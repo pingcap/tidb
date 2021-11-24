@@ -2012,3 +2012,36 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
 }
+
+func (s *testIntegrationSuite7) TestTruncatePartitionMultipleTimes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (maxvalue));`)
+	dom := domain.GetDomain(tk.Se)
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
+			injected = true
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	var errCount int32
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
+			atomic.AddInt32(&errCount, 1)
+		}
+	}
+	done1 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done1)
+	done2 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
+	<-done1
+	<-done2
+	c.Assert(errCount, LessEqual, int32(1))
+}
