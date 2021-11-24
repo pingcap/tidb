@@ -51,7 +51,8 @@ func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_partition")
+	dbInfo, err := testSchemaInfo(d, "test_partition")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(c, d)
