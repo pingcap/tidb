@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/hint"
@@ -81,12 +80,25 @@ func (s *testPlanSuite) TestLogicalOptimizeWithTraceEnabled(c *C) {
 func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 	defer testleak.AfterTest(c)()
 	tt := []struct {
-		sql   string
-		flags []uint64
+		sql             string
+		flags           []uint64
+		assertRuleName  string
+		assertRuleSteps []assertTraceStep
 	}{
 		{
-			sql:   "select count(distinct a) from t group by a",
-			flags: []uint64{flagEliminateAgg},
+			sql:            "select min(distinct a) from t group by a",
+			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
+			assertRuleName: "aggregation_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: ".*unique.*",
+					assertAction: ".*distinct eliminated.*",
+				},
+				{
+					assertReason: ".*unique.*",
+					assertAction: ".*aggregation eliminated.*",
+				},
+			},
 		},
 	}
 
@@ -114,7 +126,21 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		c.Assert(ok, IsTrue)
 		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
 		c.Assert(otrace, NotNil)
-		c.Assert(otrace.Steps, HasLen, 1)
-		fmt.Println(otrace.Steps[0].Steps)
+		assert := false
+		for _, step := range otrace.Steps {
+			if step.RuleName == tc.assertRuleName {
+				assert = true
+				for i, ruleStep := range step.Steps {
+					c.Assert(ruleStep.Action, Matches, tc.assertRuleSteps[i].assertAction)
+					c.Assert(ruleStep.Reason, Matches, tc.assertRuleSteps[i].assertReason)
+				}
+			}
+		}
+		c.Assert(assert, IsTrue)
 	}
+}
+
+type assertTraceStep struct {
+	assertReason string
+	assertAction string
 }
