@@ -138,7 +138,7 @@ func TestWriteHeadSendFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(s.ctx, nil, s.kvPairs)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable write head error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable write head error", err.Error())
 }
 
 func TestWriteBatchSendFailed(t *testing.T) {
@@ -170,7 +170,7 @@ func TestWriteBatchSendFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(s.ctx, nil, s.kvPairs)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable write batch error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable write batch error", err.Error())
 }
 
 func TestWriteCloseFailed(t *testing.T) {
@@ -202,7 +202,7 @@ func TestWriteCloseFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(s.ctx, nil, s.kvPairs)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable close stream error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable close stream error", err.Error())
 }
 
 func TestCloseImportCleanupEngine(t *testing.T) {
@@ -285,20 +285,20 @@ func TestCheckTiDBVersion(t *testing.T) {
 	version = "5.7.25-TiDB-v9999.0.0"
 	err := checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too new.*", err.Error())
+	require.Regexp(t, "^TiDB version too new", err.Error())
 
 	version = "5.7.25-TiDB-v6.0.0"
 	err = checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too new.*", err.Error())
+	require.Regexp(t, "^TiDB version too new", err.Error())
 
 	version = "5.7.25-TiDB-v6.0.0-beta"
 	err = checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too new.*", err.Error())
+	require.Regexp(t, "^TiDB version too new", err.Error())
 
 	version = "5.7.25-TiDB-v1.0.0"
 	err = checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too old.*", err.Error())
+	require.Regexp(t, "^TiDB version too old", err.Error())
 }
