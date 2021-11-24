@@ -226,7 +226,7 @@ func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, e
 	return transferString
 }
 
-// BuildToBinaryFunction to_binary function.
+// BuildToBinaryFunction builds to_binary function.
 func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
 	f, err := fc.getFunction(ctx, []Expression{expr})
@@ -241,7 +241,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 	return FoldConstant(res)
 }
 
-// BuildFromBinaryFunction build from_binary function.
+// BuildFromBinaryFunction builds from_binary function.
 func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
 	f, err := fc.getFunction(ctx, []Expression{expr})
@@ -271,7 +271,8 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)
 		}
-	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64:
+	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
 		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
 			return BuildToBinaryFunction(ctx, expr)
 		}
