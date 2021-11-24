@@ -461,12 +461,12 @@ func TestParseBinaryFromString(t *testing.T) {
 	obj, err := ParseBinaryFromString("")
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Contains(t,err.Error(),"The document is empty")
+	require.Contains(t, err.Error(), "The document is empty")
 
 	obj, err = ParseBinaryFromString(`"a""`)
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Contains(t, err.Error(),"The document root must not be followed by other values.")
+	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
 }
 
 func TestCreateBinary(t *testing.T) {
