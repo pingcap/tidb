@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/expression"
 	"math/bits"
 	"strings"
 	"sync/atomic"
@@ -1350,6 +1351,14 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		oldWarn = oldWarn[:0]
 	}
 	w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
+	val := w.rowMap[w.oldColInfo.ID]
+	col := w.newColInfo
+	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp {
+		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, int8(col.Decimal)); err == nil {
+			// convert null value to timestamp should be substituted with current timestamp.
+			val = v
+		}
+	}
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
 		return w.reformatErrors(err)

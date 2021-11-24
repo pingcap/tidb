@@ -56,8 +56,8 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
-// ExportedGetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
-func ExportedGetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int8) (d types.Datum, err error) {
+// GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
+func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int8) (d types.Datum, err error) {
 	var t types.Time
 	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
 	if err != nil {
