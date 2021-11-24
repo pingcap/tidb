@@ -285,11 +285,11 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1 location labels 'a','b'")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
-	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
@@ -303,7 +303,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 
 	ddl.PullTiFlashPdTick = 1
 	tk.MustExec("drop table ddltiflash")
-	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
