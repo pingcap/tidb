@@ -826,11 +826,11 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
 	require.Equal(t, nil, err)
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
-	require.Regexp(t, "^Cannot enable baseline evolution feature, it is not generally available now$", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
-	require.Regexp(t, "^Cannot enable baseline evolution feature, it is not generally available now$", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
-	require.Regexp(t, "^Cannot enable baseline evolution feature, it is not generally available now$", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func TestExplainTableStmts(t *testing.T) {

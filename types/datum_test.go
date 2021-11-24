@@ -191,7 +191,7 @@ func TestToFloat64(t *testing.T) {
 		{NewDatum([]byte("12345.678")), "", 12345.678},
 		{NewDatum(int64(12345)), "", 12345},
 		{NewDatum(uint64(123456)), "", 123456},
-		{NewDatum(byte(123)), "cannot convert .*", 0},
+		{NewDatum(byte(123)), "cannot convert ", 0},
 	}
 
 	sc := new(stmtctx.StatementContext)
@@ -201,7 +201,7 @@ func TestToFloat64(t *testing.T) {
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
-			require.Regexp(t, testCase.errMsg, err)
+			require.Contains(t, err.Error(), testCase.errMsg)
 		}
 		require.Equal(t, testCase.result, converted)
 	}
