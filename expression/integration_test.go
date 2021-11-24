@@ -794,6 +794,10 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.1418603212962489", "0.40540353712197724", "0.8716141803857071"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
+	tk.MustQuery("set @@rand_seed1=10000000,@@rand_seed2=1000000")
+	tk.MustQuery("select rand()").Check(testkit.Rows("0.028870999839968048"))
+	tk.MustQuery("select rand(1)").Check(testkit.Rows("0.40540353712197724"))
+	tk.MustQuery("select rand()").Check(testkit.Rows("0.11641535266900002"))
 }
 
 func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
