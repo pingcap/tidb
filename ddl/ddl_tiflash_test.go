@@ -315,11 +315,11 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 + 3*time.Second).Format(gcTimeFormat)
+	lastSafePoint := time.Now().Add(0 + 3*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec(fmt.Sprintf(safePointSQL, lastSafePoint))
 
 	ddl.PullTiFlashPdTick = 1
 	tk.MustExec("drop table ddltiflash")
