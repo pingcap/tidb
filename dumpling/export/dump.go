@@ -301,6 +301,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 	allTables := conf.Tables
 
 	// policy should be created before database
+	// placement policy in other server type can be different, so we only handle the tidb server
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		policyNames, err := ListAllPlacementPolicyNames(metaConn)
 		if err != nil {
