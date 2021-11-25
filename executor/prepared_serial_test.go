@@ -289,98 +289,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-//func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
-//	store, dom, err := newStoreWithBootstrap()
-//	require.NoError(t, err)
-//	orgEnable := plannercore.PreparedPlanCacheEnabled()
-//	defer func() {
-//		plannercore.SetPreparedPlanCache(orgEnable)
-//	}()
-//	plannercore.SetPreparedPlanCache(true)
-//	tk := testkit.NewTestKit(t, store)
-//	defer func() {
-//		dom.Close()
-//		require.NoError(t, store.Close())
-//	}()
-//	require.NoError(t, err)
-//
-//	tk.MustExec("use test")
-//	tk.MustExec("drop table if exists t1, t2")
-//	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-//	tk.MustExec("create table t1(a varchar(20), b int, c float, key(b, a))")
-//	tk.MustExec("insert into t1 values('1',1,1.1),('2',2,222),('3',3,333)")
-//	tk.MustExec("create table t2(a varchar(20), b int, c float, key(b, a))")
-//	tk.MustExec("insert into t2 values('3',3,3.3),('2',2,222),('3',3,333)")
-//
-//	var input []struct {
-//		PrepareStmt string
-//		Executes    []struct {
-//			Vars []struct {
-//				Name  string
-//				Value string
-//			}
-//			ExecuteSQL string
-//		}
-//	}
-//	var output []struct {
-//		PrepareStmt string
-//		Executes    []struct {
-//			SQL  string
-//			Vars []struct {
-//				Name  string
-//				Value string
-//			}
-//			Plan             []string
-//			LastPlanUseCache string
-//			Result           []string
-//		}
-//	}
-//	prepareMergeSuiteData.GetTestCases(t, &input, &output)
-//	for i, tt := range input {
-//		tk.MustExec(tt.PrepareStmt)
-//		testdata.OnRecord(func() {
-//			output[i].PrepareStmt = tt.PrepareStmt
-//			output[i].Executes = make([]struct {
-//				SQL  string
-//				Vars []struct {
-//					Name  string
-//					Value string
-//				}
-//				Plan             []string
-//				LastPlanUseCache string
-//				Result           []string
-//			}, len(tt.Executes))
-//		})
-//		require.Equal(t, tt.PrepareStmt, output[i].PrepareStmt)
-//		for j, exec := range tt.Executes {
-//			for _, v := range exec.Vars {
-//				tk.MustExec(fmt.Sprintf(`set @%s = %s`, v.Name, v.Value))
-//			}
-//			res := tk.MustQuery(exec.ExecuteSQL)
-//			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
-//			tk.MustQuery(exec.ExecuteSQL)
-//			tkProcess := tk.Session().ShowProcess()
-//			ps := []*util.ProcessInfo{tkProcess}
-//			tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-//			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-//			testdata.OnRecord(func() {
-//				output[i].Executes[j].SQL = exec.ExecuteSQL
-//				output[i].Executes[j].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-//				output[i].Executes[j].Vars = exec.Vars
-//				output[i].Executes[j].LastPlanUseCache = lastPlanUseCache.(string)
-//				output[i].Executes[j].Result = testdata.ConvertRowsToStrings(res.Rows())
-//			})
-//
-//			require.Equal(t, exec.ExecuteSQL, output[i].Executes[j].SQL)
-//			plan.Check(testkit.Rows(output[i].Executes[j].Plan...))
-//			require.Equal(t, exec.Vars, output[i].Executes[j].Vars)
-//			require.Equal(t, lastPlanUseCache.(string), output[i].Executes[j].LastPlanUseCache)
-//			res.Check(testkit.Rows(output[i].Executes[j].Result...))
-//		}
-//	}
-//}
-
-func TestPlanCacheOperators(t *testing.T) {
+func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -393,339 +302,430 @@ func TestPlanCacheOperators(t *testing.T) {
 		dom.Close()
 		require.NoError(t, store.Close())
 	}()
-	type ExecCase struct {
-		Parameters []string
-		UseCache   bool
-	}
-	type PrepCase struct {
-		PrepStmt  string
-		ExecCases []ExecCase
-	}
+	require.NoError(t, err)
 
-	cases := []PrepCase{
-		{"use test", nil},
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("create table t1(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t1 values('1',1,1.1),('2',2,222),('3',3,333)")
+	tk.MustExec("create table t2(a varchar(20), b int, c float, key(b, a))")
+	tk.MustExec("insert into t2 values('3',3,3.3),('2',2,222),('3',3,333)")
 
-		// cases for TableReader on PK
-		{"create table t (a int, b int, primary key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select a from t where a=?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select a from t where a in (?,?,?)", []ExecCase{
-			{[]string{"1", "1", "1"}, false},
-			{[]string{"2", "3", "4"}, true},
-			{[]string{"3", "5", "7"}, true},
-		}},
-		{"select a from t where a>? and a<?", []ExecCase{
-			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
-			{[]string{"3", "9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for IndexReader on UK
-		{"create table t (a int, b int, unique key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select a from t where a=?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select a from t where a in (?,?,?)", []ExecCase{
-			{[]string{"1", "1", "1"}, false},
-			{[]string{"2", "3", "4"}, true},
-			{[]string{"3", "5", "7"}, true},
-		}},
-		{"select a from t where a>? and a<?", []ExecCase{
-			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
-			{[]string{"3", "9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for IndexReader on Index
-		{"create table t (a int, b int, key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select a from t where a=?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select a from t where a in (?,?,?)", []ExecCase{
-			{[]string{"1", "1", "1"}, false},
-			{[]string{"2", "3", "4"}, true},
-			{[]string{"3", "5", "7"}, true},
-		}},
-		{"select a from t where a>? and a<?", []ExecCase{
-			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
-			{[]string{"3", "9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for IndexLookUp on UK
-		{"create table t (a int, b int, unique key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select * from t where a=?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select * from t where a in (?,?,?)", []ExecCase{
-			{[]string{"1", "1", "1"}, false},
-			{[]string{"2", "3", "4"}, true},
-			{[]string{"3", "5", "7"}, true},
-		}},
-		{"select * from t where a>? and a<?", []ExecCase{
-			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
-			{[]string{"3", "9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for IndexLookUp on Index
-		{"create table t (a int, b int, key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select * from t where a=?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select * from t where a in (?,?,?)", []ExecCase{
-			{[]string{"1", "1", "1"}, false},
-			{[]string{"2", "3", "4"}, true},
-			{[]string{"3", "5", "7"}, true},
-		}},
-		{"select * from t where a>? and a<?", []ExecCase{
-			{[]string{"5", "1"}, false},
-			{[]string{"1", "4"}, true},
-			{[]string{"3", "9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for HashJoin
-		{"create table t (a int, b int, key(a))", nil},
-		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
-		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
-			{[]string{"1", "10"}, false},
-			{[]string{"3", "5"}, true},
-			{[]string{"5", "3"}, true},
-		}},
-
-		// cases for MergeJoin
-		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
-			{[]string{"1", "10"}, false},
-			{[]string{"3", "5"}, true},
-			{[]string{"5", "3"}, true},
-		}},
-
-		// cases for IndexJoin
-		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, true},
-			{[]string{"5"}, true},
-		}},
-		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
-			{[]string{"1", "10"}, false},
-			{[]string{"3", "5"}, true},
-			{[]string{"5", "3"}, true},
-		}},
-
-		// cases for NestedLoopJoin (Apply)
-		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b)", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, false}, // plans with sub-queries cannot be cached, but the result must be correct
-			{[]string{"5"}, false},
-		}},
-		{"select * from t t1 where t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"3"}, false},
-			{[]string{"5"}, false},
-		}},
-		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
-			{[]string{"1", "1"}, false},
-			{[]string{"3", "2"}, false},
-			{[]string{"5", "3"}, false},
-		}},
-		{"drop table t", nil},
-
-		// cases for Window
-		{"create table t (name varchar(50), y int, sale decimal(14,2))", nil},
-		{"insert into t values ('Bob',2016,2.4), ('Bob',2017,3.2), ('Bob',2018,2.1), ('Alice',2016,1.4), ('Alice',2017,2), ('Alice',2018,3.3), ('John',2016,4), ('John',2017,2.1), ('John',2018,5)", nil},
-		{"select *, sum(sale) over (partition by y order by sale) total from t where sale>? order by y", []ExecCase{
-			{[]string{"0.1"}, false},
-			{[]string{"0.5"}, true},
-			{[]string{"1.5"}, true},
-			{[]string{"3.5"}, true},
-		}},
-		{"select *, sum(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
-			{[]string{"0.1"}, false},
-			{[]string{"0.5"}, true},
-			{[]string{"1.5"}, true},
-			{[]string{"3.5"}, true},
-		}},
-		{"select *, rank() over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
-			{[]string{"0.1"}, false},
-			{[]string{"0.5"}, true},
-			{[]string{"1.5"}, true},
-			{[]string{"3.5"}, true},
-		}},
-		{"select *, first_value(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
-			{[]string{"0.1"}, false},
-			{[]string{"0.5"}, true},
-			{[]string{"1.5"}, true},
-			{[]string{"3.5"}, true},
-		}},
-		{"select *, first_value(sale) over (partition by y order by sale rows ? preceding) total from t order by y", []ExecCase{
-			{[]string{"1"}, false}, // window plans with parameters in frame cannot be cached
-			{[]string{"2"}, false},
-			{[]string{"3"}, false},
-			{[]string{"4"}, false},
-		}},
-		{"drop table t", nil},
-
-		// cases for Limit
-		{"create table t (a int)", nil},
-		{"insert into t values (1), (1), (2), (2), (3), (4), (5), (6), (7), (8), (9), (0), (0)", nil},
-		{"select * from t limit ?", []ExecCase{
-			{[]string{"20"}, false},
-			{[]string{"30"}, false},
-		}},
-		{"select * from t limit 40, ?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, false},
-		}},
-		{"select * from t limit ?, 10", []ExecCase{
-			{[]string{"20"}, false},
-			{[]string{"30"}, false},
-		}},
-		{"select * from t limit ?, ?", []ExecCase{
-			{[]string{"20", "20"}, false},
-			{[]string{"20", "40"}, false},
-		}},
-		{"select * from t where a<? limit 20", []ExecCase{
-			{[]string{"2"}, false},
-			{[]string{"5"}, true},
-			{[]string{"9"}, true},
-		}},
-		{"drop table t", nil},
-
-		// cases for order
-		{"create table t (a int, b int)", nil},
-		{"insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)", nil},
-		{"select * from t order by ?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, false},
-		}},
-		{"select * from t order by b+?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select * from t order by mod(a, ?)", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-		{"select * from t where b>? order by mod(a, 3)", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, true},
-			{[]string{"3"}, true},
-		}},
-
-		// cases for topN
-		{"select * from t order by b limit ?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, false},
-		}},
-		{"select * from t order by b limit 10, ?", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, false},
-		}},
-		{"select * from t order by ? limit 10", []ExecCase{
-			{[]string{"1"}, false},
-			{[]string{"2"}, false},
-		}},
-		{"select * from t order by ? limit ?", []ExecCase{
-			{[]string{"1", "10"}, false},
-			{[]string{"2", "20"}, false},
-		}},
-	}
-
-	for _, prepCase := range cases {
-		isQuery := strings.Contains(prepCase.PrepStmt, "select")
-		if !isQuery {
-			tk.MustExec(prepCase.PrepStmt)
-			continue
+	var input []struct {
+		PrepareStmt string
+		Executes    []struct {
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			ExecuteSQL string
 		}
-
-		tk.MustExec(fmt.Sprintf(`prepare stmt from '%v'`, prepCase.PrepStmt))
-		for _, execCase := range prepCase.ExecCases {
-			// set all parameters
-			usingStmt := ""
-			if len(execCase.Parameters) > 0 {
-				setStmt := "set "
-				usingStmt = "using "
-				for i, parameter := range execCase.Parameters {
-					if i > 0 {
-						setStmt += ", "
-						usingStmt += ", "
-					}
-					setStmt += fmt.Sprintf("@x%v=%v", i, parameter)
-					usingStmt += fmt.Sprintf("@x%v", i)
+	}
+	var output []struct {
+		PrepareStmt string
+		Executes    []struct {
+			SQL  string
+			Vars []struct {
+				Name  string
+				Value string
+			}
+			Plan             []string
+			LastPlanUseCache string
+			Result           []string
+		}
+	}
+	prepareMergeSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		tk.MustExec(tt.PrepareStmt)
+		testdata.OnRecord(func() {
+			output[i].PrepareStmt = tt.PrepareStmt
+			output[i].Executes = make([]struct {
+				SQL  string
+				Vars []struct {
+					Name  string
+					Value string
 				}
-				tk.MustExec(setStmt)
+				Plan             []string
+				LastPlanUseCache string
+				Result           []string
+			}, len(tt.Executes))
+		})
+		require.Equal(t, tt.PrepareStmt, output[i].PrepareStmt)
+		for j, exec := range tt.Executes {
+			for _, v := range exec.Vars {
+				tk.MustExec(fmt.Sprintf(`set @%s = %s`, v.Name, v.Value))
 			}
+			res := tk.MustQuery(exec.ExecuteSQL)
+			lastPlanUseCache := tk.MustQuery("select @@last_plan_from_cache").Rows()[0][0]
+			tk.MustQuery(exec.ExecuteSQL)
+			tkProcess := tk.Session().ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+			testdata.OnRecord(func() {
+				output[i].Executes[j].SQL = exec.ExecuteSQL
+				output[i].Executes[j].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+				output[i].Executes[j].Vars = exec.Vars
+				output[i].Executes[j].LastPlanUseCache = lastPlanUseCache.(string)
+				output[i].Executes[j].Result = testdata.ConvertRowsToStrings(res.Rows())
+			})
 
-			// execute this statement and check whether it uses a cached plan
-			results := tk.MustQuery("execute stmt " + usingStmt).Sort().Rows()
-			useCache := "0"
-			if execCase.UseCache {
-				useCache = "1"
-			}
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(useCache))
-
-			// check whether the result is correct
-			tmp := strings.Split(prepCase.PrepStmt, "?")
-			require.Equal(t, len(execCase.Parameters)+1, len(tmp))
-			query := ""
-			for i := range tmp {
-				query += tmp[i]
-				if i < len(execCase.Parameters) {
-					query += execCase.Parameters[i]
-				}
-			}
-			tk.MustQuery(query).Sort().Check(results)
+			require.Equal(t, exec.ExecuteSQL, output[i].Executes[j].SQL)
+			plan.Check(testkit.Rows(output[i].Executes[j].Plan...))
+			require.Equal(t, exec.Vars, output[i].Executes[j].Vars)
+			require.Equal(t, lastPlanUseCache.(string), output[i].Executes[j].LastPlanUseCache)
+			res.Check(testkit.Rows(output[i].Executes[j].Result...))
 		}
 	}
 }
+
+//func TestPlanCacheOperators(t *testing.T) {
+//	store, dom, err := newStoreWithBootstrap()
+//	require.NoError(t, err)
+//	orgEnable := plannercore.PreparedPlanCacheEnabled()
+//	defer func() {
+//		plannercore.SetPreparedPlanCache(orgEnable)
+//	}()
+//	plannercore.SetPreparedPlanCache(true)
+//	tk := testkit.NewTestKit(t, store)
+//	defer func() {
+//		dom.Close()
+//		require.NoError(t, store.Close())
+//	}()
+//	type ExecCase struct {
+//		Parameters []string
+//		UseCache   bool
+//	}
+//	type PrepCase struct {
+//		PrepStmt  string
+//		ExecCases []ExecCase
+//	}
+//
+//	cases := []PrepCase{
+//		{"use test", nil},
+//
+//		// cases for TableReader on PK
+//		{"create table t (a int, b int, primary key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select a from t where a=?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select a from t where a in (?,?,?)", []ExecCase{
+//			{[]string{"1", "1", "1"}, false},
+//			{[]string{"2", "3", "4"}, true},
+//			{[]string{"3", "5", "7"}, true},
+//		}},
+//		{"select a from t where a>? and a<?", []ExecCase{
+//			{[]string{"5", "1"}, false},
+//			{[]string{"1", "4"}, true},
+//			{[]string{"3", "9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for IndexReader on UK
+//		{"create table t (a int, b int, unique key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select a from t where a=?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select a from t where a in (?,?,?)", []ExecCase{
+//			{[]string{"1", "1", "1"}, false},
+//			{[]string{"2", "3", "4"}, true},
+//			{[]string{"3", "5", "7"}, true},
+//		}},
+//		{"select a from t where a>? and a<?", []ExecCase{
+//			{[]string{"5", "1"}, false},
+//			{[]string{"1", "4"}, true},
+//			{[]string{"3", "9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for IndexReader on Index
+//		{"create table t (a int, b int, key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select a from t where a=?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select a from t where a in (?,?,?)", []ExecCase{
+//			{[]string{"1", "1", "1"}, false},
+//			{[]string{"2", "3", "4"}, true},
+//			{[]string{"3", "5", "7"}, true},
+//		}},
+//		{"select a from t where a>? and a<?", []ExecCase{
+//			{[]string{"5", "1"}, false},
+//			{[]string{"1", "4"}, true},
+//			{[]string{"3", "9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for IndexLookUp on UK
+//		{"create table t (a int, b int, unique key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select * from t where a=?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select * from t where a in (?,?,?)", []ExecCase{
+//			{[]string{"1", "1", "1"}, false},
+//			{[]string{"2", "3", "4"}, true},
+//			{[]string{"3", "5", "7"}, true},
+//		}},
+//		{"select * from t where a>? and a<?", []ExecCase{
+//			{[]string{"5", "1"}, false},
+//			{[]string{"1", "4"}, true},
+//			{[]string{"3", "9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for IndexLookUp on Index
+//		{"create table t (a int, b int, key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select * from t where a=?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select * from t where a in (?,?,?)", []ExecCase{
+//			{[]string{"1", "1", "1"}, false},
+//			{[]string{"2", "3", "4"}, true},
+//			{[]string{"3", "5", "7"}, true},
+//		}},
+//		{"select * from t where a>? and a<?", []ExecCase{
+//			{[]string{"5", "1"}, false},
+//			{[]string{"1", "4"}, true},
+//			{[]string{"3", "9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for HashJoin
+//		{"create table t (a int, b int, key(a))", nil},
+//		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+//		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+//			{[]string{"1", "10"}, false},
+//			{[]string{"3", "5"}, true},
+//			{[]string{"5", "3"}, true},
+//		}},
+//
+//		// cases for MergeJoin
+//		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+//			{[]string{"1", "10"}, false},
+//			{[]string{"3", "5"}, true},
+//			{[]string{"5", "3"}, true},
+//		}},
+//
+//		// cases for IndexJoin
+//		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, true},
+//			{[]string{"5"}, true},
+//		}},
+//		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+//			{[]string{"1", "10"}, false},
+//			{[]string{"3", "5"}, true},
+//			{[]string{"5", "3"}, true},
+//		}},
+//
+//		// cases for NestedLoopJoin (Apply)
+//		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b)", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, false}, // plans with sub-queries cannot be cached, but the result must be correct
+//			{[]string{"5"}, false},
+//		}},
+//		{"select * from t t1 where t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"3"}, false},
+//			{[]string{"5"}, false},
+//		}},
+//		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+//			{[]string{"1", "1"}, false},
+//			{[]string{"3", "2"}, false},
+//			{[]string{"5", "3"}, false},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for Window
+//		{"create table t (name varchar(50), y int, sale decimal(14,2))", nil},
+//		{"insert into t values ('Bob',2016,2.4), ('Bob',2017,3.2), ('Bob',2018,2.1), ('Alice',2016,1.4), ('Alice',2017,2), ('Alice',2018,3.3), ('John',2016,4), ('John',2017,2.1), ('John',2018,5)", nil},
+//		{"select *, sum(sale) over (partition by y order by sale) total from t where sale>? order by y", []ExecCase{
+//			{[]string{"0.1"}, false},
+//			{[]string{"0.5"}, true},
+//			{[]string{"1.5"}, true},
+//			{[]string{"3.5"}, true},
+//		}},
+//		{"select *, sum(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+//			{[]string{"0.1"}, false},
+//			{[]string{"0.5"}, true},
+//			{[]string{"1.5"}, true},
+//			{[]string{"3.5"}, true},
+//		}},
+//		{"select *, rank() over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+//			{[]string{"0.1"}, false},
+//			{[]string{"0.5"}, true},
+//			{[]string{"1.5"}, true},
+//			{[]string{"3.5"}, true},
+//		}},
+//		{"select *, first_value(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+//			{[]string{"0.1"}, false},
+//			{[]string{"0.5"}, true},
+//			{[]string{"1.5"}, true},
+//			{[]string{"3.5"}, true},
+//		}},
+//		{"select *, first_value(sale) over (partition by y order by sale rows ? preceding) total from t order by y", []ExecCase{
+//			{[]string{"1"}, false}, // window plans with parameters in frame cannot be cached
+//			{[]string{"2"}, false},
+//			{[]string{"3"}, false},
+//			{[]string{"4"}, false},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for Limit
+//		{"create table t (a int)", nil},
+//		{"insert into t values (1), (1), (2), (2), (3), (4), (5), (6), (7), (8), (9), (0), (0)", nil},
+//		{"select * from t limit ?", []ExecCase{
+//			{[]string{"20"}, false},
+//			{[]string{"30"}, false},
+//		}},
+//		{"select * from t limit 40, ?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, false},
+//		}},
+//		{"select * from t limit ?, 10", []ExecCase{
+//			{[]string{"20"}, false},
+//			{[]string{"30"}, false},
+//		}},
+//		{"select * from t limit ?, ?", []ExecCase{
+//			{[]string{"20", "20"}, false},
+//			{[]string{"20", "40"}, false},
+//		}},
+//		{"select * from t where a<? limit 20", []ExecCase{
+//			{[]string{"2"}, false},
+//			{[]string{"5"}, true},
+//			{[]string{"9"}, true},
+//		}},
+//		{"drop table t", nil},
+//
+//		// cases for order
+//		{"create table t (a int, b int)", nil},
+//		{"insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)", nil},
+//		{"select * from t order by ?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, false},
+//		}},
+//		{"select * from t order by b+?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select * from t order by mod(a, ?)", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//		{"select * from t where b>? order by mod(a, 3)", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, true},
+//			{[]string{"3"}, true},
+//		}},
+//
+//		// cases for topN
+//		{"select * from t order by b limit ?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, false},
+//		}},
+//		{"select * from t order by b limit 10, ?", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, false},
+//		}},
+//		{"select * from t order by ? limit 10", []ExecCase{
+//			{[]string{"1"}, false},
+//			{[]string{"2"}, false},
+//		}},
+//		{"select * from t order by ? limit ?", []ExecCase{
+//			{[]string{"1", "10"}, false},
+//			{[]string{"2", "20"}, false},
+//		}},
+//	}
+//
+//	for _, prepCase := range cases {
+//		isQuery := strings.Contains(prepCase.PrepStmt, "select")
+//		if !isQuery {
+//			tk.MustExec(prepCase.PrepStmt)
+//			continue
+//		}
+//
+//		tk.MustExec(fmt.Sprintf(`prepare stmt from '%v'`, prepCase.PrepStmt))
+//		for _, execCase := range prepCase.ExecCases {
+//			// set all parameters
+//			usingStmt := ""
+//			if len(execCase.Parameters) > 0 {
+//				setStmt := "set "
+//				usingStmt = "using "
+//				for i, parameter := range execCase.Parameters {
+//					if i > 0 {
+//						setStmt += ", "
+//						usingStmt += ", "
+//					}
+//					setStmt += fmt.Sprintf("@x%v=%v", i, parameter)
+//					usingStmt += fmt.Sprintf("@x%v", i)
+//				}
+//				tk.MustExec(setStmt)
+//			}
+//
+//			// execute this statement and check whether it uses a cached plan
+//			results := tk.MustQuery("execute stmt " + usingStmt).Sort().Rows()
+//			useCache := "0"
+//			if execCase.UseCache {
+//				useCache = "1"
+//			}
+//			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(useCache))
+//
+//			// check whether the result is correct
+//			tmp := strings.Split(prepCase.PrepStmt, "?")
+//			require.Equal(t, len(execCase.Parameters)+1, len(tmp))
+//			query := ""
+//			for i := range tmp {
+//				query += tmp[i]
+//				if i < len(execCase.Parameters) {
+//					query += execCase.Parameters[i]
+//				}
+//			}
+//			tk.MustQuery(query).Sort().Check(results)
+//		}
+//	}
+//}
 
 func TestIssue28782(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
