@@ -4861,3 +4861,21 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 		))
 
 }
+
+func (s *testIntegrationSuite) TestIssue30094(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t30094;`)
+	tk.MustExec(`create table t30094(a varchar(10));`)
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  cast(test.t30094.a, float BINARY), cast(test.t30094.a, var_string(5))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe59388e59388e59388\"), eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe598bfe598bfe598bf\")",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
+}
