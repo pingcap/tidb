@@ -171,7 +171,7 @@ func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(tid, ts, lease)
+	succ, err := c.handle.LockForRead(context.Background(), tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -198,7 +198,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -212,7 +212,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(ctx, c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -226,7 +226,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,7 +237,7 @@ func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) 
 	return func() {
 		tid := c.Meta().ID
 		lease := leaseFromTS(ts)
-		succ, err := c.handle.RenewLease(tid, ts, lease, op)
+		succ, err := c.handle.RenewLease(context.Background(), tid, ts, lease, op)
 		if err != nil {
 			log.Warn("Renew read lease error")
 		}
