@@ -70,7 +70,6 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	name := params[pFileName]
 	path := handler.filePath
 	if isExists(path) {
-		logutil.BgLogger().Info("path", zap.String("path", path))
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
 		file, err := os.Open(path)
