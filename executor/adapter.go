@@ -1194,6 +1194,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	execDetail.BackoffSleep["waitLockLease"] = sessVars.WaitLockLeaseTime
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
@@ -1226,6 +1227,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
+
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
