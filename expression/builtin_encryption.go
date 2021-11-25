@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -407,20 +406,10 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	dataTp := b.args[0].GetType()
-	dataStr, err = charset.NewEncoding(dataTp.Charset).EncodeString(dataStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	passwordTp := b.args[1].GetType()
-	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
-	if err != nil {
-		return "", false, err
 	}
 
 	decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
@@ -480,20 +469,10 @@ func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	decodeTp := b.args[0].GetType()
-	decodeStr, err = charset.NewEncoding(decodeTp.Charset).EncodeString(decodeStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	passwordTp := b.args[1].GetType()
-	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
-	if err != nil {
-		return "", false, err
 	}
 
 	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
@@ -549,7 +528,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, err
+		return "", isNull, err
 	}
 
 	if len(pass) == 0 {
@@ -646,12 +625,7 @@ func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	var sum [16]byte
-	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(arg))
-	if err != nil {
-		return "", false, err
-	}
-	sum = md5.Sum(dBytes) // #nosec G401
+	sum := md5.Sum([]byte(arg)) // #nosec G401
 	hexStr := fmt.Sprintf("%x", sum)
 	return hexStr, false, nil
 }
@@ -750,6 +724,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
