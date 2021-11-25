@@ -68,6 +68,15 @@ var supportedCollationNames = map[string]struct{}{
 	CollationBin:     {},
 }
 
+// TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
+var TiFlashSupportedCharsets = map[string]bool{
+	CharsetUTF8:    true,
+	CharsetUTF8MB4: true,
+	CharsetASCII:   true,
+	CharsetLatin1:  true,
+	CharsetBin:     true,
+}
+
 // GetSupportedCharsets gets descriptions for all charsets supported so far.
 func GetSupportedCharsets() []*Charset {
 	charsets := make([]*Charset, 0, len(charsetInfos))

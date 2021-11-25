@@ -17,6 +17,7 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/collate"
 	"math"
 	"math/rand"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -82,6 +84,22 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 func (s *tiflashTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	c.Assert(s.store.Close(), IsNil)
+}
+
+func (s *tiflashTestSuite) TestNonsupportCharsetTable(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset gbk collate gbk_bin)")
+	err := tk.ExecToErr("alter table t set tiflash replica 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, ddl.ErrAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs("gbk").Error())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset utf8)")
+	tk.MustExec("alter table t set tiflash replica 1")
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
