@@ -20,6 +20,8 @@ import (
 	"math"
 	"strconv"
 
+	utilMath "github.com/pingcap/tidb/util/math"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -709,11 +711,9 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	b.mu.Lock()
 	for i := range f64s {
 		f64s[i] = b.mysqlRng.Gen()
 	}
-	b.mu.Unlock()
 	return nil
 }
 
@@ -738,9 +738,9 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result 
 	for i := 0; i < n; i++ {
 		// When the seed is null we need to use 0 as the seed.
 		// The behavior same as MySQL.
-		rng := NewWithSeed(0)
+		rng := utilMath.NewWithSeed(0)
 		if !buf.IsNull(i) {
-			rng = NewWithSeed(i64s[i])
+			rng = utilMath.NewWithSeed(i64s[i])
 		}
 		f64s[i] = rng.Gen()
 	}
