@@ -16,24 +16,24 @@ package tracing
 
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
-	ID       int
-	TP       string
-	Children []*LogicalPlanTrace
+	ID       int                 `json:"id"`
+	TP       string              `json:"type"`
+	Children []*LogicalPlanTrace `json:"children"`
 
 	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string
+	ExplainInfo string `json:"info"`
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	Steps []*LogicalRuleOptimizeTracer
+	Steps []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
 }
 
 // AppendRuleTracerBeforeRuleOptimize add plan tracer before optimize
-func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(name string, before *LogicalPlanTrace) {
-	ruleTracer := buildLogicalRuleOptimizeTracerBeforeOptimize(name, before)
+func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index int, name string, before *LogicalPlanTrace) {
+	ruleTracer := buildLogicalRuleOptimizeTracerBeforeOptimize(index, name, before)
 	tracer.Steps = append(tracer.Steps, ruleTracer)
 	tracer.curRuleTracer = ruleTracer
 }
@@ -56,15 +56,17 @@ func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *Lo
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
-	Before   *LogicalPlanTrace
-	After    *LogicalPlanTrace
-	RuleName string
-	Steps    []LogicalRuleOptimizeTraceStep
+	Index    int                            `json:"index"`
+	Before   *LogicalPlanTrace              `json:"before"`
+	After    *LogicalPlanTrace              `json:"after"`
+	RuleName string                         `json:"name"`
+	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
-func buildLogicalRuleOptimizeTracerBeforeOptimize(name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
+func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
+		Index:    index,
 		Before:   before,
 		RuleName: name,
 		Steps:    make([]LogicalRuleOptimizeTraceStep, 0),
@@ -74,8 +76,8 @@ func buildLogicalRuleOptimizeTracerBeforeOptimize(name string, before *LogicalPl
 // LogicalRuleOptimizeTraceStep indicates the trace for the detailed optimize changing in
 // logical rule optimize
 type LogicalRuleOptimizeTraceStep struct {
-	Action string
-	Reason string
-	ID     int
-	TP     string
+	Action string `json:"action"`
+	Reason string `json:"reason"`
+	ID     int    `json:"id"`
+	TP     string `json:"type"`
 }
