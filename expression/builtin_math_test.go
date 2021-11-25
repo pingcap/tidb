@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -382,7 +383,7 @@ func TestRand(t *testing.T) {
 	// issue 3211
 	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
-	randGen := NewWithSeed(20160101)
+	randGen := utilMath.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		require.NoError(t, err)
