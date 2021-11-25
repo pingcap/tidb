@@ -17,11 +17,11 @@ package admin_test
 import (
 	"testing"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/require"
@@ -352,6 +352,7 @@ func TestIsJobRollbackable(t *testing.T) {
 		{model.ActionDropSchema, model.StateDeleteOnly, false},
 		{model.ActionDropColumn, model.StateDeleteOnly, false},
 		{model.ActionDropColumns, model.StateDeleteOnly, false},
+		{model.ActionDropIndexes, model.StateDeleteOnly, false},
 	}
 	job := &model.Job{}
 	for _, ca := range cases {

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 type repairInfo struct {

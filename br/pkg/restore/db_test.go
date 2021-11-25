@@ -12,7 +12,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
@@ -77,8 +78,8 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, false, autoid.RowIDAllocType)
-	globalAutoID, err := idAlloc.NextGlobalAutoID(table.Info.ID)
+	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
+	globalAutoID, err := idAlloc.NextGlobalAutoID()
 	c.Assert(err, IsNil, Commentf("Error allocate next auto id"))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID))
 	// Alter AutoIncID to the next AutoIncID + 100
@@ -97,13 +98,33 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 	table.DB.Collate = "utf8mb4_bin"
 	err = db.CreateDatabase(context.Background(), table.DB)
 	c.Assert(err, IsNil, Commentf("Error create empty charset db: %s %s", err, s.mock.DSN))
-	err = db.CreateTable(context.Background(), &table)
+	uniqueMap := make(map[restore.UniqueTableName]bool)
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
 	c.Assert(err, IsNil, Commentf("Error create table: %s %s", err, s.mock.DSN))
+
 	tk.MustExec("use test")
-	// Check if AutoIncID is altered successfully
+	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
+	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
+	// Check if AutoIncID is altered successfully.
+	c.Assert(autoIncID, Equals, uint64(globalAutoID+100))
+
+	// try again, failed due to table exists.
+	table.Info.AutoIncID = globalAutoID + 200
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID+100))
+
+	// try again, success because we use alter sql in unique map.
+	table.Info.AutoIncID = globalAutoID + 300
+	uniqueMap[restore.UniqueTableName{"test", "\"t\""}] = true
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	// Check if AutoIncID is altered to globalAutoID + 300.
+	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
+	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
+	c.Assert(autoIncID, Equals, uint64(globalAutoID+300))
+
 }
 
 func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
@@ -124,7 +145,11 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil, Commentf("Error get ts: %s", err))
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -150,7 +175,7 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	c.Assert(err, IsNil)
 	// check the schema version
 	c.Assert(mockMeta.Version, Equals, int32(metautil.MetaV1))
-	metaReader := metautil.NewMetaReader(mockMeta, s.storage)
+	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	c.Assert(err, IsNil)
 	var allDDLJobs []*model.Job
@@ -182,7 +207,11 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil, Commentf("Error get ts: %s", err))
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -209,7 +238,7 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	c.Assert(err, IsNil)
 	// check the schema version
 	c.Assert(mockMeta.Version, Equals, int32(metautil.MetaV2))
-	metaReader := metautil.NewMetaReader(mockMeta, s.storage)
+	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	c.Assert(err, IsNil)
 	var allDDLJobs []*model.Job

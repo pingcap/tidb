@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -390,15 +390,6 @@ func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *deb
 			Name:  "mvcc.num_rows",
 			Value: strconv.Itoa(len(scanResp.Pairs)),
 		}}}, nil
-}
-
-// Client is a client that sends RPC.
-// This is same with tikv.Client, define again for avoid circle import.
-type Client interface {
-	// Close should release all data.
-	Close() error
-	// SendRequest sends Request.
-	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
 // Close closes RPCClient and cleanup temporal resources.

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
@@ -16,13 +15,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
@@ -135,6 +133,7 @@ func GetSSTMetaFromFile(
 		Length:      file.GetSize_(),
 		RegionId:    region.GetId(),
 		RegionEpoch: region.GetRegionEpoch(),
+		CipherIv:    file.GetCipherIv(),
 	}
 }
 
@@ -287,8 +286,9 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 		)
 		return errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule")
 	}
-	// the new prefix of the start rule must equal or less than the new prefix of the end rule
-	if bytes.Compare(startRule.GetNewKeyPrefix(), endRule.GetNewKeyPrefix()) > 0 {
+	// the rewrite rule of the start key and the end key should be equaled.
+	// i.e. there should only one rewrite rule for one file, a file should only be imported into one region.
+	if !bytes.Equal(startRule.GetNewKeyPrefix(), endRule.GetNewKeyPrefix()) {
 		startTableID := tablecodec.DecodeTableID(file.GetStartKey())
 		endTableID := tablecodec.DecodeTableID(file.GetEndKey())
 		log.Error(
@@ -299,17 +299,10 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 			zap.Stringer("endRule", endRule),
 			logutil.File(file),
 		)
-		return errors.Annotate(berrors.ErrRestoreInvalidRewrite, "unexpected rewrite rules")
-	}
-
-	startID := tablecodec.DecodeTableID(file.GetStartKey())
-	endID := tablecodec.DecodeTableID(file.GetEndKey())
-	if startID != endID {
-		log.Error("table ids mismatch",
-			zap.Int64("startID", startID),
-			zap.Int64("endID", endID),
-			logutil.File(file))
-		return errors.Annotate(berrors.ErrRestoreTableIDMismatch, "file start_key end_key table ids mismatch")
+		return errors.Annotatef(berrors.ErrRestoreInvalidRewrite,
+			"rewrite rule mismatch, the backup data may be dirty or from incompatible versions of BR, startKey rule: %X => %X, endKey rule: %X => %X",
+			startRule.OldKeyPrefix, startRule.NewKeyPrefix, endRule.OldKeyPrefix, endRule.NewKeyPrefix,
+		)
 	}
 	return nil
 }
@@ -336,15 +329,6 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func matchNewPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.RewriteRule {
-	for _, rule := range rewriteRules.Data {
-		if bytes.HasPrefix(key, rule.GetNewKeyPrefix()) {
-			return rule
-		}
-	}
-	return nil
-}
-
 func truncateTS(key []byte) []byte {
 	if len(key) == 0 {
 		return nil
@@ -362,11 +346,6 @@ func SplitRanges(
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) error {
-	start := time.Now()
-	defer func() {
-		elapsed := time.Since(start)
-		summary.CollectDuration("split region", elapsed)
-	}()
 	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig()))
 
 	return splitter.Split(ctx, ranges, rewriteRules, func(keys [][]byte) {
@@ -374,6 +353,16 @@ func SplitRanges(
 			updateCh.Inc()
 		}
 	})
+}
+
+func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_sstpb.RewriteRule {
+	startID := tablecodec.DecodeTableID(file.GetStartKey())
+	endID := tablecodec.DecodeTableID(file.GetEndKey())
+	if startID != endID {
+		return nil
+	}
+	_, rule := rewriteRawKey(file.StartKey, rules)
+	return rule
 }
 
 func rewriteFileKeys(file *backuppb.File, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {

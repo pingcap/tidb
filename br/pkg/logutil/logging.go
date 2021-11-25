@@ -115,7 +115,7 @@ func (region zapMarshalRegionMarshaler) MarshalLogObject(enc zapcore.ObjectEncod
 	for _, peer := range region.GetPeers() {
 		peers = append(peers, peer.String())
 	}
-	enc.AddUint64("ID", region.Id)
+	enc.AddUint64("ID", region.GetId())
 	enc.AddString("startKey", redact.Key(region.GetStartKey()))
 	enc.AddString("endKey", redact.Key(region.GetEndKey()))
 	enc.AddString("epoch", region.GetRegionEpoch().String())
@@ -133,10 +133,15 @@ func RegionBy(key string, region *metapb.Region) zap.Field {
 	return zap.Object(key, zapMarshalRegionMarshaler{region})
 }
 
-// Leader make the zap fields for a peer.
+// Leader make the zap fields for a peer as leader.
 // nolint:interfacer
 func Leader(peer *metapb.Peer) zap.Field {
 	return zap.String("leader", peer.String())
+}
+
+// Peer make the zap fields for a peer.
+func Peer(peer *metapb.Peer) zap.Field {
+	return zap.String("peer", peer.String())
 }
 
 type zapSSTMetaMarshaler struct{ *import_sstpb.SSTMeta }
@@ -225,4 +230,12 @@ func RedactAny(fieldKey string, key interface{}) zap.Field {
 		return zap.String(fieldKey, "?")
 	}
 	return zap.Any(fieldKey, key)
+}
+
+// Redact replaces the zap field by a '?' if redaction is turned on.
+func Redact(field zap.Field) zap.Field {
+	if redact.NeedRedact() {
+		return zap.String(field.Key, "?")
+	}
+	return field
 }

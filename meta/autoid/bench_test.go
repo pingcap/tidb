@@ -20,10 +20,10 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 )
 
@@ -57,10 +57,10 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 		return
 	}
 	ctx := context.Background()
-	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, err := alloc.Alloc(ctx, 2, 1, 1, 1)
+		_, _, err := alloc.Alloc(ctx, 1, 1, 1)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -108,10 +108,10 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	alloc := autoid.NewSequenceAllocator(store, 1, 1, seq)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := alloc.AllocSeqCache(1)
+		_, _, _, err := alloc.AllocSeqCache()
 		if err != nil {
 			fmt.Println("err")
 		}

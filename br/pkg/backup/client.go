@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -268,10 +269,6 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
-		idAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.RowIDAllocType)
-		seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.SequenceType)
-		randAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.AutoRandomType)
-
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -294,14 +291,19 @@ func BuildBackupRangeAndSchema(
 				zap.String("table", tableInfo.Name.O),
 			)
 
+			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
+			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
+			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
+			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
+
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = seqAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoID, err = seqAlloc.NextGlobalAutoID()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = idAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -311,7 +313,7 @@ func BuildBackupRangeAndSchema(
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
-				globalAutoRandID, err = randAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -354,6 +356,24 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, nil
 }
 
+func skipUnsupportedDDLJob(job *model.Job) bool {
+	switch job.Type {
+	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
+	// Backup guarantees data integrity but region placement, which is out of scope of backup
+	case model.ActionCreatePlacementPolicy,
+		model.ActionAlterPlacementPolicy,
+		model.ActionDropPlacementPolicy,
+		model.ActionAlterTablePartitionPolicy,
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionAlterTablePlacement,
+		model.ActionAlterTableAttributes,
+		model.ActionAlterTablePartitionAttributes:
+		return true
+	default:
+		return false
+	}
+}
+
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
@@ -386,6 +406,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 	count := 0
 	for _, job := range allJobs {
+		if skipUnsupportedDDLJob(job) {
+			continue
+		}
+
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
 			jobBytes, err := json.Marshal(job)
@@ -460,7 +484,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStores(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -939,7 +963,26 @@ backupLoop:
 	return nil
 }
 
+// gRPC communication cancelled with connection closing
+const (
+	gRPC_Cancel = "the client connection is closing"
+)
+
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-	return status.Code(err) == codes.Unavailable
+
+	if status.Code(err) == codes.Unavailable {
+		return true
+	}
+
+	// At least, there are two possible cancel() call,
+	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
+	if status.Code(err) == codes.Canceled {
+		if s, ok := status.FromError(err); ok {
+			if strings.Contains(s.Message(), gRPC_Cancel) {
+				return true
+			}
+		}
+	}
+	return false
 }

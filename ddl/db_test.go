@@ -30,12 +30,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -46,6 +40,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -125,6 +125,8 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
@@ -571,7 +573,7 @@ func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 }
 
 func (s *testDBSuite7) TestCancelAddIndex(c *C) {
-	idxName := "c3_index "
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
 
@@ -614,7 +616,8 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	ctx := tk.Se.(sessionctx.Context)
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originalHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
+	jobIDExt := wrapJobIDExtCallback(hook)
+	d.(ddl.DDLForTest).SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -644,14 +647,7 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, idxName), IsFalse)
-	}
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -1349,7 +1345,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	otherKeys = append(otherKeys, v)
 
 	addIdxSQL := fmt.Sprintf("alter table test_add_index add %s key c3_index(c3)", idxTp)
-	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, addIdxSQL, done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -1543,7 +1539,7 @@ func testAddIndexWithSplitTable(c *C, store kv.Storage, lease time.Duration, cre
 	rows := re.Rows()
 	c.Assert(len(rows), Equals, 16)
 	addIdxSQL := "alter table test_add_index add index idx(a)"
-	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, addIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 5)
 	defer ticker.Stop()
@@ -1711,17 +1707,10 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
 	ctx := tk.Se.(sessionctx.Context)
-	t := testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var c3idx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			c3idx = tidx
-			break
-		}
-	}
-	c.Assert(c3idx, NotNil)
-
-	testddlutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	indexID := testGetIndexID(c, ctx, "test_db", "test_drop_index", idxName)
+	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	defer reset()
+	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
@@ -1748,20 +1737,7 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), idxName), IsFalse)
 
-	// Check in index, it must be no index in KV.
-	// Make sure there is no index with name c3_index.
-	t = testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var nidx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			nidx = tidx
-			break
-		}
-	}
-	c.Assert(nidx, IsNil)
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3idx.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
@@ -1819,19 +1795,14 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
-	var c3idx table.Index
 	for i := range testCases {
+		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
 			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
-			tt := s.testGetTable(c, "test_drop_column")
-			for _, idx := range tt.Indices() {
-				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-					c3idx = idx
-					break
-				}
-			}
+			ctx := tk.Se.(sessionctx.Context)
+			c3IdxID = testGetIndexID(c, ctx, s.schemaName, "test_drop_column", "idx_c3")
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
@@ -1862,9 +1833,10 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			// Check index is deleted
-			ctx := s.s.(sessionctx.Context)
-			checkDelRangeDone(c, ctx, c3idx)
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAdded(tk, jobID, c3IdxID)
+			}
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1926,19 +1898,14 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
-	var c3idx table.Index
 	for i := range testCases {
+		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
 			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
-			tt := s.testGetTable(c, "test_drop_column")
-			for _, idx := range tt.Indices() {
-				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-					c3idx = idx
-					break
-				}
-			}
+			ctx := tk.Se.(sessionctx.Context)
+			c3IdxID = testGetIndexID(c, ctx, s.schemaName, "test_drop_column", "idx_c3")
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
 		t := s.testGetTable(c, "test_drop_column")
@@ -1967,9 +1934,10 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			// Check index is deleted
-			ctx := s.s.(sessionctx.Context)
-			checkDelRangeDone(c, ctx, c3idx)
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAdded(tk, jobID, c3IdxID)
+			}
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1977,47 +1945,56 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3, drop column c4")
 }
 
-func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
-	startTime := time.Now()
-	f := func() map[int64]struct{} {
-		handles := make(map[int64]struct{})
+func testGetIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	c.Assert(err, IsNil)
 
-		c.Assert(ctx.NewTxn(context.Background()), IsNil)
-		txn, err := ctx.Txn(true)
-		c.Assert(err, IsNil)
-		defer func() {
-			err := txn.Rollback()
-			c.Assert(err, IsNil)
-		}()
-
-		txn, err = ctx.Txn(true)
-		c.Assert(err, IsNil)
-		it, err := idx.SeekFirst(txn)
-		c.Assert(err, IsNil)
-		defer it.Close()
-
-		for {
-			_, h, err := it.Next()
-			if terror.ErrorEqual(err, io.EOF) {
-				break
-			}
-
-			c.Assert(err, IsNil)
-			handles[h.IntValue()] = struct{}{}
-		}
-		return handles
-	}
-
-	var handles map[int64]struct{}
-	for i := 0; i < waitForCleanDataRound; i++ {
-		handles = f()
-		if len(handles) != 0 {
-			time.Sleep(waitForCleanDataInterval)
-		} else {
-			break
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
 		}
 	}
-	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
+	c.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	return -1
+}
+
+type testDDLJobIDCallback struct {
+	ddl.Callback
+	jobID int64
+}
+
+func (t *testDDLJobIDCallback) OnJobUpdated(job *model.Job) {
+	if t.jobID == 0 {
+		t.jobID = job.ID
+	}
+	if t.Callback != nil {
+		t.Callback.OnJobUpdated(job)
+	}
+}
+
+func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
+	return &testDDLJobIDCallback{
+		Callback: oldCallback,
+		jobID:    0,
+	}
+}
+
+func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback, tearDown func()) {
+	dom := domain.GetDomain(ctx)
+	originHook := dom.DDL().GetHook()
+	jobIDExt := wrapJobIDExtCallback(originHook)
+	dom.DDL().SetHook(jobIDExt)
+	return jobIDExt, func() {
+		dom.DDL().SetHook(originHook)
+	}
+}
+
+func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
+	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
 func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
@@ -2340,7 +2317,7 @@ func (s *testDBSuite) testAddColumn(tk *testkit.TestKit, c *C) {
 	// add some rows
 	batchInsert(tk, "t2", 0, num)
 
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -2486,7 +2463,7 @@ func (s *testDBSuite) testDropColumn(tk *testkit.TestKit, c *C) {
 	}
 
 	// get c4 column id
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -2552,9 +2529,9 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	dmlDone := make(chan error, num)
 	ddlDone := make(chan error, num)
 
-	testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
+	testddlutil.ExecMultiSQLInGoroutine(s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
-		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
+		testddlutil.ExecMultiSQLInGoroutine(s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
 		err := <-ddlDone
@@ -3328,8 +3305,6 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec("drop table if exists t1_tmp;")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("set tidb_enable_noop_functions=1")
 	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
 	tk.MustExec("create temporary table t2_tmp (a int, b int)")
 	// test add foreign key.
@@ -3787,7 +3762,7 @@ func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
 	tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
 	tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
 	done := make(chan error, 1)
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table tnn add column c3 int not null default 3", done)
 	updateCnt := 0
 out:
 	for {
@@ -3813,7 +3788,6 @@ out:
 
 func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_gv_ddl")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
@@ -3842,7 +3816,6 @@ func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// for local temporary table
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
 	defer tk.MustExec("drop table if exists test_local_gv_ddl")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
@@ -4458,7 +4431,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	mvc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(mvc.FieldType.Flen, Equals, 5)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
-	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a varchar(100);")
 	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
 
@@ -4470,7 +4443,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	mc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(mc.FieldType.Flen, Equals, 5)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
-	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a char(100);")
 	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
 
@@ -4478,11 +4451,11 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustExec("drop table if exists tt;")
 	tk.MustExec("create table tt (a binary(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
-	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1406]Data Too Long, field len 5, data len 10")
+	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
 	mb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(mb.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
-	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1406]Data Too Long, field len 4, data len 10")
+	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
 	tk.MustExec("alter table tt change a a binary(12);")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00\x00\x00"))
 	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("12", "12"))
@@ -4495,7 +4468,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	mvb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(mvb.FieldType.Flen, Equals, 5)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
-	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a varbinary(12);")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
@@ -4510,7 +4483,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
 	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
-	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 
 	// char to text
 	tk.MustExec("alter table tt change a a text;")
@@ -4897,7 +4870,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	s.mustExec(tk, c, "alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
@@ -5556,16 +5529,16 @@ type testModifyColumnTimeCase struct {
 
 func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCase) {
 	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", limit))
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
@@ -5724,11 +5697,13 @@ func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("drop table if exists temp, temp2")
 	tk.MustExec("drop table if exists temp")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
+	tk.MustExec("create temporary table temp2(id int)")
 	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
-	tk.MustExec("drop table temp")
+	tk.MustGetErrCode("alter table temp2 set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("drop table temp, temp2")
 
 	tk.MustExec("drop table if exists normal")
 	tk.MustExec("create table normal(id int)")
@@ -5738,7 +5713,6 @@ func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table temp like normal on commit delete rows")
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
 	tk.MustExec("drop table temp")
-	tk.MustExec("set tidb_enable_noop_functions = 1")
 	tk.MustExec("create temporary table temp like normal")
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
 }
@@ -5789,7 +5763,6 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk.MustExec("use test")
 	// for global temporary table
 	tk.MustExec("drop table if exists shard_row_id_temporary")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")
@@ -5797,7 +5770,6 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
 	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	// for local temporary table
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("drop table if exists local_shard_row_id_temporary")
 	_, err = tk.Exec("create temporary table local_shard_row_id_temporary (a int) shard_row_id_bits = 5;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
@@ -5970,6 +5942,36 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	tk2.MustExec("alter table t1 add column b int;")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/29752
+// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
+func (s *testDBSuite2) TestRenameTableWithLocked(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database renamedb")
+	tk.MustExec("create database renamedb2")
+	tk.MustExec("use renamedb")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a int);")
+
+	tk.MustExec("LOCK TABLES t1 WRITE;")
+	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
+	tk.MustExec("RENAME TABLE t1 TO t2;")
+	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
+	tk.MustExec("UNLOCK TABLES")
+	tk.MustExec("RENAME TABLE t2 TO t1;")
+	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
+
+	tk.MustExec("LOCK TABLES t1 READ;")
+	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
+	tk.MustExec("UNLOCK TABLES")
+
+	tk.MustExec("drop database renamedb")
 }
 
 func (s *testDBSuite2) TestLockTables(c *C) {
@@ -6418,6 +6420,14 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 	} else {
 		c.Assert(tb.Meta().Lock, IsNil)
 	}
+}
+
+func checkTableCacheStatus(c *C, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
+	tb := testGetTableByName(c, se, dbName, tableName)
+	dom := domain.GetDomain(se)
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	c.Assert(tb.Meta().TableCacheStatusType, Equals, status)
 }
 
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
@@ -7296,6 +7306,227 @@ func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
 
 }
 
+func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dropIdxSQL string, idxNames []string) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_drop_indexes")
+	tk.MustExec(createSQL)
+	done := make(chan error, 1)
+
+	num := 100
+	// add some rows
+	for i := 0; i < num; i++ {
+		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+	}
+	ctx := tk.Se.(sessionctx.Context)
+	idxIDs := make([]int64, 0, 3)
+	for _, idxName := range idxNames {
+		idxIDs = append(idxIDs, testGetIndexID(c, ctx, "test_db", "test_drop_indexes", idxName))
+	}
+	jobIDExt, resetHook := setupJobIDExtCallback(ctx)
+	defer resetHook()
+	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
+
+	ticker := time.NewTicker(lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			step := 5
+			// delete some rows, and add some data
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				tk.MustExec("update test_drop_indexes set c2 = 1 where c1 = ?", n)
+				tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+	for _, idxID := range idxIDs {
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
+	}
+}
+
+func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
+	indexesName := []string{"idx_c1", "idx_c2"}
+	addIdxesSQL := "alter table t add index idx_c1 (c1);alter table t add index idx_c2 (c2);"
+	dropIdxesSQL := "alter table t drop index idx_c1;alter table t drop index idx_c2;"
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	defer tk.MustExec("drop table t;")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	testCases := []struct {
+		needAddIndex   bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
+			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	ctx := tk.Se.(sessionctx.Context)
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddIndex {
+			tk.MustExec(addIdxesSQL)
+		}
+		rs, err := tk.Exec(dropIdxesSQL)
+		if rs != nil {
+			rs.Close()
+		}
+		t := testGetTableByName(c, ctx, "test_db", "t")
+
+		var indexInfos []*model.IndexInfo
+		for _, idxName := range indexesName {
+			indexInfo := t.Meta().FindIndexByName(idxName)
+			if indexInfo != nil {
+				indexInfos = append(indexInfos, indexInfo)
+			}
+		}
+
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(indexInfos, NotNil)
+			c.Assert(indexInfos[0].State, Equals, model.StatePublic)
+		} else {
+			err1 := admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID)
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, err1.Error())
+			c.Assert(indexInfos, IsNil)
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(originalHook)
+	tk.MustExec(addIdxesSQL)
+	tk.MustExec(dropIdxesSQL)
+}
+
+func testDropIndexesIfExists(c *C, store kv.Storage) {
+	tk := testkit.NewTestKitWithInit(c, store)
+	tk.MustExec("use test_db;")
+	tk.MustExec("drop table if exists test_drop_indexes_if_exists;")
+	tk.MustExec("create table test_drop_indexes_if_exists (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+
+	// Drop different indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i1, drop index i3;",
+		"[ddl:1091]index i3 doesn't exist",
+	)
+	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;"); true {
+		c.Assert(err, IsNil)
+	}
+	tk.MustQuery("show warnings;").Check(
+		testutil.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"),
+	)
+
+	// Verify the impact of deletion order when dropping duplicate indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;"); true {
+		c.Assert(err, IsNil)
+	}
+	tk.MustQuery("show warnings;").Check(
+		testutil.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"),
+	)
+}
+
+func testDropIndexesFromPartitionedTable(c *C, store kv.Storage) {
+	tk := testkit.NewTestKitWithInit(c, store)
+	tk.MustExec("use test_db;")
+	tk.MustExec("drop table if exists test_drop_indexes_from_partitioned_table;")
+	tk.MustExec(`
+		create table test_drop_indexes_from_partitioned_table (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))
+		partition by range(id) (partition p0 values less than (6), partition p1 values less than maxvalue);
+	`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
+	}
+	if _, err := tk.Exec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;"); true {
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testDBSuite5) TestDropIndexes(c *C) {
+	// drop multiple indexes
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
+	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
+	idxNames := []string{"i1", "i2"}
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+
+	createSQL = "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1;"
+	idxNames = []string{"primary", "i1"}
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
+	idxNames = []string{"primary", "i1", "i2"}
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+
+	testDropIndexesIfExists(c, s.store)
+	testDropIndexesFromPartitionedTable(c, s.store)
+	testCancelDropIndexes(c, s.store, s.dom.DDL())
+}
+
 // Close issue #24580.
 // See https://github.com/pingcap/tidb/issues/24580
 func (s *testDBSuite8) TestIssue24580(c *C) {
@@ -7307,5 +7538,47 @@ func (s *testDBSuite8) TestIssue24580(c *C) {
 
 	_, err := tk.Exec("alter table t modify a char not null;")
 	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	tk.MustExec("drop table if exists t")
+}
+
+// Close issue #27862 https://github.com/pingcap/tidb/issues/27862
+// Ref: https://dev.mysql.com/doc/refman/8.0/en/storage-requirements.html#data-types-storage-reqs-strings
+// text(100) in utf8mb4 charset needs max 400 byte length, thus tinytext is not enough.
+func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a text(100));")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` text DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t add b text(100);")
+	tk.MustExec("alter table t add c text;")
+	tk.MustExec("alter table t add d text(50);")
+	tk.MustExec("alter table t change column a a text(50);")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` tinytext DEFAULT NULL,\n"+
+		"  `b` text DEFAULT NULL,\n"+
+		"  `c` text DEFAULT NULL,\n"+
+		"  `d` tinytext DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Ref: https://dev.mysql.com/doc/refman/8.0/en/storage-requirements.html
+	// TINYBLOB, TINYTEXT	L + 1 bytes, where L < 2^8
+	// BLOB, TEXT	L + 2 bytes, where L < 2^16
+	// MEDIUMBLOB, MEDIUMTEXT	L + 3 bytes, where L < 2^24
+	// LONGBLOB, LONGTEXT	L + 4 bytes, where L < 2^32
+	tk.MustExec("alter table t change column d d text(100);")
+	tk.MustExec("alter table t change column c c text(30000);")
+	tk.MustExec("alter table t change column b b text(10000000);")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` tinytext DEFAULT NULL,\n"+
+		"  `b` longtext DEFAULT NULL,\n"+
+		"  `c` mediumtext DEFAULT NULL,\n"+
+		"  `d` text DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
 }

@@ -5,7 +5,6 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -56,7 +55,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	verifyRow := func(i int) {
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
 		c.Assert(len(reader.lastRow.Row), Equals, 2)
-		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), "", 0))
+		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), ""))
 		c.Assert(reader.lastRow.Row[1], DeepEquals, types.NewIntDatum(int64(i)))
 	}
 
@@ -82,13 +81,6 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 }
 
 func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
-	// those deprecated TIME/TIMESTAMP types depend on the local timezone!
-	prevTZ := time.Local
-	time.Local = time.FixedZone("UTC+8", 8*60*60)
-	defer func() {
-		time.Local = prevTZ
-	}()
-
 	type Test struct {
 		Date            int32 `parquet:"name=date, type=DATE"`
 		TimeMillis      int32 `parquet:"name=timemillis, type=TIME_MILLIS"`
@@ -114,7 +106,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 
 	v := &Test{
 		Date:            18564,              // 2020-10-29
-		TimeMillis:      62775123,           // 17:26:15.123 (note all time are in UTC+8!)
+		TimeMillis:      62775123,           // 17:26:15.123
 		TimeMicros:      62775123456,        // 17:26:15.123
 		TimestampMillis: 1603963672356,      // 2020-10-29T09:27:52.356Z
 		TimestampMicros: 1603963672356956,   // 2020-10-29T09:27:52.356956Z
@@ -192,7 +184,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 
 	for i, testCase := range cases {
 		c.Assert(reader.ReadRow(), IsNil)
-		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "", 0)}
+		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "")}
 		if i%2 == 0 {
 			vals = append(vals, vals[0])
 		} else {

@@ -19,10 +19,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
@@ -35,11 +36,12 @@ func TestImplGroupZeroCost(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -60,11 +62,12 @@ func TestInitGroupSchema(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -83,11 +86,12 @@ func TestFillGroupStats(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -105,6 +109,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
@@ -119,7 +124,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select f, sum(a) from t group by f", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -198,6 +203,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}
@@ -214,7 +220,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select 1", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)

@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -134,6 +134,11 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		v := time.Unix(int64(val.(int)), 0)
+		failpoint.Return(v, nil)
+	})
+
 	now := time.Now()
 
 	if ctx == nil {
@@ -146,16 +151,10 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return now, err
 	}
 
-	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if timestamp <= 0 {
-			return now, nil
-		}
-		return time.Unix(timestamp, 0), nil
+	timestamp, err := types.StrToFloat(sessionVars.StmtCtx, timestampStr, false)
+	if err != nil {
+		return time.Time{}, err
 	}
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	return stmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time), nil
+	seconds, fractionalSeconds := math.Modf(timestamp)
+	return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
 }
