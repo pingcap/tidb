@@ -542,7 +542,7 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
 		return true
 	}
-	allRoles := mysqlPriv.FindAllRole(activeRoles)
+	allRoles := mysqlPriv.FindAllUserEffectiveRoles(p.user, p.host, activeRoles)
 	for _, role := range allRoles {
 		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
 			return true
