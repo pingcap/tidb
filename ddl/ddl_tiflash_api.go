@@ -172,7 +172,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// report to pd
+	// Report to pd
 	key := fmt.Sprintf("/tiflash/cluster/http_port/%v", store.Store.Address)
 	if d.etcdCli == nil {
 		return errors.New("no etcdCli in ddl")
@@ -200,7 +200,6 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 }
 
 func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (bool, error) {
-	// Should we escape table update?
 	allReplicaReady := true
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
@@ -231,13 +230,13 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		log.Error("update TiFlash status address failed", zap.Error(err))
 	}
 
-	// main body of table_update
+	// Main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 	if schema == nil {
 		return allReplicaReady, errors.New("Schema is nil")
 	}
 
-	// compute table_list
+	// Compute table_list
 	var tableList []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
 
 	for _, db := range schema.AllSchemas() {
@@ -256,7 +255,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	}
 
 	for _, tb := range tableList {
-		// for every region in each table, if it has one replica, we reckon it ready.
+		// For every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
 
 		fmt.Printf("!!!! Table %v Available is %v\n", tb.ID, tb.Available)
@@ -290,7 +289,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 				}
 				for i := int64(0); i < n; i++ {
 					rs, _, _ := reader.ReadLine()
-					// for (`table`, `store`), has region `r`
+					// For (`table`, `store`), has region `r`
 					r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
 					if err != nil {
 						return allReplicaReady, errors.Trace(err)
@@ -357,7 +356,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
+	// We should check this first, in order to avoid creating redundant DDL jobs.
 	tblInfo := tb.Meta()
 	if d.IsTiFlashPollEnabled() {
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
@@ -376,7 +375,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 					return errors.Trace(err)
 				}
 			}
-			// partitions that in adding mid-state
+			// Partitions that in adding mid-state.
 			for _, p := range pi.AddingDefinitions {
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
@@ -487,9 +486,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 
 // HandlePlacementRuleRoutine fetch all rules from pd, and remove all obsolete rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []PollTiFlashReplicaStatusContext) error {
-	// compute all_rules
-	// TODO Need async remove allRules
-
+	// TODO Is it OK to do this in `doGCPlacementRules`, rather than looping?
 	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
 
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
@@ -512,30 +509,22 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 
 	// Cover getDropOrTruncateTableTiflash
 	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
-		// TODO May fails when no `tikv_gc_safe_point` available.
+		// may fail when no `tikv_gc_safe_point` available, should return in order to remove valid pd rules.
 		log.Error("getDropOrTruncateTableTiflash returns error", zap.Error(err))
+		return errors.Trace(err)
 	}
 	for _, tb := range tableList {
-		// for every region in each table, if it has one replica, we reckon it ready
+		// For every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
-		// implement _check_and_make_rule
+		// Implement _check_and_make_rule
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
-		_, ok := allRules[ruleID]
-		if ok {
-			//match, ruleNew := isRuleMatch(rule, tb)
-			//if !match {
-			//fmt.Printf("!!!! Set rule %v\n", ruleNew)
-			//tikvHelper.SetPlacementRule(*ruleNew)
-			//}
+		// For every existing table, we do not remove their rules.
+		if _, ok := allRules[ruleID]; ok {
 			delete(allRules, ruleID)
-		} else {
-			//ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			//fmt.Printf("!!!! Set new rule %v\n", ruleNew)
-			//tikvHelper.SetPlacementRule(*ruleNew)
 		}
 	}
 
-	// remove rules of non-existing table
+	// Remove rules of non-existing table
 	for _, v := range allRules {
 		log.Info("remove tiflash rule", zap.String("id", v.ID))
 		if err := tikvHelper.DeletePlacementRule("tiflash", v.ID); err != nil {
