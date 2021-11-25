@@ -41,6 +41,8 @@ type Builder struct {
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
 	store kv.Storage
+	// TODO: renewLeaseCh is only used to pass data between table and domain
+	renewLeaseCh chan func()
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -438,7 +440,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo)
+	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -601,7 +603,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -620,6 +622,20 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 		sort.Sort(v)
 	}
 	return b, nil
+}
+
+func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	ret, err := tables.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if t, ok := ret.(table.CachedTable); ok {
+		err = t.Init(b.renewLeaseCh)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ret, nil
 }
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
@@ -658,7 +674,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage) *Builder {
+func NewBuilder(store kv.Storage, renewCh chan func()) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -667,6 +683,7 @@ func NewBuilder(store kv.Storage) *Builder {
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
+		renewLeaseCh: renewCh,
 	}
 }
 
