@@ -77,60 +77,10 @@ func makeBaseRule() placement.Rule {
 }
 
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) error {
-	// TODO lastHandledSchemaVersionTso checking can be removed.
-	//ddlGlobalSchemaVersion := 0
-
-	//etcdCli := d.etcdCli
-	//if etcdCli == nil {
-	//	return errors.New("Etcd is nil")
-	//}
-	//
-	//resp, err := etcdCli.Get(d.ctx, ddlutil.DDLGlobalSchemaVersion)
-	//if err == nil {
-	//	if len(resp.Kvs) > 0 {
-	//		ddlGlobalSchemaVersion, err = strconv.Atoi(string(resp.Kvs[0].Value))
-	//		if err != nil {
-	//			errors.Trace(err)
-	//		}
-	//	}
-	//}
-	//
-	//lastHandledSchemaVersionTso := "0_tso_0"
-	//resp, err = etcdCli.Get(d.ctx, ddlutil.TiFlashLastHandledSchemaVersion)
-	//if err == nil {
-	//	if len(resp.Kvs) > 0 {
-	//		lastHandledSchemaVersionTso = string(resp.Kvs[0].Value)
-	//	}
-	//}
-	//
-	//splitVec := strings.Split(lastHandledSchemaVersionTso, "_tso_")
-	//lastHandledSchemaVersion, err := strconv.Atoi(splitVec[0])
-	//if err != nil {
-	//	return errors.Trace(err)
-	//}
-	//lastHandledSchemaTso, err := strconv.Atoi(splitVec[1])
-	//if err != nil {
-	//	return errors.Trace(err)
-	//}
-	//
-	//curTso := time.Now().Unix()
-
-	if true {
-		//|| ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
-		// Need to update table
-		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if allUpdate {
-			// Need to update pd's schema version
-
-			//v := fmt.Sprintf("%v_tso_%v", ddlGlobalSchemaVersion, curTso)
-			//etcdCli.Put(d.ctx, "/tiflash/cluster/last_handled_schema_version", v)
-		}
-
+	_, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	return nil
 }
 
@@ -310,7 +260,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		// TODO Can we batch request table?
 
 		fmt.Printf("!!!! Table %v Available is %v\n", tb.ID, tb.Available)
-		if true || !tb.Available {
+		if !tb.Available {
 			allReplicaReady = false
 
 			// set_accelerate_schedule
@@ -356,7 +306,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 				}
 			}
 
-			// TODO Is it necessary, or we can get from TiDB?
+			// TODO Is it necessary, or we can get from TiDB, like using tb.Count?
 			var stats helper.PDRegionStats
 			if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
 				return allReplicaReady, errors.Trace(err)

@@ -1071,8 +1071,6 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 
-	fmt.Printf("!!!! startUrl %v\n", statURL)
-
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
 		return err
