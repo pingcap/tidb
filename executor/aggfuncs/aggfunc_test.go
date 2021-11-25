@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
@@ -317,6 +318,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -359,7 +361,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	if p.funcName == ast.AggFuncJsonArrayagg {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
 	}
-	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
 
@@ -386,7 +388,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	if p.funcName == ast.AggFuncJsonArrayagg {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
 	}
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
 	_, err = finalFunc.MergePartialResult(ctx, partialResult, finalPr)
@@ -409,7 +411,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	if p.funcName == ast.AggFuncJsonArrayagg {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
 	}
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[2])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[2], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[2])
 }
@@ -447,6 +449,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 			{Expr: args[0], Desc: true},
 		}
 	}
+	ctor := collate.GetCollator(args[0].GetType().Collate)
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build partial func for partial phase.
@@ -467,7 +470,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, p.retType)
-	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Zero(t, result)
 
@@ -488,7 +491,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, p.retType)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Zero(t, result)
 	_, err = finalFunc.MergePartialResult(ctx, partialResult, finalPr)
@@ -499,7 +502,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 	require.NoError(t, err)
 
 	dt = resultChk.GetRow(0).GetDatum(0, p.retType)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[2])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[2], ctor)
 	require.NoError(t, err)
 	require.Zero(t, result)
 }
@@ -570,6 +573,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	ctx := mock.NewContext()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -596,7 +600,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
 
@@ -606,7 +610,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
 
@@ -639,7 +643,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
 
@@ -649,7 +653,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
 }
@@ -658,6 +662,7 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	srcChk := p.genSrcChk()
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
@@ -685,7 +690,7 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Zerof(t, result, "%v != %v", dt.String(), p.results[1])
 
@@ -695,7 +700,7 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Zerof(t, result, "%v != %v", dt.String(), p.results[0])
 }
@@ -749,6 +754,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 			{Expr: args[0], Desc: true},
 		}
 	}
+	ctor := collate.GetCollator(args[0].GetType().Collate)
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -762,7 +768,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Zerof(t, result, "%v != %v", dt.String(), p.results[1])
 
@@ -772,7 +778,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Zerof(t, result, "%v != %v", dt.String(), p.results[0])
 
@@ -805,7 +811,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Zerof(t, result, "%v != %v", dt.String(), p.results[1])
 
@@ -815,7 +821,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Zero(t, result)
 }

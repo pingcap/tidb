@@ -123,7 +123,8 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	s.d = d
-	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
+	s.dbInfo, err = testSchemaInfo(d, "test_foreign")
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 	s.ctx = ctx
 	testCreateSchema(c, ctx, d, s.dbInfo)
