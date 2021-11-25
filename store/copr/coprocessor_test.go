@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
@@ -287,5 +288,68 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 		r := ranges[i]
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
+	}
+}
+
+func TestCalculateTODO(t *testing.T) {
+	worker := copIteratorWorker{}
+	toCopRange := func(r kv.KeyRange) *coprocessor.KeyRange {
+		coprRange := coprocessor.KeyRange{}
+		coprRange.Start = r.StartKey
+		coprRange.End = r.EndKey
+		return &coprRange
+	}
+	toRange := func(r *KeyRanges) []kv.KeyRange {
+		ranges := []kv.KeyRange{}
+		if r.first != nil {
+			ranges = append(ranges, *r.first)
+		}
+		ranges = append(ranges, r.mid...)
+		if r.last != nil {
+			ranges = append(ranges, *r.last)
+		}
+		return ranges
+	}
+
+	// split in one range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "b")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(todo), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("f", "g")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(todo), "a", "c", "e", "f")
+	}
+
+	// across ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "f")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(todo), "f", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "g")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(todo), "a", "b")
+	}
+
+	// exhaust the range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
+		require.Equal(t, todo.Len(), 0)
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
+		require.Equal(t, todo.Len(), 0)
 	}
 }
