@@ -17,7 +17,7 @@ cd $pwd/tidb-lightning && make
 cd $pwd
 mv tidb-lightning/bin/tidb-lightning bin/
 
-TIDB_TAG="v5.3.0"
+TIDB_TAG="master"
 # download tidb-server
 git clone -b $TIDB_TAG https://github.com/pingcap/tidb
 cd $pwd/tidb && make
