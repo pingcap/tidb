@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/go-sql-driver/mysql"
 	"io"
 	"os"
 	"path"
@@ -361,6 +362,36 @@ func TestShowCreatePolicy(t *testing.T) {
 	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+}
+
+func TestListPolicyNames(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+		WillReturnRows(sqlmock.NewRows([]string{ "policy_name"}).
+			AddRow("policy_x"))
+	policies, err := ListAllPlacementPolicyNames(conn)
+	require.NoError(t, err)
+	require.Equal(t, []string{"policy_x"}, policies)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// some old tidb version doesn't support placement rules returns error
+	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_rules' doesn't exist"}
+	mock.ExpectExec("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+		WillReturnError(expectedErr)
+	policies, err = ListAllPlacementPolicyNames(conn)
+	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
+		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
+	}
 }
 
 func TestGetSuitableRows(t *testing.T) {
