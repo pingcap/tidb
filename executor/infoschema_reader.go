@@ -590,6 +590,10 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				if table.DirectPlacementOpts != nil {
 					directPlacement = table.DirectPlacementOpts.String()
 				}
+				comment := table.Comment
+				if len(comment) >= infoschema.MaxTableCommentLengt {
+					comment = table.Comment[:infoschema.MaxTableCommentLengt]
+				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
@@ -611,7 +615,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					collation,             // TABLE_COLLATION
 					nil,                   // CHECKSUM
 					createOptions,         // CREATE_OPTIONS
-					table.Comment,         // TABLE_COMMENT
+					comment,               // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 					pkType,                // TIDB_PK_TYPE

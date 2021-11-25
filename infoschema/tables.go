@@ -180,6 +180,9 @@ const (
 	TablePlacementRules = "PLACEMENT_RULES"
 )
 
+// MaxTableCommentLengt is the max length of table comment.
+const MaxTableCommentLengt = 2048
+
 const (
 	// DataLockWaitsColumnKey is the name of the KEY column of the DATA_LOCK_WAITS table.
 	DataLockWaitsColumnKey = "KEY"
@@ -384,7 +387,7 @@ var tablesCols = []columnInfo{
 	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, deflt: mysql.DefaultCollationName},
 	{name: "CHECKSUM", tp: mysql.TypeLonglong, size: 21},
 	{name: "CREATE_OPTIONS", tp: mysql.TypeVarchar, size: 255},
-	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
+	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: MaxTableCommentLengt},
 	{name: "TIDB_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
