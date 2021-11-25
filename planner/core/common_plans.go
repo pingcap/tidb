@@ -610,6 +610,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
+				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
+					return errors.New("failed to rebuild range: the length of the range has changed")
+				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
@@ -624,6 +627,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
+					}
+					if len(ranges) == 0 {
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -658,6 +664,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
+				if len(ranges.Ranges) != len(x.IndexValues) || len(ranges.AccessConds) != len(x.AccessConditions) {
+					return errors.New("failed to rebuild range: the length of the range has changed")
+				}
 				for i := range x.IndexValues {
 					for j := range ranges.Ranges[i].LowVal {
 						x.IndexValues[i][j] = ranges.Ranges[i].LowVal[j]
@@ -674,6 +683,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
+					}
+					if len(ranges) != len(x.Handles) {
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
