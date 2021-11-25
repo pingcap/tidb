@@ -275,6 +275,30 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica, IsNil)
 }
 
+// TiFlash Table shall be eventually available, even with lots of small table created.
+func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
+		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
+		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
+	}
+
+	time.Sleep(ddl.PollTiFlashInterval * 10)
+	// Should get schema right now
+	for i := 0; i < 100; i++ {
+		tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("ddltiflash%v", i)))
+		c.Assert(err, IsNil)
+		replica := tb.Meta().TiFlashReplica
+		c.Assert(replica, NotNil)
+		c.Assert(replica.Available, Equals, true)
+		c.Assert(replica.Count, Equals, uint64(1))
+		c.Assert(replica.LocationLabels, DeepEquals, []string{})
+	}
+}
+
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
