@@ -15,47 +15,45 @@
 package server
 
 import (
-	"io"
+	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/domain/infosync"
 )
 
 type OptimizeTraceHandler struct {
+	infoGetter *infosync.InfoSyncer
+	address    string
+	statusPort uint
 }
 
 func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
-	return &OptimizeTraceHandler{}
+	cfg := config.GetGlobalConfig()
+	oth := &OptimizeTraceHandler{
+		address:    cfg.AdvertiseAddress,
+		statusPort: cfg.Status.StatusPort,
+	}
+	if s.dom != nil && s.dom.InfoSyncer() != nil {
+		oth.infoGetter = s.dom.InfoSyncer()
+	}
+	return oth
 }
 
-func (prh OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"optimize_trace.zip\"")
-
+func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
-
 	name := params[pFileName]
-	path := filepath.Join(domain.GetOptimizerTraceDirName(), name)
-	file, err := os.Open(path)
-	if err != nil {
-		writeError(w, err)
-	} else {
-		_, err := io.Copy(w, file)
-		if err != nil {
-			terror.Log(errors.Trace(err))
-		}
+	handler := downloadFileHandler{
+		filePath:           filepath.Join(domain.GetOptimizerTraceDirName(), name),
+		fileName:           name,
+		infoGetter:         oth.infoGetter,
+		address:            oth.address,
+		statusPort:         oth.statusPort,
+		urlPath:            fmt.Sprintf("optimize_trace/dump/%s", name),
+		downloadedFilename: "optimize_trace",
 	}
-	err = file.Close()
-	if err != nil {
-		terror.Log(errors.Trace(err))
-	}
-	err = os.Remove(path)
-	if err != nil {
-		terror.Log(errors.Trace(err))
-	}
+	handleDownloadFile(handler, w, req)
 }
