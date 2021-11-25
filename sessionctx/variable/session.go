@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	utilMath "github.com/pingcap/tidb/util/math"
+
 	"github.com/pingcap/errors"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
@@ -958,6 +960,8 @@ type SessionVars struct {
 
 	// EnableStmtOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
 	EnableStmtOptimizeTrace bool
+	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
+	Rng *utilMath.MysqlRng
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1191,6 +1195,7 @@ func NewSessionVars() *SessionVars {
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		EnablePlacementChecks:       DefEnablePlacementCheck,
+		Rng:                         utilMath.NewWithTime(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
