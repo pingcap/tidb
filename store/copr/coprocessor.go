@@ -89,6 +89,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
 	}
+	if req.Streaming && req.Paging {
+		return copErrorResponse{errors.New("streaming and paging are both on")}
+	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)

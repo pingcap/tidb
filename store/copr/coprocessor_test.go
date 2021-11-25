@@ -291,7 +291,42 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 	}
 }
 
+func TestBuildPagingTasks(t *testing.T) {
+	t.Parallel()
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging = true
+	flashReq := &kv.Request{}
+	flashReq.StoreType = kv.TiFlash
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
+	require.True(t, tasks[0].paging)
+	require.Equal(t, tasks[0].pagingSize, minPagingSize)
+}
+
 func TestCalculateTODO(t *testing.T) {
+	t.Parallel()
 	worker := copIteratorWorker{}
 	toCopRange := func(r kv.KeyRange) *coprocessor.KeyRange {
 		coprRange := coprocessor.KeyRange{}
