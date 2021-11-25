@@ -378,7 +378,7 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
-	if vars.EnableStmtOptimizeTrace {
+	if vars.StmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
