@@ -958,6 +958,8 @@ type SessionVars struct {
 		data [2]stmtctx.StatementContext
 	}
 
+	// EnableStmtOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableStmtOptimizeTrace bool
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
 }
