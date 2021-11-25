@@ -256,17 +256,14 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	}
 
 	for _, tb := range tableList {
-		// for every region in each table, if it has one replica, we reckon it ready
+		// for every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
 
 		fmt.Printf("!!!! Table %v Available is %v\n", tb.ID, tb.Available)
 		if !tb.Available {
 			allReplicaReady = false
 
-			// set_accelerate_schedule
-			//if tb.HighPriority {
-			//	err := tikvHelper.PostAccelerateSchedule(tb.ID)
-			//}
+			// We don't need to set_accelerate_schedule, since it is already done in DDL.
 
 			// compute_sync_data_process
 			regionReplica := make(map[int64]int)
@@ -340,17 +337,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
-	skipSetPd := false
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		skipSetPd = true
-		log.Error("can not get Helper")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
@@ -373,7 +359,15 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
 	tblInfo := tb.Meta()
-	if d.IsTiFlashPollEnabled() && !skipSetPd {
+	if d.IsTiFlashPollEnabled() {
+		tikvStore, ok := ctx.GetStore().(helper.Storage)
+		if !ok {
+			log.Error("can not get Helper")
+		}
+		tikvHelper := &helper.Helper{
+			Store:       tikvStore,
+			RegionCache: tikvStore.GetRegionCache(),
+		}
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			// TODO Can we make it as a batch request?
 			for _, p := range pi.Definitions {
