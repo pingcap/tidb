@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -178,11 +179,11 @@ func TestMergeHistogram(t *testing.T) {
 		require.Equal(t, tt.bucketNum, h.Len())
 		require.Equal(t, tt.leftNum+tt.rightNum, int64(h.TotalRowCount()))
 		expectLower := types.NewIntDatum(tt.leftLower)
-		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
+		cmp, err := h.GetLower(0).Compare(sc, &expectLower, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 		expectUpper := types.NewIntDatum(tt.rightLower + tt.rightNum - 1)
-		cmp, err = h.GetUpper(h.Len()-1).CompareDatum(sc, &expectUpper)
+		cmp, err = h.GetUpper(h.Len()-1).Compare(sc, &expectUpper, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
