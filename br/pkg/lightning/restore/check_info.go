@@ -638,14 +638,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return msgs, nil
 	}
 
-	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, col := range igCol.Columns {
-		igCols[col] = struct{}{}
-	}
+	igCols := igCol.ColumnsMap()
 
 	colCountFromTiDB := len(info.Core.Columns)
 	core := info.Core
@@ -996,7 +993,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}
