@@ -1359,7 +1359,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 			val = v
 		}
 	}
-	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
+	newColVal, err := table.CastValue(w.sessCtx, val, col, false, false)
 	if err != nil {
 		return w.reformatErrors(err)
 	}
