@@ -129,6 +129,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
 			capacity = it.concurrency * 2
 		}
+		if req.Streaming || req.Paging {
+			capacity = 2048
+		}
 		it.respChan = make(chan *copResponse, capacity)
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
@@ -184,6 +187,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	chanSize := 2
+	if req.Streaming || req.Paging {
+		chanSize = 128
+	}
 
 	var tasks []*copTask
 	for _, loc := range locs {
@@ -201,7 +208,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				ranges: loc.Ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan:   make(chan *copResponse, 2),
+				respChan:   make(chan *copResponse, chanSize),
 				cmdType:    cmdType,
 				storeType:  req.StoreType,
 				eventCb:    eventCb,
