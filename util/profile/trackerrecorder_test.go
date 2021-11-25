@@ -18,16 +18,12 @@ import (
 	"math/rand"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestHeapProfileRecorder(t *testing.T) {
-	// TestHeapProfileRecorder is not stable, skip it for now.
-	t.Skip("unstable-test")
 	t.Parallel()
 
 	// As runtime.MemProfileRate default values is 512 KB , so the num should be greater than 60000
@@ -41,13 +37,15 @@ func TestHeapProfileRecorder(t *testing.T) {
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
 	}
-	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
-	require.Nil(t, err)
 
-	valueSize := int(unsafe.Sizeof(getRandomString(10)))
-	// ensure that the consumed bytes is at least larger than num * size of value
-	assert.LessOrEqual(t, int64(valueSize*num), bytes)
-	// we should assert lru size last and value size to reference lru in order to avoid gc
+	// TODO: TestHeapProfileRecorder is not stable, skip memory profile for now.
+	//bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
+	//require.Nil(t, err)
+	//
+	//valueSize := int(unsafe.Sizeof(getRandomString(10)))
+	//// ensure that the consumed bytes is at least larger than num * size of value
+	//assert.LessOrEqual(t, int64(valueSize*num), bytes)
+	//// we should assert lru size last and value size to reference lru in order to avoid gc
 	for _, k := range lru.Keys() {
 		assert.Len(t, k.Hash(), 8)
 	}
