@@ -67,29 +67,29 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue              bool
-	InInsertStmt                 bool
-	InUpdateStmt                 bool
-	InDeleteStmt                 bool
-	InSelectStmt                 bool
-	InLoadDataStmt               bool
-	InExplainStmt                bool
-	InCreateOrAlterStmt          bool
-	IgnoreTruncate               bool
-	IgnoreZeroInDate             bool
-	DupKeyAsWarning              bool
-	BadNullAsWarning             bool
-	DividedByZeroAsWarning       bool
-	TruncateAsWarning            bool
-	OverflowAsWarning            bool
-	InShowWarning                bool
-	UseCache                     bool
-	BatchCheck                   bool
-	InNullRejectCheck            bool
-	AllowInvalidDate             bool
-	IgnoreNoPartition            bool
-	MaybeOverOptimized4PlanCache bool
-	IgnoreExplainIDSuffix        bool
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
+	SkipPlanCache          bool
+	IgnoreExplainIDSuffix  bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
