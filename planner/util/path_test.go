@@ -15,50 +15,51 @@
 package util
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCompareCol2Len(t *testing.T) {
 	tests := []struct {
-		c1 Col2Len
-		c2 Col2Len
-		res int
+		c1         Col2Len
+		c2         Col2Len
+		res        int
 		comparable bool
 	}{
 		{
-			c1:         Col2Len{1:-1, 2:-1, 3:-1},
-			c2:         Col2Len{1:-1, 2:10},
+			c1:         Col2Len{1: -1, 2: -1, 3: -1},
+			c2:         Col2Len{1: -1, 2: 10},
 			res:        1,
 			comparable: true,
 		},
 		{
-			c1:         Col2Len{1:5},
-			c2:         Col2Len{1:10, 2:-1},
+			c1:         Col2Len{1: 5},
+			c2:         Col2Len{1: 10, 2: -1},
 			res:        -1,
 			comparable: true,
 		},
 		{
-			c1:         Col2Len{1:-1, 2:-1},
-			c2:         Col2Len{1:-1, 2:5, 3:-1},
+			c1:         Col2Len{1: -1, 2: -1},
+			c2:         Col2Len{1: -1, 2: 5, 3: -1},
 			res:        0,
 			comparable: false,
 		},
 		{
-			c1:         Col2Len{1:-1, 2:10},
-			c2:         Col2Len{1:-1, 2:5, 3:-1},
+			c1:         Col2Len{1: -1, 2: 10},
+			c2:         Col2Len{1: -1, 2: 5, 3: -1},
 			res:        0,
 			comparable: false,
 		},
 		{
-			c1:         Col2Len{1:-1, 2:10},
-			c2:         Col2Len{1:-1, 2:10},
+			c1:         Col2Len{1: -1, 2: 10},
+			c2:         Col2Len{1: -1, 2: 10},
 			res:        0,
 			comparable: true,
 		},
 		{
-			c1:         Col2Len{1:-1, 2:-1},
-			c2:         Col2Len{1:-1, 2:10},
+			c1:         Col2Len{1: -1, 2: -1},
+			c2:         Col2Len{1: -1, 2: 10},
 			res:        0,
 			comparable: false,
 		},

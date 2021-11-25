@@ -202,7 +202,7 @@ func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Co
 			col2Len[v.UniqueID] = types.UnspecifiedLength
 		} else {
 			for i, col := range idxCols {
-				if v.UniqueID == col.UniqueID {
+				if col != nil && v.UniqueID == col.UniqueID {
 					col2Len[v.UniqueID] = idxColLens[i]
 					break
 				}
@@ -234,7 +234,7 @@ func compareLength(l, r int) int {
 	return -1
 }
 
-// c1 dominates c2 when each column of c2 exists in c1 and c2's column length is no longer than c1's column length.
+// dominate return true if each column of c2 exists in c1 and c2's column length is no longer than c1's column length.
 func (c1 Col2Len) dominate(c2 Col2Len) bool {
 	if len(c2) > len(c1) {
 		return false
