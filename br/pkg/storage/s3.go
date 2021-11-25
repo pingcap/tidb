@@ -245,8 +245,8 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 		WithS3ForcePathStyle(qs.ForcePathStyle).
 		WithRegion(qs.Region)
 	request.WithRetryer(awsConfig, defaultS3Retryer())
-	
-	if len(qs.Endpoint) > 0) {
+
+	if len(qs.Endpoint) > 0 {
 		strings.TrimSuffix(qs.Endpoint, "/")
 	}
 
