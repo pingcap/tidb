@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -216,23 +215,7 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
-	case ast.AggFuncAvg, ast.AggFuncSum:
-		for _, arg := range aggFunc.Args {
-			// Non-numeric type need to check whether the CastAsReal is support.
-			if arg.GetType().Tp == mysql.TypeDuration || arg.GetType().Tp == mysql.TypeJSON {
-				return false
-			}
-		}
-		return true
-	case ast.AggFuncGroupConcat:
-		for _, arg := range aggFunc.Args {
-			// Need to check whether the CastAsString is support.
-			if arg.GetType().Tp == mysql.TypeDuration || arg.GetType().Tp == mysql.TypeJSON {
-				return false
-			}
-		}
-		return true
-	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct, ast.AggFuncGroupConcat:
 		return true
 	}
 	return false
