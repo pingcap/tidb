@@ -25,21 +25,21 @@ import (
 var col = &Collector{}
 
 // HeapProfileForGlobalMemTracker record heap profile data into each global function memory tracker
-func HeapProfileForGlobalMemTracker(d time.Duration) {
+func HeapProfileForGlobalMemTracker(profileName string, d time.Duration) {
 	log.Info("Mem Profile Tracker started")
 	t := time.NewTicker(d)
 	defer t.Stop()
 	for {
 		<-t.C
-		err := heapProfileForGlobalMemTracker()
+		err := heapProfileForGlobalMemTracker(profileName)
 		if err != nil {
 			log.Warn("profile memory into tracker failed", zap.Error(err))
 		}
 	}
 }
 
-func heapProfileForGlobalMemTracker() error {
-	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
+func heapProfileForGlobalMemTracker(profileName string) error {
+	bytes, err := col.getFuncMemUsage(profileName)
 	if err != nil {
 		return err
 	}
