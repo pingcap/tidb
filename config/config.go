@@ -435,7 +435,7 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval  string `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	MemProfileInterval  string `toml:"-" json:"-"`
 	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                int    `toml:"gogc" json:"gogc"`
