@@ -187,7 +187,6 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 			}
 		}
 	}
-	fmt.Printf("!!!! httpAddr key %v origin %v \n", httpAddr, origin)
 	if origin != httpAddr {
 		// TODO add lease ttl
 		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
@@ -257,8 +256,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
-
-		fmt.Printf("!!!! Table %v Available is %v\n", tb.ID, tb.Available)
 		if !tb.Available {
 			allReplicaReady = false
 
@@ -519,9 +516,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		// Implement _check_and_make_rule
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
 		// For every existing table, we do not remove their rules.
-		if _, ok := allRules[ruleID]; ok {
-			delete(allRules, ruleID)
-		}
+		delete(allRules, ruleID)
 	}
 
 	// Remove rules of non-existing table

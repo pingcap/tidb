@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -899,8 +898,6 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 		}
 	}()
 
-	data, err := ioutil.ReadAll(resp.Body)
-	fmt.Printf("!!!! GetPDRegionStats return %v\n", string(data))
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
@@ -1002,8 +999,6 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		return nil, errors.Trace(err)
 	}
 
-	fmt.Printf("!!!! GetGroupRules %v\n", buf.String())
-
 	var rules []placement.Rule
 	err = json.Unmarshal(buf.Bytes(), &rules)
 	if err != nil {
@@ -1027,8 +1022,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
 		util.InternalHTTPSchema(),
 		pdAddrs[0])
-
-	fmt.Printf("!!!! PostAccelerateSchedule %v\n", postURL)
 
 	if err != nil {
 		return err
