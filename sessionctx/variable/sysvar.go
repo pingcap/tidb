@@ -1873,6 +1873,22 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBSyncLoadWait, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Stats.SyncLoadWait), 10), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64,
+		SetGlobal: func(s *SessionVars, val string) error {
+			newSyncWait := tidbOptPositiveInt32(val, int(config.GetGlobalConfig().Stats.SyncLoadWait))
+			if config.GetGlobalConfig().Performance.StatsLoadConcurrency <= 0 && newSyncWait > 0 {
+				return errors.New("Cannot enable stats sync wait, since concurrent load is not working, please enable concurrent load and restart server.")
+			}
+			StatsSyncLoadWait.Store(uint32(newSyncWait))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPseudoForLoadTimeout, Value: strconv.FormatBool(config.GetGlobalConfig().Stats.PseudoForLoadTimeout), skipInit: true, Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			PseudoForLoadTimeout.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 }
 
 func collectAllowFuncName4ExpressionIndex() string {

@@ -17,7 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -1302,14 +1301,16 @@ func (do *Domain) loadStatsWorker(ctx sessionctx.Context) {
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
 	}
-	// TODO config concurrency
-	for i := 0; i < 20; i++ {
-		sess, err := session.CreateSession(ctx.GetStore())
-		if err != nil {
-			logutil.BgLogger().Fatal("Create sub load session failed", zap.Error(err))
-		} else {
-			go statsHandle.SubLoadWorker(sess)
-		}
+	// start sub load worker if concurrent-stats-load is enabled
+	t = time.Now()
+	subCtxs, err := statsHandle.InitSubSessions(ctx.GetStore())
+	if err != nil {
+		logutil.BgLogger().Error("init sub load sessions failed", zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init sub load sessions time", zap.Duration("take time", time.Since(t)))
+	}
+	for _, subCtx := range subCtxs {
+		go statsHandle.SubLoadWorker(subCtx, do.exit)
 	}
 	for {
 		select {

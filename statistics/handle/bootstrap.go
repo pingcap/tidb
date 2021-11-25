@@ -21,9 +21,12 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -429,4 +432,16 @@ func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 		}
 	}
 	return fmt.Sprintf("%d", tblInfo.ID)
+}
+
+// InitSubSessions will init the sub sessions used for sub load workers.
+func (h *Handle) InitSubSessions(store kv.Storage) ([]sessionctx.Context, error) {
+	for i := 0; i < len(h.subCtxs); i++ {
+		sess, err := session.CreateSession(store)
+		if err != nil {
+			return nil, err
+		}
+		h.subCtxs[i] = sess
+	}
+	return h.subCtxs, nil
 }

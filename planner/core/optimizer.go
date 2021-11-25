@@ -16,8 +16,10 @@ package core
 
 import (
 	"context"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -29,9 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
@@ -68,6 +68,8 @@ const (
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
+
+var flagRulesAfterStats = []uint64{flagJoinReOrder, flagPrunColumnsAgain}
 
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
@@ -265,14 +267,27 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
-	flag1 := flag - flagJoinReOrder - flagPrunColumnsAgain
-	flag2 := flag & flagJoinReOrder & flagPrunColumnsAgain
-	logic, err := logicalOptimize(ctx, flag1, logic)
+	var flagBeforeStats = flag
+	var flagAfterStats uint64 = 0
+	for _, flg := range flagRulesAfterStats {
+		if flagBeforeStats&flg > 0 {
+			flagBeforeStats -= flg
+			flagAfterStats |= flg
+		}
+	}
+	logic, err := logicalOptimize(ctx, flagBeforeStats, logic)
 	if err != nil {
 		return nil, 0, err
 	}
-	handleNeededColumns(logic, sctx.GetSessionVars().StmtCtx)
-	logic, err = logicalOptimize(ctx, flag2, logic)
+	ok, err := SyncLoadNeededColumns(logic, sctx)
+	if !ok || err != nil {
+		if sctx.GetSessionVars().GetPseudoForLoadTimeout() {
+			sctx.GetSessionVars().StmtCtx.StatsLoad.Fallback = true
+		} else {
+			return nil, 0, err
+		}
+	}
+	logic, err = logicalOptimize(ctx, flagAfterStats, logic)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -291,20 +306,35 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	return finalPlan, cost, nil
 }
 
-func handleNeededColumns(plan LogicalPlan, stmtCtx *stmtctx.StatementContext) {
+// SyncLoadNeededColumns sends column-hist request and sync-wait until timeout
+func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, error) {
+	syncWait := sctx.GetSessionVars().GetStatsSyncWait()
+	if syncWait <= 0 {
+		return true, nil
+	}
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	neededColumns := collectNeededColumns(plan)
-	stmtCtx.StatsLoad.NeededColumnMap = neededColumns
-	wg := stmtCtx.StatsLoad.Wg
-	wg.Add(len(neededColumns))
+	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
+	// TODO check missing
 	for col := range neededColumns {
-		handle.AppendNeededColumn(col, wg)
+		missingColumns = append(missingColumns, col)
 	}
-	if util.WaitTimeout(wg, time.Second*10) { // TODO configurable timeout
-		stmtCtx.StatsLoad.Fallback = true
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.StatsLoad.NeededColumns = missingColumns
+	wg := stmtCtx.StatsLoad.Wg
+	wg.Add(len(missingColumns))
+	waitTime := mathutil.Min(int(syncWait), int(stmtCtx.MaxExecutionTime*1000))
+	var timeout = time.Duration(waitTime)
+	for _, col := range missingColumns {
+		statsHandle.AppendNeededColumn(col, wg, timeout)
 	}
-	// check if all loaded from statsCache
+	if util.WaitTimeout(wg, timeout) {
+		return false, errors.New("Fail to load stats for columns, timeout.")
+	}
+	return true, nil
 }
 
+// collectNeededColumns to align with predicate-column collection
 func collectNeededColumns(plan LogicalPlan) map[model.TableColumnID]struct{} {
 	var neededColumns map[model.TableColumnID]struct{}
 	switch x := plan.(type) {

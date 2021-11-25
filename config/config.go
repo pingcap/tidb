@@ -189,7 +189,8 @@ type Config struct {
 	// one quarter of the total physical memory in the current system.
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
-	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+	BallastObjectSize int   `toml:"ballast-object-size" json:"ballast-object-size"`
+	Stats             Stats `toml:"stats" json:"stats"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -439,6 +440,8 @@ type Performance struct {
 	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency  uint    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize    uint    `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -569,6 +572,11 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
+type Stats struct {
+	SyncLoadWait         uint `toml:"sync-load-wait" json:"sync-load-wait"`
+	PseudoForLoadTimeout bool `toml:"pseudo-for-load-timeout" json:"pseudo-for-load-timeout"`
+}
+
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -649,10 +657,12 @@ var defaultConf = Config{
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease: "0s",
-		GOGC:                100,
-		EnforceMPP:          false,
-		PlanReplayerGCLease: "10m",
+		IndexUsageSyncLease:  "0s",
+		GOGC:                 100,
+		EnforceMPP:           false,
+		PlanReplayerGCLease:  "10m",
+		StatsLoadConcurrency: 20,
+		StatsLoadQueueSize:   10000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -711,6 +721,10 @@ var defaultConf = Config{
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	Stats: Stats{
+		SyncLoadWait:         100,
+		PseudoForLoadTimeout: false,
+	},
 }
 
 var (

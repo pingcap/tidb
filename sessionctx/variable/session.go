@@ -2342,3 +2342,30 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	}
 	return s.seekFactor
 }
+
+func (s *SessionVars) GetStatsSyncWait() uint {
+	if config.GetGlobalConfig().Performance.StatsLoadConcurrency <= 0 {
+		return 0
+	}
+	val, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBSyncLoadWait)
+	if err != nil {
+		return config.GetGlobalConfig().Stats.SyncLoadWait
+	}
+	syncWait, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		return config.GetGlobalConfig().Stats.SyncLoadWait
+	}
+	return uint(syncWait)
+}
+
+func (s *SessionVars) GetPseudoForLoadTimeout() bool {
+	val, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBPseudoForLoadTimeout)
+	if err != nil {
+		return config.GetGlobalConfig().Stats.PseudoForLoadTimeout
+	}
+	pseudo, err := strconv.ParseBool(val)
+	if err != nil {
+		return config.GetGlobalConfig().Stats.PseudoForLoadTimeout
+	}
+	return pseudo
+}

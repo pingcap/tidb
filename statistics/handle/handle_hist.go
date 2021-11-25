@@ -30,11 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// HistogramNeeded buffers the histogram needs from optimizer/statistics and is consumed by stats LoadStatsWorker.
-var HistogramNeeded = NeededColumnsCh{NeededColumnsCh: make(chan *NeededColumnTask, 100000), TimeoutColumnsCh: make(chan *NeededColumnTask, 1000)}
-
 type NeededColumnsCh struct {
-	NeededColumnsCh  chan *NeededColumnTask
+	ColumnsCh        chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
 }
 
@@ -45,18 +42,17 @@ type NeededColumnTask struct {
 	Wg            *sync.WaitGroup
 }
 
-// NeededColumnTimeout is the milliseconds the SQL will wait for stats loading
-var NeededColumnTimeout int64 = 100
-
-// AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one. It's not thread-safe. TODO
-func AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup) {
-	toTimout := time.Now().Local().Add(time.Millisecond * time.Duration(NeededColumnTimeout))
+// AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
+func (h *Handle) AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, timeout time.Duration) {
+	toTimout := time.Now().Local().Add(timeout)
 	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, Wg: wg}
-	HistogramNeeded.NeededColumnsCh <- colTask
+	h.HistogramNeeded.ColumnsCh <- colTask
 }
 
-// SubLoadWorker
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context) error {
+var ErrExit = errors.New("Stop loading since domain is closed.")
+
+// SubLoadWorker loads hist data for each column
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}) error {
 	reader, err0 := h.getStatsReader(0, ctx.(sqlexec.RestrictedSQLExecutor))
 	if err0 != nil {
 		return err0
@@ -70,10 +66,15 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context) error {
 	batched := 0
 	for {
 		batched += 1
-		err := h.handleOneTask(reader)
+		err := h.handleOneTask(reader, exit)
 		if err != nil {
-			// TODO should behave differently for different errors
-			time.Sleep(500 * time.Millisecond)
+			switch err {
+			case ErrExit:
+				return nil
+			default:
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
 		}
 		if batched >= 100 {
 			// refresh statsReader after a while for latest stats
@@ -81,9 +82,9 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context) error {
 			if err != nil {
 				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
 			}
-			// TODO will begin/commit fail?
 			reader, err = h.getStatsReader(0, ctx.(sqlexec.RestrictedSQLExecutor))
 			if err != nil {
+				// TODO will begin/commit fail?
 				logutil.BgLogger().Error("Fail to new stats loader: ", zap.Error(err))
 			}
 			batched = 0
@@ -91,8 +92,8 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context) error {
 	}
 }
 
-// handleOneTask
-func (h *Handle) handleOneTask(reader *statsReader) error {
+// handleOneTask handles one column task.
+func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -102,7 +103,7 @@ func (h *Handle) handleOneTask(reader *statsReader) error {
 			metrics.PanicCounter.WithLabelValues(metrics.LabelStatsLoadWorker).Inc()
 		}
 	}()
-	task, err0 := h.drainColTask()
+	task, err0 := h.drainColTask(exit)
 	if err0 != nil && task == nil {
 		logutil.BgLogger().Fatal("Fail to drain task for stats loading.")
 		return err0
@@ -121,7 +122,7 @@ func (h *Handle) handleOneTask(reader *statsReader) error {
 	}
 	hist, err := h.readStatsForOne(col, c, reader)
 	if err != nil {
-		// TODO Put task back to align with old code
+		h.HistogramNeeded.ColumnsCh <- task
 		return err
 	}
 	if hist != nil && h.updateCachedColumn(col, hist) {
@@ -130,7 +131,7 @@ func (h *Handle) handleOneTask(reader *statsReader) error {
 	return nil
 }
 
-// TODO load data via kv-get asynchronously
+// readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
 	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
@@ -167,25 +168,25 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 }
 
 // drainColTask will hang until a column task can return.
-func (h *Handle) drainColTask() (*NeededColumnTask, error) {
+func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	timeout := time.Nanosecond * 100
 	to := timeutil.NewGoodTimer(timeout)
 	for {
 		to.Reset(timeout)
-		select { // select NeededColumnsCh firstly since the priority
-		case task, ok := <-HistogramNeeded.NeededColumnsCh:
+		select { // select ColumnsCh firstly since the priority
+		case task, ok := <-h.HistogramNeeded.ColumnsCh:
 			if !ok {
-				return nil, errors.New("drainColTask: cannot read from a closed NeededColumnsCh, maybe the chan is closed.")
+				return nil, errors.New("drainColTask: cannot read from a closed ColumnsCh, maybe the chan is closed.")
 			}
 			if time.Now().After(task.ToTimeout) {
-				HistogramNeeded.TimeoutColumnsCh <- task
+				h.HistogramNeeded.TimeoutColumnsCh <- task
 				continue
 			}
 			return task, nil
 		case <-to.C():
 			to.SetRead()
-			select { // select TimeoutColumnsCh if there's no task from NeededColumnsCh currently
-			case task, ok := <-HistogramNeeded.TimeoutColumnsCh:
+			select { // select TimeoutColumnsCh if there's no task from ColumnsCh currently
+			case task, ok := <-h.HistogramNeeded.TimeoutColumnsCh:
 				if !ok {
 					return nil, errors.New("drainColTask: cannot read from a closed TimeoutColumnsCh, maybe the chan is closed.")
 				}
@@ -194,6 +195,10 @@ func (h *Handle) drainColTask() (*NeededColumnTask, error) {
 				to.SetRead()
 				continue
 			}
+		case <-exit:
+			return nil, ErrExit
+		case <-exit:
+			return nil, ErrExit
 		}
 	}
 }
