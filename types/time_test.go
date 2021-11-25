@@ -1541,6 +1541,7 @@ func TestExtractDatetimeNum(t *testing.T) {
 
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
 	require.Equal(t, int64(0), res)
+	require.Error(t, err)
 	require.Regexp(t, "^invalid unit", err)
 
 	in = types.NewTime(types.FromDate(0000, 00, 00, 00, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
@@ -1627,6 +1628,7 @@ func TestExtractDurationNum(t *testing.T) {
 		}
 		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
 		require.Equal(t, int64(0), res)
+		require.Error(t, err)
 		require.Regexp(t, "^invalid unit", err)
 	}
 }

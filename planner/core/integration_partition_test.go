@@ -79,9 +79,11 @@ func TestListColVariousTypes(t *testing.T) {
 	tk.MustExec(`create table tstring (a varchar(32)) partition by list columns(a) (partition p0 values in ('a', 'b'), partition p1 values in ('c', 'd'))`)
 
 	err := tk.ExecToErr(`create table tdouble (a double) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "not allowed")
 
 	err = tk.ExecToErr(`create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "not allowed")
 
 	tk.MustExec(`insert into tint values (0), (1), (2), (3)`)
@@ -330,9 +332,11 @@ func TestListPartitionDML(t *testing.T) {
 	tk.MustExec("insert into tlist partition(p0, p1) values (2), (3), (8), (9)")
 
 	err := tk.ExecToErr("insert into tlist partition(p0) values (9)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Found a row not matching the given partition set")
 
 	err = tk.ExecToErr("insert into tlist partition(p3) values (20)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 
 	tk.MustExec("update tlist partition(p0) set a=a+1")
@@ -353,9 +357,11 @@ func TestListPartitionDML(t *testing.T) {
 	tk.MustExec("insert into tcollist partition(p0, p1) values (2), (3), (8), (9)")
 
 	err = tk.ExecToErr("insert into tcollist partition(p0) values (9)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Found a row not matching the given partition set")
 
 	err = tk.ExecToErr("insert into tcollist partition(p3) values (20)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 
 	tk.MustExec("update tcollist partition(p0) set a=a+1")
@@ -384,17 +390,21 @@ func TestListPartitionCreation(t *testing.T) {
 	tk.MustExec("create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0))")
 
 	err := tk.ExecToErr("create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "UNIQUE INDEX must include all columns")
 
 	err = tk.ExecToErr("create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "UNIQUE INDEX must include all columns")
 
 	tk.MustExec("create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0))")
 
 	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "UNIQUE INDEX must include all columns")
 
 	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "UNIQUE INDEX must include all columns")
 
 	// with PK
@@ -417,12 +427,15 @@ func TestListPartitionCreation(t *testing.T) {
 	tk.MustExec("create table texp3 (a int, b int) partition by list(a*b) (partition p0 values in (0))")
 
 	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "This partition function is not allowed")
 
 	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "This partition function is not allowed")
 
 	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "This partition function is not allowed")
 }
 
@@ -440,9 +453,11 @@ func TestListPartitionDDL(t *testing.T) {
 	// index
 	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (partition p0 values in (0))`)
 	err := tk.ExecToErr(`alter table tlist add primary key (b)`) // add pk
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all")
 	tk.MustExec(`alter table tlist add primary key (a)`)
 	err = tk.ExecToErr(`alter table tlist add unique key (b)`) // add uk
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all")
 	tk.MustExec(`alter table tlist add key (b)`) // add index
 	tk.MustExec(`alter table tlist rename index b to bb`)
@@ -450,9 +465,11 @@ func TestListPartitionDDL(t *testing.T) {
 
 	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0))`)
 	err = tk.ExecToErr(`alter table tcollist add primary key (b)`) // add pk
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all")
 	tk.MustExec(`alter table tcollist add primary key (a)`)
 	err = tk.ExecToErr(`alter table tcollist add unique key (b)`) // add uk
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all")
 	tk.MustExec(`alter table tcollist add key (b)`) // add index
 	tk.MustExec(`alter table tcollist rename index b to bb`)
@@ -520,12 +537,15 @@ func TestListPartitionOperations(t *testing.T) {
 	tk.MustExec("alter table tlist drop partition p0")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("10", "15", "5"))
 	err := tk.ExecToErr("select * from tlist partition (p0)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 	tk.MustExec("alter table tlist drop partition p1, p2")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("15"))
 	err = tk.ExecToErr("select * from tlist partition (p1)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 	err = tk.ExecToErr("alter table tlist drop partition p3")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cannot remove all partitions")
 
 	tk.MustExec("insert into tcollist values (0), (5), (10)")
@@ -533,12 +553,15 @@ func TestListPartitionOperations(t *testing.T) {
 	tk.MustExec("alter table tcollist drop partition p0")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("10", "15", "5"))
 	err = tk.ExecToErr("select * from tcollist partition (p0)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 	tk.MustExec("alter table tcollist drop partition p1, p2")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("15"))
 	err = tk.ExecToErr("select * from tcollist partition (p1)")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
 	err = tk.ExecToErr("alter table tcollist drop partition p3")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cannot remove all partitions")
 
 	// add partition
@@ -547,6 +570,7 @@ func TestListPartitionOperations(t *testing.T) {
 	tk.MustExec("insert into tlist values (0), (5), (10)")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
 	err = tk.ExecToErr("alter table tlist add partition (partition pxxx values in (4))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Multiple definition")
 
 	tk.MustExec("alter table tcollist add partition (partition p0 values in (0, 1, 2, 3, 4))")
@@ -554,6 +578,7 @@ func TestListPartitionOperations(t *testing.T) {
 	tk.MustExec("insert into tcollist values (0), (5), (10)")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
 	err = tk.ExecToErr("alter table tcollist add partition (partition pxxx values in (4))")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Multiple definition")
 }
 
@@ -584,12 +609,16 @@ func TestListPartitionPrivilege(t *testing.T) {
 	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
 	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "denied")
 	err = tk1.ExecToErr(`alter table tlist drop partition p0`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "denied")
 	err = tk1.ExecToErr(`alter table tlist add partition (partition p2 values in (2))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "denied")
 	err = tk1.ExecToErr(`insert into tlist values (1)`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "denied")
 }
 
@@ -719,6 +748,7 @@ func TestListPartitionAutoIncre(t *testing.T) {
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
@@ -735,6 +765,7 @@ func TestListPartitionAutoIncre(t *testing.T) {
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "it must be defined as a key")
 
 	tk.MustExec(`create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
@@ -763,6 +794,7 @@ func TestListPartitionAutoRandom(t *testing.T) {
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Invalid auto random")
 
 	tk.MustExec(`create table tlist (a bigint auto_random, primary key(a)) partition by list (a) (
@@ -774,6 +806,7 @@ func TestListPartitionAutoRandom(t *testing.T) {
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Invalid auto random")
 
 	tk.MustExec(`create table tcollist (a bigint auto_random, primary key(a)) partition by list columns (a) (
@@ -841,8 +874,10 @@ func TestListPartitionTempTable(t *testing.T) {
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	err := tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cannot create temporary table with partitions")
 	err = tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows")
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cannot create temporary table with partitions")
 }
 
@@ -863,6 +898,7 @@ func TestListPartitionAlterPK(t *testing.T) {
 	tk.MustExec(`alter table tlist add primary key(a)`)
 	tk.MustExec(`alter table tlist drop primary key`)
 	err := tk.ExecToErr(`alter table tlist add primary key(b)`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all columns")
 
 	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (
@@ -872,6 +908,7 @@ func TestListPartitionAlterPK(t *testing.T) {
 	tk.MustExec(`alter table tcollist add primary key(a)`)
 	tk.MustExec(`alter table tcollist drop primary key`)
 	err = tk.ExecToErr(`alter table tcollist add primary key(b)`)
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "must include all columns")
 }
 

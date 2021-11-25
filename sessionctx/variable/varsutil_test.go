@@ -467,6 +467,7 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "a")
+	require.Error(t, err)
 	require.Regexp(t, "Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'$", err)
 
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "10")
@@ -475,15 +476,19 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "a")
+	require.Error(t, err)
 	require.Regexp(t, "Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'$", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, "1")
+	require.Error(t, err)
 	require.Regexp(t, "]Variable 'last_plan_from_cache' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
+	require.Error(t, err)
 	require.Regexp(t, "]Variable 'last_plan_from_binding' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
+	require.Error(t, err)
 	require.Regexp(t, "]Unknown system variable 'UnknownVariable'$", err.Error())
 
 	// reset warnings
@@ -493,6 +498,7 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
+	require.Error(t, warn.Err)
 	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
 }
 

@@ -322,6 +322,7 @@ func TestArithmeticMultiply(t *testing.T) {
 			require.NoError(t, err)
 			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
+			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
 		}
 	}
@@ -507,6 +508,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 			require.NoError(t, err)
 			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
+			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
 		}
 	}

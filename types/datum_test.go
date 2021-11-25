@@ -201,6 +201,7 @@ func TestToFloat64(t *testing.T) {
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
+			require.Error(t, err)
 			require.Contains(t, err.Error(), testCase.errMsg)
 		}
 		require.Equal(t, testCase.result, converted)

@@ -1243,6 +1243,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
+	require.Error(t, err)
 	require.Regexp(t, "connect: connection refused$", err.Error())
 }
 

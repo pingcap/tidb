@@ -86,6 +86,7 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
 	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "ErrInvalidMetaFile")
 }
 

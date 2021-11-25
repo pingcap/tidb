@@ -119,6 +119,7 @@ func TestJSONUnquote(t *testing.T) {
 			require.Equal(t, tt.Result, d.GetString())
 			require.NoError(t, err)
 		} else {
+			require.Error(t, err)
 			require.Contains(t, err.Error(), "The document root must not be followed by other values")
 		}
 	}

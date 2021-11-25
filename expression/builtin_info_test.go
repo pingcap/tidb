@@ -202,6 +202,7 @@ func TestCharset(t *testing.T) {
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.Nil(t, f)
+	require.Error(t, err)
 	require.Regexp(t, "FUNCTION CHARSET does not exist$", err.Error())
 }
 

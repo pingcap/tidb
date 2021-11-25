@@ -861,6 +861,7 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
 
 	err := tk1.ExecToErr("select * from t")
+	require.Error(t, err)
 	require.Regexp(t, "No database selected$", err)
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
