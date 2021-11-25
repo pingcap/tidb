@@ -1356,10 +1356,10 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp {
 		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, int8(col.Decimal)); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp.
-			val = v
+			w.rowMap[w.oldColInfo.ID] = v
 		}
 	}
-	newColVal, err := table.CastValue(w.sessCtx, val, col, false, false)
+	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
 		return w.reformatErrors(err)
 	}
