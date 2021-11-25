@@ -381,7 +381,6 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 }
 
 func TestPlanCacheOperators(t *testing.T) {
-	t.Skip("Unstable test.")
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
