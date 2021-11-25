@@ -321,7 +321,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 // Todo: make more careful check here.
 func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 	}
 }
 
