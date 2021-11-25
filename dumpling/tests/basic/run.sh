@@ -89,12 +89,11 @@ echo "expected 2, actual ${actual}"
 [ "$actual" = 2 ]
 
 # Test for tidb_mem_quota_query configuration
-#export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
-run_sql "drop sequence if exists basic.s"
-run_dumpling
-#actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
-#echo "expected 1, actual ${actual}"
-#[ "$actual" = 1 ]
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
+run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
+actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expected 1, actual ${actual}"
+[ "$actual" = 1 ]
 
 export GO_FAILPOINTS=""
 
