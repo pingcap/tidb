@@ -301,25 +301,27 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 	allTables := conf.Tables
 
 	// policy should be created before database
-	policyNames, err := ListAllPlacementPolicyNames(metaConn)
-	if err != nil {
-		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
-			// some old tidb version and other server type doesn't support placement rules, we can skip it.
-			tctx.L().Warn("fail to dump placement policy, maybe the server doesn't support it", log.ShortError(err))
-		} else {
-			return err
-		}
-	}
-	for _, policy := range policyNames {
-		createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
+		policyNames, err := ListAllPlacementPolicyNames(metaConn)
 		if err != nil {
-			return err
+			if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
+				// some old tidb version and other server type doesn't support placement rules, we can skip it.
+				tctx.L().Warn("fail to dump placement policy, maybe the server doesn't support it", log.ShortError(err))
+			} else {
+				return err
+			}
 		}
-		wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
-		task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
-		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
-		if ctxDone {
-			return tctx.Err()
+		for _, policy := range policyNames {
+			createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
+			if err != nil {
+				return err
+			}
+			wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
+			task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
+			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+			if ctxDone {
+				return tctx.Err()
+			}
 		}
 	}
 
