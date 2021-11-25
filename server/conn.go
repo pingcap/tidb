@@ -310,8 +310,10 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	if cc.bufReadConn != nil {
+		err := cc.bufReadConn.Close()
+		terror.Log(err)
+	}
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
