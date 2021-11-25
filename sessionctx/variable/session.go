@@ -2013,6 +2013,8 @@ const (
 	SlowLogResultRows = "Result_rows"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
+	// SlowLogIsWriteCacheTable is used to indicate whether write into cache table.
+	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2049,6 +2051,7 @@ type SlowQueryLogItems struct {
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	IsExplicitTxn     bool
+	IsWriteCacheTable bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2214,6 +2217,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
+	if s.StmtCtx.ReadFromTableCache {
+		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
+	}
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}
