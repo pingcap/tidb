@@ -992,6 +992,7 @@ type Writer struct {
 	// if the kvs in writeBatch are in order, we can avoid doing a `sort.Slice` which
 	// is quite slow. in our bench, the sort operation eats about 5% of total CPU
 	isWriteBatchSorted bool
+	sortedKeyBuf       []byte
 
 	batchCount int
 	batchSize  int64
@@ -1019,10 +1020,13 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 	// noopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
 	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
-		buf := make([]byte, 0, totalKeySize)
+		if cap(w.sortedKeyBuf) < totalKeySize {
+			w.sortedKeyBuf = make([]byte, totalKeySize)
+		}
+		buf := w.sortedKeyBuf[:0]
 		newKvs := make([]common.KvPair, len(kvs))
 		for i := 0; i < len(kvs); i++ {
-			buf = keyAdapter.Encode(buf[:0], kvs[i].Key, kvs[i].RowID)
+			buf = keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID)
 			newKvs[i] = common.KvPair{Key: buf, Val: kvs[i].Val}
 			buf = buf[len(buf):]
 		}
