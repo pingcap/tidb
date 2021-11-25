@@ -55,7 +55,7 @@ func (s *testTableCodecSuite) TestTableCodec(c *C) {
 }
 
 // https://github.com/pingcap/tidb/issues/27687.
-func TestTableCodecInvalid(t *testing.T) {
+func (s *testTableCodecSuite) TestTableCodecInvalid(c *C) {
 	tableID := int64(100)
 	buf := make([]byte, 0, 11)
 	buf = append(buf, 't')
@@ -64,8 +64,8 @@ func TestTableCodecInvalid(t *testing.T) {
 	buf = codec.EncodeInt(buf, -9078412423848787968)
 	buf = append(buf, '0')
 	_, err := DecodeRowKey(buf)
-	require.NotNil(t, err)
-	require.Equal(t, "invalid encoded key", err.Error())
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "invalid encoded key")
 }
 
 // column is a structure used for test
