@@ -199,8 +199,6 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
-	// EnableOptimizeTrace indicates whether the statement is enable optimize trace
-	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 }
