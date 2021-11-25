@@ -1030,12 +1030,16 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
+<<<<<<< HEAD
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+=======
+		case tipb.ScalarFuncSig_AddDateDatetimeInt:
+>>>>>>> e15b76875... expression : prevent function DATE_ADD/SUB_STRING_XXX pushed down to TiFlash (#30154)
 			return true
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
+		case tipb.ScalarFuncSig_SubDateDatetimeInt:
 			return true
 		}
 	case ast.UnixTimestamp:
