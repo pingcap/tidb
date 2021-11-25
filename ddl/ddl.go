@@ -456,7 +456,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			case <-time.After(PollTiFlashInterval):
 			}
 			iterTimes += 1
-			iterTimes %= 10000
+			iterTimes %= PullTiFlashPdTick
 		}
 	}()
 

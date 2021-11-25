@@ -31,8 +31,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 
-	"github.com/pingcap/tidb/store/gcworker"
-
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/fn"
@@ -303,8 +301,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
 // When drop/truncate table, Pd Rule shall be removed in limited time.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
-	oldInterval := gcworker.GetGcSafePointCacheInterval()
-	gcworker.SetGcSafePointCacheInterval(oldInterval)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -335,7 +331,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	time.Sleep(ddl.PollTiFlashInterval * 5)
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
-	gcworker.SetGcSafePointCacheInterval(oldInterval)
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
