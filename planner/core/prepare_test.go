@@ -2108,9 +2108,6 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 		var rscan, rpoint, rbatch [][]interface{}
 		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_tablescan using @mina, @maxa`, tbl)).Sort()
-			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-			}
 			if id == 0 {
 				rscan = scan.Rows()
 			} else {
@@ -2118,11 +2115,6 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 			}
 
 			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget using @pointa`, tbl)).Sort()
-			if tbl == `tnormalPK` && i > 0 {
-				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
-				// Please see Execute.rebuildRange for more details.
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-			}
 			if id == 0 {
 				rpoint = point.Rows()
 			} else {
@@ -2130,9 +2122,6 @@ func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
 			}
 
 			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget using @a0, @a1, @a2`, tbl)).Sort()
-			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-			}
 			if id == 0 {
 				rbatch = batch.Rows()
 			} else {
