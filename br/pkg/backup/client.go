@@ -163,6 +163,10 @@ func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
+func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
+	return bc.backend
+}
+
 // SetStorage set ExternalStorage for client.
 func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
@@ -252,11 +256,11 @@ func BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
-) ([]rtree.Range, *Schemas, error) {
+) ([]kv.KeyRange, *Schemas, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
-	ranges := make([]rtree.Range, 0)
+	ranges := make([]kv.KeyRange, 0)
 	backupSchemas := newBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -341,7 +345,7 @@ func BuildBackupRangeAndSchema(
 				return nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
-				ranges = append(ranges, rtree.Range{
+				ranges = append(ranges, kv.KeyRange{
 					StartKey: r.StartKey,
 					EndKey:   r.EndKey,
 				})
@@ -427,7 +431,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 // BackupRanges make a backup of the given key ranges.
 func (bc *Client) BackupRanges(
 	ctx context.Context,
-	ranges []rtree.Range,
+	ranges []kv.KeyRange,
 	req backuppb.BackupRequest,
 	concurrency uint,
 	metaWriter *metautil.MetaWriter,
