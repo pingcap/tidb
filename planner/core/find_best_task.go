@@ -806,7 +806,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if len(path.Ranges) == 0 {
 			// We should uncache the tableDual plan.
 			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
-				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+				ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
