@@ -1514,8 +1514,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
-	c.Assert(err, IsNil)
+	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header)
 
 	err = s.cr.parser.Close()
 	c.Assert(err, IsNil)
@@ -1523,7 +1522,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
