@@ -149,7 +149,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTagForTxn(stmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
