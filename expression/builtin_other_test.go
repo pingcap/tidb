@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -198,7 +199,7 @@ func TestValues(t *testing.T) {
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	require.NoError(t, err)
 
-	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
+	cmp, err := ret.Compare(nil, &currInsertValues[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }

@@ -38,17 +38,18 @@ type testIndexChangeSuite struct {
 
 func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_index_change")
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
+	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 
@@ -57,12 +58,12 @@ func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -72,7 +73,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
