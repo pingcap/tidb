@@ -727,30 +727,30 @@ func TestPlanCacheOperators(t *testing.T) {
 	}
 }
 
-//func TestIssue28782(t *testing.T) {
-//	store, dom, err := newStoreWithBootstrap()
-//	require.NoError(t, err)
-//	orgEnable := plannercore.PreparedPlanCacheEnabled()
-//	defer func() {
-//		plannercore.SetPreparedPlanCache(orgEnable)
-//	}()
-//	plannercore.SetPreparedPlanCache(true)
-//	tk := testkit.NewTestKit(t, store)
-//	defer func() {
-//		dom.Close()
-//		require.NoError(t, store.Close())
-//	}()
-//	tk.MustExec("use test")
-//	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-//	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
-//	tk.MustExec("set @a=1, @b=null, @c=0")
-//
-//	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-//	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-//	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-//}
+func TestIssue28782(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
+	tk.MustExec("set @a=1, @b=null, @c=0")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
 
 func TestIssue29101(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
@@ -833,48 +833,48 @@ func TestIssue29101(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 }
 
-//func TestIssue28087And28162(t *testing.T) {
-//	store, dom, err := newStoreWithBootstrap()
-//	require.NoError(t, err)
-//	orgEnable := plannercore.PreparedPlanCacheEnabled()
-//	defer func() {
-//		plannercore.SetPreparedPlanCache(orgEnable)
-//	}()
-//	plannercore.SetPreparedPlanCache(true)
-//	tk := testkit.NewTestKit(t, store)
-//	defer func() {
-//		dom.Close()
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	// issue 28087
-//	tk.MustExec(`use test`)
-//	tk.MustExec(`drop table if exists IDT_26207`)
-//	tk.MustExec(`CREATE TABLE IDT_26207 (col1 bit(1))`)
-//	tk.MustExec(`insert into  IDT_26207 values(0x0), (0x1)`)
-//	tk.MustExec(`prepare stmt from 'select t1.col1 from IDT_26207 as t1 left join IDT_26207 as t2 on t1.col1 = t2.col1 where t1.col1 in (?, ?, ?)'`)
-//	tk.MustExec(`set @a=0x01, @b=0x01, @c=0x01`)
-//	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
-//	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
-//	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
-//	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-//
-//	// issue 28162
-//	tk.MustExec(`drop table if exists IDT_MC21780`)
-//	tk.MustExec(`CREATE TABLE IDT_MC21780 (
-//		COL1 timestamp NULL DEFAULT NULL,
-//		COL2 timestamp NULL DEFAULT NULL,
-//		COL3 timestamp NULL DEFAULT NULL,
-//		KEY U_M_COL (COL1,COL2)
-//	)`)
-//	tk.MustExec(`insert into IDT_MC21780 values("1970-12-18 10:53:28", "1970-12-18 10:53:28", "1970-12-18 10:53:28")`)
-//	tk.MustExec(`prepare stmt from 'select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1 where t1. col1 < ? and t2. col1 in (?, ?, ?);'`)
-//	tk.MustExec(`set @a="2038-01-19 03:14:07", @b="2038-01-19 03:14:07", @c="2038-01-19 03:14:07", @d="2038-01-19 03:14:07"`)
-//	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
-//	tk.MustExec(`set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28"`)
-//	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28"))
-//	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-//}
+func TestIssue28087And28162(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+
+	// issue 28087
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists IDT_26207`)
+	tk.MustExec(`CREATE TABLE IDT_26207 (col1 bit(1))`)
+	tk.MustExec(`insert into  IDT_26207 values(0x0), (0x1)`)
+	tk.MustExec(`prepare stmt from 'select t1.col1 from IDT_26207 as t1 left join IDT_26207 as t2 on t1.col1 = t2.col1 where t1.col1 in (?, ?, ?)'`)
+	tk.MustExec(`set @a=0x01, @b=0x01, @c=0x01`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
+	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// issue 28162
+	tk.MustExec(`drop table if exists IDT_MC21780`)
+	tk.MustExec(`CREATE TABLE IDT_MC21780 (
+		COL1 timestamp NULL DEFAULT NULL,
+		COL2 timestamp NULL DEFAULT NULL,
+		COL3 timestamp NULL DEFAULT NULL,
+		KEY U_M_COL (COL1,COL2)
+	)`)
+	tk.MustExec(`insert into IDT_MC21780 values("1970-12-18 10:53:28", "1970-12-18 10:53:28", "1970-12-18 10:53:28")`)
+	tk.MustExec(`prepare stmt from 'select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1 where t1. col1 < ? and t2. col1 in (?, ?, ?);'`)
+	tk.MustExec(`set @a="2038-01-19 03:14:07", @b="2038-01-19 03:14:07", @c="2038-01-19 03:14:07", @d="2038-01-19 03:14:07"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
+	tk.MustExec(`set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
 
 func TestParameterPushDown(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
@@ -935,49 +935,49 @@ func TestParameterPushDown(t *testing.T) {
 	}
 }
 
-//func TestPreparePlanCache4Function(t *testing.T) {
-//	store, dom, err := newStoreWithBootstrap()
-//	require.NoError(t, err)
-//	orgEnable := plannercore.PreparedPlanCacheEnabled()
-//	defer func() {
-//		plannercore.SetPreparedPlanCache(orgEnable)
-//	}()
-//	plannercore.SetPreparedPlanCache(true)
-//	tk := testkit.NewTestKit(t, store)
-//	defer func() {
-//		dom.Close()
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	tk.MustExec("use test")
-//	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-//
-//	// Testing for non-deterministic functions
-//	tk.MustExec("prepare stmt from 'select rand()';")
-//	res := tk.MustQuery("execute stmt;")
-//	require.Equal(t, 1, len(res.Rows()))
-//
-//	res1 := tk.MustQuery("execute stmt;")
-//	require.Equal(t, 1, len(res1.Rows()))
-//	require.NotEqual(t, res.Rows()[0][0], res1.Rows()[0][0])
-//	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-//
-//	// Testing for control functions
-//	tk.MustExec("prepare stmt from 'SELECT IFNULL(?,0);';")
-//	tk.MustExec("set @a = 1, @b = null;")
-//	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-//	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-//
-//	tk.MustExec("drop table if exists t;")
-//	tk.MustExec("create table t(a int);")
-//	tk.MustExec("prepare stmt from 'select a, case when a = ? then 0 when a <=> ? then 1 else 2 end b from t order by a;';")
-//	tk.MustExec("insert into t values(0), (1), (2), (null);")
-//	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
-//	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
-//	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-//}
+func TestPreparePlanCache4Function(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Testing for non-deterministic functions
+	tk.MustExec("prepare stmt from 'select rand()';")
+	res := tk.MustQuery("execute stmt;")
+	require.Equal(t, 1, len(res.Rows()))
+
+	res1 := tk.MustQuery("execute stmt;")
+	require.Equal(t, 1, len(res1.Rows()))
+	require.NotEqual(t, res.Rows()[0][0], res1.Rows()[0][0])
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Testing for control functions
+	tk.MustExec("prepare stmt from 'SELECT IFNULL(?,0);';")
+	tk.MustExec("set @a = 1, @b = null;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select a, case when a = ? then 0 when a <=> ? then 1 else 2 end b from t order by a;';")
+	tk.MustExec("insert into t values(0), (1), (2), (null);")
+	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
+	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
+	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
@@ -1099,36 +1099,36 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
-//func TestTemporaryTable4PlanCache(t *testing.T) {
-//	store, dom, err := newStoreWithBootstrap()
-//	require.NoError(t, err)
-//	orgEnable := plannercore.PreparedPlanCacheEnabled()
-//	defer func() {
-//		plannercore.SetPreparedPlanCache(orgEnable)
-//	}()
-//	plannercore.SetPreparedPlanCache(true)
-//	tk := testkit.NewTestKit(t, store)
-//	defer func() {
-//		dom.Close()
-//		require.NoError(t, store.Close())
-//	}()
-//	tk.MustExec("use test")
-//	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-//	tk.MustExec("drop table if exists tmp2")
-//	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
-//	tk.MustExec("prepare stmt from 'select * from tmp2;';")
-//	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-//	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-//
-//	tk.MustExec("drop table if exists tmp_t;")
-//	tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
-//	tk.MustExec("prepare stmt from 'select * from tmp_t;';")
-//	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-//	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-//
-//}
+func TestTemporaryTable4PlanCache(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
+	tk.MustExec("prepare stmt from 'select * from tmp2;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists tmp_t;")
+	tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+	tk.MustExec("prepare stmt from 'select * from tmp_t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+}
 
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	if israce.RaceEnabled {
