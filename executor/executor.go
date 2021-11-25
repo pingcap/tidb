@@ -1689,7 +1689,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
-	sc.EnableOptimizeTrace = false
 	sc.LogicalOptimizeTrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)

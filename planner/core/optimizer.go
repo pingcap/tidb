@@ -98,11 +98,11 @@ func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOpt
 	return op
 }
 
-func (op *logicalOptimizeOp) appendBeforeRuleOptimize(name string, before LogicalPlan) {
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
@@ -377,12 +377,12 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	opt := defaultLogicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
+	vars := logic.SCtx().GetSessionVars()
+	if vars.EnableStmtOptimizeTrace {
 		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			stmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.LogicalOptimizeTrace = tracer
 		}()
 	}
 	var err error
@@ -393,7 +393,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendBeforeRuleOptimize(rule.name(), logic)
+		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
