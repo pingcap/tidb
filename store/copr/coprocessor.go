@@ -721,7 +721,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	var cacheKey []byte = nil
-	var cacheValue *coprCacheValue = nil
+	var cacheValue *coprCacheValue
 
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
