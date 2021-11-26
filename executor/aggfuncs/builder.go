@@ -256,10 +256,6 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 			retTp:   aggFuncDesc.RetTp,
 		},
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -334,10 +330,6 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 		retTp:   aggFuncDesc.RetTp,
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString
@@ -386,10 +378,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			retTp:   aggFuncDesc.RetTp,
 		},
 		isMax: isMax,
-	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
 	}
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
