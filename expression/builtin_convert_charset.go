@@ -66,7 +66,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		}
 		bf.tp = args[0].GetType().Clone()
 		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
-		sig = &builtinInternalToBinarySig{bf}
+		sig = &builtinInternalToBinarySig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
@@ -272,7 +272,7 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			return BuildFromBinaryFunction(ctx, expr, ft)
 		}
 	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress, ast.Ord:
 		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
 			return BuildToBinaryFunction(ctx, expr)
 		}

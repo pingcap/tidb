@@ -28,6 +28,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -2892,44 +2893,14 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	charSet := b.args[0].GetType().Charset
-	ord, err := chooseOrdFunc(charSet)
-	if err != nil {
-		return 0, false, err
-	}
-
-	enc := charset.NewEncoding(charSet)
-	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
-	if err != nil {
-		return 0, false, err
-	}
-	return ord(leftMost), false, nil
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
+	strBytes := hack.Slice(str)
+	w := enc.CharLength(strBytes)
+	w = mathutil.Min(w, len(strBytes))
+	return calcOrd(strBytes[:w]), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
-	// use utf8 by default
-	if charSet == "" {
-		charSet = charset.CharsetUTF8
-	}
-	desc, err := charset.GetCharsetInfo(charSet)
-	if err != nil {
-		return nil, err
-	}
-	if desc.Maxlen == 1 {
-		return ordSingleByte, nil
-	}
-	return ordOthers, nil
-}
-
-func ordSingleByte(src []byte) int64 {
-	if len(src) == 0 {
-		return 0
-	}
-	return int64(src[0])
-}
-
-func ordOthers(leftMost []byte) int64 {
+func calcOrd(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {

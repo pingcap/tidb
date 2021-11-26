@@ -23,6 +23,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -2067,16 +2068,7 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-
-	charSet := b.args[0].GetType().Charset
-	ord, err := chooseOrdFunc(charSet)
-	if err != nil {
-		return err
-	}
-
-	enc := charset.NewEncoding(charSet)
-	var encodedBuf []byte
-
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2084,12 +2076,10 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetBytes(i)
-		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
-		if err != nil {
-			return err
-		}
-		i64s[i] = ord(encoded)
+		strBytes := buf.GetBytes(i)
+		w := enc.CharLength(strBytes)
+		w = mathutil.Min(w, len(strBytes))
+		i64s[i] = calcOrd(strBytes[:w])
 	}
 	return nil
 }
