@@ -16,9 +16,9 @@ package copr
 
 import (
 	"context"
-	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/stretchr/testify/require"

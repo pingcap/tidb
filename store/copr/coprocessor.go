@@ -66,6 +66,7 @@ const (
 // e.g. a paging request scans over range (r1, r200), it requires 64 rows in the first batch,
 // if it's not drained, then the paging size grows, the new range is calculated like (r100, r200), then send a request again.
 // Compare with the common unary request, paging request allows early access of data, it offers a streaming-like way processing data.
+// TODO: may make the paging parameters configurable.
 const (
 	minPagingSize  uint64 = 64
 	maxPagingSize         = minPagingSize * 128
