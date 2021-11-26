@@ -832,23 +832,8 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
 	if len(userplugin) == 0 {
-		*authPlugin = mysql.AuthNativePassword
-=======
-	if userplugin == mysql.AuthSocket {
-		resp.AuthPlugin = mysql.AuthSocket
-		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
-		if err != nil {
-			return nil, err
-		}
-		return []byte(user.Username), nil
-	}
-	if len(userplugin) == 0 {
-		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
-			zap.String("user", cc.user), zap.String("host", cc.peerHost))
 		resp.AuthPlugin = mysql.AuthNativePassword
->>>>>>> 0f86a53d4... server: fix bug https://asktug.com/t/topic/213082/11 (#29577)
 		return nil, nil
 	}
 
