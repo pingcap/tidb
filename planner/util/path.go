@@ -202,7 +202,7 @@ func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Co
 			col2Len[v.UniqueID] = types.UnspecifiedLength
 		} else {
 			for i, col := range idxCols {
-				if col != nil && v.UniqueID == col.UniqueID {
+				if col != nil && v.EqualByExprAndID(nil, col) {
 					col2Len[v.UniqueID] = idxColLens[i]
 					break
 				}
