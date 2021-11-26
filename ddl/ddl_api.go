@@ -4725,7 +4725,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	for _, col := range tb.Cols() {
 		_, v := charset.TiFlashSupportedCharsets[col.Charset]
 		if !v {
-			return ErrAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
+			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
 		}
 	}
 

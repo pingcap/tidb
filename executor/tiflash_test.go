@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -92,10 +91,10 @@ func (s *tiflashTestSuite) TestNonsupportCharsetTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(10) charset gbk collate gbk_bin)")
+	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
 	err := tk.ExecToErr("alter table t set tiflash replica 1")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, ddl.ErrAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs("gbk").Error())
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported ALTER table replica for table contain gbk charset")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10) charset utf8)")
