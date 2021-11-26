@@ -344,12 +344,8 @@ func BuildBackupRangeAndSchema(
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			for _, r := range tableRanges {
-				ranges = append(ranges, kv.KeyRange{
-					StartKey: r.StartKey,
-					EndKey:   r.EndKey,
-				})
-			}
+
+			ranges = append(ranges, tableRanges...)
 		}
 	}
 

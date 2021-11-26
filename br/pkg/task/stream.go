@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package task
 
 import (
@@ -42,12 +56,13 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamResume: RunStreamResume,
 }
 
+// StreamConfig specifies the configure about backup stream
 type StreamConfig struct {
-	// common part that all of stream commands include
+	// common part that all of stream commands need
 	Config
 	taskName string
 
-	// this part that only stream start includes
+	// this part only stream start includes
 	startTS uint64
 	endTS   uint64
 }
@@ -64,7 +79,7 @@ func DefineStreamTaskNameFlags(flags *pflag.FlagSet) {
 }
 
 func (cfg *StreamConfig) ParseTSFromFlags(flags *pflag.FlagSet) error {
-	tsString, err := flags.GetString(flagStartTS)
+	tsString, err := flags.GetString(flagStreamStartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -73,7 +88,7 @@ func (cfg *StreamConfig) ParseTSFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	tsString, err = flags.GetString(flagEndTS)
+	tsString, err = flags.GetString(flagStreamEndTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -92,14 +107,13 @@ func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
 	return errors.Trace(err)
 }
 
-/////////////////////////////////////////////////////////////////
 type streamStartMgr struct {
-	Cfg    *StreamConfig
-	mgr    *conn.Mgr
-	bc     *backup.Client
-	Ranges []kv.KeyRange
+	Cfg *StreamConfig
+	mgr *conn.Mgr
+	bc  *backup.Client
 }
 
+// NewStreamStartMgr specifies Creating a stream Mgr
 func NewStreamStartMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue,
 ) (*streamStartMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
@@ -140,11 +154,11 @@ func NewStreamStartMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue,
 	return s, nil
 }
 
-func (s *streamStartMgr) Close() {
+func (s *streamStartMgr) close() {
 	s.mgr.Close()
 }
 
-func (s *streamStartMgr) SetLock(ctx context.Context) error {
+func (s *streamStartMgr) setLock(ctx context.Context) error {
 	return s.bc.SetLockFile(ctx)
 }
 
@@ -157,6 +171,31 @@ func (s *streamStartMgr) getTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
+func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
+	currentTS, err := s.getTS(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	mRange, err := stream.BuildObserveMetaRange()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	dRanges, err := stream.BuildObserveDataRanges(s.mgr.GetStorage(), s.Cfg.TableFilter, currentTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rs := append([]kv.KeyRange{*mRange}, dRanges...)
+	sort.Slice(rs, func(i, j int) bool {
+		return bytes.Compare(rs[i].StartKey, rs[j].EndKey) < 0
+	})
+
+	return rs, nil
+}
+
+// RunStreamStart specifies starting a stream task
 func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -171,18 +210,13 @@ func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer streamMgr.Close()
+	defer streamMgr.close()
 
-	if err := streamMgr.SetLock(ctx); err != nil {
+	if err := streamMgr.setLock(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
-	currentTS, err := streamMgr.getTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ranges, _, err := backup.BuildBackupRangeAndSchema(streamMgr.mgr.GetStorage(), cfg.TableFilter, currentTS)
+	ranges, err := streamMgr.buildObserveRanges(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -194,10 +228,6 @@ func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 			zap.String("PD address", pdAddress))
 		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to backup")
 	}
-
-	sort.Slice(ranges, func(i, j int) bool {
-		return bytes.Compare(ranges[i].StartKey, ranges[j].EndKey) < 0
-	})
 
 	ti := stream.TaskInfo{
 		StreamBackupTaskInfo: backuppb.StreamBackupTaskInfo{
@@ -217,6 +247,7 @@ func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 	return nil
 }
 
+// RunStreamStop specifies stoping a stream task
 func RunStreamStop(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -241,6 +272,7 @@ func RunStreamStop(c context.Context, g glue.Glue, cmdName string, cfg *StreamCo
 	return nil
 }
 
+// RunStreamPause specifies pausing a stream task
 func RunStreamPause(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -265,6 +297,7 @@ func RunStreamPause(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 	return nil
 }
 
+// RunStreamResume specifies resuming a stream task
 func RunStreamResume(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()

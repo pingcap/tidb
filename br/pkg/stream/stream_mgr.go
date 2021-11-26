@@ -1,0 +1,129 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package stream
+
+import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
+)
+
+var metaPrefix = []byte("m")
+
+// appendTableObserveRanges specifies building key ranges [t{tableID}{low}, t{tableID}{high}] corresponding to `tblIDS`
+func appendTableObserveRanges(tblIDs []int64) ([]kv.KeyRange, error) {
+	krs := make([]kv.KeyRange, 0, len(tblIDs))
+	rangers := ranger.FullNotNullRange()
+
+	for _, ran := range rangers {
+		low, high, err := distsql.EncodeIndexKey(nil, ran)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, tid := range tblIDs {
+			startKey := tablecodec.EncodeTablePrefixSeekKey(tid, low)
+			endKey := tablecodec.EncodeTablePrefixSeekKey(tid, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
+	}
+	return krs, nil
+}
+
+// buildObserveTableKeyRanges specifies building key ranges to observe data KV that belongs to `table`
+func buildObserveTableKeyRanges(table *model.TableInfo) ([]kv.KeyRange, error) {
+	pis := table.GetPartitionInfo()
+	if pis == nil {
+		// Short path, no partition.
+		return appendTableObserveRanges([]int64{table.ID})
+	}
+
+	tblIDs := make([]int64, 0, len(pis.Definitions))
+	// whether we shoud append tbl.ID into tblIDS ?
+	for _, def := range pis.Definitions {
+		tblIDs = append(tblIDs, def.ID)
+	}
+	return appendTableObserveRanges(tblIDs)
+}
+
+// BuildObserveDataRanges specifies building key ranges to observe data KV(contains row/index KV)
+func BuildObserveDataRanges(
+	storage kv.Storage,
+	tableFilter filter.Filter,
+	backupTS uint64,
+) ([]kv.KeyRange, error) {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ranges := make([]kv.KeyRange, 0, len(dbs))
+	for _, dbInfo := range dbs {
+		// skip system databases
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {
+			continue
+		}
+
+		tables, err := m.ListTables(dbInfo.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(tables) == 0 {
+			log.Warn("It's not necessary to observe empty database",
+				zap.Stringer("db", dbInfo.Name))
+			continue
+		}
+
+		for _, tableInfo := range tables {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
+				// Skip tables other than the given table.
+				continue
+			}
+
+			tableRanges, err := buildObserveTableKeyRanges(tableInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ranges = append(ranges, tableRanges...)
+		}
+	}
+
+	return ranges, nil
+}
+
+// BuildObserveDataRanges specifies build key ranges to observe meta KV(contains all of metas)
+func BuildObserveMetaRange() (*kv.KeyRange, error) {
+	rangers := ranger.FullNotNullRange()
+	low, high, err := distsql.EncodeIndexKey(nil, rangers[0])
+	if err != nil {
+		return nil, err
+	}
+
+	startKey := append(codec.EncodeBytes(nil, metaPrefix), low...)
+	endKey := append(codec.EncodeBytes(nil, metaPrefix), high...)
+	return &kv.KeyRange{StartKey: startKey, EndKey: endKey}, nil
+}

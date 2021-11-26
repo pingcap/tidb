@@ -561,7 +561,7 @@ func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, 
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -600,7 +600,7 @@ func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, 
 func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	rans := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -645,7 +645,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -658,7 +658,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	return krs, nil
 }
 
-func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
+func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 	if err != nil {
 		return nil, nil, err

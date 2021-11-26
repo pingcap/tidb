@@ -1,8 +1,23 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -12,6 +27,7 @@ import (
 	"sourcegraph.com/sourcegraph/appdash"
 )
 
+// NewStreamCommand specifies adding several commands for backup log
 func NewStreamCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:          "stream",
@@ -120,7 +136,11 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 
-	commandFn := task.StreamCommandMap[cmdName]
+	commandFn, exist := task.StreamCommandMap[cmdName]
+	if !exist {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s\n", cmdName)
+	}
+
 	if err := commandFn(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to stream", zap.String("command", cmdName), zap.Error(err))
 		return errors.Trace(err)
