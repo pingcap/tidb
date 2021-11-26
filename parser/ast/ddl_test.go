@@ -634,7 +634,7 @@ func TestDropIndexRestore(t *testing.T) {
 		expectSQL string
 	}{
 		{format.DefaultRestoreFlags, "DROP INDEX IF EXISTS `idx` ON `t`"},
-		{format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS */`idx` ON `t`"},
+		{format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
 	}
 
 	extractNodeFunc := func(node Node) Node {

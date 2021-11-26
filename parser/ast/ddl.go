@@ -1690,13 +1690,9 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		if ctx.Flags.HasTiDBSpecialCommentFlag() {
-			ctx.WriteWithSpecialComments("", func() {
-				ctx.WriteKeyWord("IF EXISTS")
-			})
-		} else {
+		ctx.WriteWithSpecialComments("", func() {
 			ctx.WriteKeyWord("IF EXISTS ")
-		}
+		})
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
