@@ -30,6 +30,7 @@ func (ki KeyInfo) Clone() KeyInfo {
 	return result
 }
 
+// String implements fmt.Stringer interface.
 func (ki KeyInfo) String() string {
 	ukColStrs := make([]string, 0, len(ki))
 	for _, col := range ki {
