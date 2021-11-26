@@ -287,6 +287,9 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
 func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
 	return func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
 		req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
@@ -294,6 +297,9 @@ func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger
 
 // GetResourceGroupTagByLabel gets the resource group of the statement based on the label.
 func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupTagLabel) []byte {
+	if sc == nil {
+		return nil
+	}
 	switch label {
 	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
 		v := sc.resourceGroupTagWithRow.Load()
@@ -316,6 +322,9 @@ func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupT
 		return nil
 	}
 	newTag := resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
+	if newTag == nil {
+		return nil
+	}
 	switch label {
 	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
 		sc.resourceGroupTagWithRow.Store(newTag)
