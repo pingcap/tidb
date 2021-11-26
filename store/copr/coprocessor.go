@@ -187,6 +187,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	chanSize := 2
+	if req.Streaming || req.Paging {
+		chanSize = 128
+	}
 
 	var tasks []*copTask
 	for _, loc := range locs {
@@ -204,7 +208,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				ranges: loc.Ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan:   make(chan *copResponse, 2),
+				respChan:   make(chan *copResponse, chanSize),
 				cmdType:    cmdType,
 				storeType:  req.StoreType,
 				eventCb:    eventCb,
