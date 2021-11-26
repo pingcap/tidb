@@ -860,6 +860,9 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 // See https://dev.mysql.com/doc/refman/5.7/en/account-names.html
 func (record *baseRecord) hostMatch(s string) bool {
 	if record.hostIPNet == nil {
+		if record.Host == "localhost" && net.ParseIP(s).IsLoopback() {
+			return true
+		}
 		return false
 	}
 	ip := net.ParseIP(s).To4()

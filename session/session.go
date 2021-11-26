@@ -2287,7 +2287,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 }
 
 func (s *session) getHostByIP(ip string) []string {
-	if ip == "127.0.0.1" {
+	if net.ParseIP(ip).IsLoopback() {
 		return []string{variable.DefHostname}
 	}
 	skipNameResolve, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
