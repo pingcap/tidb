@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/hint"
