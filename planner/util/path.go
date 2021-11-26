@@ -277,6 +277,7 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 	return 0, true
 }
 
+// GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
 func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
 	if path.IsTablePath() {
 		return ExtractCol2Len(path.AccessConds, nil, nil)
