@@ -140,7 +140,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
-		tctx.L().Info("get global metadata failed", zap.Error(err))
+		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
@@ -150,7 +150,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 	if err = d.renewSelectTableRegionFuncForLowerTiDB(tctx); err != nil {
-		tctx.L().Error("fail to update select table region info for TiDB", zap.Error(err))
+		tctx.L().Info("cannot update select table region info for TiDB", log.ShortError(err))
 	}
 
 	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
@@ -201,7 +201,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		// record again, to provide a location to exit safe mode for DM
 		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
 		if err != nil {
-			tctx.L().Info("get global metadata (after connection pool established) failed", zap.Error(err))
+			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
 		}
 	}
 
@@ -309,7 +309,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		for _, table := range tables {
 			tctx.L().Debug("start dumping table...", zap.String("database", dbName),
 				zap.String("table", table.Name))
-			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
+			meta, err := dumpTableMeta(tctx, conf, metaConn, dbName, table)
 			if err != nil {
 				return err
 			}
@@ -797,8 +797,8 @@ func selectTiDBTableRegion(tctx *tcontext.Context, conn *sql.Conn, meta TableMet
 		}
 		pkVal, err2 := extractTiDBRowIDFromDecodedKey(tidbRowID, decodedKey.String)
 		if err2 != nil {
-			logger.Debug("fail to extract pkVal from decoded start key",
-				zap.Int("rowID", rowID), zap.String("startKey", startKey.String), zap.String("decodedKey", decodedKey.String), zap.Error(err2))
+			logger.Debug("cannot extract pkVal from decoded start key",
+				zap.Int("rowID", rowID), zap.String("startKey", startKey.String), zap.String("decodedKey", decodedKey.String), log.ShortError(err2))
 		} else {
 			pkVals = append(pkVals, []string{pkVal})
 		}
@@ -834,7 +834,7 @@ func selectTiDBPartitionRegion(tctx *tcontext.Context, conn *sql.Conn, dbName, t
 		pkVal, err2 := extractTiDBRowIDFromDecodedKey(regionRowKey, startKey)
 		if err2 != nil {
 			logger.Debug("show table region start key doesn't have rowID",
-				zap.Int("rowID", rowID), zap.String("startKey", startKey), zap.Error(err2))
+				zap.Int("rowID", rowID), zap.String("startKey", startKey), log.ShortError(err2))
 		} else {
 			pkVals = append(pkVals, []string{pkVal})
 		}
@@ -883,7 +883,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	return nil
 }
 
-func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
+func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
 	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
 	if err != nil {
@@ -896,7 +896,7 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 	if conf.ServerInfo.ServerType == ServerTypeTiDB {
 		hasImplicitRowID, err = SelectTiDBRowID(conn, db, tbl)
 		if err != nil {
-			return nil, err
+			tctx.L().Info("cannot check has implicit rowID", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
 	}
 
@@ -1158,7 +1158,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 			if err == nil {
 				break
 			}
-			tctx.L().Debug("update PD safePoint failed", zap.Error(err), zap.Int("retryTime", retryCnt))
+			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
 			select {
 			case <-tctx.Done():
 				return
@@ -1243,7 +1243,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 
 			key, err := hex.DecodeString(region.StartKey)
 			if err != nil {
-				d.L().Debug("invalid region start key", zap.Error(err), zap.String("key", region.StartKey))
+				d.L().Debug("invalid region start key", log.ShortError(err), zap.String("key", region.StartKey))
 				continue
 			}
 			// Auto decode byte if needed.
@@ -1254,13 +1254,13 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 			// Try to decode it as a record key.
 			tableID, handle, err := tablecodec.DecodeRecordKey(key)
 			if err != nil {
-				d.L().Debug("fail to decode region start key", zap.Error(err), zap.String("key", region.StartKey), zap.Int64("tableID", tableID))
+				d.L().Debug("cannot decode region start key", log.ShortError(err), zap.String("key", region.StartKey), zap.Int64("tableID", tableID))
 				continue
 			}
 			if handle.IsInt() {
 				tableInfoMap[db][tbl] = append(tableInfoMap[db][tbl], handle.IntValue())
 			} else {
-				d.L().Debug("not an int handle", zap.Error(err), zap.Stringer("handle", handle))
+				d.L().Debug("not an int handle", log.ShortError(err), zap.Stringer("handle", handle))
 			}
 		}
 	}
