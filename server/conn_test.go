@@ -915,26 +915,22 @@ func (ts *ConnTestSuite) TestHandleAuthPlugin(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func TestAuthPlugin2(t *testing.T) {
+func (ts *ConnTestSuite) TestAuthPlugin2(c *C) {
 
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	c.Parallel()
 
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
-	drv := NewTiDBDriver(store)
+	drv := NewTiDBDriver(ts.store)
 	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -942,7 +938,7 @@ func TestAuthPlugin2(t *testing.T) {
 		user:   "root",
 	}
 	ctx := context.Background()
-	se, _ := session.CreateSession4Test(store)
+	se, _ := session.CreateSession4Test(ts.store)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
@@ -955,6 +951,6 @@ func TestAuthPlugin2(t *testing.T) {
 
 	cc.isUnixSocket = true
 	_, err = cc.checkAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 }
