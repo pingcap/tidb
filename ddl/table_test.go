@@ -349,14 +349,16 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = testNewDDLAndStart(
+	ddl, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
+	s.d = ddl
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
+	s.dbInfo, err = testSchemaInfo(s.d, "test_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
@@ -402,7 +404,8 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
-	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
+	dbInfo1, err := testSchemaInfo(s.d, "test_rename_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, s.dbInfo.Name, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
@@ -417,6 +420,11 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 	checkTableCacheTest(c, d, dbInfo1, tblInfo)
+	// for alter no cache table
+	job = testAlterNoCacheTable(c, ctx, d, dbInfo1.ID, tblInfo)
+	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	checkTableNoCacheTest(c, d, dbInfo1, tblInfo)
 }
 
 func checkTableCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
@@ -432,12 +440,41 @@ func checkTableCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 	c.Assert(err, IsNil)
 }
 
+func checkTableNoCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
+		c.Assert(err, IsNil)
+		c.Assert(info, NotNil)
+		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusDisable)
+		return nil
+	})
+	c.Assert(err, IsNil)
+}
+
 func testAlterCacheTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
 
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAlterCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	return job
+}
+
+func testAlterNoCacheTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}

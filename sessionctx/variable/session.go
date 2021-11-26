@@ -29,6 +29,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	utilMath "github.com/pingcap/tidb/util/math"
+
 	"github.com/pingcap/errors"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
@@ -38,13 +40,13 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -955,6 +957,11 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnableStmtOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableStmtOptimizeTrace bool
+	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
+	Rng *utilMath.MysqlRng
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1188,6 +1195,7 @@ func NewSessionVars() *SessionVars {
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		EnablePlacementChecks:       DefEnablePlacementCheck,
+		Rng:                         utilMath.NewWithTime(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1259,6 +1267,7 @@ func NewSessionVars() *SessionVars {
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
+	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
 }
 
@@ -1389,10 +1398,10 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	}
 }
 
@@ -2002,6 +2011,8 @@ const (
 	SlowLogBackoffDetail = "Backoff_Detail"
 	// SlowLogResultRows is the row count of the SQL result.
 	SlowLogResultRows = "Result_rows"
+	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
+	SlowLogIsExplicitTxn = "IsExplicitTxn"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2037,6 +2048,7 @@ type SlowQueryLogItems struct {
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
 	ResultRows        int64
+	IsExplicitTxn     bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2201,6 +2213,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}

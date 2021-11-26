@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -184,12 +183,13 @@ func main() {
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
+		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -271,12 +271,6 @@ func setCPUAffinity() {
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-}
-
-func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
-	d := parseDuration(c.Performance.MemProfileInterval)
-	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {
