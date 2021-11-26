@@ -15,6 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -1689,7 +1690,13 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		ctx.WriteKeyWord("IF EXISTS ")
+		if ctx.Flags.HasTiDBSpecialCommentFlag() {
+			ctx.WriteWithSpecialComments("", func() {
+				ctx.WriteKeyWord("IF EXISTS")
+			})
+		} else {
+			ctx.WriteKeyWord("IF EXISTS ")
+		}
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
