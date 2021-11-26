@@ -15,10 +15,8 @@
 package server
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,14 +25,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -248,188 +243,188 @@ func TestRegionsFromMeta(t *testing.T) {
 	defer func() { require.NoError(t, resp1.Body.Close()) }()
 }
 
-func TestTiFlashReplica(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-
-	db, err := sql.Open("mysql", ts.getDSN())
-	require.NoError(t, err)
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-	dbt := testkit.NewDBTestKit(t, db)
-
-	defer func(originGC bool) {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}(ddl.IsEmulatorGCEnable())
-
-	// Disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
-	ddl.EmulatorGCDisable()
-	ddl.DisableTiFlashPoll(ts.domain.DDL())
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// Set GC safe point and enable GC.
-	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-
-	resp, err := ts.fetchStatus("/tiflash/replica")
-	require.NoError(t, err)
-	decoder := json.NewDecoder(resp.Body)
-	var data []tableFlashReplicaInfo
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 0, len(data))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
-	}()
-
-	dbt.MustExec("use tidb")
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
-
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	require.NoError(t, err)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 1, len(data))
-	require.Equal(t, uint64(2), data[0].ReplicaCount)
-	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
-	require.Equal(t, false, data[0].Available)
-
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "[schema:1146]Table which ID = 84 does not exist.", string(body))
-
-	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
-	require.NoError(t, err)
-	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	body, err = io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "", string(body))
-
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	require.NoError(t, err)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 1, len(data))
-	require.Equal(t, uint64(2), data[0].ReplicaCount)
-	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
-	require.Equal(t, true, data[0].Available)
-
-	// Should not take effect.
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
-	checkFunc := func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
-		require.NoError(t, err)
-		decoder = json.NewDecoder(resp.Body)
-		err = decoder.Decode(&data)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-		require.Equal(t, 1, len(data))
-		require.Equal(t, uint64(2), data[0].ReplicaCount)
-		require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
-		require.Equal(t, true, data[0].Available)
-	}
-
-	// Test for get dropped table tiflash replica info.
-	dbt.MustExec("drop table test")
-	checkFunc()
-
-	// Test unique table id replica info.
-	dbt.MustExec("flashback table test")
-	checkFunc()
-	dbt.MustExec("drop table test")
-	checkFunc()
-	dbt.MustExec("flashback table test")
-	checkFunc()
-
-	// Test for partition table.
-	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
-	dbt.MustExec("alter table test set tiflash replica 0;")
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	require.NoError(t, err)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	err = resp.Body.Close()
-	require.NoError(t, err)
-	require.Equal(t, 3, len(data))
-	require.Equal(t, uint64(2), data[0].ReplicaCount)
-	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
-	require.Equal(t, false, data[0].Available)
-
-	pid0 := data[0].ID
-	pid1 := data[1].ID
-	pid2 := data[2].ID
-
-	// Mock for partition 1 replica was available.
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	resp, err = ts.fetchStatus("/tiflash/replica")
-	require.NoError(t, err)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 3, len(data))
-	require.Equal(t, false, data[0].Available)
-	require.Equal(t, true, data[1].Available)
-	require.Equal(t, false, data[2].Available)
-
-	// Mock for partition 0,2 replica was available.
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	require.NoError(t, err)
-	err = resp.Body.Close()
-	require.NoError(t, err)
-	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
-	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	checkFunc = func() {
-		resp, err := ts.fetchStatus("/tiflash/replica")
-		require.NoError(t, err)
-		decoder = json.NewDecoder(resp.Body)
-		err = decoder.Decode(&data)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-		require.Equal(t, 3, len(data))
-		require.Equal(t, true, data[0].Available)
-		require.Equal(t, true, data[1].Available)
-		require.Equal(t, true, data[2].Available)
-	}
-
-	// Test for get truncated table tiflash replica info.
-	dbt.MustExec("truncate table pt")
-	dbt.MustExec("alter table pt set tiflash replica 0;")
-	checkFunc()
-}
+//func TestTiFlashReplica(t *testing.T) {
+//	ts := createBasicHTTPHandlerTestSuite()
+//	ts.startServer(t)
+//	ts.prepareData(t)
+//	defer ts.stopServer(t)
+//
+//	db, err := sql.Open("mysql", ts.getDSN())
+//	require.NoError(t, err)
+//	defer func() {
+//		err := db.Close()
+//		require.NoError(t, err)
+//	}()
+//	dbt := testkit.NewDBTestKit(t, db)
+//
+//	defer func(originGC bool) {
+//		if originGC {
+//			ddl.EmulatorGCEnable()
+//		} else {
+//			ddl.EmulatorGCDisable()
+//		}
+//	}(ddl.IsEmulatorGCEnable())
+//
+//	// Disable emulator GC.
+//	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
+//	ddl.EmulatorGCDisable()
+//	ddl.DisableTiFlashPoll(ts.domain.DDL())
+//	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+//	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+//	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+//			       ON DUPLICATE KEY
+//			       UPDATE variable_value = '%[1]s'`
+//	// Set GC safe point and enable GC.
+//	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+//
+//	resp, err := ts.fetchStatus("/tiflash/replica")
+//	require.NoError(t, err)
+//	decoder := json.NewDecoder(resp.Body)
+//	var data []tableFlashReplicaInfo
+//	err = decoder.Decode(&data)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, 0, len(data))
+//
+//	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+//	defer func() {
+//		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+//	}()
+//
+//	dbt.MustExec("use tidb")
+//	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+//
+//	resp, err = ts.fetchStatus("/tiflash/replica")
+//	require.NoError(t, err)
+//	decoder = json.NewDecoder(resp.Body)
+//	err = decoder.Decode(&data)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, 1, len(data))
+//	require.Equal(t, uint64(2), data[0].ReplicaCount)
+//	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
+//	require.Equal(t, false, data[0].Available)
+//
+//	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":84,"region_count":3,"flash_region_count":3}`)))
+//	require.NoError(t, err)
+//	require.NotNil(t, resp)
+//	body, err := io.ReadAll(resp.Body)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, "[schema:1146]Table which ID = 84 does not exist.", string(body))
+//
+//	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+//	require.NoError(t, err)
+//	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
+//	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+//	require.NoError(t, err)
+//	require.NotNil(t, resp)
+//	body, err = io.ReadAll(resp.Body)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, "", string(body))
+//
+//	resp, err = ts.fetchStatus("/tiflash/replica")
+//	require.NoError(t, err)
+//	decoder = json.NewDecoder(resp.Body)
+//	err = decoder.Decode(&data)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, 1, len(data))
+//	require.Equal(t, uint64(2), data[0].ReplicaCount)
+//	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
+//	require.Equal(t, true, data[0].Available)
+//
+//	// Should not take effect.
+//	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+//	checkFunc := func() {
+//		resp, err := ts.fetchStatus("/tiflash/replica")
+//		require.NoError(t, err)
+//		decoder = json.NewDecoder(resp.Body)
+//		err = decoder.Decode(&data)
+//		require.NoError(t, err)
+//		require.NoError(t, resp.Body.Close())
+//		require.Equal(t, 1, len(data))
+//		require.Equal(t, uint64(2), data[0].ReplicaCount)
+//		require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
+//		require.Equal(t, true, data[0].Available)
+//	}
+//
+//	// Test for get dropped table tiflash replica info.
+//	dbt.MustExec("drop table test")
+//	checkFunc()
+//
+//	// Test unique table id replica info.
+//	dbt.MustExec("flashback table test")
+//	checkFunc()
+//	dbt.MustExec("drop table test")
+//	checkFunc()
+//	dbt.MustExec("flashback table test")
+//	checkFunc()
+//
+//	// Test for partition table.
+//	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
+//	dbt.MustExec("alter table test set tiflash replica 0;")
+//	resp, err = ts.fetchStatus("/tiflash/replica")
+//	require.NoError(t, err)
+//	decoder = json.NewDecoder(resp.Body)
+//	err = decoder.Decode(&data)
+//	require.NoError(t, err)
+//	err = resp.Body.Close()
+//	require.NoError(t, err)
+//	require.Equal(t, 3, len(data))
+//	require.Equal(t, uint64(2), data[0].ReplicaCount)
+//	require.Equal(t, "a,b", strings.Join(data[0].LocationLabels, ","))
+//	require.Equal(t, false, data[0].Available)
+//
+//	pid0 := data[0].ID
+//	pid1 := data[1].ID
+//	pid2 := data[2].ID
+//
+//	// Mock for partition 1 replica was available.
+//	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid1)
+//	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	resp, err = ts.fetchStatus("/tiflash/replica")
+//	require.NoError(t, err)
+//	decoder = json.NewDecoder(resp.Body)
+//	err = decoder.Decode(&data)
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	require.Equal(t, 3, len(data))
+//	require.Equal(t, false, data[0].Available)
+//	require.Equal(t, true, data[1].Available)
+//	require.Equal(t, false, data[2].Available)
+//
+//	// Mock for partition 0,2 replica was available.
+//	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid0)
+//	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+//	require.NoError(t, err)
+//	err = resp.Body.Close()
+//	require.NoError(t, err)
+//	req = fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, pid2)
+//	resp, err = ts.postStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(req)))
+//	require.NoError(t, err)
+//	require.NoError(t, resp.Body.Close())
+//	checkFunc = func() {
+//		resp, err := ts.fetchStatus("/tiflash/replica")
+//		require.NoError(t, err)
+//		decoder = json.NewDecoder(resp.Body)
+//		err = decoder.Decode(&data)
+//		require.NoError(t, err)
+//		require.NoError(t, resp.Body.Close())
+//		require.Equal(t, 3, len(data))
+//		require.Equal(t, true, data[0].Available)
+//		require.Equal(t, true, data[1].Available)
+//		require.Equal(t, true, data[2].Available)
+//	}
+//
+//	// Test for get truncated table tiflash replica info.
+//	dbt.MustExec("truncate table pt")
+//	dbt.MustExec("alter table pt set tiflash replica 0;")
+//	checkFunc()
+//}
 
 func TestFailpointHandler(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
