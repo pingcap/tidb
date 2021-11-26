@@ -1714,7 +1714,12 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
+				err = sumAgg.TypeInfer(sctx)
+				if err != nil { // must not happen
+					partial = nil
+					final = original
+					return
+				}
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
@@ -1771,7 +1776,10 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			// insert a sum(column)
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
-			avgSum.TypeInfer4AvgSum(avgSum.RetTp)
+			err = avgSum.TypeInfer(p.ctx)
+			if err != nil { // must not happen
+				return nil
+			}
 			newAggFuncs = append(newAggFuncs, avgSum)
 			avgSumCol := &expression.Column{
 				UniqueID: p.schema.Columns[i].UniqueID,

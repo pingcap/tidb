@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"github.com/pingcap/errors"
 	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -476,7 +477,10 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of first_row should not be nil!")
+	}
+	err := p.val.Round(&p.val, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"github.com/pingcap/errors"
 	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -72,7 +73,10 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil!")
+	}
+	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -260,7 +264,10 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil!")
+	}
+	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

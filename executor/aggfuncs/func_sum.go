@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"github.com/pingcap/errors"
 	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -169,7 +170,10 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of sum should not be nil!")
+	}
+	err := p.val.Round(&p.val, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
