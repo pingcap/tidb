@@ -117,9 +117,6 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 }
 
 func appendAggregationEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
-	if opt.tracer == nil {
-		return
-	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(),
 		fmt.Sprintf("%s is unique key", uniqueKey.String()),
 		"aggregation eliminated to projection")
@@ -127,9 +124,6 @@ func appendAggregationEliminateTraceStep(agg *LogicalAggregation, uniqueKey expr
 
 func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
 	opt *logicalOptimizeOp) {
-	if opt.tracer == nil {
-		return
-	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(),
 		fmt.Sprintf("%s is unique key", uniqueKey.String()),
 		fmt.Sprintf("agg[%s]'s distinct eliminated", af.Name))
