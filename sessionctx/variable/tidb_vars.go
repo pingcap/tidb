@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package variable
 import (
 	"math"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/uber-go/atomic"
+	"github.com/pingcap/tidb/parser/mysql"
+	"go.uber.org/atomic"
 )
 
 /*
@@ -26,13 +27,7 @@ import (
 
 	1. Add a new variable name with comment in this file.
 	2. Add the default value of the new variable in this file.
-	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
-	4. Add a field in `SessionVars`.
-	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
-	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Update ValidateSetSystemVar if the variable's value need to be validated.
-	9. Use this variable to control the behavior in code.
+	3. Add SysVar instance in 'defaultSysVars' slice.
 */
 
 // TiDB system variable names that only in session scope.
@@ -126,6 +121,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBLogFileMaxDays = "tidb_log_file_max_days"
+
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
@@ -213,6 +211,9 @@ const (
 
 	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
 	TiDBTxnReadTS = "tx_read_ts"
+
+	// TiDBReadStaleness indicates the staleness duration for following statement
+	TiDBReadStaleness = "tidb_read_staleness"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -310,11 +311,20 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
+	// Default value is `true`, means support hash exchange when new collation is on.
+	// Value set to `false` means not support hash exchange when new collation is on.
+	TiDBHashExchangeWithNewCollation = "tidb_hash_exchange_with_new_collation"
+
 	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
 	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
 	// Value set to `true` means enforce use mpp.
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
+
+	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
+	// TiFlash even though the failed TiFlash node has been recovered.
+	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -559,9 +569,6 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
-	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
-
 	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
 	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
 
@@ -577,9 +584,19 @@ const (
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
+	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
+	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
+	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
+	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+
+	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
+	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 )
 
 // TiDB vars that have only global scope
@@ -597,6 +614,15 @@ const (
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+)
+
+// TiDB intentional limits
+// Can be raised in future.
+
+const (
+	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
+	// for any type of configuration item that has concurrent workers.
+	MaxConfigurableConcurrency = 256
 )
 
 // Default TiDB system variable values.
@@ -646,7 +672,7 @@ const (
 	DefMaxChunkSize                       = 1024
 	DefDMLBatchSize                       = 0
 	DefMaxPreparedStmtCount               = -1
-	DefWaitTimeout                        = 0
+	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
@@ -667,7 +693,9 @@ const (
 	DefTiDBOptimizerSelectivityLevel      = 0
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
+	DefTiDBHashExchangeWithNewCollation   = true
 	DefTiDBEnforceMPPExecution            = false
+	DefTiDBMPPStoreFailTTL                = "60s"
 	DefTiDBTxnMode                        = ""
 	DefTiDBRowFormatV1                    = 1
 	DefTiDBRowFormatV2                    = 2
@@ -697,7 +725,7 @@ const (
 	DefTiDBScatterRegion                  = false
 	DefTiDBWaitSplitRegionFinish          = true
 	DefWaitSplitRegionTimeout             = 300 // 300s
-	DefTiDBEnableNoopFuncs                = false
+	DefTiDBEnableNoopFuncs                = Off
 	DefTiDBAllowRemoveAutoInc             = false
 	DefTiDBUsePlanBaselines               = true
 	DefTiDBEvolvePlanBaselines            = false
@@ -730,27 +758,30 @@ const (
 	DefTiDBEnableExchangePartition        = false
 	DefCTEMaxRecursionDepth               = 1000
 	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLAgentAddress             = ""
 	DefTiDBTopSQLPrecisionSeconds         = 1
 	DefTiDBTopSQLMaxStatementCount        = 200
 	DefTiDBTopSQLMaxCollect               = 10000
 	DefTiDBTopSQLReportIntervalSeconds    = 60
-	DefTiDBEnableGlobalTemporaryTable     = false
-	DefTMPTableSize                       = 16777216
+	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
+	DefTiDBTSOClientBatchMaxWaitTime      = 0.0 // 0ms
+	DefTiDBEnableTSOFollowerProxy         = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBEnablePseudoForOutdatedStats   = true
+	DefEnablePlacementCheck               = true
+	DefTimestamp                          = "0"
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog            = atomic.NewBool(false)
-	EnablePProfSQLCPU            = atomic.NewBool(false)
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog           = atomic.NewBool(false)
+	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	EnablePProfSQLCPU           = atomic.NewBool(false)
+	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
@@ -765,22 +796,21 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	TopSQLVariable                        = TopSQL{
 		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
-		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
-	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.
 type TopSQL struct {
 	// Enable top-sql or not.
 	Enable *atomic.Bool
-	// AgentAddress indicate the collect agent address.
-	AgentAddress *atomic.String
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -793,5 +823,5 @@ type TopSQL struct {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
 }

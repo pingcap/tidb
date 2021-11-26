@@ -1,0 +1,9 @@
+[lightning]
+max-error = 20
+task-info-schema-name = 'sqlmodedb_lightning_task_info'
+
+[tikv-importer]
+backend = 'local'
+
+[tidb]
+sql-mode = 'STRICT_TRANS_TABLES'

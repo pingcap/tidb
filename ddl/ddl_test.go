@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,16 +21,17 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -57,6 +59,11 @@ func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
 }
 
+// GetMaxRowID is used for test.
+func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
+	return getRangeEndKey(store, priority, t, startHandle, endHandle)
+}
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -75,6 +82,7 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 
@@ -88,16 +96,14 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
-	c.Assert(err, IsNil)
-
-	return d
+	return d, err
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
@@ -177,6 +183,17 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
+	}
+}
+
+func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	newCol := table.ToColumn(tblInfo.Columns[0])
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
 	}
 }
 

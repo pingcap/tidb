@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +92,7 @@ func TestProfileToDatum(t *testing.T) {
 		comment = fmt.Sprintf("row %2d, actual (%s), expected (%s)", i, rowStr, expectStr)
 		equal := true
 		for j, r := range row {
-			v, err := r.CompareDatum(nil, &datums[i][j])
+			v, err := r.Compare(nil, &datums[i][j], collate.GetBinaryCollator())
 			if v != 0 || err != nil {
 				equal = false
 				break

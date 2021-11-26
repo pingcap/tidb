@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,12 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -44,6 +40,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -344,7 +345,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	allocators := tbl.Allocators(e.ctx)
 	for _, alloc := range allocators {
-		nextGlobalID, err := alloc.NextGlobalAutoID(tblMeta.ID)
+		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
 			return err
 		}
@@ -967,18 +968,25 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
-	var planDigest *parser.Digest
-	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
-		_, planDigest = seVars.StmtCtx.GetPlanDigest()
-	}
 	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
-	lockCtx.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest)
+	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
+		if req == nil {
+			return nil
+		}
+		if len(req.Mutations) == 0 {
+			return nil
+		}
+		if mutation := req.Mutations[0]; mutation != nil {
+			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
+			return seVars.StmtCtx.GetResourceGroupTagByLabel(label)
+		}
+		return nil
+	}
 	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
 		cfg := config.GetGlobalConfig()
 		if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
@@ -1008,6 +1016,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
 
+	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1027,6 +1036,20 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
+	if len(stmtCtx.LockTableIDs) == 0 {
+		return keys
+	}
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1653,12 +1676,20 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	sc := &stmtctx.StatementContext{
-		TimeZone:      vars.Location(),
-		TaskID:        stmtctx.AllocateTaskID(),
-		CTEStorageMap: map[int]*CTEStorages{},
-		IsStaleness:   false,
+	var sc *stmtctx.StatementContext
+	if vars.TxnCtx.CouldRetry {
+		// Must construct new statement context object, the retry history need context for every statement.
+		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
+		sc = &stmtctx.StatementContext{}
+	} else {
+		sc = vars.InitStatementContext()
 	}
+	sc.TimeZone = vars.Location()
+	sc.TaskID = stmtctx.AllocateTaskID()
+	sc.CTEStorageMap = map[int]*CTEStorages{}
+	sc.IsStaleness = false
+	sc.LockTableIDs = make(map[int64]struct{})
+	sc.LogicalOptimizeTrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -1701,10 +1732,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
 		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
+		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	}
-	if _, ok := s.(*ast.ExplainForStmt); ok {
+	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
+		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1738,7 +1771,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
@@ -1869,8 +1902,8 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
 }

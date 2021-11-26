@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -551,7 +553,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		return
 	}
 
-	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
+	agentAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {

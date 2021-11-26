@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,9 +21,9 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -59,6 +60,15 @@ func (a *AggFuncDesc) String() string {
 	for i, arg := range a.Args {
 		buffer.WriteString(arg.String())
 		if i+1 != len(a.Args) {
+			buffer.WriteString(", ")
+		}
+	}
+	if len(a.OrderByItems) > 0 {
+		buffer.WriteString(" order by ")
+	}
+	for i, arg := range a.OrderByItems {
+		buffer.WriteString(arg.String())
+		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}
 	}
@@ -282,7 +292,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
-		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg,
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg,
 		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:

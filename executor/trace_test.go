@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -64,4 +65,14 @@ func rowsOrdered(rows [][]interface{}) bool {
 		}
 	}
 	return true
+}
+
+func (s *testSuite1) TestTracePlanStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp123(id int);")
+	rows := tk.MustQuery("trace plan select * from tp123").Rows()
+	c.Assert(rows, HasLen, 1)
+	c.Assert(rows[0], HasLen, 1)
+	c.Assert(rows[0][0].(string), Matches, ".*zip")
 }

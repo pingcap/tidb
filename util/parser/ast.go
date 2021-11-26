@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,13 +17,13 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-// GetDefaultDB checks if all columns in the AST have explicit DBName. If not, return specified DBName.
+// GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
 	sel.Accept(implicitDB)

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,8 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -964,12 +965,11 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
 	}
 	return nil
 }
@@ -1942,12 +1942,11 @@ func (b *builtinHourSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(ds[i].Hours())
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).Hour())
 	}
 	return nil
 }

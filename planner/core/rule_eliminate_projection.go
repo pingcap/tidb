@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -143,7 +145,7 @@ type projectionEliminator struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false)
 	return root, nil
 }
@@ -177,7 +179,11 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
+				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				foldedExpr := expression.FoldConstant(proj.Exprs[i])
+				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
+				foldedExpr.GetType().Flag = (foldedExpr.GetType().Flag & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().Flag & mysql.NotNullFlag)
+				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
 		}

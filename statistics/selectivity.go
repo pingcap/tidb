@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,9 +20,9 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -361,13 +362,12 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType, lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
-		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
+		ranges, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
 			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges, cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
@@ -375,10 +375,10 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		}
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 		if err != nil {
 			return 0, nil, false, err
 		}
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 	default:
 		panic("should never be here")
 	}

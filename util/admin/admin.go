@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,13 +22,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -91,7 +92,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionDropIndexes:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
 		// know the type of index here, we consider all indices except primary index as non-rollbackable.
@@ -115,10 +116,16 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
+		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
 		return job.SchemaState == model.StateNone
 	}
 	return true
+}
+
+// MayNeedBackfill returns whether the action type may need to backfill the data.
+func MayNeedBackfill(tp model.ActionType) bool {
+	return tp == model.ActionAddIndex || tp == model.ActionAddPrimaryKey || tp == model.ActionModifyColumn
 }
 
 // CancelJobs cancels the DDL jobs.
@@ -170,7 +177,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+			if MayNeedBackfill(job.Type) {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {

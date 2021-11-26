@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -75,21 +76,6 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 		locs = locs[:len(locs)-1]
 		n = child
 	}
-}
-
-// collectFuncUsage collect the value by given function name
-func (n *flamegraphNode) collectFuncUsage(name string) int64 {
-	if n.name == name {
-		return n.cumValue
-	}
-	if len(n.children) == 0 {
-		return 0
-	}
-	var usage int64 = 0
-	for _, child := range n.children {
-		usage = child.collectFuncUsage(name) + usage
-	}
-	return usage
 }
 
 type flamegraphNodeWithLocation struct {

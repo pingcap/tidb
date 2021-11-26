@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +44,8 @@ func TestValueExprRestore(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expect, func(t *testing.T) {
 			t.Parallel()
 			var sb strings.Builder

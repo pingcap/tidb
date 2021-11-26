@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,7 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -55,6 +56,7 @@ var (
 	outputRatio int
 )
 
+// #nosec G404
 func nextRow(r *rand.Rand, keySize int, valSize int) *comparableRow {
 	key := make([]types.Datum, keySize)
 	for i := range key {
@@ -187,6 +189,7 @@ func decodeMeta(fd *os.File) error {
  *		One 64-bit integer represent the row size in bytes, followed by the
  *      the actual row bytes.
  */
+// #nosec G404
 func export() error {
 	var outputBytes []byte
 

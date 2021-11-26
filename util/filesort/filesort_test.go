@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,50 +20,24 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testFileSortSuite{})
-
-type testFileSortSuite struct {
-}
-
-func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []types.Datum, handle int64) {
-	key = make([]types.Datum, keySize)
-	for i := range key {
-		key[i] = types.NewDatum(r.Int())
-	}
-
-	val = make([]types.Datum, valSize)
-	for j := range val {
-		val[j] = types.NewDatum(r.Int())
-	}
-
-	handle = r.Int63()
-	return
-}
-
-func (s *testFileSortSuite) TestLessThan(c *C) {
-	defer testleak.AfterTest(c)()
+func TestLessThan(t *testing.T) {
+	t.Parallel()
 
 	sc := new(stmtctx.StatementContext)
 
 	d0 := types.NewDatum(0)
 	d1 := types.NewDatum(1)
 
-	tblOneColumn := []struct {
-		Arg1 []types.Datum
-		Arg2 []types.Datum
-		Arg3 []bool
-		Ret  bool
+	tests := []struct {
+		i      []types.Datum
+		j      []types.Datum
+		byDesc []bool
+		ret    bool
 	}{
 		{[]types.Datum{d0}, []types.Datum{d0}, []bool{false}, false},
 		{[]types.Datum{d0}, []types.Datum{d1}, []bool{false}, true},
@@ -70,20 +45,6 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 		{[]types.Datum{d0}, []types.Datum{d0}, []bool{true}, false},
 		{[]types.Datum{d0}, []types.Datum{d1}, []bool{true}, false},
 		{[]types.Datum{d1}, []types.Datum{d0}, []bool{true}, true},
-	}
-
-	for _, t := range tblOneColumn {
-		ret, err := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
-	}
-
-	tblTwoColumns := []struct {
-		Arg1 []types.Datum
-		Arg2 []types.Datum
-		Arg3 []bool
-		Ret  bool
-	}{
 		{[]types.Datum{d0, d0}, []types.Datum{d1, d1}, []bool{false, false}, true},
 		{[]types.Datum{d0, d1}, []types.Datum{d1, d1}, []bool{false, false}, true},
 		{[]types.Datum{d0, d0}, []types.Datum{d1, d1}, []bool{false, false}, true},
@@ -95,15 +56,15 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 		{[]types.Datum{d1, d1}, []types.Datum{d0, d0}, []bool{false, false}, false},
 	}
 
-	for _, t := range tblTwoColumns {
-		ret, err := lessThan(sc, t.Arg1, t.Arg2, t.Arg3)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
+	for _, test := range tests {
+		ret, err := lessThan(sc, test.i, test.j, test.byDesc)
+		require.NoError(t, err)
+		require.Equal(t, test.ret, ret)
 	}
 }
 
-func (s *testFileSortSuite) TestInMemory(c *C) {
-	defer testleak.AfterTest(c)()
+func TestInMemory(t *testing.T) {
+	t.Parallel()
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
@@ -127,33 +88,37 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 	)
 
 	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
-	c.Assert(err, IsNil)
-	defer fs.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs.Close()
+		require.NoError(t, err)
+	}()
 
 	nRows := r.Intn(bufSize-1) + 1 // random int in range [1, bufSize - 1]
 	for i := 1; i <= nRows; i++ {
 		err = fs.Input(nextRow(r, keySize, valSize))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	pkey, _, _, err = fs.Output()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	for i := 1; i < nRows; i++ {
 		key, _, _, err = fs.Output()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ret, err = lessThan(sc, key, pkey, byDesc)
-		c.Assert(err, IsNil)
-		c.Assert(ret, IsFalse)
+		require.NoError(t, err)
+		require.False(t, ret)
 		pkey = key
 	}
 }
 
-func (s *testFileSortSuite) TestMultipleFiles(c *C) {
-	defer testleak.AfterTest(c)()
+func TestMultipleFiles(t *testing.T) {
+	t.Parallel()
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
@@ -177,51 +142,54 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	)
 
 	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fsBuilder := new(Builder)
 
 	// Test for basic function.
 	_, err = fsBuilder.Build()
-	c.Assert(err.Error(), Equals, "StatementContext is nil")
+	require.EqualError(t, err, "StatementContext is nil")
 	fsBuilder.SetSC(sc)
 	_, err = fsBuilder.Build()
-	c.Assert(err.Error(), Equals, "key size is not positive")
+	require.EqualError(t, err, "key size is not positive")
 	fsBuilder.SetDesc(byDesc)
 	_, err = fsBuilder.Build()
-	c.Assert(err.Error(), Equals, "mismatch in key size and byDesc slice")
+	require.EqualError(t, err, "mismatch in key size and byDesc slice")
 	fsBuilder.SetSchema(keySize, valSize)
 	_, err = fsBuilder.Build()
-	c.Assert(err.Error(), Equals, "buffer size is not positive")
+	require.EqualError(t, err, "buffer size is not positive")
 	fsBuilder.SetBuf(bufSize)
 	_, err = fsBuilder.Build()
-	c.Assert(err.Error(), Equals, "tmpDir does not exist")
+	require.EqualError(t, err, "tmpDir does not exist")
 	fsBuilder.SetDir(tmpDir)
 
 	fs, err = fsBuilder.SetWorkers(1).Build()
-	c.Assert(err, IsNil)
-	defer fs.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs.Close()
+		require.NoError(t, err)
+	}()
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
 	for i := 1; i <= nRows; i++ {
 		err = fs.Input(nextRow(r, keySize, valSize))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	pkey, _, _, err = fs.Output()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i := 1; i < nRows; i++ {
 		key, _, _, err = fs.Output()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ret, err = lessThan(sc, key, pkey, byDesc)
-		c.Assert(err, IsNil)
-		c.Assert(ret, IsFalse)
+		require.NoError(t, err)
+		require.False(t, ret)
 		pkey = key
 	}
 }
 
-func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
-	defer testleak.AfterTest(c)()
+func TestMultipleWorkers(t *testing.T) {
+	t.Parallel()
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
@@ -245,33 +213,36 @@ func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 	)
 
 	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fsBuilder := new(Builder)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(4).SetDesc(byDesc).SetDir(tmpDir).Build()
-	c.Assert(err, IsNil)
-	defer fs.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs.Close()
+		require.NoError(t, err)
+	}()
 
 	nRows := (r.Intn(bufSize) + 1) * (r.Intn(10) + 2)
 	for i := 1; i <= nRows; i++ {
 		err = fs.Input(nextRow(r, keySize, valSize))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	pkey, _, _, err = fs.Output()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i := 1; i < nRows; i++ {
 		key, _, _, err = fs.Output()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ret, err = lessThan(sc, key, pkey, byDesc)
-		c.Assert(err, IsNil)
-		c.Assert(ret, IsFalse)
+		require.NoError(t, err)
+		require.False(t, ret)
 		pkey = key
 	}
 }
 
-func (s *testFileSortSuite) TestClose(c *C) {
-	defer testleak.AfterTest(c)()
+func TestClose(t *testing.T) {
+	t.Parallel()
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
@@ -294,63 +265,69 @@ func (s *testFileSortSuite) TestClose(c *C) {
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
 	tmpDir0, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir0).Build()
-	c.Assert(err, IsNil)
-	defer fs0.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs0.Close()
+		require.NoError(t, err)
+	}()
 
 	tmpDir1, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir1).Build()
-	c.Assert(err, IsNil)
-	defer fs1.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs1.Close()
+		require.NoError(t, err)
+	}()
 
 	// 1. Close after some Input
 	err = fs0.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = fs0.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = os.Stat(tmpDir0)
-	c.Assert(os.IsNotExist(err), IsTrue)
+	require.True(t, os.IsNotExist(err))
 
 	_, _, _, err = fs0.Output()
-	c.Assert(err, ErrorMatches, errmsg)
+	require.EqualError(t, err, errmsg)
 
 	err = fs0.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, ErrorMatches, errmsg)
+	require.EqualError(t, err, errmsg)
 
 	err = fs0.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// 2. Close after some Output
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, _, _, err = fs1.Output()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = fs1.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = os.Stat(tmpDir1)
-	c.Assert(os.IsNotExist(err), IsTrue)
+	require.True(t, os.IsNotExist(err))
 
 	_, _, _, err = fs1.Output()
-	c.Assert(err, ErrorMatches, errmsg)
+	require.EqualError(t, err, errmsg)
 
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, ErrorMatches, errmsg)
+	require.EqualError(t, err, errmsg)
 
 	err = fs1.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
-	defer testleak.AfterTest(c)()
+func TestMismatchedUsage(t *testing.T) {
+	t.Parallel()
 
 	seed := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(seed)
@@ -373,37 +350,43 @@ func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	// Prepare two FileSorter instances for tests
 	fsBuilder := new(Builder)
 	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fs0, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
-	c.Assert(err, IsNil)
-	defer fs0.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs0.Close()
+		require.NoError(t, err)
+	}()
 
 	tmpDir, err = os.MkdirTemp("", "util_filesort_test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fs1, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(1).SetDesc(byDesc).SetDir(tmpDir).Build()
-	c.Assert(err, IsNil)
-	defer fs1.Close()
+	require.NoError(t, err)
+	defer func() {
+		err := fs1.Close()
+		require.NoError(t, err)
+	}()
 
 	// 1. call Output after fetched all rows
 	err = fs0.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	key, _, _, err = fs0.Output()
-	c.Assert(err, IsNil)
-	c.Assert(key, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, key)
 
 	key, _, _, err = fs0.Output()
-	c.Assert(err, IsNil)
-	c.Assert(key, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, key)
 
 	// 2. call Input after Output
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	key, _, _, err = fs1.Output()
-	c.Assert(err, IsNil)
-	c.Assert(key, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, key)
 
 	err = fs1.Input(nextRow(r, keySize, valSize))
-	c.Assert(err, ErrorMatches, errmsg)
+	require.EqualError(t, err, errmsg)
 }

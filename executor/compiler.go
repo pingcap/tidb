@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,10 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -55,10 +56,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
+	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
+	if err != nil {
 		return nil, err
 	}
-	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
 	if err != nil {
@@ -79,18 +81,18 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:         ctx,
-		SnapshotTS:    ret.LastSnapshotTS,
-		IsStaleness:   ret.IsStaleness,
-		TxnScope:      ret.TxnScope,
-		InfoSchema:    ret.InfoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
+		GoCtx:            ctx,
+		SnapshotTS:       ret.LastSnapshotTS,
+		IsStaleness:      ret.IsStaleness,
+		ReplicaReadScope: ret.ReadReplicaScope,
+		InfoSchema:       ret.InfoSchema,
+		Plan:             finalPlan,
+		LowerPriority:    lowerPriority,
+		Text:             stmtNode.Text(),
+		StmtNode:         stmtNode,
+		Ctx:              c.Ctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
 	}, nil
 }
 
@@ -232,16 +234,22 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 		}
 	case *ast.CreateBindingStmt:
 		var resNode ast.ResultSetNode
+		var tableRef *ast.TableRefsClause
 		if x.OriginNode != nil {
 			switch n := x.OriginNode.(type) {
 			case *ast.SelectStmt:
-				resNode = n.From.TableRefs
+				tableRef = n.From
 			case *ast.DeleteStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.UpdateStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.InsertStmt:
-				resNode = n.Table.TableRefs
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
 			}
 			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
@@ -252,13 +260,18 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 		if len(dbLabelSet) == 0 && x.HintedNode != nil {
 			switch n := x.HintedNode.(type) {
 			case *ast.SelectStmt:
-				resNode = n.From.TableRefs
+				tableRef = n.From
 			case *ast.DeleteStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.UpdateStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.InsertStmt:
-				resNode = n.Table.TableRefs
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
 			}
 			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
@@ -335,6 +348,9 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.DropIndexStmt:
 		return "DropIndex"
 	case *ast.DropTableStmt:
+		if x.IsView {
+			return "DropView"
+		}
 		return "DropTable"
 	case *ast.ExplainStmt:
 		return "Explain"
@@ -373,6 +389,12 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateBinding"
 	case *ast.IndexAdviseStmt:
 		return "IndexAdvise"
+	case *ast.DropBindingStmt:
+		return "DropBinding"
+	case *ast.TraceStmt:
+		return "Trace"
+	case *ast.ShutdownStmt:
+		return "Shutdown"
 	}
 	return "other"
 }

@@ -1,0 +1,4 @@
+CREATE TABLE `double` (
+    `ref` INT NOT NULL,
+    `pk` DOUBLE NOT NULL PRIMARY KEY
+);

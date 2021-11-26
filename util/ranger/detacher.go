@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -102,7 +103,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 	if !ok {
 		return -1
 	}
-	_, collation := expr.CharsetAndCollation(f.GetCtx())
+	_, collation := expr.CharsetAndCollation()
 	switch f.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(f)
@@ -215,7 +216,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		sameLens, allPoints := true, true
 		numCols := int(0)
 		for j, ran := range res.Ranges {
-			if !ran.IsPoint(sctx.GetSessionVars().StmtCtx) {
+			if !ran.IsPoint(sctx) {
 				allPoints = false
 				break
 			}
@@ -532,8 +533,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			points[offset] = rb.build(accesses[offset])
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond))
-		// Early termination if false expression found
-		if len(points[offset]) == 0 {
+		if len(points[offset]) == 0 { // Early termination if false expression found
+			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
+				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
+				// for safety, return the whole conditions in this case
+				return nil, conditions, nil, nil, false
+			}
 			return nil, nil, nil, nil, true
 		}
 	}
@@ -553,8 +558,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		if points[i] == nil {
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
-		} else if len(points[i]) == 0 {
-			// Early termination if false expression found
+		} else if len(points[i]) == 0 { // Early termination if false expression found
+			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
+				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
+				// for safety, return the whole conditions in this case
+				return nil, conditions, nil, nil, false
+			}
 			return nil, nil, nil, nil, true
 		} else {
 			// All Intervals are single points
@@ -565,7 +574,10 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
-			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
+				// TODO: optimize it more elaborately, e.g. return [2 3, 2 3] as accesses for 'where a = 2 and b = 3 and c >= ? and c <= ?'
+				return nil, conditions, nil, nil, false
+			}
 		}
 	}
 	for i, offset := range offsets {
@@ -598,13 +610,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) ([]*Range, []expression.Expression, []*valueInfo, bool, error) {
-	sc := d.sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		checkerCol:    d.cols[0],
 		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
 		length:        d.lengths[0],
 	}
-	rb := builder{sc: sc}
+	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges []*Range
@@ -616,7 +627,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			var accesses, filters []expression.Expression
 			res, err := d.detachCNFCondAndBuildRangeForIndex(cnfItems, newTpSlice, true)
 			if err != nil {
-				return nil, nil, nil, false, nil
+				return nil, nil, nil, false, err
 			}
 			ranges := res.Ranges
 			accesses = res.AccessConds
@@ -654,7 +665,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item)
-			ranges, err := points2Ranges(sc, points, newTpSlice[0])
+			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}
@@ -681,7 +692,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	if hasPrefix(d.lengths) {
 		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
 	}
-	totalRanges, err := UnionRanges(sc, totalRanges, d.mergeConsecutive)
+	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}

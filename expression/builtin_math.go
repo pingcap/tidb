@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -23,14 +24,14 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -272,14 +273,17 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
 
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	if bf.tp.Decimal != types.UnspecifiedLength {
-		if argFieldTp.Decimal != types.UnspecifiedLength {
-			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
-			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
-		} else {
-			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.Flen = argFieldTp.Flen
+		bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+		if bf.tp.Decimal != types.UnspecifiedLength {
+			if argFieldTp.Decimal != types.UnspecifiedLength {
+				decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+				bf.tp.Flen += mathutil.Max(decimalDelta, 0)
+			} else {
+				bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+			}
 		}
 	}
 
@@ -486,8 +490,10 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	argFieldTp := args[0].GetType()
-	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 
 	switch argTp {
 	case types.ETInt:
@@ -674,7 +680,11 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 	switch argTp {
 	case types.ETInt:
 		if retTp == types.ETInt {
@@ -1013,7 +1023,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
+		sig = &builtinRandSig{bt, ctx.GetSessionVars().Rng}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1029,7 +1039,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, utilMath.NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1040,12 +1050,11 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu       *sync.Mutex
-	mysqlRng *MysqlRng
+	mysqlRng *utilMath.MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1053,9 +1062,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
-	b.mu.Lock()
 	res := b.mysqlRng.Gen()
-	b.mu.Unlock()
 	return res, false, nil
 }
 
@@ -1079,11 +1086,11 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *MysqlRng
+	var rng *utilMath.MysqlRng
 	if !isNull {
-		rng = NewWithSeed(seed)
+		rng = utilMath.NewWithSeed(seed)
 	} else {
-		rng = NewWithSeed(0)
+		rng = utilMath.NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }
@@ -1897,9 +1904,11 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+		bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
+	}
 	bf.tp.Flag |= args[0].GetType().Flag
 
 	var sig builtinFunc

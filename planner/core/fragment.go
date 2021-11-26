@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,13 +16,14 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -345,8 +347,15 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
-	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
+	req := &kv.MPPBuildTasksRequest{
+		KeyRanges: kvRanges,
+	}
+	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
+	if err != nil {
+		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
+		ttl = 30 * time.Second
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

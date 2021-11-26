@@ -8,13 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package server
 
 import (
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 const maxColumnNameSize = 256
@@ -36,7 +38,10 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
+	if d == nil {
+		d = newResultEncoder(charset.CharsetUTF8MB4)
+	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
@@ -45,15 +50,14 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.Schema))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.Table))
-	buffer = dumpLengthEncodedString(buffer, []byte(column.OrgTable))
-	buffer = dumpLengthEncodedString(buffer, nameDump)
-	buffer = dumpLengthEncodedString(buffer, orgnameDump)
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Schema)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.Table)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta([]byte(column.OrgTable)))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(nameDump))
+	buffer = dumpLengthEncodedString(buffer, d.encodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-
-	buffer = dumpUint16(buffer, column.Charset)
+	buffer = dumpUint16(buffer, d.columnTypeInfoCharsetID(column))
 	buffer = dumpUint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
@@ -68,6 +72,16 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 	return buffer
 }
 
+func isStringColumnType(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
+		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+		return true
+	}
+	return false
+}
+
 func dumpFlag(tp byte, flag uint16) uint16 {
 	switch tp {
 	case mysql.TypeSet:
@@ -75,9 +89,6 @@ func dumpFlag(tp byte, flag uint16) uint16 {
 	case mysql.TypeEnum:
 		return flag | uint16(mysql.EnumFlag)
 	default:
-		if mysql.HasBinaryFlag(uint(flag)) {
-			return flag | uint16(mysql.NotNullFlag)
-		}
 		return flag
 	}
 }

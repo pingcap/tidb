@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,7 +26,7 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
+func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }
 

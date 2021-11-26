@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -77,6 +78,13 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) createSQLBind() error {
+	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
+	// is necessary to avoid 'create binding' been recorded as 'explain'.
+	saveStmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = saveStmtCtx
+	}()
+
 	bindInfo := bindinfo.Binding{
 		BindSQL:   e.bindSQL,
 		Charset:   e.charset,

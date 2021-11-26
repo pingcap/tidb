@@ -1,0 +1,326 @@
+### tidb-lightning configuartion
+[lightning]
+
+# Listening address for the HTTP server (set to empty string to disable).
+# The server is responsible for the web interface, submitting import tasks,
+# serving Prometheus metrics and exposing debug profiling data.
+status-addr = ":8289"
+
+# Toggle server mode.
+# If "false", running Lightning will immediately start the import job, and exits
+# after the job is finished.
+# If "true", running Lightning will wait for user to submit tasks, via the HTTP API
+# (`curl http://lightning-ip:8289/tasks --data-binary @tidb-lightning.toml`).
+# The program will keep running and waiting for more tasks, until receiving the SIGINT signal.
+server-mode = false
+
+# check if the cluster satisfies the minimum requirement before starting
+# check-requirements = true
+
+# index-concurrency controls the maximum handled index concurrently while reading Mydumper SQL files. It can affect the tikv-importer disk usage.
+index-concurrency = 2
+# table-concurrency controls the maximum handled tables concurrently while reading Mydumper SQL files. It can affect the tikv-importer memory usage.
+table-concurrency = 6
+# region-concurrency changes the concurrency number of data. It is set to the number of logical CPU cores by default and needs no configuration.
+# In mixed configuration, you can set it to 75% of the size of logical CPU cores.
+# region-concurrency default to runtime.NumCPU()
+# region-concurrency =
+# io-concurrency controls the maximum IO concurrency
+# Excessive IO concurrency causes an increase in IO latency because the disk
+# internal buffer is frequently refreshed causing a cache miss. For different
+# disk media, concurrency has different effects on IO latency, which can be
+# adjusted according to monitoring.
+# Ref: https://en.wikipedia.org/wiki/Disk_buffer#Read-ahead/read-behind
+# io-concurrency = 5
+# meta-schema-name is (database name) to store lightning task and table metadata.
+# the meta schema and tables is store in target tidb cluster.
+# this config is only used in "local" and "importer" backend.
+# meta-schema-name = "lightning_metadata"
+
+# maximum number of non-fatal errors to tolerate before stopping Lightning.
+# Non-fatal errors are those that are localized to a few rows, and ignoring those rows allow the import process to continue.
+# Setting this to N means Lightning will stop as soon as possible when the (N+1)-th error is encountered.
+# The skipped rows will be inserted to tables inside the "task info" schema on the target TiDB, which can be configured below.
+max-error = 0
+# task-info-schema-name is the name of the schema/database storing human-readable Lightning execution result.
+# set this to empty string to disable error recording.
+#task-info-schema-name = 'lightning_task_info'
+
+# logging
+level = "info"
+# file path for log. If set to empty, log will be written to /tmp/lightning.log.{timestamp}
+# Set to "-" to write logs to stdout.
+file = "tidb-lightning.log"
+max-size = 128 # MB
+max-days = 28
+max-backups = 14
+
+[security]
+# specifies certificates and keys for TLS connections within the cluster.
+# public certificate of the CA. Leave empty to disable TLS.
+# ca-path = "/path/to/ca.pem"
+# public certificate of this service.
+# cert-path = "/path/to/lightning.pem"
+# private key of this service.
+# key-path = "/path/to/lightning.key"
+# If set to true, lightning will redact sensitive infomation in log.
+# redact-info-log = false
+
+[checkpoint]
+# Whether to enable checkpoints.
+# While importing, Lightning will record which tables have been imported, so even if Lightning or other component
+# crashed, we could start from a known good state instead of redoing everything.
+enable = true
+# The schema name (database name) to store the checkpoints
+schema = "tidb_lightning_checkpoint"
+# Where to store the checkpoints.
+# Set to "file" to store as a local file.
+# Set to "mysql" to store into a remote MySQL-compatible database
+driver = "file"
+# The data source name (DSN) indicating the location of the checkpoint storage.
+# For "file" driver, the DSN is a path. If not specified, Lightning would default to "/tmp/CHKPTSCHEMA.pb".
+# For "mysql" driver, the DSN is a URL in the form "USER:PASS@tcp(HOST:PORT)/".
+# If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints.
+#dsn = "/tmp/tidb_lightning_checkpoint.pb"
+# Whether to keep the checkpoints after all data are imported.
+# valid options:
+# - remove(default). the checkpoints will be deleted
+# - rename. the checkpoints data will be kept, but will change the checkpoint data schema name with `schema.{taskID}.bak`
+# - origin. keep the checkpoints data unchanged.
+#keep-after-success = "remove"
+
+[tikv-importer]
+# Delivery backend, can be "importer", "local" or "tidb".
+backend = "importer"
+# Address of tikv-importer when the backend is 'importer'
+addr = "127.0.0.1:8287"
+# What to do on duplicated record (unique key conflict) when the backend is 'tidb'. Possible values are:
+#  - replace: replace the old record by the new record (i.e. insert rows using "REPLACE INTO")
+#  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
+#  - error: produce an error (i.e. insert rows using "INSERT INTO"), which will count towards the max-error limit.
+#on-duplicate = "replace"
+# Whether to detect and resolve duplicate records (unique key conflict) when the backend is 'local'.
+# Current supports three resolution algorithms:
+#  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
+#    inconsistent data in the target TiDB.
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
+#  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
+#    state in the target TiDB.
+#duplicate-resolution = 'none'
+# Maximum KV size of SST files produced in the 'local' backend. This should be the same as
+# the TiKV region size to avoid further region splitting. The default value is 96 MiB.
+#region-split-size = '96MiB'
+# write key-values pairs to tikv batch size
+#send-kv-pairs = 32768
+# local storage directory used in "local" backend.
+#sorted-kv-dir = ""
+# Maximum size of the local storage directory. Periodically, Lightning will check if the total storage size exceeds this
+# value. If so the "local" backend will block and immediately ingest the largest engines into the target TiKV until the
+# usage falls below the specified capacity.
+# Note that the disk-quota IS NOT A HARD LIMIT. There are chances that the usage overshoots the quota before it was
+# detected. The overshoot is up to 6.3 GiB in default settings (8 open engines, 40 region-concurrency, check quota every
+# minute).
+# Setting the disk quota too low may cause engines to overlap each other too much and slow down import.
+# This setting is ignored in "tidb" and "importer" backends.
+# The default value of 0 means letting Lightning to automatically pick an appropriate capacity using the free disk space
+# of sorted-kv-dir, subtracting the overshoot.
+#disk-quota = 0
+# range-concurrency controls the maximum ingest concurrently while writing to tikv, It can affect the network traffic.
+# this default config can make full use of a 10Gib bandwidth network, if the network bandwidth is higher, you can increase
+# this to gain better performance. Larger value will also increase the memory usage slightly.
+#range-concurrency = 16
+# The memory cache used in local backend for each engine. The memory usage during write-KV phase by the engines is bound
+# by (index-concurrency + table-concurrency) * engine-mem-cache-size.
+#engine-mem-cache-size = '512MiB'
+# The memory cache used in for local sorting during the encode-KV phase before flushing into the engines. The memory
+# usage is bound by region-concurrency * local-writer-mem-cache-size.
+#local-writer-mem-cache-size = '128MiB'
+
+[mydumper]
+# block size of file reading
+read-block-size = '64KiB'
+# minimum size (in terms of source data file) of each batch of import.
+# Lightning will split a large table into multiple engine files according to this size.
+#batch-size = '100GiB'
+
+# Engine file needs to be imported sequentially. Due to table-concurrency, multiple engines will be
+# imported nearly the same time, and this will create a queue and this wastes resources. Therefore,
+# Lightning will slightly increase the size of the first few batches to properly distribute
+# resources. The scale up is controlled by this parameter, which expresses the ratio of duration
+# between the "import" and "write" steps with full concurrency. This can be calculated as the ratio
+# (import duration / write duration) of a single table of size around 1 GB. The exact timing can be
+# found in the log. If "import" is faster, the batch size anomaly is smaller, and a ratio of
+# zero means uniform batch size. This value should be in the range (0 <= batch-import-ratio < 1).
+batch-import-ratio = 0.75
+
+# mydumper local source data directory
+data-source-dir = "/tmp/export-20180328-200751"
+# if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
+no-schema = false
+# the character set of the schema files; only supports one of:
+#  - utf8mb4: the schema files must be encoded as UTF-8, otherwise will emit errors
+#  - gb18030: the schema files must be encoded as GB-18030, otherwise will emit errors
+#  - auto:    (default) automatically detect if the schema is UTF-8 or GB-18030, error if the encoding is neither
+#  - binary:  do not try to decode the schema files
+# note that the *data* files are always parsed as binary regardless of schema encoding.
+#character-set = "auto"
+
+# Specifies the character set of the source data file. Lightning converts the source file from the specified character set to UTF-8 encoding when importing.
+# Currently, this configuration only specifies the character set of the CSV files with the following options supported:
+# - utf8mb4: Indicates that the source data file uses UTF-8 encoding.
+# - GB18030: Indicates that the source data file uses the GB-18030 encoding.
+# - GBK: The source data file uses GBK encoding (GBK encoding is an extension of the GB-2312 character set, also known as Code Page 936).
+# - binary: Indicates that Lightning does not convert the encoding (by default).
+# If left blank, the default value "binary" is used, that is to say, Lightning does not convert the encoding.
+# Note that Lightning does not predict about the character set of the source data file and only converts the source file and import the data based on this configuration.
+# If the value of this configuration is not the same as the actual encoding of the source data file, a failed import, data loss or data disorder might appear.
+data-character-set = "binary"
+# Specifies the replacement character in case of incompatible characters during the character set conversion of the source data file.
+# This configuration must not be duplicated with field separators, quote definers, and line breaks.
+# The default value is "\uFFFD", which is the "error" Rune or Unicode replacement character in UTF-8 encoding.
+# Changing the default value might result in potential degradation of parsing performance for the source data file.
+data-invalid-char-replace = "\uFFFD"
+
+# make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
+# different objects. Currently only affects [[routes]].
+case-sensitive = false
+
+# if strict-format is ture, lightning will use '\r' and '\n' to determine the end of each line. Make sure your data
+# doesn't contain '\r' or '\n' if strict-format is enabled, or csv parser may parse incorrect result.
+strict-format = false
+# if strict-format is true, large CSV files will be split to multiple chunks, which Lightning
+# will restore in parallel. The size of each chunk is `max-region-size`, where the default is 256 MiB.
+#max-region-size = '256MiB'
+
+# enable file router to use the default rules. By default, it will be set to true if no `mydumper.files`
+# rule is provided, else false. You can explicitly set it to `true` to enable the default rules, they will
+# take effect on files that on other rules are match.
+# The default file routing rules' behavior is the same as former versions without this conf, that is:
+#   {schema}-schema-create.sql --> schema create sql file
+#   {schema}.{table}-schema.sql --> table schema sql file
+#   {schema}.{table}.{0001}.{sql|csv|parquet} --> data source file
+#   *-schema-view.sql, *-schema-trigger.sql, *-schema-post.sql --> ignore all the sql files end with these pattern
+#default-file-rules = false
+
+# only import tables if the wildcard rules are matched. See documention for details.
+filter = ['*.*', '!mysql.*', '!sys.*', '!INFORMATION_SCHEMA.*', '!PERFORMANCE_SCHEMA.*', '!METRICS_SCHEMA.*', '!INSPECTION_SCHEMA.*']
+
+# CSV files are imported according to MySQL's LOAD DATA INFILE rules.
+[mydumper.csv]
+# separator between fields, can be one or more characters but empty. The value can
+# not be prefix of `delimiter`.
+separator = ','
+# string delimiter, can either be one or more characters or empty string. If not empty,
+# the value should not be prefix of `separator`
+delimiter = '"'
+# row terminator, can be an empty string or not.
+# An empty string means both \r and \n are considered a terminator. This is the normal CSV behavior.
+# A non-empty string means the row ends only when such terminator is matched exactly (or reaching the end of file).
+# If the file content matches both the terminator and separator, the terminator takes precedence.
+terminator = ''
+# whether the CSV files contain a header. If true, the first line will be skipped
+header = true
+# whether the CSV contains any NULL value. If true, all columns from CSV cannot be NULL.
+not-null = false
+# if non-null = false (i.e. CSV can contain NULL), fields equal to this value will be treated as NULL
+null = '\N'
+# whether to interpret backslash-escape inside strings.
+backslash-escape = true
+# if a line ends with a separator, remove it.
+# deprecated - consider using the terminator option instead.
+#trim-last-separator = false
+
+# file level routing rule that map file path to schema,table,type,sort-key
+# The schema, table , type and key can be either a constant string or template strings
+# supported by go regexp.
+#[[mydumper.files]]
+# pattern and path determine target source files, you can use either of them but not both.
+# pattern is a regexp in Go syntax that can match one or more files in `source-dir`.
+#pattern = '(?i)^(?:[^/]*/)(?P<schema>[^/.]+)\.([^/.]+)(?:\.([0-9]+))?\.(sql|csv)$'
+# path is the target file path, both absolute file path or relative path to `mydump.source-dir` are supported.
+# the path separator is always converted to '/', regardless of operating system.
+#path = "schema_name.table_name.00001.sql"
+# schema(database) name
+#schema = "$schema"
+# table name
+#table = "$2"
+# file type, can be one of schema-schema, table-schema, sql, csv
+#type = "$4"
+# an arbitrary string used to maintain the sort order among the files for row ID allocation and checkpoint resumption
+#key = "$3"
+
+# configuration for tidb server address(one is enough) and pd server address(one is enough).
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
+# table schema information is fetched from tidb via this status-port.
+status-port = 10080
+pd-addr = "127.0.0.1:2379"
+# lightning uses some code of tidb(used as library), and the flag controls it's log level.
+log-level = "error"
+
+# sets maximum packet size allowed for SQL connections.
+# set this to 0 to automatically fetch the `max_allowed_packet` variable from server on every connection.
+# max-allowed-packet = 67_108_864
+
+# whether to use TLS for SQL connections. valid values are:
+#  * ""            - force TLS (same as "cluster") if [tidb.security] section is populated, otherwise same as "false"
+#  * "false"       - disable TLS
+#  * "cluster"     - force TLS and verify the server's certificate with the CA specified in the [tidb.security] section
+#  * "skip-verify" - force TLS but do not verify the server's certificate (insecure!)
+#  * "preferred"   - same as "skip-verify", but if the server does not support TLS, fallback to unencrypted connection
+# tls = ""
+
+# set tidb session variables to speed up checksum/analyze table.
+# see https://pingcap.com/docs/sql/statistics/#control-analyze-concurrency for the meaning of each setting
+build-stats-concurrency = 20
+distsql-scan-concurrency = 15
+index-serial-scan-concurrency = 20
+# checksum-table-concurrency controls the maximum checksum table tasks to run concurrently.
+checksum-table-concurrency = 2
+
+# specifies certificates and keys for TLS-enabled MySQL connections.
+# defaults to a copy of the [security] section.
+#[tidb.security]
+# public certificate of the CA. Set to empty string to disable TLS.
+# ca-path = "/path/to/ca.pem"
+# public certificate of this service. Default to copy of `security.cert-path`
+# cert-path = "/path/to/lightning.pem"
+# private key of this service. Default to copy of `security.key-path`
+# key-path = "/path/to/lightning.key"
+
+# post-restore provide some options which will be executed after all kv data has been imported into the tikv cluster.
+# the execution order are(if set true): checksum -> analyze
+[post-restore]
+# config whether to do `ADMIN CHECKSUM TABLE <table>` after restore finished for each table.
+# valid options:
+# - "off". do not do checksum.
+# - "optional". do execute admin checksum, but will ignore any error if checksum fails.
+# - "required". default option. do execute admin checksum, if checksum fails, lightning will exit with failure.
+# NOTE: for backward compatibility, bool values `true` and `false` is also allowed for this field. `true` is
+# equivalent to "required" and `false` is equivalent to "off".
+checksum = "required"
+# if set true, analyze will do `ANALYZE TABLE <table>` for each table.
+# the config options is the same as 'post-restore.checksum'.
+analyze = "optional"
+# if set to true, compact will do level 1 compaction to tikv data.
+# if this setting is missing, the default value is false.
+level-1-compact = false
+# if set true, compact will do full compaction to tikv data.
+# if this setting is missing, the default value is false.
+compact = false
+# if set to true, lightning will run checksum and analyze for all tables together at last
+post-process-at-last = true
+
+# cron performs some periodic actions in background
+[cron]
+# duration between which Lightning will automatically refresh the import mode status.
+# should be shorter than the corresponding TiKV setting
+switch-mode = "5m"
+# the duration which the an import progress will be printed to the log.
+log-progress = "5m"
+# the duration which tikv-importer.sorted-kv-dir-capacity is checked.
+check-disk-quota = "1m"

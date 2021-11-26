@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,14 +27,14 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
@@ -160,7 +161,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
-		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def mysql utf8mb4 utf8mb4_bin <nil> <nil> <nil>"))
 
 	// Test the privilege of new user for information_schema.schemata.
 	tk.MustExec("create user schemata_tester")
@@ -174,7 +175,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='mysql';").Check(
 		[][]interface{}{})
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA where schema_name='INFORMATION_SCHEMA';").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil> <nil>"))
 
 	// Test the privilege of user with privilege of mysql for information_schema.schemata.
 	tk.MustExec("CREATE ROLE r_mysql_priv;")
@@ -183,7 +184,7 @@ func (s *testInfoschemaTableSuite) TestSchemataTables(c *C) {
 	schemataTester.MustExec("set role r_mysql_priv")
 	schemataTester.MustQuery("select count(*) from information_schema.SCHEMATA;").Check(testkit.Rows("2"))
 	schemataTester.MustQuery("select * from information_schema.SCHEMATA;").Check(
-		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil>", "def mysql utf8mb4 utf8mb4_bin <nil>"))
+		testkit.Rows("def INFORMATION_SCHEMA utf8mb4 utf8mb4_bin <nil> <nil> <nil>", "def mysql utf8mb4 utf8mb4_bin <nil> <nil> <nil>"))
 }
 
 func (s *testInfoschemaTableSuite) TestTableIDAndIndexID(c *C) {
@@ -207,6 +208,7 @@ func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
+	tk.MustQuery("select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW'").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
@@ -559,7 +561,6 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
-	c.Skip("Skip this unstable test(#25896) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
@@ -586,6 +587,8 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1.")) // 1 note.
+	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
@@ -708,12 +711,13 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
+			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
@@ -914,7 +918,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 24)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 26)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -940,14 +944,14 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("24"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("24"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
@@ -959,6 +963,7 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME , TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables WHERE TABLE_TYPE='SEQUENCE' AND TABLE_NAME='seq2'").Check(testkit.Rows("def test seq2 SEQUENCE InnoDB 1"))
 }
 
 func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {

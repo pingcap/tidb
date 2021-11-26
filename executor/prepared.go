@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -87,6 +88,11 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+
+	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
+	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
+	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	needReset bool
 }
 
 // NewPrepareExec creates a new PrepareExec.
@@ -96,6 +102,7 @@ func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
 		baseExecutor: base,
 		sqlText:      sqlTxt,
+		needReset:    true,
 	}
 }
 
@@ -117,12 +124,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 		for _, warn := range warns {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
@@ -135,9 +146,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	err = ResetContextOfStmt(e.ctx, stmt)
-	if err != nil {
-		return err
+	if e.needReset {
+		err = ResetContextOfStmt(e.ctx, stmt)
+		if err != nil {
+			return err
+		}
 	}
 
 	var extractor paramMarkerExtractor
@@ -188,11 +201,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
-		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
-		}
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
 	}
 
 	// We try to build the real statement of preparedStmt.

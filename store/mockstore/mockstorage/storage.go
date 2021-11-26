@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -35,21 +36,15 @@ type mockStorage struct {
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
-	return NewMockStorageWithLockWaits(tikvStore, nil)
-}
-
-// NewMockStorageWithLockWaits wraps tikv.KVStore as kv.Storage, with mock LockWaits.
-func NewMockStorageWithLockWaits(tikvStore *tikv.KVStore, lockWaits []*deadlockpb.WaitForEntry) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:   tikvStore,
-		Store:     coprStore,
-		memCache:  kv.NewCacheDB(),
-		LockWaits: lockWaits,
+		KVStore:  tikvStore,
+		Store:    coprStore,
+		memCache: kv.NewCacheDB(),
 	}, nil
 }
 
@@ -79,19 +74,14 @@ func (s *mockStorage) Describe() string {
 }
 
 // Begin a global transaction.
-func (s *mockStorage) Begin() (kv.Transaction, error) {
-	txn, err := s.KVStore.Begin()
+func (s *mockStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin(opts...)
 	return newTiKVTxn(txn, err)
 }
 
 // ShowStatus returns the specified status of the storage
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
-}
-
-// BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
-	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
@@ -125,4 +115,14 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 func (s *mockStorage) Close() error {
 	s.Store.Close()
 	return s.KVStore.Close()
+}
+
+// MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
+// GetLockWaits function.
+type MockLockWaitSetter interface {
+	SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry)
+}
+
+func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
+	s.LockWaits = lockWaits
 }

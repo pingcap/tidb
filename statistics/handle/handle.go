@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,11 +28,11 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -321,7 +322,7 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -331,11 +332,11 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -344,11 +345,16 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
-	if isIndex == 0 {
-		globalStats.Num = len(globalTableInfo.Columns)
-	} else {
-		globalStats.Num = 1
+	if len(histIDs) == 0 {
+		for _, col := range globalTableInfo.Columns {
+			// The virtual generated column stats can not be merged to the global stats.
+			if col.IsGenerated() && !col.GeneratedStored {
+				continue
+			}
+			histIDs = append(histIDs, col.ID)
+		}
 	}
+	globalStats.Num = len(histIDs)
 	globalStats.Count = 0
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
@@ -392,7 +398,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			} else {
 				indexName := ""
 				for _, idx := range tableInfo.Indices {
-					if idx.ID == idxID {
+					if idx.ID == histIDs[0] {
 						indexName = idx.Name.L
 					}
 				}
@@ -402,12 +408,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			ID := tableInfo.Columns[i].ID
-			if isIndex != 0 {
-				// If the statistics is the index stats, we should use the index ID to replace the column ID.
-				ID = idxID
-			}
-			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += count
@@ -634,10 +635,10 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
 		}
+		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
 		// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 		// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
@@ -820,12 +821,12 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				CMSketch:   cms,
 				TopN:       topN,
 				FMSketch:   fmSketch,
-				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
+			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			break
@@ -1109,6 +1110,11 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					return err
 				}
 			}
+			if result.IsIndex == 0 {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	// 3. Save extended statistics.
@@ -1138,7 +1144,8 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool) (err error) {
+// TODO: refactor to reduce the number of parameters
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1232,6 +1239,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			return err
 		}
 	}
+	if updateAnalyzeTime && isIndex == 0 {
+		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+			return err
+		}
+	}
 	return
 }
 
@@ -1276,6 +1288,12 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			// When there's new collation data, the length of bounds of histogram(the collate key) might be
+			// longer than the FieldType.Flen of this column.
+			// We change it to TypeBlob to bypass the length check here.
+			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
+				tp = types.NewFieldType(mysql.TypeBlob)
+			}
 			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1756,4 +1774,60 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 		return true
 	}
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+}
+
+type colStatsUsage struct {
+	LastUsedAt     *types.Time
+	LastAnalyzedAt *types.Time
+}
+
+// LoadColumnStatsUsage loads column stats usage information from disk.
+func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
+	for _, row := range rows {
+		if row.IsNull(0) || row.IsNull(1) {
+			continue
+		}
+		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
+		var statsUsage colStatsUsage
+		if !row.IsNull(2) {
+			t := row.GetTime(2)
+			statsUsage.LastUsedAt = &t
+		}
+		if !row.IsNull(3) {
+			t := row.GetTime(3)
+			statsUsage.LastAnalyzedAt = &t
+		}
+		colStatsMap[tblColID] = statsUsage
+	}
+	return colStatsMap, nil
+}
+
+// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
+func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
+	ctx := context.Background()
+	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
+	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	columnIDs := make([]int64, 0, len(rows)*2)
+	for _, row := range rows {
+		twoIDs := make([]int64, 0, 2)
+		data := row.GetString(2)
+		err := json.Unmarshal([]byte(data), &twoIDs)
+		if err != nil {
+			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", data), zap.Error(err))
+			continue
+		}
+		columnIDs = append(columnIDs, twoIDs...)
+	}
+	return columnIDs, nil
 }

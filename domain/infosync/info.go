@@ -8,14 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package infosync
 
 import (
-	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,8 +30,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -39,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
@@ -86,16 +87,18 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli         *clientv3.Client
-	info            *ServerInfo
-	serverInfoPath  string
-	minStartTS      uint64
-	minStartTSPath  string
-	manager         util2.SessionManager
-	session         *concurrency.Session
-	topologySession *concurrency.Session
-	prometheusAddr  string
-	modifyTime      time.Time
+	etcdCli          *clientv3.Client
+	info             *ServerInfo
+	serverInfoPath   string
+	minStartTS       uint64
+	minStartTSPath   string
+	manager          util2.SessionManager
+	session          *concurrency.Session
+	topologySession  *concurrency.Session
+	prometheusAddr   string
+	modifyTime       time.Time
+	labelRuleManager LabelRuleManager
+	placementManager PlacementManager
 }
 
 // ServerInfo is server static information.
@@ -174,6 +177,13 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
+	if etcdCli != nil {
+		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
+		is.placementManager = initPlacementManager(etcdCli.Endpoints())
+	} else {
+		is.labelRuleManager = initLabelRuleManager([]string{})
+		is.placementManager = initPlacementManager([]string{})
+	}
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -198,6 +208,20 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
+}
+
+func initLabelRuleManager(addrs []string) LabelRuleManager {
+	if len(addrs) == 0 {
+		return &mockLabelManager{labelRules: map[string][]byte{}}
+	}
+	return &PDLabelManager{addrs: addrs}
+}
+
+func initPlacementManager(addrs []string) PlacementManager {
+	if len(addrs) == 0 {
+		return &mockPlacementManager{}
+	}
+	return &PDPlacementManager{addrs: addrs}
 }
 
 // GetServerInfo gets self server static information.
@@ -311,13 +335,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var req *http.Request
 	var res *http.Response
 	for _, addr := range addrs {
-		var url string
-		if strings.HasPrefix(addr, "http") {
-			url = fmt.Sprintf("%s%s", addr, route)
-		} else {
-			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
-		}
-
+		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
@@ -326,13 +344,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = util2.InternalHTTPClient().Do(req)
-		failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-			if val.(bool) {
-				res = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
-				err = nil
-			}
-		})
+		res, err = doRequestWithFailpoint(req)
 		if err == nil {
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
@@ -352,6 +364,45 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	return nil, err
 }
 
+func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
+	fpEnabled := false
+	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+		if val.(bool) {
+			fpEnabled = true
+			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
+			err = nil
+		}
+	})
+	if fpEnabled {
+		return
+	}
+	return util2.InternalHTTPClient().Do(req)
+}
+
+// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
+func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (bool, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false, err
+	}
+
+	if is.etcdCli == nil {
+		return false, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return false, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	if err == nil && res != nil {
+		return string(res) == "true\n", nil
+	}
+	return false, err
+}
+
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
@@ -359,22 +410,7 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 		return nil, err
 	}
 
-	bundles := []*placement.Bundle{}
-	if is.etcdCli == nil {
-		return bundles, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &bundles)
-	}
-	return bundles, err
+	return is.placementManager.GetAllRuleBundles(ctx)
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
@@ -384,53 +420,17 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 		return nil, err
 	}
 
-	bundle := &placement.Bundle{ID: name}
-
-	if is.etcdCli == nil {
-		return bundle, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, bundle)
-	}
-	return bundle, err
+	return is.placementManager.GetRuleBundle(ctx, name)
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
-	if len(bundles) == 0 {
-		return nil
-	}
-
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
 
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	b, err := json.Marshal(bundles)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
-	return err
+	return is.placementManager.PutRuleBundles(ctx, bundles)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
@@ -471,25 +471,28 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
-type topologyInfo struct {
+// TopologyInfo is the topology info
+type TopologyInfo struct {
 	ServerVersionInfo
+	IP             string            `json:"ip"`
 	StatusPort     uint              `json:"status_port"`
 	DeployPath     string            `json:"deploy_path"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo() topologyInfo {
+func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
 	}
 	dir := path.Dir(s)
-	return topologyInfo{
+	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
+		IP:             is.info.IP,
 		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
@@ -602,6 +605,27 @@ func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
+// GetAllTiDBTopology gets all tidb topology
+func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
+	topos := make([]*TopologyInfo, 0)
+	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+	for _, kv := range response.Kvs {
+		if !strings.HasSuffix(string(kv.Key), "/info") {
+			continue
+		}
+		var topo *TopologyInfo
+		err = json.Unmarshal(kv.Value, &topo)
+		if err != nil {
+			return nil, err
+		}
+		topos = append(topos, topo)
+	}
+	return topos, nil
+}
+
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt int) error {
 	if is.etcdCli == nil {
@@ -683,25 +707,20 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
-
 	// Get prometheus address from pdApi.
-	var url, res string
-	if strings.HasPrefix(pdAddrs[0], "http://") {
-		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
-	} else {
-		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
-	}
-	resp, err := http.Get(url)
+	url := util2.ComposeURL(pdAddrs[0], pdapi.Config)
+	resp, err := util2.InternalHTTPClient().Get(url)
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
 	var metricStorage metricStorage
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&metricStorage)
 	if err != nil {
 		return "", err
 	}
-	res = metricStorage.PDServer.MetricStorage
+	res := metricStorage.PDServer.MetricStorage
 
 	// Get prometheus address from etcdApi.
 	if res == "" {
@@ -816,22 +835,52 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
+	return is.labelRuleManager.PutLabelRule(ctx, rule)
+}
 
-	if is.etcdCli == nil {
+// UpdateLabelRules synchronizes the label rule to PD.
+func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
+	if patch == nil || (len(patch.DeleteRules) == 0 && len(patch.SetRules) == 0) {
 		return nil
 	}
 
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	r, err := json.Marshal(rule)
+	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
+	return is.labelRuleManager.UpdateLabelRules(ctx, patch)
+}
 
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
-	return err
+// GetAllLabelRules gets all label rules from PD.
+func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
+	}
+	return is.labelRuleManager.GetAllLabelRules(ctx)
+}
+
+// GetLabelRules gets the label rules according to the given IDs from PD.
+func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
+	}
+	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }

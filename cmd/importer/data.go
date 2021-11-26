@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -60,6 +61,7 @@ func (d *datum) setInitInt64Value(min int64, max int64) {
 	d.init = true
 }
 
+// #nosec G404
 func (d *datum) updateRemains() {
 	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
 		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1

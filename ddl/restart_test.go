@@ -8,8 +8,10 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !race
 // +build !race
 
 package ddl
@@ -20,8 +22,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -108,12 +110,12 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -121,7 +123,8 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	dbInfo := testSchemaInfo(c, d1, "test_restart")
+	dbInfo, err := testSchemaInfo(d1, "test_restart")
+	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -147,18 +150,19 @@ func (s *testStatSuite) TestStat(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test_restart")
+	dbInfo, err := testSchemaInfo(d, "test_restart")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.

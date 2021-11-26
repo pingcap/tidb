@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,10 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -59,12 +61,12 @@ func (s *testEnforceMPPSuite) TestSetVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// test value limit of tidb_opt_tiflash_concurrency_factor
-	err := tk.ExecToErr("set @@tidb_opt_tiflash_concurrency_factor = 0")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_opt_tiflash_concurrency_factor' can't be set to the value of '0'`)
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 0")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'"))
+	tk.MustQuery(`select @@tidb_opt_tiflash_concurrency_factor`).Check(testkit.Rows("1"))
 
 	// test set tidb_enforce_mpp when tidb_allow_mpp=false;
-	err = tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
+	err := tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.'`)
 
@@ -105,6 +107,16 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
+		warnings := make([]stmtctx.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -116,11 +128,11 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
-		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+		c.Assert(s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())), DeepEquals, output[i].Warn)
 	}
 }
 
@@ -131,7 +143,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning1(c *C) {
 	// test query
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int as (a+1), c time)")
+	tk.MustExec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))")
 	tk.MustExec("create index idx on t(a)")
 
 	var input []string

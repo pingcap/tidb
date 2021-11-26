@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,14 +24,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -226,14 +228,11 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	var jobs []*model.Job
-	var err error
-	switch curJob.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	default:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	jobListKey := meta.DefaultJobListKey
+	if !admin.MayNeedBackfill(curJob.Type) {
+		jobListKey = meta.AddIndexJobListKey
 	}
+	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -285,6 +284,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
@@ -293,14 +293,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
-
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-				jobKey := meta.AddIndexJobListKey
-				err = t.EnQueueDDLJob(job, jobKey)
-			} else {
-				err = t.EnQueueDDLJob(job)
+			jobListKey := meta.DefaultJobListKey
+			if admin.MayNeedBackfill(job.Type) {
+				jobListKey = meta.AddIndexJobListKey
 			}
-			if err != nil {
+			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -401,7 +398,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
@@ -511,6 +508,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
+
+			// only general ddls allowed to be executed when TiKV is disk full.
+			if w.tp == addIdxWorker && job.IsRunning() {
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
+
 			w.setDDLLabelForTopSQL(job)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
@@ -607,9 +610,6 @@ func skipWriteBinlog(job *model.Job) bool {
 	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
-		return true
-	// It is done without modifying table info, bin log is not needed
-	case model.ActionAlterTableAlterPartition:
 		return true
 	}
 
@@ -741,6 +741,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
+	case model.ActionModifySchemaDefaultPlacement:
+		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionRepairTable:
@@ -748,7 +750,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(t, job)
+		ver, err = onDropTableOrView(d, t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -773,6 +775,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onCreateIndex(d, t, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(t, job)
+	case model.ActionDropIndexes:
+		ver, err = onDropIndexes(t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(t, job)
 	case model.ActionAddForeignKey:
@@ -811,14 +815,28 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
-	case model.ActionAlterTableAlterPartition:
-		ver, err = onAlterTableAlterPartition(t, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(t, job)
 	case model.ActionRenameTables:
 		ver, err = onRenameTables(d, t, job)
 	case model.ActionAlterTableAttributes:
 		ver, err = onAlterTableAttributes(t, job)
+	case model.ActionAlterTablePartitionAttributes:
+		ver, err = onAlterTablePartitionAttributes(t, job)
+	case model.ActionCreatePlacementPolicy:
+		ver, err = onCreatePlacementPolicy(d, t, job)
+	case model.ActionDropPlacementPolicy:
+		ver, err = onDropPlacementPolicy(d, t, job)
+	case model.ActionAlterPlacementPolicy:
+		ver, err = onAlterPlacementPolicy(d, t, job)
+	case model.ActionAlterTablePartitionPolicy:
+		ver, err = onAlterTablePartitionOptions(d, t, job)
+	case model.ActionAlterTablePlacement:
+		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionAlterCacheTable:
+		ver, err = onAlterCacheTable(t, job)
+	case model.ActionAlterNoCacheTable:
+		ver, err = onAlterNoCacheTable(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -989,7 +1007,8 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
 		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		oldSchemaNames := []*model.CIStr{}
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1036,15 +1055,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
-			}
-		}
-	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.TableID
-		if len(job.CtxVars) > 0 {
-			diff.AffectedOpts = []*model.AffectedOption{
-				{
-					TableID: job.CtxVars[0].(int64),
-				},
 			}
 		}
 	default:

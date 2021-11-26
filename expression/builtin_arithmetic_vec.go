@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +18,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	math2 "github.com/pingcap/tidb/util/math"
@@ -103,6 +104,8 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 					return err
 				}
 			}
+		} else if err == types.ErrOverflow {
+			return types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
 		} else {
 			return err
 		}
@@ -355,6 +358,9 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 			continue
 		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = to
@@ -554,6 +560,9 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = to
@@ -920,7 +929,7 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
+		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
 			if result.IsNull(i) {
 				continue
 			}
@@ -996,6 +1005,9 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 			continue
 		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = *to
