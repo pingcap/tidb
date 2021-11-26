@@ -363,7 +363,7 @@ type PhysicalPlan interface {
 	Clone() (PhysicalPlan, error)
 
 	// ExportIR exports the physical plan in IR format, which is a go function that could reproduce the physical plan
-	ExportIR() (IRConstructor, error)
+	// ExportIR() (IRConstructor, error)
 }
 
 type baseLogicalPlan struct {

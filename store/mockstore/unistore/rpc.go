@@ -15,6 +15,7 @@
 package unistore
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
@@ -51,13 +53,13 @@ type RPCClient struct {
 	rawHandler *rawHandler
 	persistent bool
 	closed     int32
+	testGen    bool
 }
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook func(*tikvrpc.Request)
 
-// SendRequest sends a request to mock cluster.
-func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *RPCClient) sendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -297,6 +299,31 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	}
 	return resp, nil
+}
+
+// SendRequest sends a request to mock cluster.
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.sendRequest(ctx, addr, req, timeout)
+	if !c.testGen {
+		return resp, err
+	}
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		cop := req.Cop()
+		start := cop.Ranges[0].Start
+		tid := tablecodec.DecodeTableID(start)
+		fmt.Printf("Sending Cop Request to Table %d\n", tid)
+		fmt.Println(cop)
+		fmt.Println(resp)
+	case tikvrpc.CmdScan:
+		scan := req.Scan()
+		start := scan.StartKey
+		tid := tablecodec.DecodeTableID(start)
+		fmt.Printf("Sending Scan Request to Table %d\n", tid)
+		fmt.Println(scan)
+		fmt.Println(resp)
+	}
+	return resp, err
 }
 
 func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Request) (*tikvrpc.CopStreamResponse, error) {

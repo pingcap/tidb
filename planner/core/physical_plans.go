@@ -17,10 +17,12 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/mysql"
+	"os"
 	"strconv"
 	"unsafe"
+
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/mysql"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -129,7 +131,7 @@ func ConstructPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema) Phy
 		panic(err)
 	}
 	accessConditions := []expression.Expression{cond}
-	ranges, err := ranger.BuildTableRange([]expression.Expression{cond}, ctx.GetSessionVars().StmtCtx, ft)
+	ranges, err := ranger.BuildTableRange([]expression.Expression{cond}, ctx, ft)
 	fmt.Println(ranges)
 	if err != nil {
 		panic(err)
@@ -170,6 +172,25 @@ func ConstructPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema) Phy
 		panic(err)
 	}
 	p.SetSchema(outputSchema)
+
+	pb, err := p.GetTablePlan().ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		panic(err)
+	}
+	bytes, err := pb.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	// write marshal bytes to file
+	file, err := os.Create("/tmp/test.pb")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	_, err = file.Write(bytes)
+	if err != nil {
+		panic(err)
+	}
 
 	return p
 }
@@ -687,6 +708,7 @@ func (ts *PhysicalTableScan) ExportIR() (IRConstructor, error) {
 	}
 `, dbName, tbName))
 
+	return IRConstructor{}, nil
 }
 
 // Clone implements PhysicalPlan interface.
