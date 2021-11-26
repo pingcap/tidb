@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -890,9 +891,21 @@ func (p *LogicalAggregation) ExplainInfo() string {
 	return buffer.String()
 }
 
+func (p *LogicalAggregation) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	lpt := p.baseLogicalPlan.buildLogicalPlanTrace()
+	lpt.ExplainInfo = p.ExplainInfo()
+	return lpt
+}
+
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.schema)
+}
+
+func (p *LogicalProjection) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	lpt := p.baseLogicalPlan.buildLogicalPlanTrace()
+	lpt.ExplainInfo = p.ExplainInfo()
+	return lpt
 }
 
 // ExplainInfo implements Plan interface.
@@ -928,6 +941,12 @@ func (ds *DataSource) ExplainInfo() string {
 		}
 	}
 	return buffer.String()
+}
+
+func (ds *DataSource) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	lpt := ds.baseLogicalPlan.buildLogicalPlanTrace()
+	lpt.ExplainInfo = ds.ExplainInfo()
+	return lpt
 }
 
 // ExplainInfo implements Plan interface.

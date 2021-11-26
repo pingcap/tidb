@@ -445,12 +445,6 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 	return usedCols
 }
 
-func (la *LogicalAggregation) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
-	lpt := la.baseLogicalPlan.buildLogicalPlanTrace()
-	lpt.ExplainInfo = la.ExplainInfo()
-	return lpt
-}
-
 // LogicalSelection represents a where or having predicate.
 type LogicalSelection struct {
 	baseLogicalPlan
