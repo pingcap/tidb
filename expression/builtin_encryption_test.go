@@ -223,18 +223,10 @@ func TestAESDecrypt(t *testing.T) {
 		require.NoError(t, err)
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
-		args := []types.Datum{fromHex(tt.crypt)}
-		for _, param := range tt.params {
-			args = append(args, types.NewDatum(param))
-		}
-		// Set charset and collate for args to test new charset support
-		cons := datumsToConstants(args)
-		chs, col := ctx.GetSessionVars().GetCharsetInfo()
-		// Start from 1, as first arg is crypt_str
-		for i := 1; i < len(cons); i++ {
-			cons[i].GetType().Charset, cons[i].GetType().Collate = chs, col
-		}
-		f, err := fc.getFunction(ctx, cons)
+		// Set charset and collate except first argument
+		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
+		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
+		f, err := fc.getFunction(ctx, args)
 		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
