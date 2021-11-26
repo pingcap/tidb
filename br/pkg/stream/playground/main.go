@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -65,9 +66,31 @@ func must(err error) {
 var (
 	commad = pflag.String("command", "insert", "The command to execute(insert | remove)")
 	name   = pflag.String("name", "", "The target")
+	ranges = pflag.Int64Slice("ranges", []int64{}, "the integer ranges")
 	tables = pflag.Int("table", 4, "The table count(only avaliable in 'insert')")
-	etcd   = pflag.StringSlice("etcd", []string{"127.0.0.1:2379"}, "The etcd address")
+	etcd   = pflag.StringSlice("etcd", []string{"127.0.0.1:12315"}, "The etcd address")
 )
+
+func intRanges(rngs []int64) stream.Ranges {
+	if len(rngs)%2 == 1 {
+		must(fmt.Errorf("there must be even number ranges"))
+	}
+	result := make(stream.Ranges, 0, len(rngs)/2)
+	buf := [8]byte{}
+	for i := 0; i < len(rngs); i += 2 {
+		rng := stream.Range{
+			StartKey: make([]byte, 8),
+			EndKey:   make([]byte, 8),
+		}
+		binary.BigEndian.PutUint64(buf[:], uint64(rngs[i]))
+		copy([]byte(rng.StartKey), buf[:])
+		binary.BigEndian.PutUint64(buf[:], uint64(rngs[i+1]))
+		copy([]byte(rng.EndKey), buf[:])
+		result = append(result, rng)
+	}
+	fmt.Printf("%x", result)
+	return result
+}
 
 func main() {
 	pflag.Parse()
@@ -85,6 +108,9 @@ func main() {
 	switch *commad {
 	case "insert":
 		task := simpleTask(*name, *tables)
+		if len(*ranges) > 0 {
+			task.Ranges = intRanges(*ranges)
+		}
 		must(cli.PutTask(ctx, task))
 	case "delete":
 		must(cli.DeleteTask(ctx, *name))
