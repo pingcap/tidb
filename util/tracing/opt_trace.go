@@ -82,5 +82,5 @@ type LogicalRuleOptimizeTraceStep struct {
 	Reason string `json:"reason"`
 	ID     int    `json:"id"`
 	TP     string `json:"type"`
-	Index  int    `json:"Index"`
+	Index  int    `json:"index"`
 }
