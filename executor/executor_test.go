@@ -9008,103 +9008,6 @@ func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
 		tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite) TestGetResultRowsCount(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	for i := 1; i <= 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
-	}
-	cases := []struct {
-		sql string
-		row int64
-	}{
-		{"select * from t", 10},
-		{"select * from t where a < 0", 0},
-		{"select * from t where a <= 3", 3},
-		{"insert into t values (11)", 0},
-		{"replace into t values (12)", 0},
-		{"update t set a=13 where a=12", 0},
-	}
-
-	for _, ca := range cases {
-		if strings.HasPrefix(ca.sql, "select") {
-			tk.MustQuery(ca.sql)
-		} else {
-			tk.MustExec(ca.sql)
-		}
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(plannercore.Plan)
-		c.Assert(ok, IsTrue)
-		cnt := executor.GetResultRowsCount(tk.Se, p)
-		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
-	}
-}
-
-func checkFileName(s string) bool {
-	files := []string{
-		"config.toml",
-		"meta.txt",
-		"stats/test.t_dump_single.json",
-		"schema/test.t_dump_single.schema.txt",
-		"variables.toml",
-		"sqls.sql",
-		"session_bindings.sql",
-		"global_bindings.sql",
-		"explain.txt",
-	}
-	for _, f := range files {
-		if strings.Compare(f, s) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_dump_single")
-	tk.MustExec("create table t_dump_single(a int)")
-	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	path := s.testData.ConvertRowsToStrings(res.Rows())
-
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
-	c.Assert(err, IsNil)
-	defer reader.Close()
-	for _, file := range reader.File {
-		c.Assert(checkFileName(file.Name), IsTrue)
-	}
-}
-
-func (s *testSuiteP1) TestIssue28935(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
-	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
-	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
-
-	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
-	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
-	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
-}
-
-func (s *testSuiteP1) TestIssue29412(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t29142_1")
-	tk.MustExec("drop table if exists t29142_2")
-	tk.MustExec("create table t29142_1(a int);")
-	tk.MustExec("create table t29142_2(a double);")
-	tk.MustExec("insert into t29142_1 value(20);")
-	tk.MustQuery("select sum(distinct a) as x from t29142_1 having x > some ( select a from t29142_2 where x in (a));").Check(nil)
-}
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -9163,4 +9066,3 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 		}()
 	}
 }
->>>>>>> 481455728... *: track the memory usage of IndexJoin more accurate (#29068)
