@@ -180,6 +180,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	origin := ""
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	if err != nil {
+		// If there is no key,
 		for _, kv := range resp.Kvs {
 			if string(kv.Key) == key {
 				origin = string(kv.Value)
@@ -189,9 +190,10 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	}
 	if origin != httpAddr {
 		// TODO add lease ttl
+		log.Warn(fmt.Sprintf("Update status addr to %v\n", httpAddr))
 		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -218,7 +220,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
-				log.Debug("find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+				log.Info("find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 			}
 		}
 	}
