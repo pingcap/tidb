@@ -187,10 +187,6 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	chanSize := 2
-	if req.Streaming || req.Paging {
-		chanSize = 128
-	}
 
 	var tasks []*copTask
 	for _, loc := range locs {
@@ -208,7 +204,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				ranges: loc.Ranges.Slice(i, nextI),
 				// Channel buffer is 2 for handling region split.
 				// In a common case, two region split tasks will not be blocked.
-				respChan:   make(chan *copResponse, chanSize),
+				respChan:   make(chan *copResponse, 2),
 				cmdType:    cmdType,
 				storeType:  req.StoreType,
 				eventCb:    eventCb,
@@ -1039,16 +1035,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if lastRange == nil {
 		return nil, nil
 	}
-	tasks, err := worker.buildCopTasksFromRemain(bo, lastRange, task)
-	if err != nil {
-		return nil, err
-	}
-	// grow the paging size
-	pagingSize := growPagingSize(task.pagingSize)
-	for _, t := range tasks {
-		t.pagingSize *= pagingSize
-	}
-	return tasks, err
+	// calculate next ranges and grow the paging size
+	task.ranges = worker.calculateTodo(task.ranges, lastRange, worker.req.Desc)
+	task.pagingSize = growPagingSize(task.pagingSize)
+	return []*copTask{task}, nil
 }
 
 // CopRuntimeStats contains execution detail information.
