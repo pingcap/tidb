@@ -900,6 +900,8 @@ func (tf *tableFlashReplicaStatus) checkTableFlashReplicaAvailable() bool {
 }
 
 func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+	return
 	var status tableFlashReplicaStatus
 	err := json.NewDecoder(req.Body).Decode(&status)
 	if err != nil {
