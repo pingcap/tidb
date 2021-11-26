@@ -1155,7 +1155,10 @@ func TestAuthPlugin2(t *testing.T) {
 	}
 
 	cc.isUnixSocket = true
-	_, err = cc.checkAuthPlugin(ctx, &resp)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
 
 }
