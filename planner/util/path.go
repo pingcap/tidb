@@ -215,8 +215,12 @@ func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Co
 	}
 }
 
+// compareLength will compare the two column lengths. The return value:
+// (1) -1 means that l is shorter than r;
+// (2) 0 means that l equals to r;
+// (3) 1 means that l is longer than r;
 func compareLength(l, r int) int {
-	if l == types.UnspecifiedLength && r == types.UnspecifiedLength {
+	if l == r {
 		return 0
 	}
 	if l == types.UnspecifiedLength {
@@ -227,9 +231,6 @@ func compareLength(l, r int) int {
 	}
 	if l > r {
 		return 1
-	}
-	if l == r {
-		return 0
 	}
 	return -1
 }
