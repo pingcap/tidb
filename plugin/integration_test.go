@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,8 @@ func TestAuditLogNormal(t *testing.T) {
 	defer sv.Close()
 	conn := server.CreateMockConn(t, store, sv)
 	defer conn.Close()
+	session.DisableStats4Test()
+	session.SetSchemaLease(0)
 
 	type normalTest struct {
 		sql      string
@@ -695,6 +698,7 @@ func TestAuditLogNormal(t *testing.T) {
 		require.NoError(t, err, errMsg)
 		require.Equal(t, 2, len(testResults), errMsg)
 		result := testResults[0]
+		// TODO: currently, result.text is wrong.
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
 		result = testResults[1]
