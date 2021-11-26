@@ -625,16 +625,15 @@ func TestSequenceRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-
 func TestDropIndexRestore(t *testing.T) {
 	t.Parallel()
 	sourceSQL := "drop index if exists idx on t"
-	cases := [] struct {
-		flags format.RestoreFlags
+	cases := []struct {
+		flags     format.RestoreFlags
 		expectSQL string
 	}{
 		{format.DefaultRestoreFlags, "DROP INDEX IF EXISTS `idx` ON `t`"},
-		{format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
+		{format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
 	}
 
 	extractNodeFunc := func(node Node) Node {
