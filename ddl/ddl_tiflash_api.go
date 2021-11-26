@@ -191,6 +191,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	if origin != httpAddr {
 		// TODO add lease ttl
 		log.Warn(fmt.Sprintf("Update status addr to %v\n", httpAddr))
+		// TODO this may fail with no error
 		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
 		if err != nil {
 			return errors.Trace(err)
@@ -220,7 +221,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
-				log.Info("find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+				log.Info("Find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 			}
 		}
 	}
@@ -228,7 +229,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	for _, store := range tiflashStores {
 		s := store
 		err := d.UpdateTiFlashHTTPAddress(&s)
-		log.Error("update TiFlash status address failed", zap.Error(err))
+		log.Error("Update TiFlash status address failed", zap.Error(err))
 	}
 
 	// Main body of table_update
@@ -311,7 +312,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 			flashRegionCount := len(regionReplica)
 			available := regionCount == flashRegionCount
 
-			log.Info("update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+			log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 			err := d.UpdateTableReplicaInfo(ctx, tb.ID, available)
 			if err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
@@ -369,6 +370,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			// TODO Can we make it as a batch request?
 			for _, p := range pi.Definitions {
+				log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add partition %v\n", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -376,6 +378,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			}
 			// Partitions that in adding mid-state.
 			for _, p := range pi.AddingDefinitions {
+				log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add partition %v\n", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -385,6 +388,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 				}
 			}
 		} else {
+			log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add table %v\n", tblInfo.ID))
 			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)

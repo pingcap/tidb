@@ -3280,6 +3280,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 				RegionCache: tikvStore.GetRegionCache(),
 			}
 			for _, p := range partInfo.Definitions {
+				log.Info(fmt.Sprintf("AddTablePartitions add partition %v\n", p.ID))
 				ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
