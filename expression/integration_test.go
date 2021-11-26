@@ -2008,6 +2008,9 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	// result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2017-01-01')")
 	result.Check(testkit.Rows("1483228800"))
+	// issue 6981
+	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2011:01:01.001')")
+	result.Check(testkit.Rows("1293843600.000"))
 	// Test different time zone.
 	tk.MustExec("SET time_zone = '+08:00';")
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00');")
@@ -2173,6 +2176,12 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	tk.MustExec(`set @@session.time_zone = "+00:00"`)
 	result = tk.MustQuery(`select from_unixtime(20170101), from_unixtime(20170101.9999999), from_unixtime(20170101.999), from_unixtime(20170101.999, "%Y %D %M %h:%i:%s %x"), from_unixtime(20170101.999, "%Y %D %M %h:%i:%s %x")`)
 	result.Check(testkit.Rows("1970-08-22 10:48:21 1970-08-22 10:48:22.000000 1970-08-22 10:48:21.999 1970 22nd August 10:48:21 1970 1970 22nd August 10:48:21 1970"))
+	// issue 30151
+	tk.MustExec("create table i30151(value varchar(100))")
+	tk.MustExec("insert into i30151 values ('1.1')")
+	result = tk.MustQuery("select from_unixtime('1.1'), from_unixtime(value) from i30151")
+	result.Check(testkit.Rows("1970-01-01 00:00:01.100000 1970-01-01 00:00:01.100000"))
+	tk.MustExec("drop table if exists i30151")
 	tk.MustExec(`set @@session.time_zone = @@global.time_zone`)
 
 	// for extract
