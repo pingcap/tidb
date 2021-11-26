@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 )
 
+// OptimizeTraceHandler serve http
 type OptimizeTraceHandler struct {
 	infoGetter *infosync.InfoSyncer
 	address    string
