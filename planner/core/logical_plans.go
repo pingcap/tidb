@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 
