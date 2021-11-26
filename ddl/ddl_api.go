@@ -4723,8 +4723,8 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	// Ban setting replica count for tables which has charset not supported by TiFlash
 	for _, col := range tb.Cols() {
-		_, v := charset.TiFlashSupportedCharsets[col.Charset]
-		if !v {
+		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		if !ok {
 			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
 		}
 	}
