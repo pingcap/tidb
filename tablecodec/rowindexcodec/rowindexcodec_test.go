@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rowindexcodec
 
 import (
-	"github.com/pingcap/tidb/parser/ast"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// Trace represents a trace plan.
-type Trace struct {
-	baseSchemaProducer
-
-	StmtNode ast.StmtNode
-	Format   string
-
-	// OptimizerTrace indicates `trace plan <statement>` case
-	OptimizerTrace bool
+func TestGetKeyKind(t *testing.T) {
+	require.Equal(t, KeyKindRow, GetKeyKind([]byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 114}))
+	require.Equal(t, KeyKindIndex, GetKeyKind([]byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 105, 128, 0, 0, 0, 0, 0, 0, 0}))
+	require.Equal(t, KeyKindUnknown, GetKeyKind([]byte("")))
+	require.Equal(t, KeyKindUnknown, GetKeyKind(nil))
 }
