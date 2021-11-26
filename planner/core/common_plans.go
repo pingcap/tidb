@@ -402,7 +402,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		bindSQL := GetBindSQL4PlanCache(sctx, prepared.Stmt)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion, bindSQL)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -484,7 +485,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
+	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
@@ -500,7 +501,8 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			sessionVars := sctx.GetSessionVars()
+			cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion, sessionVars.StmtCtx.BindSQL)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
@@ -541,7 +543,7 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		names    types.NameSlice
 	)
 	switch p.(type) {
-	case *PointGetPlan:
+	case *PointGetPlan, *BatchPointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
@@ -1517,6 +1519,15 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// and the data and index would be inconsistent!
 		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
 		// because math.MaxUint64 always make cacheData invalid.
+		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		if !noSecondRead {
+			return false, nil
+		}
+		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+			return false, nil
+		}
+		return true, nil
+	case *BatchPointGetPlan:
 		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
 		if !noSecondRead {
 			return false, nil

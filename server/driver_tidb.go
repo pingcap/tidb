@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/planner"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -164,8 +165,10 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
+			preparedAst := preparedObj.PreparedAst
+			bindSQL := planner.GetBindSQL4PlanCache(ts.ctx, preparedAst.Stmt)
 			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion, bindSQL))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}

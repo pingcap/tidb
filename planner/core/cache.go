@@ -74,6 +74,7 @@ type pstmtPlanCacheKey struct {
 	timezoneOffset       int
 	isolationReadEngines map[kv.StoreType]struct{}
 	selectLimit          uint64
+	bindSQL              string
 
 	hash []byte
 }
@@ -125,7 +126,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64, bindSQL string) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -139,6 +140,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 		timezoneOffset:       timezoneOffset,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 		selectLimit:          sessionVars.SelectLimit,
+		bindSQL:              bindSQL,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v

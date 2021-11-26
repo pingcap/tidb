@@ -309,7 +309,8 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+				bindSQL := planner.GetBindSQL4PlanCache(s, preparedAst.Stmt)
+				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
 			}
 		}
 	}

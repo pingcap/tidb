@@ -154,6 +154,7 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
