@@ -2224,6 +2224,9 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	return authplugin, nil
 }
 
+// Auth validates a user using an authentication string and salt.
+// If the password fails, it will keep trying other users until exhausted.
+// This means it can not be refactored to use MatchIdentity yet.
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
@@ -2279,33 +2282,15 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 // AuthWithoutVerification is required by the ResetConnection RPC
 func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
-	if success {
-		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-		return true
-	} else if user.Hostname == variable.DefHostname {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
 		return false
 	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
-	}
-	return false
+	user.AuthUsername = authUser.Username
+	user.AuthHostname = authUser.Hostname
+	s.sessionVars.User = user
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	return true
 }
 
 func (s *session) getHostByIP(ip string) []string {
