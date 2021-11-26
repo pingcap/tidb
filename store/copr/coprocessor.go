@@ -61,7 +61,7 @@ const (
 	copNextMaxBackoff      = 20000
 )
 
-// A paging request may be seperated into multi requests if there are more data than a page.
+// A paging request may be separated into multi requests if there are more data than a page.
 // The paging size grows from min to max, it's not well tuned yet.
 // e.g. a paging request scans over range (r1, r200), it requires 64 rows in the first batch,
 // if it's not drained, then the paging size grows, the new range is calculated like (r100, r200), then send a request again.
