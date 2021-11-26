@@ -126,10 +126,16 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	return nil
 }
 
+type tidbFromBinaryFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
 // toBinaryMap contains the builtin functions which arguments need to be converted to the correct charset.
 var toBinaryMap = map[string]struct{}{
 	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
-	ast.ToBase64: {}, ast.AesDecrypt: {},ast.AesEncrypt: {}, ast.Decode: {}, ast.Encode: {},
+	ast.ToBase64: {}, ast.AesDecrypt: {}, ast.AesEncrypt: {}, ast.Decode: {}, ast.Encode: {},
 	ast.PasswordFunc: {}, ast.MD5: {}, ast.SHA: {}, ast.SHA1: {},
 	ast.SHA2: {}, ast.Compress: {},
 }
