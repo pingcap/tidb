@@ -254,7 +254,8 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Schema ID is wrong, so dropping table is failed.
 	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
 	// Table ID is wrong, so dropping table is failed.
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
@@ -302,7 +303,8 @@ func (s *testDDLSuite) TestViewError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
@@ -370,7 +372,8 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
@@ -400,7 +403,8 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropIndex, nil, ctx, d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
@@ -442,7 +446,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	}()
 	ctx := testNewContext(d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
@@ -739,7 +744,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
+	dbInfo, err := testSchemaInfo(d, "test_cancel_job")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// create a partition table.
 	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
@@ -898,7 +904,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StateNone)
 
 	// for create database
-	dbInfo1 := testSchemaInfo(c, d, "test_cancel_job1")
+	dbInfo1, err := testSchemaInfo(d, "test_cancel_job1")
+	c.Assert(err, IsNil)
 	updateTest(&tests[9])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
@@ -1469,7 +1476,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 			}
 	*/
 	// create database test_parallel_ddl_1;
-	dbInfo1 := testSchemaInfo(c, d, "test_parallel_ddl_1")
+	dbInfo1, err := testSchemaInfo(d, "test_parallel_ddl_1")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo1)
 	// create table t1 (c1 int, c2 int);
 	tblInfo1 := testTableInfo(c, d, "t1", 2)
@@ -1494,7 +1502,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	_, err = tbl2.AddRecord(ctx, types.MakeDatums(3, 3, 3))
 	c.Assert(err, IsNil)
 	// create database test_parallel_ddl_2;
-	dbInfo2 := testSchemaInfo(c, d, "test_parallel_ddl_2")
+	dbInfo2, err := testSchemaInfo(d, "test_parallel_ddl_2")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo2)
 	// create table t3 (c1 int, c2 int, c3 int, c4 int);
 	tblInfo3 := testTableInfo(c, d, "t3", 4)

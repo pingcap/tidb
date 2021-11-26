@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -963,7 +965,7 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length < 0 {
+	if length <= 0 {
 		return 0, errors.New("invalid encoded key")
 	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+
@@ -1293,4 +1295,58 @@ func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
 func ConvertByCollationStr(str string, tp *types.FieldType) string {
 	collator := collate.GetCollator(tp.Collate)
 	return string(hack.String(collator.Key(str)))
+}
+
+// HashCode encodes a Datum into a unique byte slice.
+// It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order
+// 	to make the encoding lossless.
+func HashCode(b []byte, d types.Datum) []byte {
+	switch d.Kind() {
+	case types.KindInt64:
+		b = encodeSignedInt(b, d.GetInt64(), false)
+	case types.KindUint64:
+		b = encodeUnsignedInt(b, d.GetUint64(), false)
+	case types.KindFloat32, types.KindFloat64:
+		b = append(b, floatFlag)
+		b = EncodeFloat(b, d.GetFloat64())
+	case types.KindString:
+		b = encodeString(b, d, false)
+	case types.KindBytes:
+		b = encodeBytes(b, d.GetBytes(), false)
+	case types.KindMysqlTime:
+		b = append(b, uintFlag)
+		t := d.GetMysqlTime().CoreTime()
+		b = encodeUnsignedInt(b, uint64(t), true)
+	case types.KindMysqlDuration:
+		// duration may have negative value, so we cannot use String to encode directly.
+		b = append(b, durationFlag)
+		b = EncodeInt(b, int64(d.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal:
+		b = append(b, decimalFlag)
+		decStr := d.GetMysqlDecimal().ToString()
+		b = encodeBytes(b, decStr, false)
+	case types.KindMysqlEnum:
+		b = encodeUnsignedInt(b, uint64(d.GetMysqlEnum().ToNumber()), false)
+	case types.KindMysqlSet:
+		b = encodeUnsignedInt(b, uint64(d.GetMysqlSet().ToNumber()), false)
+	case types.KindMysqlBit, types.KindBinaryLiteral:
+		val := d.GetBinaryLiteral()
+		b = encodeBytes(b, val, false)
+	case types.KindMysqlJSON:
+		b = append(b, jsonFlag)
+		j := d.GetMysqlJSON()
+		b = append(b, j.TypeCode)
+		b = append(b, j.Value...)
+	case types.KindNull:
+		b = append(b, NilFlag)
+	case types.KindMinNotNull:
+		b = append(b, bytesFlag)
+	case types.KindMaxValue:
+		b = append(b, maxFlag)
+	default:
+		logutil.BgLogger().Warn("trying to calculate HashCode of an unexpected type of Datum",
+			zap.Uint8("Datum Kind", d.Kind()),
+			zap.Stack("stack"))
+	}
+	return b
 }

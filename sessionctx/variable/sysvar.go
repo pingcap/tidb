@@ -1861,6 +1861,18 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
+	{Scope: ScopeSession, Name: RandSeed1, Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed1(uint32(tidbOptPositiveInt32(val, 0)))
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return "0", nil
+	}},
+	{Scope: ScopeSession, Name: RandSeed2, Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed2(uint32(tidbOptPositiveInt32(val, 0)))
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return "0", nil
+	}},
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
@@ -2183,6 +2195,10 @@ const (
 	Identity = "identity"
 	// TiDBAllowFunctionForExpressionIndex is the name of `TiDBAllowFunctionForExpressionIndex` system variable.
 	TiDBAllowFunctionForExpressionIndex = "tidb_allow_function_for_expression_index"
+	// RandSeed1 is the name of 'rand_seed1' system variable.
+	RandSeed1 = "rand_seed1"
+	// RandSeed2 is the name of 'rand_seed2' system variable.
+	RandSeed2 = "rand_seed2"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
