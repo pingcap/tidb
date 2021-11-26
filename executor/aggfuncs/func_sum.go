@@ -171,7 +171,7 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		return nil
 	}
 	if e.retTp == nil {
-		return errors.New("e.retTp of sum should not be nil!")
+		return errors.New("e.retTp of sum should not be nil")
 	}
 	err := p.val.Round(&p.val, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {

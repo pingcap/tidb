@@ -813,7 +813,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		return nil
 	}
 	if e.retTp == nil {
-		return errors.New("e.retTp of max or min should not be nil!")
+		return errors.New("e.retTp of max or min should not be nil")
 	}
 	err := p.val.Round(&p.val, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {

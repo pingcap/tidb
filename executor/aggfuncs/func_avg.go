@@ -74,7 +74,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		return err
 	}
 	if e.retTp == nil {
-		return errors.New("e.retTp of avg should not be nil!")
+		return errors.New("e.retTp of avg should not be nil")
 	}
 	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
@@ -265,7 +265,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 		return err
 	}
 	if e.retTp == nil {
-		return errors.New("e.retTp of avg should not be nil!")
+		return errors.New("e.retTp of avg should not be nil")
 	}
 	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
 	if err != nil {
