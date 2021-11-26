@@ -930,14 +930,17 @@ func TestHandleAuthPlugin(t *testing.T) {
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
-		server: srv,
+		server:    srv,
+		collation: mysql.DefaultCollationID,
+		peerHost:  "127.0.0.1",
 	}
 	ctx := context.Background()
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
+	require.Error(t, err) // Does not have username or password
+	require.Equal(t, errAccessDenied.FastGenByArgs("", "127.0.0.1", "NO"), err)
 
 	resp.Capability = mysql.ClientProtocol41
 	err = cc.handleAuthPlugin(ctx, &resp)

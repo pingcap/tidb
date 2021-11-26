@@ -146,6 +146,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
+	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
 	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
@@ -2252,6 +2253,27 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 		}
 	}
 	return false
+}
+
+// MatchIdentity finds the matching username + password in the MySQL privilege tables
+// for a username + hostname, since MySQL can have wildcards.
+func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	var success bool
+	var user = &auth.UserIdentity{}
+	user.Username, user.Hostname, success = pm.GetAuthWithoutVerification(username, remoteHost)
+	if success {
+		return user, nil
+	}
+	// Check Hosts
+	for _, addr := range s.getHostByIP(remoteHost) {
+		user.Username, user.Hostname, success = pm.GetAuthWithoutVerification(username, addr)
+		if success {
+			return user, nil
+		}
+	}
+	// This error will not be returned to the user, access denied will be instead
+	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
