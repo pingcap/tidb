@@ -15,8 +15,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
-
+	"fmt"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -32,6 +33,7 @@ type aggregationPushDownSolver struct {
 // isDecomposable checks if an aggregate function is decomposable. An aggregation function $F$ is decomposable
 // if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
+// For example, Max(S_1 union S_2) = Max(Max(S_1) union Max(S_2)), thus we think Max is decomposable.
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
 // count(distinct) is not.
 // Currently we don't support avg and concat.
@@ -207,7 +209,8 @@ func (a *aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *a
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
-func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin,
+	childIdx int, aggHints aggHintInfo, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -226,6 +229,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 	if err != nil {
 		return nil, err
 	}
+	a.appendAggPushDownTraceStep(aggFuncs, join, childIdx, opt)
 	agg.SetChildren(child)
 	// If agg has no group-by item, it will return a default value, which may cause some bugs.
 	// So here we add a group-by item forcely.
@@ -395,6 +399,9 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
+// For example, we can optimize 'select sum(a.id) from t as a,t as b where a.id = b.id;' as
+// 'select sum(agg) from (select sum(id) as agg,id from t group by id) as a, t as b where a.id = b.id;'
+// by pushing down sum aggregation functions.
 func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	if agg, ok := p.(*LogicalAggregation); ok {
 		proj := a.tryToEliminateAggregation(agg, opt)
@@ -402,6 +409,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 			p = proj
 		} else {
 			child := agg.children[0]
+
 			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) && p.SCtx().GetSessionVars().AllowAggPushDown {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild LogicalPlan
@@ -412,7 +420,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset)
+						rChild, err = a.tryToPushDownAgg(rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
 							return nil, err
 						}
@@ -420,7 +428,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset)
+						lChild, err = a.tryToPushDownAgg(leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.blockOffset, opt)
 						if err != nil {
 							return nil, err
 						}
@@ -499,4 +507,33 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 
 func (*aggregationPushDownSolver) name() string {
 	return "aggregation_push_down"
+}
+
+func (*aggregationPushDownSolver) appendAggPushDownTraceStep(aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
+	childIdx int, opt *logicalOptimizeOp) {
+	if opt.tracer == nil {
+		return
+	}
+	reason := func() string {
+		buffer := bytes.NewBufferString("aggFuncs[")
+		for _, aggFunc := range aggFuncs {
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString("] is decomposable")
+		return buffer.String()
+	}()
+	action := func() string {
+		buffer := bytes.NewBufferString("aggFuncs[")
+		for _, aggFunc := range aggFuncs {
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString(fmt.Sprintf("] pushed into join[%v] %v path", join.ID(), func() string {
+			if childIdx == 0 {
+				return "left"
+			}
+			return "right"
+		}()))
+		return buffer.String()
+	}()
+	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
