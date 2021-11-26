@@ -22,9 +22,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/store/gcworker"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -45,8 +45,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
@@ -60,6 +58,7 @@ type tiflashDDLTestSuite struct {
 	pdEnabled    bool
 	startTime    time.Time
 	tiflash      mockTiFlash
+	cluster      *unistore.Cluster
 }
 
 var _ = SerialSuites(&tiflashDDLTestSuite{})
@@ -80,6 +79,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 				mockCluster.AddPeer(region1, store2, peer2)
 				tiflashIdx++
 			}
+			s.cluster = mockCluster
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
@@ -333,6 +333,49 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	c.Assert(res, Equals, false)
 }
 
+// When gc worker works, it will automatically remove pd rule for TiFlash.
+func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
+	_, pdClient, cluster, err := unistore.New("")
+	for _, s := range s.cluster.GetAllStores() {
+		cluster.AddStore(s.Id, s.Address, s.Labels...)
+	}
+
+	c.Assert(err, IsNil)
+	gcWorker, err := gcworker.NewGCWorker(s.store, pdClient)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1 location labels 'a','b'")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+
+	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
+	res := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
+
+	originValue := ddl.PullTiFlashPdTick
+	ddl.PullTiFlashPdTick = 1000
+	defer func() {
+		ddl.PullTiFlashPdTick = originValue
+	}()
+
+	tk.MustExec("drop table ddltiflash")
+
+	time.Sleep(5 * time.Second)
+	// Now gc will trigger, and will remove dropped table.
+
+	gcWorker.Start()
+	defer gcWorker.Close()
+
+	// Wait GC
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	res = s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, false)
+}
+
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -560,10 +603,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		endKey, _ = url.QueryUnescape(endKey)
-		_, decodedEndKey, _ := codec.DecodeBytes([]byte(endKey), []byte{})
-		tableID := tablecodec.DecodeTableID(decodedEndKey)
-		tableID -= 1
+		tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
 		table, ok := s.tiflash.SyncStatus[int(tableID)]
 		if ok {
