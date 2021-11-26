@@ -132,14 +132,6 @@ type tidbFromBinaryFunctionClass struct {
 	tp *types.FieldType
 }
 
-// toBinaryMap contains the builtin functions which arguments need to be converted to the correct charset.
-var toBinaryMap = map[string]struct{}{
-	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
-	ast.ToBase64: {}, ast.AesDecrypt: {}, ast.AesEncrypt: {}, ast.Decode: {}, ast.Encode: {},
-	ast.PasswordFunc: {}, ast.MD5: {}, ast.SHA: {}, ast.SHA1: {},
-	ast.SHA2: {}, ast.Compress: {},
-}
-
 func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
