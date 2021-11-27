@@ -24,7 +24,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2229,31 +2228,16 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 // This means it can not be refactored to use MatchIdentity yet.
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
-	if success {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
+		return false
+	}
+	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
-	} else if user.Hostname == variable.DefHostname {
-		return false
-	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
 	}
 	return false
 }
@@ -2263,17 +2247,15 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	var success bool
+	var skipNameResolve bool
 	var user = &auth.UserIdentity{}
-	user.Username, user.Hostname, success = pm.GetAuthWithoutVerification(username, remoteHost)
+	varVal, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
+	if err == nil && variable.TiDBOptOn(varVal) {
+		skipNameResolve = true
+	}
+	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
 	if success {
 		return user, nil
-	}
-	// Check Hosts
-	for _, addr := range s.getHostByIP(remoteHost) {
-		user.Username, user.Hostname, success = pm.GetAuthWithoutVerification(username, addr)
-		if success {
-			return user, nil
-		}
 	}
 	// This error will not be returned to the user, access denied will be instead
 	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
@@ -2286,33 +2268,14 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	if err != nil {
 		return false
 	}
-	user.AuthUsername = authUser.Username
-	user.AuthHostname = authUser.Hostname
-	s.sessionVars.User = user
-	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
-	return true
-}
-
-func (s *session) getHostByIP(ip string) []string {
-	if ip == "127.0.0.1" {
-		return []string{variable.DefHostname}
+	if pm.GetAuthWithoutVerification(authUser.Username, authUser.Hostname) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
+		s.sessionVars.User = user
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		return true
 	}
-	skipNameResolve, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
-	if err == nil && variable.TiDBOptOn(skipNameResolve) {
-		return []string{ip} // user wants to skip name resolution
-	}
-	addrs, err := net.LookupAddr(ip)
-	if err != nil {
-		// These messages can be noisy.
-		// See: https://github.com/pingcap/tidb/pull/13989
-		logutil.BgLogger().Debug(
-			"net.LookupAddr returned an error during auth check",
-			zap.String("ip", ip),
-			zap.Error(err),
-		)
-		return []string{ip}
-	}
-	return addrs
+	return false
 }
 
 // RefreshVars implements the sessionctx.Context interface.

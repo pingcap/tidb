@@ -730,8 +730,7 @@ func (s *testSessionSuite) TestMatchIdentity(c *C) {
 	identity, err = tk.Se.MatchIdentity("useridentity", "127.0.0.1")
 	c.Assert(err, IsNil)
 	c.Assert(identity.Username, Equals, "useridentity")
-	// FIXME: we *should* match localhost instead
-	c.Assert(identity.Hostname, Equals, "%")
+	c.Assert(identity.Hostname, Equals, "localhost")
 
 	// This uses the lookup of example.com to get an IP address.
 	// We then login with that IP address, but expect it to match the example.com
