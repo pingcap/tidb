@@ -224,7 +224,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
-				log.Info("Find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+				log.Debug("Find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 			}
 		}
 	}
@@ -373,7 +373,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			// TODO Can we make it as a batch request?
 			for _, p := range pi.Definitions {
-				log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add partition %v\n", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -381,7 +380,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			}
 			// Partitions that in adding mid-state.
 			for _, p := range pi.AddingDefinitions {
-				log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add partition %v\n", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -391,7 +389,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 				}
 			}
 		} else {
-			log.Info(fmt.Sprintf("AlterTableSetTiFlashReplica add table %v\n", tblInfo.ID))
 			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)
