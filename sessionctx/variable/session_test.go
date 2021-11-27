@@ -155,7 +155,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
-	seVar.StmtCtx.ReadFromTableCache = true
+	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
