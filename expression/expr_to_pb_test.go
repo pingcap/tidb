@@ -956,8 +956,8 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	c.Assert(len(remained), Equals, 0)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
-	c.Assert(len(pushed), Equals, 0)
-	c.Assert(len(remained), Equals, len(exprs))
+	c.Assert(len(pushed), Equals, 1)
+	c.Assert(len(remained), Equals, len(exprs) - 1)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToTiKV(c *C) {
