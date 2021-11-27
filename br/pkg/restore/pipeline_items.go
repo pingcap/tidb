@@ -323,7 +323,7 @@ func (b *tikvSender) registerTableIsRestoring(ts []CreatedTable) func() {
 
 // waitTablesDone block the current goroutine,
 // till all tables provided are no more ‘current restoring’.
-func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
+func (b *tikvSender) waitTablesDone(ctx context.Context, ts []CreatedTable) {
 	for _, t := range ts {
 		wg, ok := b.tableWaiters.LoadAndDelete(t.Table.ID)
 		if !ok {
@@ -331,7 +331,12 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 				zap.Any("wait-table-map", b.tableWaiters),
 				zap.Stringer("table", t.Table.Name))
 		}
-		wg.(*sync.WaitGroup).Wait()
+		select {
+		case <-ctx.Done(): // error group cancel, in this circumstance do not sync wait.
+			return
+		default:
+			wg.(*sync.WaitGroup).Wait()
+		}
 	}
 }
 
@@ -364,7 +369,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
 				r.done()
-				b.waitTablesDone(r.result.BlankTablesAfterSend)
+				b.waitTablesDone(ectx, r.result.BlankTablesAfterSend)
 				b.sink.EmitTables(r.result.BlankTablesAfterSend...)
 				return nil
 			})
