@@ -689,6 +689,15 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+
+	// Set the global var to a non canonical form of the value
+	// i.e. implying that it was set from an earlier version of TiDB.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF")
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -5718,26 +5727,28 @@ func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 0.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
 	c.Assert(err, NotNil)
-	if *withTiKV {
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = -1;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = 11;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-	} else {
-		// Because the PD client in the unit test may be nil, so we only check the warning here.
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
-	}
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -0.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")

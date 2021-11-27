@@ -154,6 +154,11 @@ func GetCollator(collate string) Collator {
 	return binCollatorInstance
 }
 
+// GetBinaryCollator gets the binary collator, it is often used when we want to apply binary compare.
+func GetBinaryCollator() Collator {
+	return binCollatorInstance
+}
+
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {

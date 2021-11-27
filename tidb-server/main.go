@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -191,7 +190,6 @@ func main() {
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -273,12 +271,6 @@ func setCPUAffinity() {
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-}
-
-func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
-	d := parseDuration(c.Performance.MemProfileInterval)
-	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {

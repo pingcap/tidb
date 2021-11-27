@@ -51,6 +51,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
 		HandleCols: p.handleCols,
+		CacheTable: p.cacheTable,
 	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}, true, nil
 }
@@ -482,11 +483,11 @@ func (p *LogicalJoin) constructIndexJoin(
 					}
 					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
 					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
-						outerHashKeys = append(outerHashKeys, lhs)
-						innerHashKeys = append(innerHashKeys, rhs)
+						outerHashKeys = append(outerHashKeys, lhs) // nozero
+						innerHashKeys = append(innerHashKeys, rhs) // nozero
 					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
-						outerHashKeys = append(outerHashKeys, rhs)
-						innerHashKeys = append(innerHashKeys, lhs)
+						outerHashKeys = append(outerHashKeys, rhs) // nozero
+						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
 					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
 				}
@@ -1203,9 +1204,9 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 		if err != nil {
 			return nil, err
 		}
-		exprs = append(exprs, newExpr)
+		exprs = append(exprs, newExpr) // nozero
 	}
-	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.TargetCol.RetType, cwc.colLength)
+	ranges, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength)
 	if err != nil {
 		return nil, err
 	}
@@ -1260,18 +1261,18 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // uselessFilters is the conditions which cannot be used for building ranges.
 // remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, _ = ranger.ExtractEqAndInCondition(
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
 		innerPlan.ctx, innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
 	uselessFilters = append(uselessFilters, remainedEqOrIn...)
-	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates, emptyRange
 }
 
 // buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
@@ -1393,7 +1394,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
 	relatedExprs := make([]expression.Expression, 0, len(path.IdxCols)) // all expressions related to the chosen range
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens, outerJoinKeys)
-	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	if emptyRange {
+		return true, nil
+	}
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn, outerJoinKeys)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
@@ -1449,7 +1453,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		var ranges, nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
-			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
+			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
 			if err != nil {
 				return false, err
 			}
@@ -1558,12 +1562,15 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			continue
 		}
 		exprs := []expression.Expression{eqAndInFuncs[j]}
-		oneColumnRan, err := ranger.BuildColumnRange(exprs, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		oneColumnRan, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
 		if err != nil {
 			return nil, false, err
 		}
 		if len(oneColumnRan) == 0 {
 			return nil, true, nil
+		}
+		if sc.MemTracker != nil {
+			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
 		}
 		for _, ran := range ranges {
 			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
@@ -1577,6 +1584,9 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
 				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
 				newRanges = append(newRanges, newRange)
+			}
+			if sc.MemTracker != nil && len(newRanges) != 0 {
+				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(newRanges[0].LowVal, len(newRanges)))
 			}
 			ranges = append(ranges, newRanges...)
 		}
