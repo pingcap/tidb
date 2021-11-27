@@ -4087,3 +4087,60 @@ func (s *testIntegrationSuite) TestIssues27130(c *C) {
 		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testIntegrationSuite) TestIndexMergeExprs(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// varbinary and binary can be used in IndexMerge.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varbinary(100), c4 binary(100), key(c1), key(c2));")
+	tk.MustExec("insert into t1 values('ab', '10', '10', '10');")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, 10) = 10;").Check(testkit.Rows(
+		"IndexMerge_9 0.04 root  ",
+		"├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"└─Selection_8(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(cast(substring(test.t1.c3, 10), double BINARY), 10)))",
+		"  └─TableRowIDScan_7 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c4, 10) = 10;").Check(testkit.Rows(
+		"IndexMerge_9 0.04 root  ",
+		"├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"└─Selection_8(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(cast(substring(test.t1.c4, 10), double BINARY), 10)))",
+		"  └─TableRowIDScan_7 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c3, 1) = 10;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c4, 1) = 10;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c3, 1) = 1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c4, 1) = 1;").Check(testkit.Rows())
+
+	// Test char_length.
+	tk.MustExec("insert into t1 values('ab', '10', '1234567ab', '1234567ab');")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c3) - 5) = '567ab';").Check(testkit.Rows(
+		"IndexMerge_9 0.04 root  ",
+		"├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"└─Selection_8(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(substring(test.t1.c3, minus(char_length(test.t1.c3), 5)), \"567ab\")))",
+		"  └─TableRowIDScan_7 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c4) - 5) = '567ab';").Check(testkit.Rows(
+		"IndexMerge_9 0.04 root  ",
+		"├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"└─Selection_8(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(substring(test.t1.c3, minus(char_length(test.t1.c4), 5)), \"567ab\")))",
+		"  └─TableRowIDScan_7 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c3) - 5) = '4567ab';").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c4) - 5) = '4567ab';").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c3) - 5) = '123';").Check(testkit.Rows(""))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, char_length(c4) - 5) = '123';").Check(testkit.Rows(""))
+
+	// varchar can be used in IndexMerge.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), key(c1), key(c2));")
+	tk.MustExec("insert into t1 values('ab', '10', '10');")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where c1 = 'de' or c2 = '10' and substring(c3, 10) = 10;").Check(testkit.Rows(
+		"IndexMerge_9 0.04 root  ",
+		"├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"└─Selection_8(Probe) 0.04 cop[tikv]  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(cast(substring(test.t1.c3, 10), double BINARY), 10)))",
+		"  └─TableRowIDScan_7 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c3, 1) = 10;").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and substring(c3, 1) = 1;").Check(testkit.Rows())
+}

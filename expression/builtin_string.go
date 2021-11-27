@@ -131,6 +131,7 @@ var (
 	_ builtinFunc = &builtinBitLengthSig{}
 	_ builtinFunc = &builtinCharSig{}
 	_ builtinFunc = &builtinCharLengthUTF8Sig{}
+	_ builtinFunc = &builtinCharLengthBinarySig{}
 	_ builtinFunc = &builtinFindInSetSig{}
 	_ builtinFunc = &builtinMakeSetSig{}
 	_ builtinFunc = &builtinOctIntSig{}
