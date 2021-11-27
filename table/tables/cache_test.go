@@ -437,5 +437,5 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	}
 	require.True(t, i < 10)
 	tk.MustExec("insert into wait_tb1 values(1)")
-	require.True(t, se.GetSessionVars().WaitLockLeaseTime > 0)
+	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
 }

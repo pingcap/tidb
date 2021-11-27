@@ -201,6 +201,9 @@ type StatementContext struct {
 
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+
+	// WaitLockLease is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
 }
 
 // StmtHints are SessionVars related sql hints.

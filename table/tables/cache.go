@@ -203,7 +203,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ctx.GetSessionVars().WaitLockLeaseTime = time.Since(start)
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.AddRecord(ctx, r, opts...)
 }
 
@@ -219,7 +219,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sctx.GetSessionVars().WaitLockLeaseTime = time.Since(start)
+	sctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
@@ -235,7 +235,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.GetSessionVars().WaitLockLeaseTime = time.Since(start)
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 

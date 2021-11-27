@@ -1014,7 +1014,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ResultRows:        GetResultRowsCount(a.Ctx, a.Plan),
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
-		IsWriteCacheTable: sessVars.StmtCtx.ReadFromTableCache,
+		IsWriteCacheTable: sessVars.StmtCtx.WaitLockLeaseTime > 0,
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1194,7 +1194,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	execDetail.BackoffSleep["waitLockLease"] = sessVars.WaitLockLeaseTime
+	if stmtCtx.WaitLockLeaseTime > 0 {
+		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
+	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
