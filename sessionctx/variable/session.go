@@ -2013,7 +2013,7 @@ const (
 	SlowLogResultRows = "Result_rows"
 	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
-	// SlowLogIsWriteCacheTable is used to indicate whether write into cache table.
+	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
@@ -2217,7 +2217,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
-	if s.StmtCtx.ReadFromTableCache {
+	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
 	}
 	if len(logItems.Plan) != 0 {
