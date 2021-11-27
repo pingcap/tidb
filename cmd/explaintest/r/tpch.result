@@ -976,7 +976,7 @@ l_partkey = p_partkey
 );
 id	estRows	task	access object	operator info
 Projection	1.00	root		div(Column#46, 7.0)->Column#47
-└─HashAgg	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
+└─StreamAgg	1.00	root		funcs:sum(tpch.lineitem.l_extendedprice)->Column#46
   └─HashJoin	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:lt(tpch.lineitem.l_quantity, mul(0.2, Column#44))
     ├─HashJoin(Build)	293773.83	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)]
     │ ├─TableReader(Build)	9736.49	root		data:Selection
@@ -1094,7 +1094,7 @@ and l_shipmode in ('AIR', 'AIR REG')
 and l_shipinstruct = 'DELIVER IN PERSON'
 );
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:sum(Column#28)->Column#27
+StreamAgg	1.00	root		funcs:sum(Column#28)->Column#27
 └─Projection	733887.82	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#28
   └─HashJoin	733887.82	root		inner join, equal:[eq(tpch.part.p_partkey, tpch.lineitem.l_partkey)], other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
     ├─TableReader(Build)	24323.12	root		data:Selection
