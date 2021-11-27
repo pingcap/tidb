@@ -274,6 +274,30 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
+func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	// Should get schema right now
+
+	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
+	tk.MustExec("alter table ddltiflash truncate partition p1")
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	replica := tb.Meta().TiFlashReplica
+	c.Assert(replica, NotNil)
+	c.Assert(replica.Available, Equals, true)
+	c.Assert(replica.Count, Equals, uint64(1))
+	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+}
+
+// TiFlash Table shall be eventually available, even with lots of small table created.
 func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

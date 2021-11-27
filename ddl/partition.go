@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 	"strconv"
 	"strings"
 	"time"
@@ -1201,6 +1203,20 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 					break
 				}
 			}
+		}
+		tikvStore, ok := d.store.(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			for _, p := range newPartitions {
+				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
+				tikvHelper.SetPlacementRule(*newRule)
+			}
+		} else{
+			log.Warn("Set new pd rule fail while truncate partition")
+			ReschePullTiFlash = true
 		}
 	}
 

@@ -150,14 +150,17 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashRep
 	}
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		for _, p := range pi.Definitions {
+			log.Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
 			*tableList = append(*tableList, PollTiFlashReplicaStatusContext{p.ID,
 				tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), false})
 		}
 		// partitions that in adding mid-state
 		for _, p := range pi.AddingDefinitions {
+			log.Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
 			*tableList = append(*tableList, PollTiFlashReplicaStatusContext{p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID), true})
 		}
 	} else {
+		log.Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
 		*tableList = append(*tableList, PollTiFlashReplicaStatusContext{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, false})
 	}
 }
@@ -521,6 +524,12 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		// TODO Can we batch request table?
 		// Implement _check_and_make_rule
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
+		if _, ok := allRules[ruleID]; !ok {
+			// Mostly because of a previous failure of setting pd rule.
+			log.Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
+			newRule := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
+			tikvHelper.SetPlacementRule(*newRule)
+		}
 		// For every existing table, we do not remove their rules.
 		delete(allRules, ruleID)
 	}
