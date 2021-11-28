@@ -18,11 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/store/helper"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -1214,7 +1215,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 				tikvHelper.SetPlacementRule(*newRule)
 			}
-		} else{
+		} else {
 			log.Warn("Set new pd rule fail while truncate partition")
 			ReschePullTiFlash = true
 		}
