@@ -23,7 +23,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -2072,14 +2071,22 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
+	var encodeBuf [4]byte
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		strBytes := buf.GetBytes(i)
-		w := enc.CharLength(strBytes)
-		w = mathutil.Min(w, len(strBytes))
-		i64s[i] = calcOrd(strBytes[:w])
+		w := charset.UTF8Encoding.CharLength(strBytes)
+		encodedBytes, err := enc.Encode(encodeBuf[:], strBytes[:w])
+		if err != nil {
+			// Fallback to the first byte.
+			i64s[i] = calcOrd(strBytes[:1])
+			continue
+		}
+		// Only the first character is considered.
+		w = enc.CharLength(encodedBytes)
+		i64s[i] = calcOrd(encodedBytes[:w])
 	}
 	return nil
 }

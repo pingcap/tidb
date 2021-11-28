@@ -18,7 +18,6 @@ import (
 	go_unicode "unicode"
 	"unicode/utf8"
 
-	"github.com/cznic/mathutil"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/japanese"
@@ -330,7 +329,6 @@ func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (s
 			w = 1
 			if str[i] > go_unicode.MaxASCII {
 				w = UTF8Encoding.CharLength(Slice(str)[i:])
-				w = mathutil.Min(w, len(str)-i)
 				result = append(result, '?')
 				continue
 			}
@@ -425,7 +423,6 @@ func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (s
 	invalidPos := -1
 	for i, w := 0, 0; i < len(str); i += w {
 		w = UTF8Encoding.CharLength(strBytes[i:])
-		w = mathutil.Min(w, len(str)-i)
 		_, _, err := transformer.Transform(buf[:], strBytes[i:i+w], true)
 		if err != nil {
 			if invalidPos == -1 {

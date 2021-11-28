@@ -272,7 +272,7 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			return BuildFromBinaryFunction(ctx, expr, ft)
 		}
 	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress, ast.Ord:
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
 		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
 			return BuildToBinaryFunction(ctx, expr)
 		}

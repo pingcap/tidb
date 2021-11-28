@@ -28,7 +28,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -2895,9 +2894,15 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	strBytes := hack.Slice(str)
-	w := enc.CharLength(strBytes)
-	w = mathutil.Min(w, len(strBytes))
-	return calcOrd(strBytes[:w]), false, nil
+	w := charset.UTF8Encoding.CharLength(strBytes)
+	encodedBytes, err := enc.Encode(nil, strBytes[:w])
+	if err != nil {
+		// Fallback to the first byte.
+		return calcOrd(strBytes[:1]), false, nil
+	}
+	// Only the first character is considered.
+	w = enc.CharLength(encodedBytes)
+	return calcOrd(encodedBytes[:w]), false, nil
 }
 
 func calcOrd(leftMost []byte) int64 {
