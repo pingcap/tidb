@@ -1454,11 +1454,14 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETString {
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 					} else {
 						continue
 					}
+				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+					// We should remove the mutable constant for correctness, because its value may be changed.
+					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {

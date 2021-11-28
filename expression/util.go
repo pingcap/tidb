@@ -920,12 +920,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
-		return false
-	}
-	if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
-		// If the current statement can not be cached. We should remove the mutable constant.
-		RemoveMutableConst(ctx, exprs)
+	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return false
 	}
 	return containMutableConst(ctx, exprs)
