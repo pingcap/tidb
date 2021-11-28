@@ -24,9 +24,6 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
-	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -208,44 +205,4 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 		}()
 	}
 	wg.Wait()
-}
-
-func TestCommitWhenSchemaChanged(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	s.mustExec("drop table if exists test_commit")
-	s.mustExec("create table test_commit (a int, b int)")
-	s.mustExec("insert into test_commit values (1, 1)")
-	s.mustExec("insert into test_commit values (2, 2)")
-
-	s1, err := session.CreateSession(s.store)
-	require.NoError(t, err)
-	ctx := goctx.Background()
-	_, err = s1.Execute(ctx, "use test_ddl")
-	require.NoError(t, err)
-	_, err = s1.Execute(ctx, "begin")
-	require.NoError(t, err)
-	_, err = s1.Execute(ctx, "insert into test_commit values (3, 3)")
-	require.NoError(t, err)
-
-	s.mustExec("alter table test_commit drop column b")
-
-	// When this transaction commit, it will find schema already changed.
-	_, err = s1.Execute(ctx, "insert into test_commit values (4, 4)")
-	require.NoError(t, err)
-	_, err = s1.Execute(ctx, "commit")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), "err: %v", err)
-}
-
-func TestForIssue24621(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	s.mustExec("use test")
-	s.mustExec("drop table if exists t")
-	s.mustExec("create table t(a char(250));")
-	s.mustExec("insert into t values('0123456789abc');")
-	_, err := s.exec("alter table t modify a char(12) null;")
-	require.EqualError(t, err, "[types:1265]Data truncated for column 'a', value is '0123456789abc'")
 }

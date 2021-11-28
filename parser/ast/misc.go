@@ -120,14 +120,17 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 type TraceStmt struct {
 	stmtNode
 
-	Stmt   StmtNode
-	Format string
+	Stmt      StmtNode
+	Format    string
+	TracePlan bool
 }
 
 // Restore implements Node interface.
 func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
-	if n.Format != "row" {
+	if n.TracePlan {
+		ctx.WriteKeyWord("PLAN ")
+	} else if n.Format != "row" {
 		ctx.WriteKeyWord("FORMAT")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Format)
@@ -1191,6 +1194,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		switch opt.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
 			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthSocket:
+			return "", true
 		default:
 			return auth.EncodePassword(opt.AuthString), true
 		}

@@ -268,6 +268,18 @@ type MySQLPrivilege struct {
 	RoleGraph     map[string]roleGraphEdgesTable
 }
 
+// FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
+// This method will filter out the roles that are not granted to the user but are still in activeRoles
+func (p *MySQLPrivilege) FindAllUserEffectiveRoles(user, host string, activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
+	grantedActiveRoles := make([]*auth.RoleIdentity, 0, len(activeRoles))
+	for _, role := range activeRoles {
+		if p.FindRole(user, host, role) {
+			grantedActiveRoles = append(grantedActiveRoles, role)
+		}
+	}
+	return p.FindAllRole(grantedActiveRoles)
+}
+
 // FindAllRole is used to find all roles grant to this user.
 func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
 	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
@@ -560,7 +572,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	}
 	defer terror.Call(rs.Close)
 	fs := rs.Fields()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
@@ -968,7 +980,7 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 // without accepting SUPER privilege as a fallback.
 func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
-	roleList := p.FindAllRole(activeRoles)
+	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 	// Loop through each of the roles and return on first match
 	// If grantable is required, ensure the record has the GrantOption set.
@@ -1016,7 +1028,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		return true
 	}
 
-	roleList := p.FindAllRole(activeRoles)
+	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
 	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
@@ -1117,7 +1129,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
-	allRoles := p.FindAllRole(roles)
+	allRoles := p.FindAllUserEffectiveRoles(user, host, roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
 	var userExists = false
@@ -1257,7 +1269,8 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
-	for _, record := range p.ColumnsPriv {
+	for i := range p.ColumnsPriv {
+		record := p.ColumnsPriv[i]
 		if !collectColumnGrant(&record, user, host, columnPrivTable) {
 			for _, r := range allRoles {
 				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
@@ -1357,7 +1370,7 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
@@ -1395,24 +1408,25 @@ func userPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == userTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
 }
 
 func dbPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == dbTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
+	return PrivToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
 }
 
 func tablePrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == tablePrivMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
 }
 
-func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
+// PrivToString converts the privileges to string.
+func PrivToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
 	pstrs := make([]string, 0, 20)
 	for _, p := range allPrivs {
 		if priv&p == 0 {
