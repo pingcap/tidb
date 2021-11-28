@@ -17,6 +17,8 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
+	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -194,10 +196,14 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	newMaxUsage := memTracker.MaxConsumed()
 	c.Assert(newMaxUsage, Greater, oriMaxUsage)
 
-	// We expect memory is not N/A.
 	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	c.Assert(len(res.Rows()), Equals, 4)
-	if res.Rows()[1][6] == "N/A" {
-		c.Assert(1, Equals, 0)
-	}
+	// Parse "xxx KB" and check it's greater than 0.
+	memStr := res.Rows()[0][7].(string)
+	re, err := regexp.Compile("[0-9]+ KB")
+	c.Assert(err, IsNil)
+	c.Assert(re.MatchString(memStr), IsTrue)
+	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
+	c.Assert(err, IsNil)
+	c.Assert(bytes, Greater, 0.0)
 }
