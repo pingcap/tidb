@@ -778,8 +778,6 @@ type tableFlashReplicaInfo struct {
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
-	return
 	if req.Method == http.MethodPost {
 		h.handleStatusReport(w, req)
 		return
