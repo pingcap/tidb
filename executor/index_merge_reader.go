@@ -133,6 +133,8 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	}
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
@@ -520,7 +522,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			indexMergeExec: e,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
+			memTracker:     e.memTracker,
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {

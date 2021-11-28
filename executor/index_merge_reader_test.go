@@ -170,3 +170,34 @@ func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
 		tk.MustQuery("select /*+ USE_INDEX_MERGE(tpk, a, b) */ * from tpk where " + cond).Sort().Check(result)
 	}
 }
+
+func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
+
+	insertStr := "insert into t1 values(0, 0, 0)"
+	rowNum := 1000
+	for i := 0; i < rowNum; i++ {
+		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
+	}
+	insertStr += ";"
+	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
+
+	tk.MustExec(insertStr)
+
+	oriMaxUsage := memTracker.MaxConsumed()
+
+	// We select all rows in t1, so the mem usage is more clear.
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+
+	newMaxUsage := memTracker.MaxConsumed()
+	c.Assert(newMaxUsage, Greater, oriMaxUsage)
+
+	// We expect memory is not N/A.
+	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+	c.Assert(len(res.Rows()), Equals, 4)
+	if res.Rows()[1][6] == "N/A" {
+		c.Assert(1, Equals, 0)
+	}
+}
