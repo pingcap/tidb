@@ -491,6 +491,9 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 			def := defs[i]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
+			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return definitions, nil
