@@ -305,9 +305,6 @@ committer-concurrency = 128
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
-# the interval duration between two memory profile into global tracker
-mem-profile-interval = "1m"
-
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.

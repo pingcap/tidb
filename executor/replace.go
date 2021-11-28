@@ -222,7 +222,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
