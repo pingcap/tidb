@@ -212,6 +212,22 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 		if len(rg.LowVal) != len(idx.Columns) {
 			return false
 		}
+		if !rg.LowExclude {
+			for _, v := range rg.LowVal {
+				if v.IsNull() {
+					// a unique index may have duplicated rows with NULLs, so we cannot set the unique attribute to true when the range has NULL
+					// please see https://github.com/pingcap/tidb/issues/29650 for more details
+					return false
+				}
+			}
+		}
+		if !rg.HighExclude {
+			for _, v := range rg.HighVal {
+				if v.IsNull() {
+					return false
+				}
+			}
+		}
 	}
 	return true
 }
