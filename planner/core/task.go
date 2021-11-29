@@ -1458,9 +1458,12 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	client := sctx.GetClient()
 	ret := true
 	reason := ""
-	for _, agg := range aggFuncs {
-		aggFunc := agg.Clone()
-		aggFunc.WrapCastForAggArgs(sctx)
+	for i := range aggFuncs {
+		aggFunc := aggFuncs[i]
+		if storeType == kv.TiFlash {
+			aggFunc = aggFunc.Clone()
+			aggFunc.WrapCastForAggArgs(sctx)
+		}
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
 			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
