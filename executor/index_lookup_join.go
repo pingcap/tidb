@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/failpoint"
 	"runtime"
 	"runtime/trace"
 	"sort"
@@ -28,6 +27,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
