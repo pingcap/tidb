@@ -434,11 +434,12 @@ type Performance struct {
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                  int     `toml:"gogc" json:"gogc"`
-	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
+	// Deprecated
+	MemProfileInterval  string `toml:"-" json:"-"`
+	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                int    `toml:"gogc" json:"gogc"`
+	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -647,7 +648,6 @@ var defaultConf = Config{
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
@@ -738,20 +738,21 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":               {},
+	"pessimistic-txn.ttl":              {},
+	"pessimistic-txn.enable":           {},
+	"log.file.log-rotate":              {},
+	"log.log-slow-query":               {},
+	"txn-local-latches":                {},
+	"txn-local-latches.enabled":        {},
+	"txn-local-latches.capacity":       {},
+	"performance.max-memory":           {},
+	"max-txn-time-use":                 {},
+	"experimental.allow-auto-random":   {},
+	"enable-redact-log":                {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":    {},
+	"alter-primary-key":                {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                 {},
+	"performance.mem-profile-interval": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

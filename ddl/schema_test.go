@@ -39,14 +39,16 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 func (s *testSchemaSuite) TearDownSuite(c *C) {
 }
 
-func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
+func testSchemaInfo(d *ddl, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr(name),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	if err != nil {
+		return nil, err
+	}
 	dbInfo.ID = genIDs[0]
-	return dbInfo
+	return dbInfo, nil
 }
 
 func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
@@ -140,7 +142,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test_schema")
+	dbInfo, err := testSchemaInfo(d, "test_schema")
+	c.Assert(err, IsNil)
 
 	// create a database.
 	job := testCreateSchema(c, ctx, d, dbInfo)
@@ -149,7 +152,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
-	tblInfo1 := testTableInfo(c, d, "t", 3)
+	tblInfo1, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
@@ -159,7 +163,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with 1034 records.
-	tblInfo2 := testTableInfo(c, d, "t1", 3)
+	tblInfo2, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
@@ -185,7 +190,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue, Commentf("err %v", err))
 
 	// Drop a database without a table.
-	dbInfo1 := testSchemaInfo(c, d, "test1")
+	dbInfo1, err := testSchemaInfo(d, "test1")
+	c.Assert(err, IsNil)
 	job = testCreateSchema(c, ctx, d, dbInfo1)
 	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
@@ -229,7 +235,8 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	d2.ownerManager.RetireOwner()
 
-	dbInfo := testSchemaInfo(c, d2, "test_schema")
+	dbInfo, err := testSchemaInfo(d2, "test_schema")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
