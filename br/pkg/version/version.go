@@ -71,8 +71,8 @@ func checkTiFlashVersion(store *metapb.Store) error {
 }
 
 // IsTiFlash tests whether the store is based on tiflash engine.
-func IsTiFlash(labels []*metapb.StoreLabel) bool {
-	for _, label := range labels {
+func IsTiFlash(store *metapb.Store) bool {
+	for _, label := range store.Labels {
 		if label.Key == "engine" && label.Value == "tiflash" {
 			return true
 		}
@@ -91,7 +91,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 		return errors.Trace(err)
 	}
 	for _, s := range stores {
-		isTiFlash := IsTiFlash(s.Labels)
+		isTiFlash := IsTiFlash(s)
 		log.Debug("checking compatibility of store in cluster",
 			zap.Uint64("ID", s.GetId()),
 			zap.Bool("TiFlash?", isTiFlash),
