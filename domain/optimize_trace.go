@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package domain
 
 import (
-	"github.com/pingcap/tidb/parser/ast"
+	"os"
+	"path/filepath"
+	"strconv"
 )
 
-// Trace represents a trace plan.
-type Trace struct {
-	baseSchemaProducer
-
-	StmtNode ast.StmtNode
-	Format   string
-
-	// OptimizerTrace indicates `trace plan <statement>` case
-	OptimizerTrace bool
+// GetOptimizerTraceDirName returns optimizer trace directory path.
+// The path is related to the process id.
+func GetOptimizerTraceDirName() string {
+	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
 }

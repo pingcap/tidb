@@ -310,8 +310,10 @@ func (cc *clientConn) Close() error {
 
 func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
-	err := cc.bufReadConn.Close()
-	terror.Log(err)
+	if cc.bufReadConn != nil {
+		err := cc.bufReadConn.Close()
+		terror.Log(err)
+	}
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -886,7 +888,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 
 func (cc *clientConn) PeerHost(hasPassword string) (host, port string, err error) {
 	if len(cc.peerHost) > 0 {
-		return cc.peerHost, "", nil
+		return cc.peerHost, cc.peerPort, nil
 	}
 	host = variable.DefHostname
 	if cc.isUnixSocket {
