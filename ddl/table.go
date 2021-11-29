@@ -21,6 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/label"
@@ -569,6 +573,33 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
+		// Set PD rules for TiFlash
+		tikvStore, ok := d.store.(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
+			err := tikvHelper.SetPlacementRule(*newRule)
+			if err != nil {
+				log.Warn("SetPlacementRule fails", zap.Error(err))
+				atomic.StoreUint32(&ReschePullTiFlash, 1)
+			}
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, d := range pi.Definitions {
+					newPartRule := MakeNewRule(d.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
+					err := tikvHelper.SetPlacementRule(*newPartRule)
+					if err != nil {
+						log.Warn("SetPlacementRule fails", zap.Error(err))
+						atomic.StoreUint32(&ReschePullTiFlash, 1)
+					}
+				}
+			}
+		} else {
+			log.Warn("Set new pd rule fail while truncate table")
+			atomic.StoreUint32(&ReschePullTiFlash, 1)
+		}
 	}
 
 	tblInfo.ID = newTableID

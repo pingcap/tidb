@@ -1216,7 +1216,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 				err := tikvHelper.SetPlacementRule(*newRule)
 				if err != nil {
-					log.Warn("SetPlacementRule fails")
+					log.Warn("SetPlacementRule fails", zap.Error(err))
+					atomic.StoreUint32(&ReschePullTiFlash, 1)
 				}
 			}
 		} else {

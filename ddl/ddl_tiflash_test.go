@@ -184,13 +184,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 
 	time.Sleep(ddl.PollTiFlashInterval * 5)
 	// Should get schema again
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	c.Assert(err, IsNil)
-	replica = tb.Meta().TiFlashReplica
-	c.Assert(replica, NotNil)
-	c.Assert(replica.Available, Equals, true)
-	c.Assert(replica.Count, Equals, uint64(1))
-	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	pi := tb.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
@@ -215,13 +209,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	// Make sure is available
 	time.Sleep(ddl.PollTiFlashInterval * 4)
 	// Should get schema right now
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	c.Assert(err, IsNil)
-	replica := tb.Meta().TiFlashReplica
-	c.Assert(replica, NotNil)
-	c.Assert(replica.Available, Equals, true)
-	c.Assert(replica.Count, Equals, uint64(1))
-	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	lessThan := "40"
 	// Stop loop
@@ -232,7 +220,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop")
 	}()
 
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	pi := tb.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
@@ -257,24 +245,17 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
 	time.Sleep(ddl.PollTiFlashInterval * 5)
-	// Should get schema right now
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	c.Assert(err, IsNil)
-	replica := tb.Meta().TiFlashReplica
-	c.Assert(replica, NotNil)
-	c.Assert(replica.Available, Equals, true)
-	c.Assert(replica.Count, Equals, uint64(1))
-	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * 5)
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
-	replica = tb.Meta().TiFlashReplica
+	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, IsNil)
 }
 
-// TiFlash Table shall be eventually available, even with lots of small table created.
+// Truncate partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -289,13 +270,44 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * 5)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	CheckTableAvailable(s.dom, c, 1, []string{})
+}
+
+func CheckTableAvailable(dom *domain.Domain, c *C, count uint64, labels []string) {
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
 	c.Assert(replica.Available, Equals, true)
-	c.Assert(replica.Count, Equals, uint64(1))
-	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+	c.Assert(replica.Count, Equals, count)
+	c.Assert(replica.LocationLabels, DeepEquals, labels)
+}
+
+// Truncate table shall not block.
+func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	// Should get schema right now
+
+	tk.MustExec("truncate table ddltiflash")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	CheckTableAvailable(s.dom, c, 1, []string{})
+
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(i int not null, s varchar(255))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	// Should get schema right now
+
+	tk.MustExec("truncate table ddltiflash")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
@@ -325,7 +337,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
-	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
