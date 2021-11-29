@@ -130,8 +130,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
 			capacity = it.concurrency * 2
 		}
+		// in streaming or paging request, a request will be returned in multi batches,
+		// enlarge the channel size to avoid the request blocked by buffer full.
 		if req.Streaming || req.Paging {
-			capacity = 2048
+			if capacity < 2048 {
+				capacity = 2048
+			}
 		}
 		it.respChan = make(chan *copResponse, capacity)
 		it.sendRate = util.NewRateLimit(it.concurrency)
@@ -189,6 +193,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		return nil, errors.Trace(err)
 	}
 	chanSize := 2
+	// in streaming or paging request, a request will be returned in multi batches,
+	// enlarge the channel size to avoid the request blocked by buffer full.
 	if req.Streaming || req.Paging {
 		chanSize = 128
 	}
@@ -416,13 +422,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			worker.sendToRespCh(finCopResp, worker.respChan, false)
 		}
 		close(task.respChan)
-		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+		if worker.finished() {
 			return
-		}
-		select {
-		case <-worker.finishCh:
-			return
-		default:
 		}
 	}
 }
@@ -670,13 +671,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
-		finished := false
-		select {
-		case <-worker.finishCh:
-			finished = true
-		default:
-		}
-		if finished {
+		if worker.finished() {
 			break
 		}
 		curTask := remainTasks[0]
@@ -1037,7 +1032,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 	}
 	worker.sendToRespCh(resp, ch, true)
-	if lastRange == nil {
+	// only paging requests need to calculate the next ranges
+	if !worker.req.Paging || lastRange == nil {
 		return nil, nil
 	}
 	// calculate next ranges and grow the paging size
@@ -1122,6 +1118,18 @@ func (worker *copIteratorWorker) calculateTodo(ranges *KeyRanges, split *coproce
 	}
 	_, right := ranges.Split(split.End)
 	return right
+}
+
+func (worker *copIteratorWorker) finished() bool {
+	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+		return true
+	}
+	select {
+	case <-worker.finishCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (it *copIterator) Close() error {

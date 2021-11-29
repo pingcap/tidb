@@ -374,7 +374,7 @@ func TestCalculateTODO(t *testing.T) {
 		rangeEqual(t, toRange(todo), "a", "b")
 	}
 
-	// exhaust the range
+	// exhaust the ranges
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("a", "g")[0]
