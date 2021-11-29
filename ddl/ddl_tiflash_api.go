@@ -525,7 +525,10 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 			// Mostly because of a previous failure of setting pd rule.
 			log.Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
 			newRule := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			tikvHelper.SetPlacementRule(*newRule)
+			err := tikvHelper.SetPlacementRule(*newRule)
+			if err != nil {
+				log.Warn("SetPlacementRule fails")
+			}
 		}
 		// For every existing table, we do not remove their rules.
 		delete(allRules, ruleID)

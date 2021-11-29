@@ -18,12 +18,13 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/store/helper"
 	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"

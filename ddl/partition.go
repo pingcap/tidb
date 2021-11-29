@@ -1213,7 +1213,10 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			}
 			for _, p := range newPartitions {
 				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
-				tikvHelper.SetPlacementRule(*newRule)
+				err := tikvHelper.SetPlacementRule(*newRule)
+				if err != nil {
+					log.Warn("SetPlacementRule fails")
+				}
 			}
 		} else {
 			log.Warn("Set new pd rule fail while truncate partition")
