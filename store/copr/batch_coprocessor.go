@@ -793,14 +793,16 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
-		IsolationLevel:   isolationLevelToPB(b.req.IsolationLevel),
-		Priority:         priorityToPB(b.req.Priority),
-		NotFillCache:     b.req.NotFillCache,
-		RecordTimeStat:   true,
-		RecordScanStat:   true,
-		TaskId:           b.req.TaskID,
-		ResourceGroupTag: b.req.ResourceGroupTag,
+		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
+		Priority:       priorityToPB(b.req.Priority),
+		NotFillCache:   b.req.NotFillCache,
+		RecordTimeStat: true,
+		RecordScanStat: true,
+		TaskId:         b.req.TaskID,
 	})
+	if b.req.ResourceGroupTagger != nil {
+		b.req.ResourceGroupTagger(req)
+	}
 	req.StoreTp = tikvrpc.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.regionInfos)))
