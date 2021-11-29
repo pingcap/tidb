@@ -4612,13 +4612,8 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	// Test the @@tidb_tmp_table_max_size system variable.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-<<<<<<< HEAD
 	tk.MustExec("set tidb_enable_global_temporary_table=on")
-	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
-=======
 	tk.MustExec("create global temporary table t (c1 int, c2 mediumtext) on commit delete rows")
-	tk.MustExec("create temporary table tl (c1 int, c2 mediumtext)")
->>>>>>> ce8e734ea... variable: rename `tmp_table_size` to `tidb_tmp_table_max_size` (#29123)
 
 	tk.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTmpTableMaxSize)))
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTiDBTmpTableMaxSize))
@@ -4638,10 +4633,10 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	// The value is now 1M, check the error when table size exceed it.
 	tk.MustExec(fmt.Sprintf("set @@session.tidb_tmp_table_max_size = %d", 1<<20))
 	tk.MustExec("begin")
-<<<<<<< HEAD
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
@@ -4671,26 +4666,6 @@ func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
 	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
-=======
-	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
-	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into t values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
-
-	// Check local temporary table
-	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
-
-	// Check local temporary table with some data in session
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
-	tk.MustExec("rollback")
->>>>>>> ce8e734ea... variable: rename `tmp_table_size` to `tidb_tmp_table_max_size` (#29123)
 }
 
 func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
