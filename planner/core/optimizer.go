@@ -112,11 +112,11 @@ func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action stri
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
 }
 
-func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
+func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -379,7 +379,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.LogicalOptimizeTrace = tracer
@@ -398,8 +400,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if err != nil {
 			return nil, err
 		}
-		opt.trackAfterRuleOptimize(logic)
 	}
+	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 
