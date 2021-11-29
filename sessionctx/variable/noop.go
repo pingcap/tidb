@@ -482,7 +482,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_concurrency", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_dump_pct", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_time_names", Value: "en_US"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_time_names", Value: "en_US", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_statement_time", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: EndMarkersInJSON, Value: Off, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: Off, Type: TypeBool},
