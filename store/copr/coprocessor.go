@@ -1120,6 +1120,7 @@ func (worker *copIteratorWorker) calculateTodo(ranges *KeyRanges, split *coproce
 	return right
 }
 
+// finished checks the flags and finished channel, it tells whether the worker is finished.
 func (worker *copIteratorWorker) finished() bool {
 	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 		return true
