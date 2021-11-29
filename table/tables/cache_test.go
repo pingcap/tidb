@@ -185,7 +185,7 @@ func TestCacheCondition(t *testing.T) {
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	tk.MustExec("delete from t2  where id = 2")
+	tk.MustExec("delete from t2 where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
