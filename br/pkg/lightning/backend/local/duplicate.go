@@ -168,7 +168,7 @@ func (p *pendingKeyRanges) list() []tidbkv.KeyRange {
 }
 
 func (p *pendingKeyRanges) empty() bool {
-	return p.tree.Min() == nil
+	return p.tree.Len() == 0
 }
 
 func (p *pendingKeyRanges) finish(keyRange tidbkv.KeyRange) {
