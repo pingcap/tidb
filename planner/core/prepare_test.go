@@ -1996,13 +1996,15 @@ func (s *testPrepareSerialSuite) TestIssue30100(c *C) {
 	tk.MustExec(`prepare stmt from 'SELECT * FROM t t1 JOIN t t2 ON t1.col1 = t2.col1 WHERE t1.col1 <=> NULL';`)
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// The plan contains tableDual, so it can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec(`prepare stmt from 'SELECT * FROM t t1 JOIN t t2 ON t1.col1 = t2.col1 WHERE t1.col1 <=> NULL and t2.col2 > ?';`)
 	tk.MustExec("set @a=0;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// The plan contains tableDual, so it can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
