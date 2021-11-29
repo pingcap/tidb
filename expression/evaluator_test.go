@@ -30,6 +30,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
+	TestingT(t)
+}
+
 func kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {

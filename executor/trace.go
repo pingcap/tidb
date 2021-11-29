@@ -24,12 +24,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -303,7 +303,7 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 }
 
 func generateOptimizerTraceFile() (*os.File, string, error) {
-	dirPath := getOptimizerTraceDirName()
+	dirPath := domain.GetOptimizerTraceDirName()
 	// Create path
 	err := os.MkdirAll(dirPath, os.ModePerm)
 	if err != nil {
@@ -323,10 +323,4 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 		return nil, "", errors.AddStack(err)
 	}
 	return zf, fileName, nil
-}
-
-// getOptimizerTraceDirName returns optimizer trace directory path.
-// The path is related to the process id.
-func getOptimizerTraceDirName() string {
-	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
 }
