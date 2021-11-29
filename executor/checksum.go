@@ -18,9 +18,9 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -241,7 +241,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 	}
 
 	var builder distsql.RequestBuilder
-	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx)
 	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, tableID, c.TableInfo.IsCommonHandle, ranges, nil).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
@@ -258,7 +258,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
-	builder.SetResourceGroupTag(ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx)
 	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, tableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).

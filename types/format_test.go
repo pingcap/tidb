@@ -15,13 +15,17 @@
 package types_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
+func TestTimeFormatMethod(t *testing.T) {
+	t.Parallel()
+
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tblDate := []struct {
@@ -66,18 +70,19 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 			`Jan January 01 1 0th 00 0 000 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 00 00 00 52 Fri Friday 5 4294967295 4294967295 0000 00 %`,
 		},
 	}
-	for i, t := range tblDate {
-		tm, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, 6)
-		c.Assert(err, IsNil, Commentf("parse time fail: %s", t.Input))
+	for i, tt := range tblDate {
+		tm, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, 6)
+		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
-		str, err := tm.DateFormat(t.Format)
-		c.Assert(err, IsNil, Commentf("time format fail: %d", i))
-		c.Assert(str, Equals, t.Expect, Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
-			str, t.Expect))
+		str, err := tm.DateFormat(tt.Format)
+		require.NoErrorf(t, err, "time format fail: %d", i)
+		require.Equalf(t, tt.Expect, str, "no.%d \nobtain:%v \nexpect:%v\n", i, str, tt.Expect)
 	}
 }
 
-func (s *testTimeSuite) TestStrToDate(c *C) {
+func TestStrToDate(t *testing.T) {
+	t.Parallel()
+
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {
@@ -157,9 +162,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}
 	for i, tt := range tests {
 		sc.AllowInvalidDate = true
-		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
-		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		var time types.Time
+		require.Truef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
+		require.Equalf(t, tt.expect, time.CoreTime(), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 
 	errTests := []struct {
@@ -192,7 +197,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}
 	for i, tt := range errTests {
 		sc.AllowInvalidDate = false
-		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		var time types.Time
+		require.Falsef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 }

@@ -78,7 +78,6 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	for _, f := range fields {
 		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
-
 	return chk
 }
 
@@ -130,6 +129,15 @@ func renewEmpty(chk *Chunk) *Chunk {
 		copy(newChk.sel, chk.sel)
 	}
 	return newChk
+}
+
+func (c *Chunk) resetForReuse() {
+	for i := 0; i < len(c.columns); i++ {
+		c.columns[i] = nil
+	}
+	columns := c.columns[:0]
+	// Keep only the empty columns array space, reset other fields.
+	*c = Chunk{columns: columns}
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in bytes.
