@@ -187,6 +187,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	tb2, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
 	c.Assert(tb2, NotNil)
 	pi := tb2.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
