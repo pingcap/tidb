@@ -1101,12 +1101,8 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-<<<<<<< HEAD
-		TMPTableSize:                DefTMPTableSize,
-		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
-=======
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
->>>>>>> ce8e734ea... variable: rename `tmp_table_size` to `tidb_tmp_table_max_size` (#29123)
+		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
