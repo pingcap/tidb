@@ -630,11 +630,13 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 	logger := m.logger
 	logger.Info("[detect-dupe] collect duplicate rows from local duplicate db", zap.Int("tasks", len(tasks)))
 
+	var ctxErr error
 	concurrencyLimit := semaphore.NewWeighted(int64(m.regionConcurrency))
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		if err := concurrencyLimit.Acquire(gCtx, 1); err != nil {
 			logger.Debug("[detect-dupe] stop processing task because context is done", log.ShortError(err))
+			ctxErr = err
 			break
 		}
 		task := task
@@ -648,10 +650,22 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 			} else {
 				err = m.RecordIndexConflictError(gCtx, stream, task.tableID, task.indexInfo)
 			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// Delete the key range in duplicate DB since we have the duplicates have been collected.
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, math.MinInt64)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, math.MinInt64)
+			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})
 	}
-	return errors.Trace(g.Wait())
+	err = g.Wait()
+	if err == nil {
+		err = ctxErr
+	}
+	return errors.Trace(err)
 }
 
 func (m *DuplicateManager) splitKeyRangeByRegions(
