@@ -178,8 +178,10 @@ func TestAESEncrypt(t *testing.T) {
 		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
 		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
 		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
-		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"}, {"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
-		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"}, // test for cbc
+		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
+		// test for cbc
 		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
 		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
 		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
@@ -194,10 +196,10 @@ func TestAESEncrypt(t *testing.T) {
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
 
-		// Set charset and collate except first argument
-		args := datumsToConstants([]types.Datum{fromHex(tt.origin)})
+		args := datumsToConstants([]types.Datum{types.NewDatum(tt.origin)})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
+
 		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
