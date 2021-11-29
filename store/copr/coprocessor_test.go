@@ -325,26 +325,75 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, minPagingSize)
 }
 
+func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
+	coprRange := coprocessor.KeyRange{}
+	coprRange.Start = r.StartKey
+	coprRange.End = r.EndKey
+	return &coprRange
+}
+
+func toRange(r *KeyRanges) []kv.KeyRange {
+	ranges := make([]kv.KeyRange, 0, r.Len())
+	if r.first != nil {
+		ranges = append(ranges, *r.first)
+	}
+	ranges = append(ranges, r.mid...)
+	if r.last != nil {
+		ranges = append(ranges, *r.last)
+	}
+	return ranges
+}
+
+func TestCalculateRetry(t *testing.T) {
+	t.Parallel()
+	worker := copIteratorWorker{}
+
+	// split in one range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "c")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("e", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
+	}
+
+	// across ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
+	}
+
+	// exhaust the ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+}
+
 func TestCalculateRemain(t *testing.T) {
 	t.Parallel()
 	worker := copIteratorWorker{}
-	toCopRange := func(r kv.KeyRange) *coprocessor.KeyRange {
-		coprRange := coprocessor.KeyRange{}
-		coprRange.Start = r.StartKey
-		coprRange.End = r.EndKey
-		return &coprRange
-	}
-	toRange := func(r *KeyRanges) []kv.KeyRange {
-		ranges := []kv.KeyRange{}
-		if r.first != nil {
-			ranges = append(ranges, *r.first)
-		}
-		ranges = append(ranges, r.mid...)
-		if r.last != nil {
-			ranges = append(ranges, *r.last)
-		}
-		return ranges
-	}
 
 	// split in one range
 	{
