@@ -192,6 +192,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Channel buffer is 2 for handling region split.
+	// In a common case, two region split tasks will not be blocked.
 	chanSize := 2
 	// in streaming or paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
@@ -211,10 +213,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				pagingSize = minPagingSize
 			}
 			tasks = append(tasks, &copTask{
-				region: loc.Location.Region,
-				ranges: loc.Ranges.Slice(i, nextI),
-				// Channel buffer is 2 for handling region split.
-				// In a common case, two region split tasks will not be blocked.
+				region:     loc.Location.Region,
+				ranges:     loc.Ranges.Slice(i, nextI),
 				respChan:   make(chan *copResponse, chanSize),
 				cmdType:    cmdType,
 				storeType:  req.StoreType,
@@ -1099,7 +1099,8 @@ func (worker *copIteratorWorker) buildCopTasksFromRetry(bo *Backoffer, lastRange
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
+	task.ranges = remainedRanges
+	return []*copTask{task}, nil
 }
 
 // calculateRetry splits the input ranges into two, and take one of them according to desc flag.
