@@ -589,7 +589,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 						atomic.StoreUint32(&ReschePullTiFlash, 1)
 					}
 				}
-			}else{
+			} else {
 				newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 				err := tikvHelper.SetPlacementRule(*newRule)
 				if err != nil {
