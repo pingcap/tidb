@@ -922,29 +922,213 @@ func TestHandleAuthPlugin(t *testing.T) {
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
+	ctx := context.Background()
 
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER unativepassword")
+	defer func() {
+		tk.MustExec("DROP USER unativepassword")
+	}()
+
+	// 5.7 or newer client trying to authenticate with mysql_native_password
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
-		server:    srv,
-		collation: mysql.DefaultCollationID,
-		peerHost:  "127.0.0.1",
+		server: srv,
+		user:   "unativepassword",
 	}
-	ctx := context.Background()
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
-	require.Error(t, err) // Does not have username or password
-	require.Equal(t, errAccessDenied.FastGenByArgs("", "127.0.0.1", "NO"), err)
+	require.NoError(t, err)
 
-	resp.Capability = mysql.ClientProtocol41
+	// 8.0 or newer client trying to authenticate with caching_sha2_password
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthCachingSha2Password,
+	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
+	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+
+	// MySQL 5.1 or older client, without authplugin support
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+
+	// === Target account has mysql_native_password ===
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"mysql_native_password\")"))
+
+	// 5.7 or newer client trying to authenticate with mysql_native_password
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+
+	// 8.0 or newer client trying to authenticate with caching_sha2_password
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthCachingSha2Password,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+
+	// MySQL 5.1 or older client, without authplugin support
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
+
+	// === Target account has caching_sha2_password ===
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeUser", "return(\"caching_sha2_password\")"))
+
+	// 5.7 or newer client trying to authenticate with mysql_native_password
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+
+	// 8.0 or newer client trying to authenticate with caching_sha2_password
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthCachingSha2Password,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+
+	// MySQL 5.1 or older client, without authplugin support
+	cc = &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "unativepassword",
+	}
+	resp = handshakeResponse41{
+		Capability: mysql.ClientProtocol41,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 }
 
 func TestAuthPlugin2(t *testing.T) {
@@ -986,7 +1170,10 @@ func TestAuthPlugin2(t *testing.T) {
 	}
 
 	cc.isUnixSocket = true
-	_, err = cc.checkAuthPlugin(ctx, &resp)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
+	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
 
 }
