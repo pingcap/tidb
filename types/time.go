@@ -3219,6 +3219,7 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 		t.setMicrosecond(0)
 		return input, true
 	}
+<<<<<<< HEAD
 
 	v, ok := parseDigits(input, length)
 
@@ -3226,6 +3227,9 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 		return input, false
 	}
 	for v > 0 && v*10 < 1000000 {
+=======
+	for i := step; i < 6; i++ {
+>>>>>>> 352811dfc... types: fix wrong str_to_date() microseconds with leading zeros are not converted correctly (#30122)
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))
