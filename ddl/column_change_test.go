@@ -79,7 +79,8 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	// create table t (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo, err := testTableInfo(d, "t", 2)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
