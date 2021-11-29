@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
@@ -90,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -558,8 +560,80 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
+	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
+		c := cachedTableRenewLease{exit: make(chan struct{}), tables: tables}
+		err := c.start(ctx)
+		defer c.stop(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.txn.SetOption(kv.CachedTableWriteLease, &c.lease)
+	}
 
 	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+}
+
+type cachedTableRenewLease struct {
+	lease  uint64
+	exit   chan struct{}
+	tables map[int64]interface{}
+}
+
+func (c *cachedTableRenewLease) start(ctx context.Context) error {
+	var maxLease uint64
+	for tid, raw := range c.tables {
+		handle := raw.(tables.StateRemote)
+		writeLockLease, err := handle.LockForWrite(ctx, tid)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if writeLockLease > maxLease {
+			maxLease = writeLockLease
+		}
+		go c.keepAlive(ctx)
+	}
+	atomic.StoreUint64(&c.lease, maxLease)
+	return nil
+}
+
+func (c *cachedTableRenewLease) keepAlive(ctx context.Context) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			if err := c.renew(ctx); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail",
+					zap.Error(err))
+				return
+			}
+		case <-c.exit:
+			return
+		}
+	}
+}
+
+func (c *cachedTableRenewLease) renew(ctx context.Context) error {
+	newLease := atomic.LoadUint64(&c.lease)
+	physicalTime := oracle.GetTimeFromTS(newLease)
+	newLease = oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
+	for tid, raw := range c.tables {
+		handle := raw.(tables.StateRemote)
+		succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !succ {
+			// Don't update the new lease unless all the operation success.
+			return nil
+		}
+	}
+	atomic.StoreUint64(&c.lease, newLease)
+	return nil
+}
+
+func (c *cachedTableRenewLease) stop(ctx context.Context) {
+	close(c.exit)
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
