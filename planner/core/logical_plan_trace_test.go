@@ -92,12 +92,12 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "aggregation_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: ".*unique.*",
-					assertAction: ".*distinct eliminated.*",
+					assertReason: "[test.t.a] is a unique key",
+					assertAction: "min(distinct ...) is simplified to min(...)",
 				},
 				{
-					assertReason: ".*unique.*",
-					assertAction: ".*aggregation eliminated.*",
+					assertReason: "[test.t.a] is a unique key",
+					assertAction: "aggregation is simplified to a projection",
 				},
 			},
 		},
@@ -132,8 +132,8 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			if step.RuleName == tc.assertRuleName {
 				assert = true
 				for i, ruleStep := range step.Steps {
-					c.Assert(ruleStep.Action, Matches, tc.assertRuleSteps[i].assertAction)
-					c.Assert(ruleStep.Reason, Matches, tc.assertRuleSteps[i].assertReason)
+					c.Assert(ruleStep.Action, Equals, tc.assertRuleSteps[i].assertAction)
+					c.Assert(ruleStep.Reason, Equals, tc.assertRuleSteps[i].assertReason)
 				}
 			}
 		}

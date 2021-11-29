@@ -67,9 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
 			proj.SetChildren(agg.children[0])
-			opt.appendStepToCurrent(agg.ID(), agg.TP(),
-				fmt.Sprintf("%s is unique key", uniqueKey.String()),
-				"aggregation eliminated to projection")
+			appendAggregationEliminateTraceStep(agg, uniqueKey, opt)
 			return proj
 		}
 	}
@@ -111,13 +109,24 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
-					opt.appendStepToCurrent(agg.ID(), agg.TP(),
-						fmt.Sprintf("%s is unique key", uniqueKey.String()),
-						fmt.Sprintf("agg[%s]'s distinct eliminated", af.Name))
+					appendDistinctEliminateTraceStep(agg, uniqueKey, af, opt)
 				}
 			}
 		}
 	}
+}
+
+func appendAggregationEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
+	opt.appendStepToCurrent(agg.ID(), agg.TP(),
+		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
+		"aggregation is simplified to a projection")
+}
+
+func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
+	opt *logicalOptimizeOp) {
+	opt.appendStepToCurrent(agg.ID(), agg.TP(),
+		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
+		fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name))
 }
 
 // ConvertAggToProj convert aggregation to projection.
