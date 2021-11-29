@@ -81,3 +81,12 @@ type LogicalRuleOptimizeTraceStep struct {
 	ID     int    `json:"id"`
 	TP     string `json:"type"`
 }
+
+// CETraceRecord records an expression and related cardinality estimation result.
+type CETraceRecord struct {
+	TableID   int64
+	TableName string
+	Type      string
+	Expr      string
+	RowCount  uint64
+}
