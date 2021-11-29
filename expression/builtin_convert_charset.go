@@ -258,21 +258,24 @@ func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
 func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
-	if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err == nil {
-		// Old charsets' behavior should be compatible with the old version TiDB.
+	rsChs, argChs := ec.Charset, expr.GetType().Charset
+	switch argChs {
+	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetLatin1, charset.CharsetASCII:
+		// These charsets' behavior should be compatible with the old version TiDB.
 		return expr
 	}
 	switch funcName {
+	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
+		return BuildToBinaryFunction(ctx, expr)
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce,
 		ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace,
 		ast.Substring, ast.Mid, ast.Translate, ast.InsertFunc, ast.Lpad, ast.Rpad, ast.Elt, ast.ExportSet, ast.MakeSet,
 		ast.FindInSet, ast.Regexp, ast.Field, ast.Locate, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
-		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat, ast.Hex,
-		ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
-		if ec.Charset == charset.CharsetBin && expr.GetType().Charset != charset.CharsetBin {
+		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat:
+		if rsChs == charset.CharsetBin && argChs != charset.CharsetBin {
 			return BuildToBinaryFunction(ctx, expr)
-		} else if ec.Charset != charset.CharsetBin && expr.GetType().Charset == charset.CharsetBin {
+		} else if rsChs != charset.CharsetBin && argChs == charset.CharsetBin {
 			ft := expr.GetType().Clone()
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)
