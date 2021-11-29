@@ -361,7 +361,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	ddl.PullTiFlashPdTick = 1
 	defer func() {
 		ddl.PullTiFlashPdTick = originValue
-	}
+	}()
 	tk.MustExec("drop table ddltiflash")
 	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
