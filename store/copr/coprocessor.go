@@ -1101,13 +1101,6 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	return nil
 }
 
-func (worker *copIteratorWorker) buildCopTasksFromRetry(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
-	if worker.req.Streaming && lastRange != nil {
-		task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
-	}
-	return []*copTask{task}, nil
-}
-
 // calculateRetry splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
