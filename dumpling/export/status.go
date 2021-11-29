@@ -15,7 +15,6 @@ import (
 const logProgressTick = 2 * time.Minute
 
 func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
-	midd := d.GetParameters()
 	logProgressTicker := time.NewTicker(logProgressTick)
 	lastCheckpoint := time.Now()
 	lastBytes := float64(0)
@@ -27,9 +26,9 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 			return
 		case <-logProgressTicker.C:
 			nanoseconds := float64(time.Since(lastCheckpoint).Nanoseconds())
-
+			midd := d.GetParameters()
 			tctx.L().Info("progress",
-				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", midd.CompletedTables, midd.TotalTables, midd.CompletedTables/midd.TotalTables*100)),
+				zap.String("tables", fmt.Sprintf("%.0f/%.0f (%.1f%%)", midd.CompletedTables, float64(d.totalTables), midd.CompletedTables/float64(d.totalTables)*100)),
 				zap.String("finished rows", fmt.Sprintf("%.0f", midd.FinishedRows)),
 				zap.String("estimate total rows", fmt.Sprintf("%.0f", midd.EstimateTotalRows)),
 				zap.String("finished size", units.HumanSize(midd.FinishedBytes)),
@@ -43,7 +42,6 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 }
 
 type Midparams struct {
-	TotalTables       float64
 	CompletedTables   float64
 	FinishedBytes     float64
 	FinishedRows      float64
@@ -53,9 +51,6 @@ type Midparams struct {
 func (d *Dumper) GetParameters() (midparams *Midparams) {
 	conf := d.conf
 	mid := &Midparams{}
-	if mid.TotalTables == 0 {
-		mid.TotalTables = float64(calculateTableCount(conf.Tables))
-	}
 	mid.CompletedTables = ReadCounter(finishedTablesCounter, conf.Labels)
 	mid.FinishedBytes = ReadGauge(finishedSizeGauge, conf.Labels)
 	mid.FinishedRows = ReadGauge(finishedRowsGauge, conf.Labels)

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	// import mysql driver
@@ -49,6 +50,7 @@ type Dumper struct {
 
 	tidbPDClientForGC         pd.Client
 	selectTiDBTableRegionFunc func(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
+	totalTables               int64
 }
 
 // NewDumper returns a new Dumper
@@ -157,6 +159,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 	if err = d.renewSelectTableRegionFuncForLowerTiDB(tctx); err != nil {
 		tctx.L().Info("cannot update select table region info for TiDB", zap.Error(err))
 	}
+
+	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
 		// make sure that the lock connection is still alive
