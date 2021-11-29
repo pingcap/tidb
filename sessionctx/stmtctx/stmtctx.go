@@ -194,6 +194,8 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
