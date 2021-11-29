@@ -719,6 +719,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var cacheKey []byte
 	var cacheValue *coprCacheValue
 
+	// TODO: cache paging copr
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
 	if task.cmdType == tikvrpc.CmdCop && !task.paging && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
@@ -788,12 +789,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)
 	}
 
-	var lastRange *coprocessor.KeyRange
-	if task.paging {
-		lastRange = resp.Resp.(*coprocessor.Response).Range
+	if worker.req.Paging {
+		lastRange := resp.Resp.(*coprocessor.Response).Range
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, nil, nil, task, ch, lastRange, costTime)
 	}
+
 	// Handles the response for non-streaming copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, lastRange, costTime)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
 const (
@@ -901,12 +903,27 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return worker.buildCopTasksFromRemain(bo, lastRange, task)
+			return worker.buildCopTasksFromRetry(bo, lastRange, task)
 		}
 		if resp.Range != nil {
 			lastRange = resp.Range
 		}
 	}
+}
+
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
+	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, ch, nil, costTime)
+	if err != nil || len(remainedTasks) != 0 {
+		return remainedTasks, errors.Trace(err)
+	}
+	// only paging requests need to calculate the next ranges
+	if lastRange == nil {
+		return nil, errors.New("lastRange in paging should not be nil")
+	}
+	// calculate next ranges and grow the paging size
+	task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
+	task.pagingSize = growPagingSize(task.pagingSize)
+	return []*copTask{task}, nil
 }
 
 // handleCopResponse checks coprocessor Response for region split and lock,
@@ -948,7 +965,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 				return nil, errors.Trace(err)
 			}
 		}
-		return worker.buildCopTasksFromRemain(bo, lastRange, task)
+		if worker.req.Streaming {
+			return worker.buildCopTasksFromRetry(bo, lastRange, task)
+		}
+		return []*copTask{task}, nil
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1032,14 +1052,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 	}
 	worker.sendToRespCh(resp, ch, true)
-	// only paging requests need to calculate the next ranges
-	if !worker.req.Paging || lastRange == nil {
-		return nil, nil
-	}
-	// calculate next ranges and grow the paging size
-	task.ranges = worker.calculateTodo(task.ranges, lastRange, worker.req.Desc)
-	task.pagingSize = growPagingSize(task.pagingSize)
-	return []*copTask{task}, nil
+	return nil, nil
 }
 
 // CopRuntimeStats contains execution detail information.
@@ -1083,25 +1096,22 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 	return nil
 }
 
-func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
+func (worker *copIteratorWorker) buildCopTasksFromRetry(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
 	remainedRanges := task.ranges
 	if worker.req.Streaming && lastRange != nil {
-		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
-	}
-	if worker.req.Paging && lastRange != nil {
-		remainedRanges = worker.calculateTodo(task.ranges, lastRange, worker.req.Desc)
+		remainedRanges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
 	}
 	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
 }
 
-// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
+// calculateRetry splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)
 // split:      [s1   -->   s2)
-// In normal scan order, all data before s1 is consumed, so the remain ranges should be [s1 --> r2) [r3 --> r4)
-// In reverse scan order, all data after s2 is consumed, so the remain ranges should be [r1 --> r2) [r3 --> s2)
-func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+// In normal scan order, all data before s1 is consumed, so the retry ranges should be [s1 --> r2) [r3 --> r4)
+// In reverse scan order, all data after s2 is consumed, so the retry ranges should be [r1 --> r2) [r3 --> s2)
+func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
 	if desc {
 		left, _ := ranges.Split(split.End)
 		return left
@@ -1110,8 +1120,13 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 	return right
 }
 
-// calculateTodo is similar to calculateRemain, which calculates the rest ranges to be done instead of the ranges to be retried.
-func (worker *copIteratorWorker) calculateTodo(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+// calculateRemain calculates the remain ranges to be processed, it's used in streaming and paging API.
+// For example:
+// ranges: [r1 --> r2) [r3 --> r4)
+// split:      [s1   -->   s2)
+// In normal scan order, all data before s2 is consumed, so the remained ranges should be [s2 --> r4)
+// In reverse scan order, all data after s1 is consumed, so the remained ranges should be [r1 --> s1)
+func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
 	if desc {
 		left, _ := ranges.Split(split.Start)
 		return left

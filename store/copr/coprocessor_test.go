@@ -325,7 +325,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, minPagingSize)
 }
 
-func TestCalculateTODO(t *testing.T) {
+func TestCalculateRemain(t *testing.T) {
 	t.Parallel()
 	worker := copIteratorWorker{}
 	toCopRange := func(r kv.KeyRange) *coprocessor.KeyRange {
@@ -350,41 +350,41 @@ func TestCalculateTODO(t *testing.T) {
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("a", "b")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
-		rangeEqual(t, toRange(todo), "b", "c", "e", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(remain), "b", "c", "e", "g")
 	}
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("f", "g")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
-		rangeEqual(t, toRange(todo), "a", "c", "e", "f")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "f")
 	}
 
 	// across ranges
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("a", "f")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
-		rangeEqual(t, toRange(todo), "f", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(remain), "f", "g")
 	}
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("b", "g")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
-		rangeEqual(t, toRange(todo), "a", "b")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(remain), "a", "b")
 	}
 
 	// exhaust the ranges
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("a", "g")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), false)
-		require.Equal(t, todo.Len(), 0)
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		require.Equal(t, remain.Len(), 0)
 	}
 	{
 		ranges := buildKeyRanges("a", "c", "e", "g")
 		split := buildKeyRanges("a", "g")[0]
-		todo := worker.calculateTodo(NewKeyRanges(ranges), toCopRange(split), true)
-		require.Equal(t, todo.Len(), 0)
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		require.Equal(t, remain.Len(), 0)
 	}
 }
