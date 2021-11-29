@@ -4713,9 +4713,10 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTmpTableMaxSize)))
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTiDBTmpTableMaxSize))
 
-	// Min value 1M, so the result is change to 1M, with a warning.
-	tk.MustExec("set @@global.tidb_tmp_table_max_size = 123")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tmp_table_max_size value: '123'"))
+	// Min value 1M, so report an error.
+	_, err := tk.Exec("set @@global.tidb_tmp_table_max_size=123")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	tk.MustExec("set @@global.tidb_tmp_table_max_size = 1048576")
 
 	// Change the session scope value to 2M.
 	tk.MustExec("set @@session.tidb_tmp_table_max_size = 2097152")
