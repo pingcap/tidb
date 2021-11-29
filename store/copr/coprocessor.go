@@ -671,9 +671,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
-		if worker.finished() {
-			break
-		}
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
@@ -682,11 +679,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
-		// test whether the ctx is cancelled
-		if vars := bo.GetVars(); vars != nil && vars.Killed != nil && atomic.LoadUint32(vars.Killed) == 1 {
-			return
+		if worker.finished() {
+			break
 		}
-
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -922,6 +917,9 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	}
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
+	if task.ranges.Len() == 0 {
+		return nil, nil
+	}
 	task.pagingSize = growPagingSize(task.pagingSize)
 	return []*copTask{task}, nil
 }
