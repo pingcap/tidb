@@ -886,7 +886,7 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 }
 
 // TODO it fails even under branch `master`.
-func (s *testInfoschemaClusterTableSuite) `TestTableStorageStats`(c *C) {
+func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
 	c.Assert(err.Error(), Equals, "pd unavailable")
