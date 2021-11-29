@@ -68,6 +68,7 @@ type Plan interface {
 	SelectBlockOffset() int
 }
 
+// OperatorExplainInfo is the interface for ExplainInfo
 type OperatorExplainInfo interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
