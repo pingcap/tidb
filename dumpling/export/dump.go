@@ -37,7 +37,6 @@ import (
 var openDBFunc = sql.Open
 
 var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
-var UnSupporedSequenceErr = errors.Errorf("unsupported tableType %s for dumping table MetaData", TableTypeSequenceStr)
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -317,12 +316,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 				zap.String("table", table.Name))
 			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
 			if err != nil {
-				if err == UnSupporedSequenceErr {
-					tctx.L().Warn("fail to dump table meta: ", log.ShortError(err))
-					continue
-				} else {
-					return err
-				}
+				return err
 			}
 
 			if !conf.NoSchemas {
@@ -886,7 +880,20 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
-	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, getListTableTypeByConf(conf), tableTypes...)
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		tctx.L().Warn("dumpling tableType `sequence` is unsupported for now")
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
 	if err != nil {
 		return err
 	}
@@ -896,10 +903,6 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 }
 
 func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
-	if table.Type == TableTypeSequence {
-		return nil, UnSupporedSequenceErr
-	}
-
 	tbl := table.Name
 	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
 	if err != nil {

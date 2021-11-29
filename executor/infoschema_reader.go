@@ -578,7 +578,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					if rowCount == 0 {
 						rowCount = 1
 					}
-					table.Comment = "SEQUENCE"
 				}
 				if table.PKIsHandle || table.IsCommonHandle {
 					pkType = "CLUSTERED"

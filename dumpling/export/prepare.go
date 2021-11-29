@@ -117,6 +117,7 @@ const (
 	// TableTypeView represents the view table
 	TableTypeView
 	// TableTypeSequence represents the view table
+	// TODO: need to be supported
 	TableTypeSequence
 )
 

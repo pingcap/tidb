@@ -90,9 +90,9 @@ echo "expected 2, actual ${actual}"
 
 # Test for dump with sequence
 run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
-actual=$(grep -w "dump data successfully" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
-echo "expected 1, actual ${actual}"
-[ "$actual" = 1 ]
+actual=$(grep -w "dump failed" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expected 0, actual ${actual}"
+[ "$actual" = 0 ]
 
 # Test for tidb_mem_quota_query configuration
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
