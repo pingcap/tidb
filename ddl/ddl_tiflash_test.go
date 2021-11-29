@@ -301,19 +301,18 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 
 	tk.MustExec("truncate table ddltiflash")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
-	//CheckTableAvailable(s.dom, c, 1, []string{})
+	CheckTableAvailable(s.dom, c, 1, []string{})
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	// Should get schema right now
-
-	tk.MustExec("truncate table ddltiflash")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	//CheckTableAvailable(s.dom, c, 1, []string{})
-	tk.MustExec("drop table if exists ddltiflash")
+	//time.Sleep(ddl.PollTiFlashInterval * 3)
+	//tk.MustExec("drop table if exists ddltiflash")
+	//tk.MustExec("create table ddltiflash(z int)")
+	//tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	//time.Sleep(ddl.PollTiFlashInterval * 3)
+	//// Should get schema right now
+	//
+	//tk.MustExec("truncate table ddltiflash")
+	//time.Sleep(ddl.PollTiFlashInterval * 3)
+	////CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
