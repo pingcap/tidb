@@ -186,13 +186,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	// Should get schema again
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-	c.Assert(tb, NotNil)
-	pi := tb.Meta().GetPartitionInfo()
+	tb2, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(tb2, NotNil)
+	pi := tb2.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
-	c.Assert(tb.Meta().TiFlashReplica, NotNil)
+	c.Assert(tb2.Meta().TiFlashReplica, NotNil)
 	for _, p := range pi.Definitions {
-		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
+		c.Assert(tb2.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.SyncStatus[int(p.ID)]
 			c.Assert(ok, Equals, true)
