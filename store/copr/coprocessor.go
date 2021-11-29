@@ -208,6 +208,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 		rLen := loc.Ranges.Len()
 		for i := 0; i < rLen; {
 			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			// If this is a paging request, we set the paging size to minPagingSize,
+			// the size will grow every round.
 			pagingSize := uint64(0)
 			if req.Paging {
 				pagingSize = minPagingSize
@@ -785,8 +787,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 
 	if worker.req.Paging {
-		lastRange := resp.Resp.(*coprocessor.Response).Range
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, nil, nil, task, ch, lastRange, costTime)
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, costTime)
 	}
 
 	// Handles the response for non-streaming copTask.
@@ -898,7 +899,8 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 			} else {
 				logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 			}
-			return worker.buildCopTasksFromRetry(bo, lastRange, task)
+			task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
+			return []*copTask{task}, nil
 		}
 		if resp.Range != nil {
 			lastRange = resp.Range
@@ -906,17 +908,22 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 	}
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
-	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, ch, nil, costTime)
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
+	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, nil, nil, task, ch, nil, costTime)
 	if err != nil || len(remainedTasks) != 0 {
+		// If there is region error or lock error, keep the paging size and retry.
+		for _, remainedTask := range remainedTasks {
+			remainedTask.pagingSize = task.pagingSize
+		}
 		return remainedTasks, errors.Trace(err)
 	}
+	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
-	if lastRange == nil {
+	if pagingRange == nil {
 		return nil, errors.New("lastRange in paging should not be nil")
 	}
 	// calculate next ranges and grow the paging size
-	task.ranges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
+	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
@@ -964,7 +971,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			}
 		}
 		if worker.req.Streaming {
-			return worker.buildCopTasksFromRetry(bo, lastRange, task)
+			task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
 		}
 		return []*copTask{task}, nil
 	}
