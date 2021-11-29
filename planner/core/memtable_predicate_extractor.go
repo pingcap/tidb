@@ -1432,7 +1432,6 @@ func (e *TikvRegionStatusExtractor) Extract(_ sessionctx.Context,
 }
 
 type StatementsSummaryExtractor struct {
-
 	extractHelper
 
 	// SkipRequest means the where clause always false, we don't need to request any component

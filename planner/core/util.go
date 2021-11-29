@@ -307,6 +307,7 @@ func extractStringFromInt64Set(set set.Int64Set) string {
 	sort.Strings(l)
 	return strings.Join(l, ",")
 }
+
 // extractStringFromUint64Slice helps extract string info from uint64 slice.
 func extractStringFromUint64Slice(slice []uint64) string {
 	if len(slice) < 1 {

@@ -732,7 +732,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	return &regionsInfo, err
 }
 
-// GetRegionsInfo gets the region information of current store by using PD's api.
+// GetRegionsInfoByRange gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfoByRange(startKey, endKey []byte) (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
 	uri := fmt.Sprintf("%s?start_key=%s&end_key=%s", pdapi.RegionsInKeys,

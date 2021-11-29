@@ -938,10 +938,10 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLog(c *C) {
 var regions []helper.RegionInfo
 
 func tikvRegionStatusHandler(w http.ResponseWriter, r *http.Request) {
-	start_key := r.URL.Query().Get("start_key")
-	end_key := r.URL.Query().Get("end_key")
-	start := string(start_key)
-	end := string(end_key)
+	startKey := r.URL.Query().Get("start_key")
+	endKey := r.URL.Query().Get("end_key")
+	start := startKey
+	end := endKey
 	regionsInfo := helper.RegionsInfo{
 		Count:   0,
 		Regions: make([]helper.RegionInfo, 0),
@@ -998,7 +998,7 @@ func (s *testTikvRegionStatusTableSuite) setUpMockPDHTTPServer(c *C) (*httptest.
 			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
-		},nil
+		}, nil
 	}))
 	// mock hisory hot regions response
 	router.HandleFunc(pdapi.RegionsInKeys, tikvRegionStatusHandler)
