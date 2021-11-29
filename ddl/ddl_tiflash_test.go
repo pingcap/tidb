@@ -106,6 +106,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	ddl.EnableTiFlashPoll(s.dom.DDL())
+	ddl.PollTiFlashInterval = 500 * time.Millisecond
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -119,6 +120,7 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	ddl.PollTiFlashInterval = 2 * time.Second
 }
 
 // Compare supposed rule, and we actually get from TableInfo
@@ -182,7 +184,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	lessThan := "40"
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	// Should get schema again
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
@@ -248,11 +250,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
@@ -273,7 +275,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
@@ -303,15 +305,15 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
-	//time.Sleep(ddl.PollTiFlashInterval * 3)
-	//tk.MustExec("drop table if exists ddltiflash")
-	//tk.MustExec("create table ddltiflash(z int)")
-	//time.Sleep(ddl.PollTiFlashInterval * 3)
-	//// Should get schema right now
-	//
-	//tk.MustExec("truncate table ddltiflash")
-	//time.Sleep(ddl.PollTiFlashInterval * 3)
-	////CheckTableAvailable(s.dom, c, 1, []string{})
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	tk.MustExec("drop table if exists ddltiflash2")
+	tk.MustExec("create table ddltiflash2(z int)")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	// Should get schema right now
+
+	tk.MustExec("truncate table ddltiflash2")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
