@@ -1095,11 +1095,9 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 }
 
 func (worker *copIteratorWorker) buildCopTasksFromRetry(bo *Backoffer, lastRange *coprocessor.KeyRange, task *copTask) ([]*copTask, error) {
-	remainedRanges := task.ranges
 	if worker.req.Streaming && lastRange != nil {
-		remainedRanges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
+		task.ranges = worker.calculateRetry(task.ranges, lastRange, worker.req.Desc)
 	}
-	task.ranges = remainedRanges
 	return []*copTask{task}, nil
 }
 
