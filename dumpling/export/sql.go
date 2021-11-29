@@ -92,6 +92,21 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
+// ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
+// returns (createPoilicySQL, error)
+func ShowCreatePlacementPolicy(db *sql.Conn, policy string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`", escapeString(policy))
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return oneRow[1], nil
+}
+
 // ShowCreateView constructs the create view SQL for a specified view
 // returns (createFakeTableSQL, createViewSQL, error)
 func ShowCreateView(db *sql.Conn, database, view string) (createFakeTableSQL string, createRealViewSQL string, err error) {
@@ -277,6 +292,25 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		}
 	}
 	return dbTables, nil
+}
+
+func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
+	var policyList []string
+	var policy string
+	const query = "select distinct policy_name from information_schema.placement_rules where policy_name is not null;"
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		return policyList, errors.Annotatef(err, "sql: %s", query)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&policy)
+		if err != nil {
+			return policyList, errors.Trace(err)
+		}
+		policyList = append(policyList, policy)
+	}
+	return policyList, errors.Annotatef(rows.Err(), "sql: %s", query)
 }
 
 // SelectVersion gets the version information from the database server
