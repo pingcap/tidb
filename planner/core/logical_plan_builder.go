@@ -4340,6 +4340,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TableStorageStatsExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
 			p.Extractor = &TiFlashSystemTableExtractor{}
+		case infoschema.TableTiKVRegionPeers:
+			p.Extractor = &TikvRegionPeersExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
 		}
