@@ -911,18 +911,13 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-<<<<<<< HEAD
-=======
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
-		collation: mysql.DefaultCollationID,
-		server:    srv,
-		user:      "root",
+		server: srv,
+		user:   "root",
 	}
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -936,7 +931,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -957,7 +951,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -979,7 +972,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1001,7 +993,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1022,7 +1013,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1045,7 +1035,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1067,7 +1056,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1088,7 +1076,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1103,8 +1090,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
 }
-<<<<<<< HEAD
-=======
 
 func TestAuthPlugin2(t *testing.T) {
 
@@ -1125,7 +1110,6 @@ func TestAuthPlugin2(t *testing.T) {
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -1150,6 +1134,4 @@ func TestAuthPlugin2(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
-
 }
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)

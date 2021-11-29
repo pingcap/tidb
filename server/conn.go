@@ -711,7 +711,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
 	if resp.Capability&mysql.ClientPluginAuth > 0 {
-		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
 		}
@@ -729,26 +729,10 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 	} else {
 		// MySQL 5.1 and older clients don't support authentication plugins.
 		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
-<<<<<<< HEAD
-		if cc.ctx == nil {
-			err := cc.openSession()
-			if err != nil {
-				return err
-			}
-		}
-		userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: cc.peerHost})
-		if err != nil {
-			return err
-		}
-		if userplugin != mysql.AuthNativePassword && userplugin != "" {
-			return errNotSupportedAuthMode
-		}
-=======
 		_, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			return err
 		}
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)
 		resp.AuthPlugin = mysql.AuthNativePassword
 	}
 	return nil
@@ -855,7 +839,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 }
 
 // Check if the Authentication Plugin of the server, client and user configuration matches
-func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) ([]byte, error) {
+func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeResponse41) ([]byte, error) {
 	// Open a context unless this was done before.
 	if cc.ctx == nil {
 		err := cc.openSession()
@@ -864,9 +848,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 		}
 	}
 
-<<<<<<< HEAD
-	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: cc.peerHost})
-=======
 	authData := resp.Auth
 	hasPassword := "YES"
 	if len(authData) == 0 {
@@ -880,14 +861,13 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	failpoint.Inject("FakeUser", func(val failpoint.Value) {
 		userplugin = val.(string)
 	})
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)
 	if err != nil {
 		// This happens if the account doesn't exist
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
 	}
 	if userplugin == mysql.AuthSocket {
-		*authPlugin = mysql.AuthSocket
+		resp.AuthPlugin = mysql.AuthSocket
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
 		if err != nil {
 			return nil, err
@@ -895,11 +875,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
-<<<<<<< HEAD
-		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
-			zap.String("user", cc.user), zap.String("host", cc.peerHost))
-		*authPlugin = mysql.AuthNativePassword
-=======
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
@@ -913,7 +888,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 				return authData, nil
 			}
 		}
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)
 		return nil, nil
 	}
 
@@ -922,15 +896,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	// or if the authentication method send by the server doesn't match the authentication
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
-<<<<<<< HEAD
-	if (cc.authPlugin != userplugin) || (cc.authPlugin != *authPlugin) {
-		authData, err := cc.authSwitchRequest(ctx, userplugin)
-		if err != nil {
-			return nil, err
-		}
-		*authPlugin = userplugin
-		return authData, nil
-=======
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
 		if resp.Capability&mysql.ClientPluginAuth > 0 {
 			authData, err := cc.authSwitchRequest(ctx, userplugin)
@@ -943,7 +908,6 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 			// MySQL 5.1 and older don't support authentication plugins yet
 			return nil, errNotSupportedAuthMode
 		}
->>>>>>> 6756bd2ea... server: Combined fix for authentication issues (#29738)
 	}
 
 	return nil, nil
