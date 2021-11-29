@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/go-sql-driver/mysql"
 	"io"
 	"os"
 	"path"
@@ -338,6 +339,59 @@ func TestShowCreateView(t *testing.T) {
 	require.Equal(t, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n", createTableSQL)
 	require.Equal(t, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n", createViewSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestShowCreatePolicy(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `policy_x`").
+		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
+			AddRow("policy_x", "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1"))
+
+	createPolicySQL, err := ShowCreatePlacementPolicy(conn, "policy_x")
+	require.NoError(t, err)
+	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+}
+
+func TestListPolicyNames(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
+			AddRow("policy_x"))
+	policies, err := ListAllPlacementPolicyNames(conn)
+	require.NoError(t, err)
+	require.Equal(t, []string{"policy_x"}, policies)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// some old tidb version doesn't support placement rules returns error
+	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_rules' doesn't exist"}
+	mock.ExpectExec("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+		WillReturnError(expectedErr)
+	policies, err = ListAllPlacementPolicyNames(conn)
+	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
+		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
+	}
 }
 
 func TestGetSuitableRows(t *testing.T) {
