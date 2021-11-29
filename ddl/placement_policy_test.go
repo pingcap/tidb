@@ -250,9 +250,9 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n)",
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))",
 	))
 
 	// Test for `ALTER`
@@ -273,17 +273,17 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */\n)",
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */)",
 	))
 	tk.MustExec("alter table t_range_p PARTITION p1 placement policy x;")
 	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */\n)",
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */)",
 	))
 
 	tk.MustExec("SET PLACEMENT_CHECKS = 1;")
@@ -921,10 +921,9 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
-		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
-		")"))
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (200))"))
 	tk.MustExec("drop table if exists t")
 
 	// partition's specified placement rules will override the default one.
@@ -932,10 +931,9 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
-		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
-		")"))
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (200))"))
 	tk.MustExec("drop table if exists t")
 
 	// test partition override table's placement rules.
@@ -944,10 +942,9 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */\n" +
-		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
-		")"))
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (200))"))
 }
 
 func (s *testDBSuite6) TestDatabasePlacement(c *C) {
@@ -1126,10 +1123,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// alter with policy
 	tk.MustExec("alter table tp placement policy p1")
@@ -1137,10 +1133,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
@@ -1153,10 +1148,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// reset with placement policy 'default'
 	tk.MustExec("alter table tp placement policy default")
@@ -1164,10 +1158,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// error invalid policy
 	err = tk.ExecToErr("alter table tp placement policy px")
@@ -1186,10 +1179,9 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 }
 
 func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
@@ -1278,10 +1270,9 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// alter with policy
 	tk.MustExec("alter table tp partition p0 placement policy p1")
@@ -1289,10 +1280,9 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
@@ -1305,20 +1295,18 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r1,r2\" */)"))
 
 	tk.MustExec("alter table tp partition p1 primary_region='r3' regions='r3,r4'")
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3,r4\" */)"))
 
 	// reset with placement policy 'default'
 	tk.MustExec("alter table tp partition p1 placement policy default")
@@ -1326,20 +1314,18 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	tk.MustExec("alter table tp partition p0 placement policy default")
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// error invalid policy
 	err = tk.ExecToErr("alter table tp partition p1 placement policy px")
@@ -1362,10 +1348,9 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 }
 
 func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
@@ -1389,10 +1374,9 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 
 	// Add partitions
 	tk.MustExec(`alter table tp add partition (
@@ -1404,13 +1388,12 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
-		"  PARTITION `p4` VALUES LESS THAN (1000000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
+		" PARTITION `p4` VALUES LESS THAN (1000000))"))
 
 	tb, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
@@ -1433,13 +1416,12 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000),\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
-		"  PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
-		"  PARTITION `p4` VALUES LESS THAN (1000000)\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */,\n" +
+		" PARTITION `p4` VALUES LESS THAN (1000000))"))
 }
 
 func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
@@ -1497,11 +1479,10 @@ func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
 
 	tk.MustExec("TRUNCATE TABLE tp")
 	newTp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
@@ -1632,12 +1613,11 @@ func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p3` */,\n" +
-		"  PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p3` */,\n" +
+		" PARTITION `p3` VALUES LESS THAN (100000) /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */)"))
 }
 
 func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
@@ -1759,11 +1739,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
 	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
@@ -1786,11 +1765,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
 	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
@@ -1813,11 +1791,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
 	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
@@ -1840,11 +1817,10 @@ func (s *testDBSuite6) TestExchangePartitionWithPlacement(c *C) {
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */\n" +
-		"PARTITION BY RANGE ( `id` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
-		")"))
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */)"))
 	tp, err = tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	c.Assert(err, IsNil)
 	c.Assert(tp.Meta().ID, Equals, tpID)
