@@ -48,17 +48,18 @@ type testColumnChangeSuite struct {
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	s.store = testCreateStore(c, "test_column_change")
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
+	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 
@@ -67,20 +68,21 @@ func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	// create table t (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo, err := testTableInfo(d, "t", 2)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
@@ -163,12 +165,12 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 }
 
 func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)

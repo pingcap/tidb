@@ -685,7 +685,6 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if encoding == nil {
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
-	encoder := encoding.NewEncoder()
 	decoder := encoding.NewDecoder()
 	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
 	isRetBinary := types.IsBinaryStr(b.tp)
@@ -702,13 +701,12 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		}
 		exprI := expr.GetString(i)
 		if isBinaryStr {
-			target, _, err := transform.String(encoder, exprI)
+			target, _, err := transform.String(decoder, exprI)
 			if err != nil {
-				return err
+				result.AppendNull()
+				continue
 			}
-			// we should convert target into utf8 internal.
-			exprInternal, _, _ := transform.String(decoder, target)
-			result.AppendString(exprInternal)
+			result.AppendString(target)
 		} else {
 			if isRetBinary {
 				str, err := enc.EncodeString(exprI)
@@ -2070,10 +2068,14 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return err
 	}
+
+	enc := charset.NewEncoding(charSet)
+	var encodedBuf []byte
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -2082,8 +2084,12 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetString(i)
-		i64s[i] = ord(str)
+		str := buf.GetBytes(i)
+		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = ord(encoded)
 	}
 	return nil
 }
@@ -2225,6 +2231,9 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2233,7 +2242,11 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		str := buf.GetBytes(i)
-		i64s[i] = int64(len(str) * 8)
+		dBytes, err := enc.Encode(nil, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(len(dBytes) * 8)
 	}
 	return nil
 }

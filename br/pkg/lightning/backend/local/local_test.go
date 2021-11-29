@@ -37,12 +37,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	pd "github.com/tikv/pd/client"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -54,6 +61,7 @@ import (
 type localSuite struct{}
 
 var _ = Suite(&localSuite{})
+var _ = SerialSuites(&testMultiIngestSuite{})
 
 func Test(t *testing.T) {
 	TestingT(t)
@@ -865,4 +873,344 @@ func (s *localSuite) TestMergeSSTsDuplicated(c *C) {
 	kvs = append(kvs, kvs[0])
 
 	s.testMergeSSTs(c, kvs, &sstMeta{totalCount: 40, totalSize: 640})
+}
+
+type mockPdClient struct {
+	pd.Client
+	stores []*metapb.Store
+}
+
+func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return c.stores, nil
+}
+
+type mockGrpcErr struct{}
+
+func (e mockGrpcErr) GRPCStatus() *status.Status {
+	return status.New(codes.Unimplemented, "unimplmented")
+}
+
+func (e mockGrpcErr) Error() string {
+	return "unimplmented"
+}
+
+type mockImportClient struct {
+	sst.ImportSSTClient
+	stores             []*metapb.Store
+	curStore           *metapb.Store
+	err                error
+	retry              int
+	cnt                int
+	multiIngestCheckFn func(s *metapb.Store) bool
+}
+
+func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
+	defer func() {
+		c.cnt++
+	}()
+	if c.cnt < c.retry && c.err != nil {
+		return nil, c.err
+	}
+
+	if !c.multiIngestCheckFn(c.curStore) {
+		return nil, mockGrpcErr{}
+	}
+	return nil, nil
+}
+
+type testMultiIngestSuite struct {
+	local *local
+	pdCli *mockPdClient
+}
+
+func (s *testMultiIngestSuite) SetUpSuite(c *C) {
+	local := &local{
+		pdCtl: &pdutil.PdController{},
+	}
+	pdCli := &mockPdClient{}
+	local.pdCtl.SetPDClient(pdCli)
+	s.local = local
+	s.pdCli = pdCli
+}
+
+func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
+	defer func() {
+		getImportClientFn = getImportClient
+	}()
+
+	allStores := []*metapb.Store{
+		{
+			Id:    1,
+			State: metapb.StoreState_Offline,
+		},
+		{
+			Id:    2,
+			State: metapb.StoreState_Tombstone,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "test",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    3,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "test",
+					Value: "123",
+				},
+			},
+		},
+		{
+			Id:    4,
+			State: metapb.StoreState_Tombstone,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "test",
+				},
+			},
+		},
+		{
+			Id:    5,
+			State: metapb.StoreState_Tombstone,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "test123",
+				},
+			},
+		},
+		{
+			Id:    6,
+			State: metapb.StoreState_Offline,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    7,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "test",
+					Value: "123",
+				},
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    8,
+			State: metapb.StoreState_Up,
+		},
+	}
+	cases := []struct {
+		filter             func(store *metapb.Store) bool
+		multiIngestSupport func(s *metapb.Store) bool
+		retry              int
+		err                error
+		supportMutliIngest bool
+		retErr             string
+	}{
+		// test up stores with all support multiIngest
+		{
+			func(store *metapb.Store) bool {
+				return store.State == metapb.StoreState_Up
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			0,
+			nil,
+			true,
+			"",
+		},
+		// test all up stores with tiflash not support multi ingest
+		{
+			func(store *metapb.Store) bool {
+				return store.State == metapb.StoreState_Up
+			},
+			func(s *metapb.Store) bool {
+				return !version.IsTiFlash(s)
+			},
+			0,
+			nil,
+			true,
+			"",
+		},
+		// test all up stores with only tiflash support multi ingest
+		{
+			func(store *metapb.Store) bool {
+				return store.State == metapb.StoreState_Up
+			},
+			func(s *metapb.Store) bool {
+				return version.IsTiFlash(s)
+			},
+			0,
+			nil,
+			false,
+			"",
+		},
+		// test all up stores with some non-tiflash store support multi ingest
+		{
+			func(store *metapb.Store) bool {
+				return store.State == metapb.StoreState_Up
+			},
+			func(s *metapb.Store) bool {
+				return len(s.Labels) > 0
+			},
+			0,
+			nil,
+			false,
+			"",
+		},
+		// test all stores with all states
+		{
+			func(store *metapb.Store) bool {
+				return true
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			0,
+			nil,
+			true,
+			"",
+		},
+		// test all non-tiflash stores that support multi ingests
+		{
+			func(store *metapb.Store) bool {
+				return !version.IsTiFlash(store)
+			},
+			func(s *metapb.Store) bool {
+				return !version.IsTiFlash(s)
+			},
+			0,
+			nil,
+			true,
+			"",
+		},
+		// test only up stores support multi ingest
+		{
+			func(store *metapb.Store) bool {
+				return true
+			},
+			func(s *metapb.Store) bool {
+				return s.State == metapb.StoreState_Up
+			},
+			0,
+			nil,
+			true,
+			"",
+		},
+		// test only offline/tombstore stores support multi ingest
+		{
+			func(store *metapb.Store) bool {
+				return true
+			},
+			func(s *metapb.Store) bool {
+				return s.State != metapb.StoreState_Up
+			},
+			0,
+			nil,
+			false,
+			"",
+		},
+		// test grpc return error but no tiflash
+		{
+			func(store *metapb.Store) bool {
+				return !version.IsTiFlash(store)
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			math.MaxInt32,
+			errors.New("mock error"),
+			false,
+			"",
+		},
+		// test grpc return error and contains offline tiflash
+		{
+			func(store *metapb.Store) bool {
+				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			math.MaxInt32,
+			errors.New("mock error"),
+			false,
+			"",
+		},
+		// test grpc return error
+		{
+			func(store *metapb.Store) bool {
+				return true
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			math.MaxInt32,
+			errors.New("mock error"),
+			false,
+			"mock error",
+		},
+		// test grpc return error only once
+		{
+			func(store *metapb.Store) bool {
+				return true
+			},
+			func(s *metapb.Store) bool {
+				return true
+			},
+			1,
+			errors.New("mock error"),
+			true,
+			"",
+		},
+	}
+
+	for _, testCase := range cases {
+		stores := make([]*metapb.Store, 0, len(allStores))
+		for _, s := range allStores {
+			if testCase.filter(s) {
+				stores = append(stores, s)
+			}
+		}
+
+		importCli := &mockImportClient{
+			stores:             allStores,
+			cnt:                0,
+			retry:              testCase.retry,
+			err:                testCase.err,
+			multiIngestCheckFn: testCase.multiIngestSupport,
+		}
+		s.pdCli.stores = stores
+
+		getImportClientFn = func(local *local, ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+			for _, store := range importCli.stores {
+				if store.Id == storeID {
+					importCli.curStore = store
+					break
+				}
+			}
+			return importCli, nil
+		}
+		s.local.supportMultiIngest = false
+
+		err := s.local.checkMultiIngestSupport(context.Background())
+		if err != nil {
+			c.Assert(err, ErrorMatches, testCase.retErr)
+		} else {
+			c.Assert(s.local.supportMultiIngest, Equals, testCase.supportMutliIngest)
+		}
+	}
 }
