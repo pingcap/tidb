@@ -246,9 +246,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 		WithRegion(qs.Region)
 	request.WithRetryer(awsConfig, defaultS3Retryer())
 
-	if len(qs.Endpoint) > 0 {
-		qs.Endpoint = strings.TrimSuffix(qs.Endpoint, "/")
-	}
+	qs.Endpoint = strings.TrimSuffix(qs.Endpoint, "/")
 
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
