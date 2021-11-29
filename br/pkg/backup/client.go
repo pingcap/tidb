@@ -202,7 +202,7 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
 	}
 	if exist {
-		err = s.WalkDir(ctx,  &storage.WalkOption{}, func(path string, size int64) error {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
 				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
