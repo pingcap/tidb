@@ -15,6 +15,7 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -87,14 +88,18 @@ const (
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
-		VALUES (?, ?, 'PRIMARY', ?, ?, ?, ?, raw_key, raw_value);
+		VALUES
 	`
+	// TODO: Do table_name, index_name, key_data, row_data need to escape.
+	sqlValuesConflictErrorData = "(%d,'%s','PRIMARY','%s','%s',x'%x',x'%x',raw_key,raw_value)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+		VALUES
 	`
+	// TODO: Do table_name, index_name, key_data, row_data need to escape.
+	sqlValuesConflictErrorIndex = "(%d,'%s','%s','%s','%s',x'%x',x'%x',x'%x',x'%x')"
 
 	selectConflictKeys = `
 		SELECT _tidb_rowid, raw_handle, raw_row
@@ -220,6 +225,9 @@ func (em *ErrorManager) RecordDataConflictError(
 	if em.db == nil {
 		return nil
 	}
+	if len(conflictInfos) == 0 {
+		return nil
+	}
 
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -227,13 +235,13 @@ func (em *ErrorManager) RecordDataConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
-		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorData, em.schemaEscaped))
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, conflictInfo := range conflictInfos {
-			_, err = stmt.ExecContext(c,
+		buf := &bytes.Buffer{}
+		fmt.Fprintf(buf, insertIntoConflictErrorData, em.schemaEscaped)
+		for i, conflictInfo := range conflictInfos {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			fmt.Fprintf(buf, sqlValuesConflictErrorData,
 				em.taskID,
 				tableName,
 				conflictInfo.KeyData,
@@ -241,11 +249,9 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.RawKey,
 				conflictInfo.RawValue,
 			)
-			if err != nil {
-				return err
-			}
 		}
-		return nil
+		_, err := txn.ExecContext(c, buf.String())
+		return err
 	})
 }
 
@@ -260,6 +266,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 	if em.db == nil {
 		return nil
 	}
+	if len(conflictInfos) == 0 {
+		return nil
+	}
 
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -267,13 +276,13 @@ func (em *ErrorManager) RecordIndexConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
-		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorIndex, em.schemaEscaped))
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
+		buf := &bytes.Buffer{}
+		fmt.Fprintf(buf, insertIntoConflictErrorIndex, em.schemaEscaped)
 		for i, conflictInfo := range conflictInfos {
-			_, err = stmt.ExecContext(c,
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			fmt.Fprintf(buf, sqlValuesConflictErrorIndex,
 				em.taskID,
 				tableName,
 				indexNames[i],
@@ -284,11 +293,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 				rawHandles[i],
 				rawRows[i],
 			)
-			if err != nil {
-				return err
-			}
 		}
-		return nil
+		_, err := txn.ExecContext(c, buf.String())
+		return err
 	})
 }
 
