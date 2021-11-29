@@ -33,6 +33,18 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
+type memReader interface {
+	getMemRows() ([][]types.Datum, error)
+	getMemRowsHandle() ([]kv.Handle, error)
+}
+
+var (
+	_ memReader = &memIndexReader{}
+	_ memReader = &memTableReader{}
+	_ memReader = &memIndexLookUpReader{}
+	_ memReader = &memIndexMergeReader{}
+)
+
 type memIndexReader struct {
 	ctx           sessionctx.Context
 	index         *model.IndexInfo
@@ -545,6 +557,10 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	return memTblReader.getMemRows()
 }
 
+func (m *memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
+	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexLookUpReader")
+}
+
 type memIndexMergeReader struct {
 	ctx              sessionctx.Context
 	columns          []*model.ColumnInfo
@@ -552,9 +568,7 @@ type memIndexMergeReader struct {
 	conditions       []expression.Expression
 	retFieldTypes    []*types.FieldType
 	indexMergeReader *IndexMergeReaderExecutor
-
-	memIndexReaders []*memIndexReader
-	memTableReaders []*memTableReader
+	memReaders       []memReader
 
 	// partition mode
 	partitionMode     bool                  // if it is accessing a partition table
@@ -564,12 +578,11 @@ type memIndexMergeReader struct {
 
 func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
 	indexCount := len(indexMergeReader.indexes)
-	indexReaders := make([]*memIndexReader, 0, indexCount)
-	tableReaders := make([]*memTableReader, 0, indexCount)
+	memReaders := make([]memReader, 0, indexCount)
 	for i := 0; i < indexCount; i++ {
 		if indexMergeReader.indexes[i] == nil {
 			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.table, indexMergeReader.columns)
-			tableReaders = append(tableReaders, &memTableReader{
+			memReaders = append(memReaders, &memTableReader{
 				ctx:           us.ctx,
 				table:         indexMergeReader.table.Meta(),
 				columns:       indexMergeReader.columns,
@@ -585,10 +598,9 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 				},
 				handleCols: indexMergeReader.handleCols,
 			})
-			indexReaders = append(indexReaders, nil)
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
-			indexReaders = append(indexReaders, &memIndexReader{
+			memReaders = append(memReaders, &memIndexReader{
 				ctx:             us.ctx,
 				index:           indexMergeReader.indexes[i],
 				table:           indexMergeReader.table.Meta(),
@@ -598,7 +610,6 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 				outputOffset:    outputOffset,
 				belowHandleCols: us.belowHandleCols,
 			})
-			tableReaders = append(tableReaders, nil)
 		}
 	}
 
@@ -609,8 +620,7 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 		conditions:       us.conditions,
 		retFieldTypes:    retTypes(us),
 		indexMergeReader: indexMergeReader,
-		memIndexReaders:  indexReaders,
-		memTableReaders:  tableReaders,
+		memReaders:       memReaders,
 
 		partitionMode:     indexMergeReader.partitionTableMode,
 		partitionTables:   indexMergeReader.prunedPartitions,
@@ -635,7 +645,7 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
 	numHandles := 0
 	for i, tbl := range tbls {
-		handles, err := unionHandles(kvRanges[i], m.memIndexReaders, m.memTableReaders)
+		handles, err := unionHandles(kvRanges[i], m.memReaders)
 		if err != nil {
 			return nil, err
 		}
@@ -695,26 +705,23 @@ func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[in
 }
 
 // Union all handles of different Indexes.
-func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, memTableReaders []*memTableReader) (finalHandles []kv.Handle, err error) {
-	if len(memIndexReaders) != len(kvRanges) {
-		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
-	}
-	if len(memTableReaders) != len(memIndexReaders) {
-		return nil, errors.Errorf("len(memTableReaders) should be equal to len(memIndexReaders)")
+func unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
+	if len(memReaders) != len(kvRanges) {
+		return nil, errors.Errorf("len(kvRanges) should be equal to len(memReaders)")
 	}
 
 	hMap := kv.NewHandleMap()
 	var handles []kv.Handle
-	for i, reader := range memIndexReaders {
-		if reader == nil {
-			reader := memTableReaders[i]
-			reader.kvRanges = kvRanges[i]
-			handles, err = reader.getMemRowsHandle()
-		} else {
-			reader.kvRanges = kvRanges[i]
-			handles, err = reader.getMemRowsHandle()
+	for i, reader := range memReaders {
+		switch r := reader.(type) {
+		case *memTableReader:
+			r.kvRanges = kvRanges[i]
+		case *memIndexReader:
+			r.kvRanges = kvRanges[i]
+		default:
+			return nil, errors.New("memReader have to be memTableReader or memIndexReader")
 		}
-		if err != nil {
+		if handles, err = reader.getMemRowsHandle(); err != nil {
 			return nil, err
 		}
 		// Filter same row.
@@ -726,4 +733,8 @@ func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, m
 		}
 	}
 	return finalHandles, nil
+}
+
+func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
+	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
