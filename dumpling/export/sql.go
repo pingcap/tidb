@@ -310,7 +310,7 @@ func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
 		}
 		policyList = append(policyList, policy)
 	}
-	return policyList, nil
+	return policyList, errors.Annotatef(rows.Err(), "sql: %s", query)
 }
 
 // SelectVersion gets the version information from the database server
