@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"testing"
 
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -75,17 +77,17 @@ func simpleRanges(tableCount int) stream.Ranges {
 
 func simpleTask(name string, tableCount int) stream.TaskInfo {
 	backend, _ := storage.ParseBackend("noop://", nil)
-	return stream.TaskInfo{
-		StreamBackupTaskInfo: backuppb.StreamBackupTaskInfo{
-			Storage:     backend,
-			StartTs:     0,
-			EndTs:       1000,
-			Name:        name,
-			TableFilter: []string{"*.*"},
-		},
-		Ranges:  simpleRanges(tableCount),
-		Pausing: false,
+	task, err := stream.NewTask(name).
+		FromTS(1).
+		UntilTS(1000).
+		WithRanges(simpleRanges(tableCount)...).
+		WithTableFilter("*.*", "!mysql").
+		ToStorage(backend).
+		Check()
+	if err != nil {
+		panic(err)
 	}
+	return *task
 }
 
 func keyIs(t *testing.T, key, value []byte, etcd *embed.Etcd) {
@@ -128,7 +130,7 @@ func rangeIsEmpty(t *testing.T, prefix []byte, etcd *embed.Etcd) {
 	require.Len(t, r.KVs, 0)
 }
 
-func TestAll(t *testing.T) {
+func TestIntegration(t *testing.T) {
 	etcd, cli := runEtcd(t)
 	defer etcd.Server.Stop()
 	metaCli := stream.MetaDataClient{Client: cli}
@@ -136,11 +138,40 @@ func TestAll(t *testing.T) {
 	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
 }
 
+func TestChecking(t *testing.T) {
+	noop, _ := storage.ParseBackend("noop://", nil)
+	// The name must not contains slash.
+	_, err := stream.NewTask("/root").
+		WithRange([]byte("1"), []byte("2")).
+		WithTableFilter("*.*").
+		ToStorage(noop).
+		Check()
+	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
+	// Must specify the external storage.
+	_, err = stream.NewTask("root").
+		WithRange([]byte("1"), []byte("2")).
+		WithTableFilter("*.*").
+		Check()
+	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
+	// Must specift the table filter and range?
+	_, err = stream.NewTask("root").
+		ToStorage(noop).
+		Check()
+	require.ErrorIs(t, errors.Cause(err), berrors.ErrPiTRInvalidTaskInfo)
+	// Happy path.
+	_, err = stream.NewTask("root").
+		WithRange([]byte("1"), []byte("2")).
+		WithTableFilter("*.*").
+		ToStorage(noop).
+		Check()
+	require.NoError(t, err)
+}
+
 func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 	ctx := context.Background()
 	taskName := "two tables"
 	task := simpleTask(taskName, 2)
-	taskData, err := task.Marshal()
+	taskData, err := task.PBInfo.Marshal()
 	require.NoError(t, err)
 	require.NoError(t, metaCli.PutTask(ctx, task))
 	keyIs(t, []byte(stream.TaskOf(taskName)), taskData, etcd)

@@ -36,7 +36,7 @@ func simpleRanges(tableCount int) stream.Ranges {
 func simpleTask(name string, tableCount int) stream.TaskInfo {
 	backend, _ := storage.ParseBackend("noop://", nil)
 	return stream.TaskInfo{
-		StreamBackupTaskInfo: backuppb.StreamBackupTaskInfo{
+		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     backend,
 			StartTs:     0,
 			EndTs:       1000,

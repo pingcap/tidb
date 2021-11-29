@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 
@@ -22,24 +21,24 @@ type MetaDataClient struct {
 
 // PutTask put a task to the metadata storage.
 func (c *MetaDataClient) PutTask(ctx context.Context, task TaskInfo) error {
-	data, err := task.StreamBackupTaskInfo.Marshal()
+	data, err := task.PBInfo.Marshal()
 	if err != nil {
-		return errors.Annotatef(err, "failed to marshal task %s", task.Name)
+		return errors.Annotatef(err, "failed to marshal task %s", task.PBInfo.Name)
 	}
 
 	ops := make([]clientv3.Op, 0, 2+len(task.Ranges))
-	ops = append(ops, clientv3.OpPut(TaskOf(task.GetName()), string(data)))
+	ops = append(ops, clientv3.OpPut(TaskOf(task.PBInfo.Name), string(data)))
 	for _, r := range task.Ranges {
-		ops = append(ops, clientv3.OpPut(RangeKeyOf(task.Name, r.StartKey), string(r.EndKey)))
+		ops = append(ops, clientv3.OpPut(RangeKeyOf(task.PBInfo.Name, r.StartKey), string(r.EndKey)))
 	}
 	if task.Pausing {
-		ops = append(ops, clientv3.OpPut(Pause(task.Name), ""))
+		ops = append(ops, clientv3.OpPut(Pause(task.PBInfo.Name), ""))
 	}
 
 	txn := c.KV.Txn(ctx)
 	_, err = txn.Then(ops...).Commit()
 	if err != nil {
-		return errors.Annotatef(err, "failed to commit the change for task %s", task.Name)
+		return errors.Annotatef(err, "failed to commit the change for task %s", task.PBInfo.Name)
 	}
 	return nil
 }
@@ -129,11 +128,8 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 	}
 	commonPrefix := []byte(RangesOf(t.Info.Name))
 	for _, kvp := range kvs {
-		// Given we scan the key `RangesOf(t.Info.Name)` with `WithPrefix()`,
-		// The prefix should always be RangesOf(t.Info.Name).
-		// It would be safe to cut the prefix directly. (instead of use TrimPrefix)
-		// But the rule not apply for the slash. Maybe scan the prefix RangesOf(t.Info.Name) + "/"?
-		startKey := bytes.TrimPrefix(kvp.Key[len(commonPrefix):], []byte("/"))
+		// The prefix must matches.
+		startKey := kvp.Key[len(commonPrefix):]
 		ranges = append(ranges, kv.KeyRange{StartKey: startKey, EndKey: kvp.Value})
 	}
 	return ranges, nil
