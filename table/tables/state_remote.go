@@ -72,7 +72,6 @@ type StateRemote interface {
 	// RenewLease attempt to renew the read / write lock on the table with the specified tableID
 	RenewLease(ctx context.Context, tid int64, newTs uint64, op RenewLeaseType) (bool, error)
 }
-}
 
 type sqlExec interface {
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
