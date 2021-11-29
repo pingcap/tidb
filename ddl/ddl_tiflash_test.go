@@ -313,6 +313,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 	tk.MustExec("truncate table ddltiflash")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
+	tk.MustExec("drop table if exists ddltiflash")
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
