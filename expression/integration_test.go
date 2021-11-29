@@ -10649,6 +10649,19 @@ func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
 
+func (s *testIntegrationSuite) TestIssue29755(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (NULL), (0x61);")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select char(a) from t;").Check(testkit.Rows("", "a"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select char(a) from t;").Check(testkit.Rows("", "a"))
+}
+
 func (s *testIntegrationSuite) TestIssue30101(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
