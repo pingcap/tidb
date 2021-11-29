@@ -32,7 +32,6 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -88,7 +87,6 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
-	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
