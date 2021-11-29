@@ -6660,14 +6660,5 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 	}
 
 	err = d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Do our best to clean up the date, the error is ignorable.
-	_, err1 := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(),
-		"delete from mysql.table_cache_meta where tid = %?", t.Meta().ID)
-	terror.Log(err1)
-	return nil
+	return d.callHookOnChanged(err)
 }
