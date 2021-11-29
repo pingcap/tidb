@@ -58,7 +58,7 @@ func (s *testPlanSuite) TestLogicalOptimizeWithTraceEnabled(c *C) {
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil, comment)
 		sctx := MockContext()
-		sctx.GetSessionVars().EnableStmtOptimizeTrace = true
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
@@ -111,7 +111,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil, comment)
 		sctx := MockContext()
-		sctx.GetSessionVars().EnableStmtOptimizeTrace = true
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
