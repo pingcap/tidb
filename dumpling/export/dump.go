@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"github.com/go-sql-driver/mysql"
 	"math/big"
 	"sort"
 	"strconv"
@@ -298,6 +299,34 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskChan chan<- Task) error {
 	conf := d.conf
 	allTables := conf.Tables
+
+	// policy should be created before database
+	// placement policy in other server type can be different, so we only handle the tidb server
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
+		policyNames, err := ListAllPlacementPolicyNames(metaConn)
+		if err != nil {
+			errCause := errors.Cause(err)
+			if mysqlErr, ok := errCause.(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
+				// some old tidb version and other server type doesn't support placement rules, we can skip it.
+				tctx.L().Debug("cannot dump placement policy, maybe the server doesn't support it", log.ShortError(err))
+			} else {
+				tctx.L().Warn("fail to dump placement policy: ", log.ShortError(err))
+			}
+		}
+		for _, policy := range policyNames {
+			createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
+			if err != nil {
+				return err
+			}
+			wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
+			task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
+			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+			if ctxDone {
+				return tctx.Err()
+			}
+		}
+	}
+
 	for dbName, tables := range allTables {
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
