@@ -580,12 +580,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 				Store:       tikvStore,
 				RegionCache: tikvStore.GetRegionCache(),
 			}
-			newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
-			err := tikvHelper.SetPlacementRule(*newRule)
-			if err != nil {
-				log.Warn("SetPlacementRule fails", zap.Error(err))
-				atomic.StoreUint32(&ReschePullTiFlash, 1)
-			}
+			//newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
+			//err := tikvHelper.SetPlacementRule(*newRule)
+			//if err != nil {
+			//	log.Warn("SetPlacementRule fails", zap.Error(err))
+			//	atomic.StoreUint32(&ReschePullTiFlash, 1)
+			//}
 			if pi := tblInfo.GetPartitionInfo(); pi != nil {
 				for _, d := range pi.Definitions {
 					newPartRule := MakeNewRule(d.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
