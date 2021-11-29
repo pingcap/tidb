@@ -46,11 +46,13 @@ type Midparams struct {
 	FinishedBytes     float64
 	FinishedRows      float64
 	EstimateTotalRows float64
+	TotalTables       float64
 }
 
 func (d *Dumper) GetParameters() (midparams *Midparams) {
 	conf := d.conf
 	mid := &Midparams{}
+	mid.TotalTables = float64(d.totalTables)
 	mid.CompletedTables = ReadCounter(finishedTablesCounter, conf.Labels)
 	mid.FinishedBytes = ReadGauge(finishedSizeGauge, conf.Labels)
 	mid.FinishedRows = ReadGauge(finishedRowsGauge, conf.Labels)
