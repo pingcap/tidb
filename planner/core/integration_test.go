@@ -4759,6 +4759,15 @@ func (s *testIntegrationSuite) TestIssue27949(c *C) {
 		"  └─Limit 10.00 cop[tikv]  offset:0, count:100",
 		"    └─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+	tk.MustExec("create binding for select * from t  using select * from t use index(idx_a);")
+	tk.MustExec("select * from t;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select * from t';")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestIssue28154(c *C) {
@@ -4859,7 +4868,16 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
 			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
 		))
+}
 
+func (s *testIntegrationSuite) TestIssue27313(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
+	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
+	// no warning indicates that idx2 is not pruned by idx1.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestIssue30094(c *C) {

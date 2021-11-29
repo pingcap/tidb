@@ -50,12 +50,11 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20211122024046-03abd340988f
-	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210802034743-dd9b189324ce
-	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
-	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tidb/parser v0.0.0-20211129035953-724da32b1228
-	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
+	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
+	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
+	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
+	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tipb v0.0.0-20211116093845-e9b045a0bdf8
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -67,8 +66,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210727120905-55155ad2e543
-	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211118154139-b11da6307c6f
+	github.com/tikv/pd v1.1.0-beta.0.20211118054146-02848d2660ee
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -81,7 +80,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.8.0
 	go.uber.org/automaxprocs v1.4.0
-	go.uber.org/goleak v1.1.10
+	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.7.0
 	go.uber.org/zap v1.18.1
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4

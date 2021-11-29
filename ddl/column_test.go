@@ -197,7 +197,8 @@ func (s *testColumnSuite) TestColumnBasic(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -843,7 +844,8 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		WithLease(testLease),
 	)
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	err = ctx.NewTxn(context.Background())
@@ -931,7 +933,8 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 		WithLease(testLease),
 	)
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	err = ctx.NewTxn(context.Background())
@@ -1016,7 +1019,8 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		WithLease(testLease),
 	)
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	err = ctx.NewTxn(context.Background())
@@ -1092,7 +1096,8 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 		WithLease(testLease),
 	)
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	err = ctx.NewTxn(context.Background())
