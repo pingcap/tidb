@@ -241,6 +241,17 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			}
 		}
+		// It's possible that the child operator adds extra columns to the schema.
+		// Currently, (*LogicalAggregation).PruneColumns() might do this.
+		// When this happened, we need to detect the extra column and keep the UnionAll's schema
+		// 	consistent with the children's schema.
+		if p.schema.Len() < p.Children()[0].Schema().Len() {
+			for _, col := range p.Children()[0].Schema().Columns {
+				if !p.schema.Contains(col) {
+					p.schema.Columns = append(p.schema.Columns, col.Clone().(*expression.Column))
+				}
+			}
+		}
 	}
 	return nil
 }
