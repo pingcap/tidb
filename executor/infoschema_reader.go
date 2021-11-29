@@ -1451,13 +1451,13 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for _, region := range regionsInfo.Regions {
-		tableList := tableInfos[region.ID]
+	for i := range regionsInfo.Regions {
+		tableList := tableInfos[regionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&region, nil)
+			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
 		}
-		for _, table := range tableList {
-			e.setNewTiKVRegionStatusCol(&region, &table)
+		for j := range tableList {
+			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
 		}
 	}
 	return nil
