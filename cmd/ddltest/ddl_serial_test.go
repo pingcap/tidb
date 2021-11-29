@@ -90,6 +90,8 @@ type ddlSuite struct {
 	retryCount int
 }
 
+var MaxRetryCount = 3
+
 func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	s = new(ddlSuite)
 
@@ -98,7 +100,14 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
-	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
+	retry := 0
+	for retry <= MaxRetryCount {
+		s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
+		if err == nil {
+			break
+		}
+		retry++
+	}
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
