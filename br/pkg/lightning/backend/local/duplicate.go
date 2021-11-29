@@ -580,7 +580,7 @@ func (m *DuplicateManager) splitLocalDupTaskByKeys(
 	for iter.First(); iter.Valid(); iter.Next() {
 		keys++
 		if keys > keyThreshold {
-			endKey := append([]byte{}, iter.Value()...)
+			endKey := append([]byte{}, iter.Key()...)
 			newDupTasks = append(newDupTasks, dupTask{
 				KeyRange: tidbkv.KeyRange{
 					StartKey: startKey,
