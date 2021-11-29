@@ -218,10 +218,12 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d1, "test_reorg")
+	dbInfo, err := testSchemaInfo(d1, "test_reorg")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d1, dbInfo)
 
-	tblInfo := testTableInfo(c, d1, "t", 3)
+	tblInfo, err := testTableInfo(d1, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
 	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
 

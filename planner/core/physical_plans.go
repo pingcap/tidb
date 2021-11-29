@@ -1325,8 +1325,10 @@ const (
 type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleReceiver`.
+	// Receiver points to `executor.shuffleReceiver`.
 	Receiver unsafe.Pointer
+	// DataSource is the PhysicalPlan of the Receiver.
+	DataSource PhysicalPlan
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
