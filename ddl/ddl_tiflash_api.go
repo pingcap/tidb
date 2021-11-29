@@ -76,12 +76,12 @@ func makeBaseRule() placement.Rule {
 	}
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) error {
-	_, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (bool, error) {
+	allReady, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	return nil
+	return allReady, nil
 }
 
 // MakeNewRule creates a pd rule for TiFlash.

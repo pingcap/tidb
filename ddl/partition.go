@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/log"
@@ -1220,7 +1221,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			}
 		} else {
 			log.Warn("Set new pd rule fail while truncate partition")
-			ReschePullTiFlash = true
+			atomic.StoreUint32(&ReschePullTiFlash, 1)
 		}
 	}
 

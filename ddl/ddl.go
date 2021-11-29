@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/store/helper"
@@ -99,7 +100,7 @@ var (
 	PullTiFlashPdTick = 60
 	// ReschePullTiFlash is set true, so we do a fully sync, regardless of PullTiFlashPdTick.
 	// Set to be true, when last TiFlash pd rule fails.
-	ReschePullTiFlash = false
+	ReschePullTiFlash = uint32(0)
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -439,12 +440,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				if err == nil {
 					if d.ownerManager.IsOwner() {
 						handlePd := iterTimes%PullTiFlashPdTick == 0
-						if ReschePullTiFlash {
+						if atomic.CompareAndSwapUint32(&ReschePullTiFlash, 0, 1) {
 							// This is because last pd rule failed.
 							handlePd = true
-							ReschePullTiFlash = false
 						}
-						err = d.PollTiFlashReplicaStatus(sctx, handlePd)
+						_, err := d.PollTiFlashReplicaStatus(sctx, handlePd)
 						if err != nil {
 							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 						}
