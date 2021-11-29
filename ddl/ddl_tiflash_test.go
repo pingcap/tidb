@@ -357,7 +357,11 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 			       UPDATE variable_value = '%[1]s'`
 	tk.MustExec(fmt.Sprintf(safePointSQL, lastSafePoint))
 
+	originValue := ddl.PullTiFlashPdTick
 	ddl.PullTiFlashPdTick = 1
+	defer func() {
+		ddl.PullTiFlashPdTick = originValue
+	}
 	tk.MustExec("drop table ddltiflash")
 	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
