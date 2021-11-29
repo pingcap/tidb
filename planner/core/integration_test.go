@@ -4900,6 +4900,12 @@ func (s *testIntegrationSuite) TestIssue30094(c *C) {
 
 func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(id int) partition by hash(id) partitions 4;")
