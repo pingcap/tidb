@@ -173,12 +173,7 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
-	// resourceGroupTagWithRow cache for the current statement resource group tag (with `Row` label).
-	resourceGroupTagWithRow atomic.Value
-	// resourceGroupTagWithIndex cache for the current statement resource group tag (with `Index` label).
-	resourceGroupTagWithIndex atomic.Value
-	// resourceGroupTagWithUnknown cache for the current statement resource group tag (with `Unknown` label).
-	resourceGroupTagWithUnknown atomic.Value
+
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
@@ -300,40 +295,11 @@ func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupT
 	if sc == nil {
 		return nil
 	}
-	switch label {
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
-		v := sc.resourceGroupTagWithRow.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex:
-		v := sc.resourceGroupTagWithIndex.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown:
-		v := sc.resourceGroupTagWithUnknown.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	}
 	normalized, sqlDigest := sc.SQLDigest()
 	if len(normalized) == 0 {
 		return nil
 	}
-	newTag := resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
-	if newTag == nil {
-		return nil
-	}
-	switch label {
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
-		sc.resourceGroupTagWithRow.Store(newTag)
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex:
-		sc.resourceGroupTagWithIndex.Store(newTag)
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown:
-		sc.resourceGroupTagWithUnknown.Store(newTag)
-	}
-	return newTag
+	return resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.
