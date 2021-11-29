@@ -286,33 +286,33 @@ func CheckTableAvailable(dom *domain.Domain, c *C, count uint64, labels []string
 	c.Assert(replica.Count, Equals, count)
 	c.Assert(replica.LocationLabels, DeepEquals, labels)
 }
-
-// Truncate table shall not block.
-func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	// Should get schema right now
-
-	tk.MustExec("truncate table ddltiflash")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	CheckTableAvailable(s.dom, c, 1, []string{})
-
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(i int not null, s varchar(255))")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	// Should get schema right now
-
-	tk.MustExec("truncate table ddltiflash")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	CheckTableAvailable(s.dom, c, 1, []string{})
-}
+//
+//// Truncate table shall not block.
+//func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
+//	tk := testkit.NewTestKit(c, s.store)
+//	tk.MustExec("use test")
+//
+//	tk.MustExec("drop table if exists ddltiflash")
+//	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+//	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+//
+//	time.Sleep(ddl.PollTiFlashInterval * 3)
+//	// Should get schema right now
+//
+//	tk.MustExec("truncate table ddltiflash")
+//	time.Sleep(ddl.PollTiFlashInterval * 3)
+//	CheckTableAvailable(s.dom, c, 1, []string{})
+//
+//	tk.MustExec("drop table if exists ddltiflash")
+//	tk.MustExec("create table ddltiflash(i int not null, s varchar(255))")
+//	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+//	time.Sleep(ddl.PollTiFlashInterval * 3)
+//	// Should get schema right now
+//
+//	tk.MustExec("truncate table ddltiflash")
+//	time.Sleep(ddl.PollTiFlashInterval * 3)
+//	CheckTableAvailable(s.dom, c, 1, []string{})
+//}
 
 // TiFlash Table shall be eventually available, even with lots of small table created.
 func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
