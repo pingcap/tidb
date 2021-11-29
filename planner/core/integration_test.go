@@ -4919,4 +4919,3 @@ func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
 	result.Check(testkit.Rows("1"))
 }
-
