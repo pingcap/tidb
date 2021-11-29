@@ -352,19 +352,9 @@ func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types
 	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
 	if err != nil {
 		// if encode can't succeed, fallback to record the raw input strings
-		var res strings.Builder
-		for i, d := range row {
-			if i > 0 {
-				res.WriteByte(',')
-			}
-			s, err := d.ToString()
-			if err != nil {
-				// ignore the field if there are any error
-				s = ""
-			}
-			res.WriteString(s)
-		}
-		return res.String()
+		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
+		datumStr, _ := types.DatumsToString(row, true)
+		return datumStr
 	}
 	return resRow.(tidbRow).insertStmt
 }

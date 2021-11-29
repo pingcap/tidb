@@ -432,7 +432,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
 	require.Error(t, err)
-	require.Equal(t, utils.IsRetryableError(err), false, "err: %v", err)
+	require.False(t, utils.IsRetryableError(err), "err: %v", err)
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
@@ -626,5 +626,5 @@ func TestEncodeRowForRecord(t *testing.T) {
 		types.NewStringDatum("test test"),
 		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
 	}, []int{0, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, -1, -1, -1})
-	require.Equal(t, row, "5,test test,\x00\x00\x00\xab\xcd\xef")
+	require.Equal(t, row, "(5, \"test test\", \x00\x00\x00\xab\xcd\xef)")
 }
