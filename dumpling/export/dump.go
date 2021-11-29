@@ -310,7 +310,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 				// some old tidb version and other server type doesn't support placement rules, we can skip it.
 				tctx.L().Debug("cannot dump placement policy, maybe the server doesn't support it", log.ShortError(err))
 			} else {
-				return err
+				tctx.L().Warn("fail to dump placement policy: ", log.ShortError(err))
 			}
 		}
 		for _, policy := range policyNames {
