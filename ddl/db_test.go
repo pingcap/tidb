@@ -6446,14 +6446,6 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 	}
 }
 
-func checkTableCacheStatus(c *C, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testGetTableByName(c, se, dbName, tableName)
-	dom := domain.GetDomain(se)
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().TableCacheStatusType, Equals, status)
-}
-
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
