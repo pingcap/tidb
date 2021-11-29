@@ -4859,7 +4859,16 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
 			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
 		))
+}
 
+func (s *testIntegrationSuite) TestIssue27313(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
+	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
+	// no warning indicates that idx2 is not pruned by idx1.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestIssue30094(c *C) {
