@@ -17,12 +17,13 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
