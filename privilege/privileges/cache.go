@@ -268,6 +268,18 @@ type MySQLPrivilege struct {
 	RoleGraph     map[string]roleGraphEdgesTable
 }
 
+// FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
+// This method will filter out the roles that are not granted to the user but are still in activeRoles
+func (p *MySQLPrivilege) FindAllUserEffectiveRoles(user, host string, activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
+	grantedActiveRoles := make([]*auth.RoleIdentity, 0, len(activeRoles))
+	for _, role := range activeRoles {
+		if p.FindRole(user, host, role) {
+			grantedActiveRoles = append(grantedActiveRoles, role)
+		}
+	}
+	return p.FindAllRole(grantedActiveRoles)
+}
+
 // FindAllRole is used to find all roles grant to this user.
 func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.RoleIdentity {
 	queue, head := make([]*auth.RoleIdentity, 0, len(activeRoles)), 0
@@ -968,7 +980,7 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 // without accepting SUPER privilege as a fallback.
 func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
-	roleList := p.FindAllRole(activeRoles)
+	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 	// Loop through each of the roles and return on first match
 	// If grantable is required, ensure the record has the GrantOption set.
@@ -1016,7 +1028,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		return true
 	}
 
-	roleList := p.FindAllRole(activeRoles)
+	roleList := p.FindAllUserEffectiveRoles(user, host, activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
 
 	var userPriv, dbPriv, tablePriv, columnPriv mysql.PrivilegeType
@@ -1117,7 +1129,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
-	allRoles := p.FindAllRole(roles)
+	allRoles := p.FindAllUserEffectiveRoles(user, host, roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
 	var userExists = false
