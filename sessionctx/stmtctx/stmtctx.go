@@ -198,10 +198,8 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
-
-	// WaitLockLease is the duration of cached table read lease expiration time.
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
-  
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
