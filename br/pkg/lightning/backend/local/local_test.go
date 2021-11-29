@@ -1039,7 +1039,7 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !version.IsTiFlash(s.Labels)
 			},
 			0,
 			nil,
@@ -1052,7 +1052,7 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return version.IsTiFlash(s)
+				return version.IsTiFlash(s.Labels)
 			},
 			0,
 			nil,
@@ -1088,10 +1088,10 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 		// test all non-tiflash stores that support multi ingests
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !version.IsTiFlash(store.Labels)
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !version.IsTiFlash(s.Labels)
 			},
 			0,
 			nil,
@@ -1127,7 +1127,7 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 		// test grpc return error but no tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !version.IsTiFlash(store.Labels)
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1140,7 +1140,7 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 		// test grpc return error and contains offline tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+				return !version.IsTiFlash(store.Labels) || store.State != metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
 				return true

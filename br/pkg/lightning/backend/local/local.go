@@ -260,7 +260,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	hasTiFlash := false
 	for _, s := range stores {
-		if s.State == metapb.StoreState_Up && version.IsTiFlash(s) {
+		if s.State == metapb.StoreState_Up && version.IsTiFlash(s.Labels) {
 			hasTiFlash = true
 			break
 		}
@@ -268,7 +268,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || version.IsTiFlash(s.Labels) {
 			continue
 		}
 		var err error
