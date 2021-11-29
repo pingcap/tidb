@@ -102,7 +102,7 @@ func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, be
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace(before))
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
@@ -116,7 +116,7 @@ func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace(after))
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
