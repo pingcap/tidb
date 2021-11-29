@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -395,12 +396,17 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	for _, agg := range aggs {
 		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
+	groupByCollators := make([]collate.Collator, 0, len(groupBys))
+	for _, expr := range groupBys {
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().Collate))
+	}
 
 	return &streamAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
 		aggCtxs:           aggCtxs,
 		groupByExprs:      groupBys,
+		groupByCollators:  groupByCollators,
 		currGroupByValues: make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
@@ -921,12 +927,14 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
 	return &types.FieldType{
 		Tp:      byte(col.GetTp()),
 		Flag:    uint(col.Flag),
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(col.GetCollation())),
+		Charset: charsetStr,
+		Collate: collationStr,
 	}
 }
