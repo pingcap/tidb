@@ -235,6 +235,28 @@ func (s *testIntegrationSuite) TestIssue24571(c *C) {
 	tk.MustExec("update (select 1 as a) as t, test.t set test.t.a=1;")
 }
 
+func (s *testIntegrationSuite) TestBuildUpdateListResolver(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// For issue https://github.com/pingcap/tidb/issues/24567
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(b int)")
+	tk.MustGetErrCode("update (select 1 as a) as t set a=1", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("update (select 1 as a) as t, t1 set a=1", mysql.ErrNonUpdatableTable)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+
+	// For issue https://github.com/pingcap/tidb/issues/30031
+	tk.MustExec("create table t(a int default -1, c int as (a+10) stored)")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("update test.t, (select 1 as b) as t set test.t.a=default")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-1 9"))
+	tk.MustExec("drop table if exists t")
+}
+
 func (s *testIntegrationSuite) TestIssue22828(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4719,6 +4741,35 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 }
 
+func (s *testIntegrationSuite) TestIssue27949(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27949")
+	tk.MustExec("create table t27949 (a int, b int, key(b))")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("IndexLookUp 10.00 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t27949, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("TableReader 10.00 root  data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@sql_select_limit=100")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("Limit 10.00 root  offset:0, count:100",
+		"└─TableReader 10.00 root  data:Limit",
+		"  └─Limit 10.00 cop[tikv]  offset:0, count:100",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+	tk.MustExec("create binding for select * from t  using select * from t use index(idx_a);")
+	tk.MustExec("select * from t;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select * from t';")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue28154(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4817,5 +4868,32 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
 			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
 		))
+}
 
+func (s *testIntegrationSuite) TestIssue27313(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
+	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
+	// no warning indicates that idx2 is not pruned by idx1.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue30094(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t30094;`)
+	tk.MustExec(`create table t30094(a varchar(10));`)
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  cast(test.t30094.a, float BINARY), cast(test.t30094.a, var_string(5))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe59388e59388e59388\"), eq(to_binary(concat(test.t30094.a, \"1\")), \"0xe598bfe598bfe598bf\")",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
 }

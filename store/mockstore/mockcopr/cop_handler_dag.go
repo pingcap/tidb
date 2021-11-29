@@ -396,12 +396,17 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	for _, agg := range aggs {
 		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sc))
 	}
+	groupByCollators := make([]collate.Collator, 0, len(groupBys))
+	for _, expr := range groupBys {
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().Collate))
+	}
 
 	return &streamAggExec{
 		evalCtx:           ctx.evalCtx,
 		aggExprs:          aggs,
 		aggCtxs:           aggCtxs,
 		groupByExprs:      groupBys,
+		groupByCollators:  groupByCollators,
 		currGroupByValues: make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),

@@ -53,10 +53,25 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	name := params[pFileName]
-	path := filepath.Join(domain.GetPlanReplayerDirName(), name)
+	handler := downloadFileHandler{
+		filePath:           filepath.Join(domain.GetPlanReplayerDirName(), name),
+		fileName:           name,
+		infoGetter:         prh.infoGetter,
+		address:            prh.address,
+		statusPort:         prh.statusPort,
+		urlPath:            fmt.Sprintf("plan_replyaer/dump/%s", name),
+		downloadedFilename: "plan_replayer",
+	}
+	handleDownloadFile(handler, w, req)
+}
+
+func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	name := params[pFileName]
+	path := handler.filePath
 	if isExists(path) {
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"plan_replayer.zip\"")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
 		file, err := os.Open(path)
 		if err != nil {
 			writeError(w, err)
@@ -80,7 +95,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if prh.infoGetter == nil {
+	if handler.infoGetter == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -91,17 +106,17 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
-	topos, err := prh.infoGetter.GetAllTiDBTopology(req.Context())
+	topos, err := handler.infoGetter.GetAllTiDBTopology(req.Context())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	// transfer each remote tidb-server and try to find dump file
 	for _, topo := range topos {
-		if topo.IP == prh.address && topo.StatusPort == prh.statusPort {
+		if topo.IP == handler.address && topo.StatusPort == handler.statusPort {
 			continue
 		}
-		url := fmt.Sprintf("http://%s:%v/plan_replayer/dump/%s?forward=true", topo.IP, topo.StatusPort, name)
+		url := fmt.Sprintf("http://%s:%v/%s?forward=true", topo.IP, topo.StatusPort, handler.urlPath)
 		resp, err := http.Get(url) // #nosec G107
 		if err != nil {
 			terror.Log(errors.Trace(err))
@@ -113,7 +128,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		}
 		// find dump file in one remote tidb-server, return file directly
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"plan_replayer.zip\"")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
 			writeError(w, err)
@@ -130,6 +145,16 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	// we can't find dump file in any tidb-server, return 404 directly
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
+}
+
+type downloadFileHandler struct {
+	filePath           string
+	fileName           string
+	infoGetter         *infosync.InfoSyncer
+	address            string
+	statusPort         uint
+	urlPath            string
+	downloadedFilename string
 }
 
 func isExists(path string) bool {
