@@ -55,6 +55,7 @@ func TestDumpBlock(t *testing.T) {
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
+	d.conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	require.ErrorIs(t, d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled)
 	require.ErrorIs(t, wg.Wait(), writerErr)
 }
