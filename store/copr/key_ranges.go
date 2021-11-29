@@ -103,7 +103,8 @@ func (r *KeyRanges) Do(f func(ran *kv.KeyRange)) {
 	if r.first != nil {
 		f(r.first)
 	}
-	for _, ran := range r.mid {
+	for i := range r.mid {
+		ran := r.mid[i]
 		f(&ran)
 	}
 	if r.last != nil {

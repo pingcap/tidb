@@ -62,12 +62,12 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -95,12 +95,12 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		}
 	}
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -139,12 +139,12 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 
 	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
 	// And the etcd client is nil.
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -178,12 +178,12 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	}()
 
 	RunWorker = false
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d, false)
 	defer func() {
 		err := d.Stop()
@@ -195,12 +195,12 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d1, true)
 	defer func() {
 		err := d1.Stop()
@@ -217,12 +217,12 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -239,12 +239,12 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -254,14 +254,16 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Schema ID is wrong, so dropping table is failed.
 	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
 	// Table ID is wrong, so dropping table is failed.
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -291,18 +293,19 @@ func (s *testDDLSuite) TestViewError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
@@ -325,12 +328,12 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -344,7 +347,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err.Error(), Equals, "[ddl:8204]invalid ddl job type: none")
 }
 
@@ -355,12 +358,12 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -370,8 +373,10 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	doDDLJobErr(c, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
-	tblInfo := testTableInfo(c, d, "t", 3)
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
@@ -384,12 +389,12 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -400,8 +405,10 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	doDDLJobErr(c, -1, 1, model.ActionAddIndex, nil, ctx, d)
 	doDDLJobErr(c, -1, 1, model.ActionDropIndex, nil, ctx, d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
-	tblInfo := testTableInfo(c, d, "t", 3)
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
@@ -430,20 +437,22 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
 
-	dbInfo := testSchemaInfo(c, d, "test_ddl")
-	tblInfo := testTableInfo(c, d, "t", 3)
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	col := &model.ColumnInfo{
@@ -729,26 +738,28 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
+	dbInfo, err := testSchemaInfo(d, "test_cancel_job")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// create a partition table.
 	partitionTblInfo := testTableInfoWithPartition(c, d, "t_partition", 5)
 	// Skip using sessPool. Make sure adding primary key can be successful.
 	partitionTblInfo.Columns[0].Flag |= mysql.NotNullFlag
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
-	tblInfo := testTableInfo(c, d, "t", 5)
+	tblInfo, err := testTableInfo(d, "t", 5)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	err = ctx.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	c.Assert(err, IsNil)
@@ -891,14 +902,16 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, true)
 
 	// for create table
-	tblInfo1 := testTableInfo(c, d, "t1", 2)
+	tblInfo1, err := testTableInfo(d, "t1", 2)
+	c.Assert(err, IsNil)
 	updateTest(&tests[8])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo1.ID, model.ActionCreateTable, []interface{}{tblInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StateNone)
 
 	// for create database
-	dbInfo1 := testSchemaInfo(c, d, "test_cancel_job1")
+	dbInfo1, err := testSchemaInfo(d, "test_cancel_job1")
+	c.Assert(err, IsNil)
 	updateTest(&tests[9])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
@@ -1192,7 +1205,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// test exchange partition failed caused by canceled
 	pt := testTableInfoWithPartition(c, d, "pt", 5)
-	nt := testTableInfo(c, d, "nt", 5)
+	nt, err := testTableInfo(d, "nt", 5)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo, pt)
 	testCreateTable(c, ctx, d, dbInfo, nt)
 
@@ -1438,18 +1452,18 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	/*
 		build structure:
@@ -1469,10 +1483,12 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 			}
 	*/
 	// create database test_parallel_ddl_1;
-	dbInfo1 := testSchemaInfo(c, d, "test_parallel_ddl_1")
+	dbInfo1, err := testSchemaInfo(d, "test_parallel_ddl_1")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo1)
 	// create table t1 (c1 int, c2 int);
-	tblInfo1 := testTableInfo(c, d, "t1", 2)
+	tblInfo1, err := testTableInfo(d, "t1", 2)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo1)
 	// insert t1 values (10, 10), (20, 20)
 	tbl1 := testGetTable(c, d, dbInfo1.ID, tblInfo1.ID)
@@ -1481,7 +1497,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	_, err = tbl1.AddRecord(ctx, types.MakeDatums(2, 2))
 	c.Assert(err, IsNil)
 	// create table t2 (c1 int primary key, c2 int, c3 int);
-	tblInfo2 := testTableInfo(c, d, "t2", 3)
+	tblInfo2, err := testTableInfo(d, "t2", 3)
+	c.Assert(err, IsNil)
 	tblInfo2.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo2.PKIsHandle = true
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo2)
@@ -1494,10 +1511,12 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	_, err = tbl2.AddRecord(ctx, types.MakeDatums(3, 3, 3))
 	c.Assert(err, IsNil)
 	// create database test_parallel_ddl_2;
-	dbInfo2 := testSchemaInfo(c, d, "test_parallel_ddl_2")
+	dbInfo2, err := testSchemaInfo(d, "test_parallel_ddl_2")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo2)
 	// create table t3 (c1 int, c2 int, c3 int, c4 int);
-	tblInfo3 := testTableInfo(c, d, "t3", 4)
+	tblInfo3, err := testTableInfo(d, "t3", 4)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo2, tblInfo3)
 	// insert t3 values (11, 22, 33, 44)
 	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)
@@ -1643,12 +1662,12 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d, true)
 	defer func() {
 		err := d.Stop()

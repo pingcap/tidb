@@ -3907,6 +3907,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			b.capFlag &= ^renameView
 			b.isCreateView = false
 		}()
+
+		if stmt := findStmtAsViewSchema(v); stmt != nil {
+			stmt.AsViewSchema = true
+		}
+
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
@@ -4043,7 +4048,15 @@ const (
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format, OptimizerTrace: trace.TracePlan}
+	// TODO: forbid trace plan if the statement isn't select read-only statement
+	if trace.TracePlan {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+		p.SetSchema(schema.col2Schema())
+		p.names = schema.names
+		return p, nil
+	}
 	switch trace.Format {
 	case TraceFormatRow:
 		schema := newColumnsWithNames(3)
@@ -4375,7 +4388,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
 	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())
 	p.names = schema.names
 	return p
@@ -4401,4 +4414,19 @@ func adjustOverlongViewColname(plan LogicalPlan) {
 			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
 		}
 	}
+}
+
+// findStmtAsViewSchema finds the first SelectStmt as the schema for the view
+func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
+	switch x := stmt.(type) {
+	case *ast.CreateViewStmt:
+		return findStmtAsViewSchema(x.Select)
+	case *ast.SetOprStmt:
+		return findStmtAsViewSchema(x.SelectList)
+	case *ast.SetOprSelectList:
+		return findStmtAsViewSchema(x.Selects[0])
+	case *ast.SelectStmt:
+		return x
+	}
+	return nil
 }
