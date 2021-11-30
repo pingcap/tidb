@@ -1152,9 +1152,8 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if v := makeStringValidator(b.tp.Charset); v != nil {
 		result, _ := v.Truncate(expr, charset.TruncateStrategyReplace)
 		return result, false, nil
-	} else {
-		return expr, false, nil
 	}
+	return expr, false, nil
 }
 
 func makeStringValidator(chs string) charset.StringValidator {
