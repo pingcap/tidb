@@ -1109,6 +1109,9 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 // In normal scan order, all data before s1 is consumed, so the retry ranges should be [s1 --> r2) [r3 --> r4)
 // In reverse scan order, all data after s2 is consumed, so the retry ranges should be [r1 --> r2) [r3 --> s2)
 func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+	if split == nil {
+		return ranges
+	}
 	if desc {
 		left, _ := ranges.Split(split.End)
 		return left
@@ -1124,6 +1127,9 @@ func (worker *copIteratorWorker) calculateRetry(ranges *KeyRanges, split *coproc
 // In normal scan order, all data before s2 is consumed, so the remained ranges should be [s2 --> r4)
 // In reverse scan order, all data after s1 is consumed, so the remained ranges should be [r1 --> s1)
 func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
+	if split == nil {
+		return ranges
+	}
 	if desc {
 		left, _ := ranges.Split(split.Start)
 		return left

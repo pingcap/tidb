@@ -389,6 +389,18 @@ func TestCalculateRetry(t *testing.T) {
 		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
 		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
 	}
+
+	// nil range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, false)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
 }
 
 func TestCalculateRemain(t *testing.T) {
@@ -435,5 +447,17 @@ func TestCalculateRemain(t *testing.T) {
 		split := buildKeyRanges("a", "g")[0]
 		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
 		require.Equal(t, remain.Len(), 0)
+	}
+
+	// nil range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, false)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, true)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
 	}
 }
