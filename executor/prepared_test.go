@@ -734,11 +734,6 @@ func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 
 			// execute this statement and check whether it uses a cached plan
 			results := tk.MustQuery("execute stmt " + usingStmt).Sort().Rows()
-			useCache := "0"
-			if execCase.UseCache {
-				useCache = "1"
-			}
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(useCache))
 
 			// check whether the result is correct
 			tmp := strings.Split(prepCase.PrepStmt, "?")
