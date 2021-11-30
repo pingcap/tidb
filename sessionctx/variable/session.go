@@ -960,6 +960,9 @@ type SessionVars struct {
 
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
+
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
