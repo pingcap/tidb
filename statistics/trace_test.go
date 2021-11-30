@@ -81,6 +81,6 @@ func TestTraceCE(t *testing.T) {
 			out[i].Expr = expr
 			out[i].Trace = sctx.GetSessionVars().StmtCtx.OptimizerCETrace
 		})
-		require.Equal(t, sctx.GetSessionVars().StmtCtx.OptimizerCETrace, out[i].Trace)
+		require.ElementsMatch(t, sctx.GetSessionVars().StmtCtx.OptimizerCETrace, out[i].Trace)
 	}
 }
