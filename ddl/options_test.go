@@ -15,13 +15,13 @@
 package ddl_test
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 )
 
