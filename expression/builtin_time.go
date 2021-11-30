@@ -6714,7 +6714,20 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxDatetimeWidthNoFsp, Decimal: types.UnspecifiedLength}
+	flen := mysql.MaxDatetimeWidthNoFsp
+	con, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.New("should not happened")
+	}
+	unit, null, err := con.EvalString(ctx, chunk.Row{})
+	if null || err != nil {
+		return nil, errors.New("should not happened")
+	}
+	if unit == ast.TimeUnitMicrosecond.String() {
+		flen = mysql.MaxDatetimeWidthWithFsp
+	}
+
+	bf.tp.Flen = flen
 	sig := &builtinTimestampAddSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
