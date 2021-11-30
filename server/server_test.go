@@ -779,7 +779,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(t *testing.T
 	})
 }
 
-func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {
+func (cli *testServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 	buf := bytes.NewBuffer(nil)
 	result := make([]string, 0, 2)
 	for rows.Next() {
@@ -806,7 +806,11 @@ func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRow
 		}
 		result = append(result, buf.String())
 	}
+	return result
+}
 
+func (cli *testServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {
+	result := cli.Rows(t, rows)
 	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
 }
 

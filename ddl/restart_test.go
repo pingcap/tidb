@@ -206,7 +206,8 @@ func (s *testTableSuite) TestTableResume(c *C) {
 
 	testCheckOwner(c, d, true)
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID:   s.dbInfo.ID,
 		TableID:    tblInfo.ID,
