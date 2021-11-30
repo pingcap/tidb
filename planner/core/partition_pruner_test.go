@@ -93,6 +93,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("use test_partition")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -157,6 +158,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
