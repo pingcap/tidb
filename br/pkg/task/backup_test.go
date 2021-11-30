@@ -3,11 +3,11 @@
 package task
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseTSString(t *testing.T) {
