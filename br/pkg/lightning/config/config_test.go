@@ -159,7 +159,7 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 	cfg := config.NewConfig()
 
-	cases := []string {
+	cases := []string{
 		"/path/to/source/dir",
 		"relative/path/to/dir",
 		"file:///path/to/source/dir",
@@ -177,7 +177,6 @@ func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 		err := cfg.CheckAndAdjustFilePath()
 		c.Assert(err, IsNil)
 	}
-
 
 }
 
