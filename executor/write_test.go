@@ -2424,8 +2424,12 @@ func TestInsertCalculatedValue(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a json not null, b int)")
+	tk.MustGetErrCode("insert into t value (a,a->'$')", mysql.ErrTruncatedWrongValueForField)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a json not null, b varchar(10))")
 	tk.MustExec("insert into t value (a,a->'$')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("null 0"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("null null"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json, b int, c int as (a->'$.a'))")
