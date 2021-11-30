@@ -370,5 +370,5 @@ func TestIssue29416(t *testing.T) {
 	tk.MustExec("create table t1 (a int not null, b char (10) not null);")
 	tk.MustExec("insert into t1 values (1, 'a')")
 	tk.MustQuery("((select * from t1)) union (select * from t1);")
-	tk.MustQuery("select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a;")
+//	tk.MustQuery("select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a;")
 }

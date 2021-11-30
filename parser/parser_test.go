@@ -4343,6 +4343,8 @@ func TestSubquery(t *testing.T) {
 		{"SELECT t1.a AS a FROM ((SELECT a FROM t) AS t1)", true, "SELECT `t1`.`a` AS `a` FROM (SELECT `a` FROM `t`) AS `t1`"},
 		{"select count(*) from (select a, b from x1 union all select a, b from x3 union all (select x1.a, x3.b from (select * from x3 union all select * from x2) x3 left join x1 on x3.a = x1.b))", true, "SELECT COUNT(1) FROM (SELECT `a`,`b` FROM `x1` UNION ALL SELECT `a`,`b` FROM `x3` UNION ALL (SELECT `x1`.`a`,`x3`.`b` FROM (SELECT * FROM `x3` UNION ALL SELECT * FROM `x2`) AS `x3` LEFT JOIN `x1` ON `x3`.`a`=`x1`.`b`))"},
 		{"(SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)", true, "(SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)"},
+		{"((select * from t1)) union (select * from t1)", true, "(SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)"},
+		{"(((select * from t1))) union (select * from t1)", true, "(SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)"},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
 	}

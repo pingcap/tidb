@@ -6846,7 +6846,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not2, V: $2}
 	}
-|	SubSelect
+|	SubSelect %prec neg
 |	'(' Expression ')'
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
@@ -9264,18 +9264,22 @@ SubSelect:
 	}
 |   '(' SubSelect ')'
 	{
-		var sel ast.ResultSetNode
-		switch x := $2.(*ast.SubqueryExpr).Query.(type) {
+		subQuery := $2.(*ast.SubqueryExpr).Query
+		isRecursive := true
+		for isRecursive {
+			if _, isRecursive = subQuery.(*ast.SubqueryExpr); isRecursive {
+				subQuery = subQuery.(*ast.SubqueryExpr).Query
+			}
+		}
+		switch rs := subQuery.(type) {
 		case *ast.SelectStmt:
-			rs := $2.(*ast.SelectStmt)
-        	endOffset := parser.endOffset(&yyS[yypt])
-        	parser.setLastSelectFieldText(rs, endOffset)
-        	src := parser.src
-        	// See the implementation of yyParse function
-        	rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
-        	$$ = &ast.SubqueryExpr{Query: rs}
+	       	endOffset := parser.endOffset(&yyS[yypt])
+	       	parser.setLastSelectFieldText(rs, endOffset)
+	       	src := parser.src
+	       	// See the implementation of yyParse function
+	       	rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+	       	$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
-			rs := $2.(*ast.SetOprStmt)
 			src := parser.src
 			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
