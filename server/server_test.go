@@ -1936,8 +1936,8 @@ func (cli *testServerClient) waitUntilServerOnline() {
 func (cli *testServerClient) runTestInitConnect(t *testing.T) {
 
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());`)
-		dbt.MustExec(`SET @a=1;"`)
+		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());"`)
+		dbt.MustExec(`SET @a=1`)
 		dbt.MustExec(`CREATE USER init_nonsuper`)
 		dbt.MustExec(`CREATE USER init_super`)
 		dbt.MustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
