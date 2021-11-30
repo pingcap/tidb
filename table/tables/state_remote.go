@@ -225,6 +225,7 @@ func (op *renewLeaseForReadOP) Exec(r *mockStateRemoteData) {
 }
 
 type mockStateRemoteData struct {
+	mu   sync.Mutex
 	data map[int64]*stateRecord
 }
 
@@ -241,6 +242,8 @@ func newMockStateRemoteData() *mockStateRemoteData {
 }
 
 func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	record, ok := r.data[tid]
 	if !ok {
 		return CachedTableLockNone, 0, nil
@@ -249,6 +252,8 @@ func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, erro
 }
 
 func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
@@ -286,6 +291,8 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 }
 
 func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
@@ -334,6 +341,8 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 }
 
 func (r *mockStateRemoteData) renewLeaseForRead(tid int64, oldTs uint64, newTs uint64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
