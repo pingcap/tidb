@@ -326,7 +326,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case err := <-task.doneCh:
 		if err != nil {
-			logutil.BgLogger().Error("task err not nil")
 			return nil, err
 		}
 	case <-ctx.Done():
