@@ -9151,7 +9151,7 @@ SubSelect:
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
-|   '(' SubSelect ')'
+|	'(' SubSelect ')'
 	{
 		subQuery := $2.(*ast.SubqueryExpr).Query
 		isRecursive := true
@@ -9162,12 +9162,12 @@ SubSelect:
 		}
 		switch rs := subQuery.(type) {
 		case *ast.SelectStmt:
-	       	endOffset := parser.endOffset(&yyS[yypt])
-	       	parser.setLastSelectFieldText(rs, endOffset)
-	       	src := parser.src
-	       	// See the implementation of yyParse function
-	       	rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
-	       	$$ = &ast.SubqueryExpr{Query: rs}
+			endOffset := parser.endOffset(&yyS[yypt])
+			parser.setLastSelectFieldText(rs, endOffset)
+			src := parser.src
+			// See the implementation of yyParse function
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
 			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
