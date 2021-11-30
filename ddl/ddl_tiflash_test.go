@@ -276,17 +276,21 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
-	CheckTableAvailable(s.dom, c, 1, []string{})
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
 }
 
-func CheckTableAvailable(dom *domain.Domain, c *C, count uint64, labels []string) {
-	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+func CheckTableAvailableWithTableName(dom *domain.Domain, c *C, count uint64, labels []string, db string, table string) {
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
 	c.Assert(replica.Available, Equals, true)
 	c.Assert(replica.Count, Equals, count)
 	c.Assert(replica.LocationLabels, DeepEquals, labels)
+}
+
+func CheckTableAvailable(dom *domain.Domain, c *C, count uint64, labels []string) {
+	CheckTableAvailableWithTableName(dom, c, count, labels, "test", "ddltiflash")
 }
 
 // Truncate table shall not block.
@@ -330,13 +334,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
 	time.Sleep(ddl.PollTiFlashInterval * 10)
 	// Should get schema right now
 	for i := 0; i < 100; i++ {
-		tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("ddltiflash%v", i)))
-		c.Assert(err, IsNil)
-		replica := tb.Meta().TiFlashReplica
-		c.Assert(replica, NotNil)
-		c.Assert(replica.Available, Equals, true)
-		c.Assert(replica.Count, Equals, uint64(1))
-		c.Assert(replica.LocationLabels, DeepEquals, []string{})
+		CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
 	}
 }
 
