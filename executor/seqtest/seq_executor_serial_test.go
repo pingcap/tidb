@@ -497,7 +497,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION `p0` VALUES LESS THAN (10),\n  PARTITION `p1` VALUES LESS THAN (20),\n  PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -529,8 +529,8 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY HASH( `a` )\nPARTITIONS 4",
-	))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY HASH (`a`) PARTITIONS 4"))
 
 	// Test show create table compression type.
 	tk.MustExec(`drop table if exists t1`)
@@ -600,8 +600,7 @@ func TestShow(t *testing.T) {
 	for _, sql := range sqls {
 		res := tk.MustQuery(sql)
 		require.NotNil(t, res)
-		sorted := tk.MustQuery(sql).Sort()
-		require.NotNil(t, sorted)
+		sorted := res.Sort()
 		require.Equal(t, sorted, res)
 	}
 }
