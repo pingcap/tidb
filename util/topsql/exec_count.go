@@ -1,8 +1,6 @@
 package topsql
 
 import (
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -137,9 +135,8 @@ func (m *execCounterManager) Run() {
 		case <-collectTicker.C:
 			m.collect()
 		case <-uploadTicker.C:
-			// TODO(mornyx): upload
-			b, _ := json.MarshalIndent(m.execCount, "", "  ")
-			fmt.Println(">>>", string(b))
+			// TODO(mornyx): upload m.execCount. Here is a bridge connecting the
+			//               exec-count module with the existing top-sql cpu reporter.
 			m.execCount = ExecCountMap{}
 		}
 	}
