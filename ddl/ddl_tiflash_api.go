@@ -76,14 +76,6 @@ func makeBaseRule() placement.Rule {
 	}
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (bool, error) {
-	allReady, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return allReady, nil
-}
-
 // MakeNewRule creates a pd rule for TiFlash.
 func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rule {
 	ruleID := fmt.Sprintf("table-%v-r", ID)
@@ -204,11 +196,11 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (bool, error) {
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (bool, error) {
 	allReplicaReady := true
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
-		return allReplicaReady, errors.New("Can not get Helper")
+		return false, errors.New("Can not get Helper")
 	}
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
@@ -217,7 +209,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	// _update_cluster
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
-		return allReplicaReady, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	tiflashStores := make(map[int64]helper.StoreStat)
 	for _, store := range tikvStats.Stores {
@@ -238,7 +230,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	// Main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 	if schema == nil {
-		return allReplicaReady, errors.New("Schema is nil")
+		return false, errors.New("Schema is nil")
 	}
 
 	// Compute table_list
@@ -288,14 +280,14 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 				ns, _, _ := reader.ReadLine()
 				n, err := strconv.ParseInt(string(ns), 10, 64)
 				if err != nil {
-					return allReplicaReady, errors.Trace(err)
+					return false, errors.Trace(err)
 				}
 				for i := int64(0); i < n; i++ {
 					rs, _, _ := reader.ReadLine()
 					// For (`table`, `store`), has region `r`
 					r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
 					if err != nil {
-						return allReplicaReady, errors.Trace(err)
+						return false, errors.Trace(err)
 					}
 					if i, ok := regionReplica[r]; ok {
 						regionReplica[r] = i + 1
@@ -308,7 +300,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 			// TODO Is it necessary, or we can get from TiDB, like using tb.Count?
 			var stats helper.PDRegionStats
 			if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
-				return allReplicaReady, errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 
 			regionCount := stats.Count
