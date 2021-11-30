@@ -735,8 +735,7 @@ func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 // GetStoreRegionsInfo gets the region in given store.
 func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
-	uri := fmt.Sprintf("%s?id=%d", pdapi.StoreRegions, storeID)
-	err := h.requestPD("GET", uri, nil, &regionsInfo)
+	err := h.requestPD("GET", pdapi.StoreRegions+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
 	return &regionsInfo, err
 }
 

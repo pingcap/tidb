@@ -1528,15 +1528,13 @@ func (s *testTikvRegionPeersTableSuite) SetUpSuite(c *C) {
 }
 
 func storesRegionsInfoHandler(w http.ResponseWriter, r *http.Request) {
-	if idStr := r.URL.Query().Get("id"); idStr != "" {
-		var err error
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "unable to parse id", err)
-			return
-		}
-		writeResp(w, storesRegionsInfo[uint64(id)])
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "unable to parse id", err)
+		return
 	}
+	writeResp(w, storesRegionsInfo[uint64(id)])
 }
 
 func regionsInfoHandler(w http.ResponseWriter, r *http.Request) {
@@ -1572,7 +1570,7 @@ func (s *testTikvRegionPeersTableSuite) setUpMockPDHTTPServer() (*httptest.Serve
 		}, nil
 	}))
 	// mock get regionsInfo by store id
-	router.HandleFunc(pdapi.StoreRegions, storesRegionsInfoHandler)
+	router.HandleFunc(pdapi.StoreRegions+"{id}", storesRegionsInfoHandler)
 	// mock get regionInfo by region id
 	router.HandleFunc(pdapi.RegionByID+"{id}", regionsInfoHandler)
 	return server, mockAddr

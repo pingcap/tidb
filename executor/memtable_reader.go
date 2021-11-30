@@ -1056,7 +1056,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			regionsInfoByRegionID = append(regionsInfoByRegionID, *regionInfo)
 		}
 		if len(e.extractor.StoreIDs) < 1 {
-			return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
+			return e.packTiKVRegionPeersRows(regionsInfoByRegionID)
 		}
 	}
 
