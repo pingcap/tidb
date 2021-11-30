@@ -107,7 +107,7 @@ func TestIssue29947(t *testing.T) {
 		mutRow.SetDatum(i, nilDatum)
 		require.Equal(t, col.IsNull(0), true)
 		for _, off := range col.offsets {
-			require.Equal(t, off, 0)
+			require.Equal(t, off, int64(0))
 		}
 		require.Equal(t, col.data, dataBefore[i])
 		require.Equal(t, col.elemBuf, elemBufBefore[i])
