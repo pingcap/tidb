@@ -26,12 +26,9 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-=======
-	"github.com/pingcap/failpoint"
->>>>>>> 443f15ed4... executor: send a task with error to the resultCh when panic happen (#30214)
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -326,7 +323,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case err := <-task.doneCh:
 		if err != nil {
-			logutil.BgLogger().Error("task err not nil")
 			return nil, err
 		}
 	case <-ctx.Done():
