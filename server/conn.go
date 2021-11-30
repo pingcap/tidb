@@ -711,6 +711,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+			return err
 		}
 		if len(newAuth) > 0 {
 			resp.Auth = newAuth
@@ -858,8 +859,30 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	if userplugin == mysql.AuthSocket {
 		*authPlugin = mysql.AuthSocket
+=======
+	// Find the identity of the user based on username and peer host.
+	identity, err := cc.ctx.MatchIdentity(cc.user, host)
+	if err != nil {
+		return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	}
+	// Get the plugin for the identity.
+	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	if err != nil {
+		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
+			zap.String("user", cc.user), zap.String("host", host))
+	}
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		userplugin = val.(string)
+	})
+	if userplugin == mysql.AuthSocket {
+		if !cc.isUnixSocket {
+			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
+		resp.AuthPlugin = mysql.AuthSocket
+>>>>>>> 7fc6ebbda... privilege, session, server: consistently map user login to identity (#30204)
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
 		if err != nil {
 			return nil, err
