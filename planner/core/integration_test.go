@@ -4847,6 +4847,12 @@ func (s *testIntegrationSerialSuite) TestRegardNULLAsPoint(c *C) {
 			for _, vc := range []string{"NULL", "1"} {
 				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
 				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
+				if va == "1" && vb == "1" && vc == "1" {
+					continue
+				}
+				// duplicated NULL rows
+				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
+				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
 			}
 		}
 	}
