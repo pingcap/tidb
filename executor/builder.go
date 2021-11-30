@@ -975,12 +975,13 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	t := &TraceExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		stmtNode:     v.StmtNode,
-		builder:      b,
-		format:       v.Format,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmtNode:       v.StmtNode,
+		builder:        b,
+		format:         v.Format,
+		optimizerTrace: v.OptimizerTrace,
 	}
-	if t.format == plannercore.TraceFormatLog {
+	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
 		return &SortExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), t),
 			ByItems: []*plannerutil.ByItems{
@@ -4697,20 +4698,20 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in the recoverable goroutine",
-					zap.Reflect("r", r),
-					zap.Stack("stack trace"))
-			}
-		}()
-		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logutil.BgLogger().Error("panic in the recoverable goroutine",
+						zap.Reflect("r", r),
+						zap.Stack("stack trace"))
+				}
+			}()
 			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}
-		}
-	}()
+		}()
+	}
 	return nil
 }

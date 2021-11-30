@@ -444,6 +444,12 @@ func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
 	}
+	// Cast is a special case. The RetType should also be considered as an argument.
+	// Please see `newFunctionImpl()` for detail.
+	if sf.FuncName.L == ast.Cast {
+		evalTp := sf.RetType.EvalType()
+		sf.hashcode = append(sf.hashcode, byte(evalTp))
+	}
 }
 
 // ResolveIndices implements Expression interface.
