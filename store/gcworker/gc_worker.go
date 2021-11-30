@@ -29,6 +29,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -1901,6 +1904,23 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
+	deletePdRuleFunc := func() {
+		// Delete pd rule
+		log.Info("try delete pd rule", zap.String("endKey", string(dr.EndKey)))
+		tableID := helper.GetTiFlashTableIDFromEndKey(string(dr.EndKey))
+		tikvStore, ok := w.store.(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			ruleID := fmt.Sprintf("table-%v-r", tableID)
+			if err := tikvHelper.DeletePlacementRule("tiflash", ruleID); err != nil {
+				log.Warn("delete tiflash pd rule failed", zap.Error(err))
+			}
+		}
+	}
+
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
 	switch historyJob.Type {
@@ -1910,6 +1930,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		deletePdRuleFunc()
 	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
