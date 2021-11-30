@@ -287,12 +287,23 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
 func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	// ===
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
+	// ===
 	return func(req *tikvrpc.Request) {
 		if req == nil {
 			return
 		}
-		req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
+		// ===
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+		// ===
+		// req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
+		// 	resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
 }
 
