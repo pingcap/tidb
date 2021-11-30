@@ -6835,6 +6835,7 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t2 values ('A');")
 	tk.MustExec("set names utf8 collate utf8_general_ci;")
 	tk.MustQuery("select * from t1, t2 where t1.a=t2.a and t1.a= 'a';").Check(testkit.Rows("a A"))
+	tk.MustQuery("select * from t1 where a='a' and a = 'A'").Check(testkit.Rows("a"))
 }
 
 func (s *testIntegrationSuite2) TestIssue17791(c *C) {

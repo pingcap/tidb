@@ -194,8 +194,14 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
 }
 
 // StmtHints are SessionVars related sql hints.

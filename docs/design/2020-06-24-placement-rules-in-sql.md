@@ -1,7 +1,7 @@
 # Defining placement rules in SQL
 
 - Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
-- Last updated:  2021-09-13
+- Last updated:  2021-11-28
 - Discussion PR: https://github.com/pingcap/tidb/pull/26221
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18030
 - Original Document (Chinese): https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
@@ -175,25 +175,25 @@ A new system table `information_schema.placement_rules` is added to view all exp
 The table definition is as follows:
 
 ```sql
-+----------------------+--------------+------+------+---------+-------+
-| Field                | Type         | Null | Key  | Default | Extra |
-+----------------------+--------------+------+------+---------+-------+
-| POLICY_ID            | bigint(64)   | NO   |      | NULL    |       |
-| CATALOG_NAME         | varchar(512) | NO   |      | NULL    |       |
-| POLICY_NAME          | varchar(5)   | YES  |      | NULL    |       |
-| SCHEMA_NAME          | varchar(5)   | YES  |      | NULL    |       |
-| TABLE_NAME           | varchar(5)   | YES  |      | NULL    |       |
-| PARTITION_NAME       | varchar(5)   | YES  |      | NULL    |       |
-| PRIMARY_REGION       | varchar(5)   | NO   |      | NULL    |       |
-| REGIONS              | varchar(5)   | NO   |      | NULL    |       |
-| CONSTRAINTS          | varchar(5)   | NO   |      | NULL    |       |
-| LEADER_CONSTRAINTS   | varchar(5)   | NO   |      | NULL    |       |
-| FOLLOWER_CONSTRAINTS | varchar(5)   | NO   |      | NULL    |       |
-| LEARNER_CONSTRAINTS  | varchar(5)   | NO   |      | NULL    |       |
-| SCHEDULE             | varchar(20)  | NO   |      | NULL    |       |
-| FOLLOWERS            | bigint(64)   | NO   |      | NULL    |       |
-| LEARNERS             | bigint(64)   | NO   |      | NULL    |       |
-+----------------------+--------------+------+------+---------+-------+
++----------------------+---------------+------+------+---------+-------+
+| Field                | Type          | Null | Key  | Default | Extra |
++----------------------+---------------+------+------+---------+-------+
+| POLICY_ID            | bigint(64)    | NO   |      | NULL    |       |
+| CATALOG_NAME         | varchar(512)  | NO   |      | NULL    |       |
+| POLICY_NAME          | varchar(64)   | YES  |      | NULL    |       |
+| SCHEMA_NAME          | varchar(64)   | YES  |      | NULL    |       |
+| TABLE_NAME           | varchar(64)   | YES  |      | NULL    |       |
+| PARTITION_NAME       | varchar(64)   | YES  |      | NULL    |       |
+| PRIMARY_REGION       | varchar(1024) | NO   |      | NULL    |       |
+| REGIONS              | varchar(1024) | NO   |      | NULL    |       |
+| CONSTRAINTS          | varchar(1024) | NO   |      | NULL    |       |
+| LEADER_CONSTRAINTS   | varchar(1024) | NO   |      | NULL    |       |
+| FOLLOWER_CONSTRAINTS | varchar(1024) | NO   |      | NULL    |       |
+| LEARNER_CONSTRAINTS  | varchar(1024) | NO   |      | NULL    |       |
+| SCHEDULE             | varchar(20)   | NO   |      | NULL    |       |
+| FOLLOWERS            | bigint(64)    | NO   |      | NULL    |       |
+| LEARNERS             | bigint(64)    | NO   |      | NULL    |       |
++----------------------+---------------+------+------+---------+-------+
 15 rows in set (0.00 sec)
 ```
 
@@ -203,7 +203,7 @@ The information_schema tables for `tables` and `partitions` should be modified t
 
 ```golang
 {name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}
+{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024}
 ```
 
 This helps make the information match what is available in `SHOW CREATE TABLE`, but in a structured format.
@@ -417,15 +417,6 @@ Explanation:
 - 1 follower in any region (a special label of `+any`)
 
 `+any` changes an earlier proposal where the `FOLLOWERS` count could also be specified. This has been removed to reduce the risk of discrepancies and misconfiguration. See also "Policy Validation" below.
-
-#### Built-in Placement Policies
-
-By default every system will have two placement policies, which can be modified via `ALTER PLACEMENT POLICY` but never dropped:
-
-* `default`: This policy is used only in the event that a policy has not been specified.
-* `system`: This policy is used for internal TiDB system tables.
-
-Some common applications might be to increase the replica count on system or default tables. It is not typically recommended to add constraints to these policies as it will lead to cluster inbalance, but it is possible.
 
 #### Schedule Property
 
@@ -1039,6 +1030,10 @@ CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
 This specific semantic will be the hardest to implement because of the other dependencies in the server.
 
 ## Changelog
+
+* 2021-11-29:
+  - Updated limits on object length.
+  - Removed built-in placement policies (not supported for now, need additional discussion due to `DEFAULT` conflicts.)
 
 * 2021-10-29:
   - Add more description to 'scheduling_state'.
