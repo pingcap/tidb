@@ -6735,7 +6735,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not2, V: $2}
 	}
-|	SubSelect
+|	SubSelect %prec neg
 |	'(' Expression ')'
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
@@ -9149,6 +9149,11 @@ SubSelect:
 		src := parser.src
 		// See the implementation of yyParse function
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		$$ = &ast.SubqueryExpr{Query: rs}
+	}
+|	'(' SubSelect ')'
+	{
+		rs := $2.(*ast.SubqueryExpr)
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 
