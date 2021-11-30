@@ -497,7 +497,7 @@ REBUILD:
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual {
-		// Some filter conditions cannot be pushed down and will be copied and kept in the upper layer.
+		// Some MaybeOverOptimized push-down filter conditions will be copied and kept in the upper layer.
 		// So the plan for 'Sel -> TableDual' should not be cached either
 		sel, isSelection := p.(*PhysicalSelection)
 		if isSelection {
