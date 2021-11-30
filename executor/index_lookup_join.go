@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -359,6 +360,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			err := errors.Errorf("%v", r)
 			task.doneCh <- err
+			ow.pushToChan(ctx, task, ow.resultCh)
 			ow.lookup.ctxCancelReason.Store(err)
 			ow.lookup.cancelFunc()
 		}
@@ -367,6 +369,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 	for {
+		failpoint.Inject("TestIssue30211", nil)
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err
