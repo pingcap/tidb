@@ -4734,6 +4734,90 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+
+// AlterTableSetTiFlashReplica sets the TiFlash replicas info.
+func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Ban setting replica count for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
+	}
+
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
+		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
+		changed := false
+		for i, label := range tbReplicaInfo.LocationLabels {
+			if replicaInfo.Labels[i] != label {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return nil
+		}
+	}
+
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// We should check this first, in order to avoid creating redundant DDL jobs.
+	tblInfo := tb.Meta()
+	if d.IsTiFlashPollEnabled() {
+		tikvStore, ok := ctx.GetStore().(helper.Storage)
+		if !ok {
+			log.Error("can not get Helper")
+		}
+		tikvHelper := &helper.Helper{
+			Store:       tikvStore,
+			RegionCache: tikvStore.GetRegionCache(),
+		}
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			// TODO Can we make it as a batch request?
+			for _, p := range pi.Definitions {
+				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+					return errors.Trace(err)
+				}
+			}
+			// Partitions that in adding mid-state.
+			for _, p := range pi.AddingDefinitions {
+				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+					return errors.Trace(err)
+				}
+				if e := tikvHelper.PostAccelerateSchedule(p.ID); e != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else {
+			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
+			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionSetTiFlashReplica,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{*replicaInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
 	// Check the tiflash replica count should be less than the total tiflash stores.
 	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)

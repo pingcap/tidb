@@ -106,7 +106,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	ddl.EnableTiFlashPoll(s.dom.DDL())
-	ddl.PollTiFlashInterval = 500 * time.Millisecond
+	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -169,6 +169,29 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) bool {
 	return false
 }
 
+func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
+	// If table is dropped after tikv_gc_safe_point, it can be recovered
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	// Disable emulator GC.
+	ddl.EmulatorGCDisable()
+	tk.MustExec("drop table if exists ddltiflash")
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	lastSafePoint := time.Now().Add(0 - 3000*time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, lastSafePoint))
+	tk.MustExec("flashback table ddltiflash")
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	CheckTableAvailable(s.dom, c, 1, []string{})
+}
+
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -203,6 +226,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 		}
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
+
+	s.CheckFlashback(tk, c)
 }
 
 // When block add partition, new partition shall be available even we break `UpdateTableReplicaInfo`
@@ -240,6 +265,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
 	tk.MustExec("drop table if exists ddltiflash")
+
+	s.CheckFlashback(tk, c)
 }
 
 // TiFlash Table shall be eventually available.
@@ -252,6 +279,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
+
+	s.CheckFlashback(tk, c)
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
