@@ -391,9 +391,3 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 		}
 	}
 }
-
-// Reset resets MutRow.
-func (mr MutRow) Reset() {
-	mr.idx = 0
-	mr.c.Reset()
-}
