@@ -214,6 +214,9 @@ const (
 
 	// TiDBReadStaleness indicates the staleness duration for following statement
 	TiDBReadStaleness = "tidb_read_staleness"
+
+	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
+	TiDBEnablePaging = "tidb_enable_paging"
 )
 
 // TiDB system variable names that both in session and global scope.
