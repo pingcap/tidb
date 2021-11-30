@@ -398,6 +398,7 @@ func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (st
 // StringValidatorOther checks whether a string is valid string in given charset.
 type StringValidatorOther struct {
 	Charset string
+	Buffer  []byte
 }
 
 // Validate checks whether the string is valid in the given charset.
@@ -415,9 +416,11 @@ func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (s
 	if !enc.enabled() {
 		return str, -1
 	}
-	var result []byte
+	result := s.Buffer
 	if strategy == TruncateStrategyReplace {
-		result = make([]byte, 0, len(str))
+		if len(result) < len(str) {
+			result = make([]byte, 0, len(str))
+		}
 	}
 	var buf [4]byte
 	strBytes := Slice(str)

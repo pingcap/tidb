@@ -685,14 +685,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if encoding == nil {
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
-	decoder := encoding.NewDecoder()
-	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
-	isRetBinary := types.IsBinaryStr(b.tp)
-	enc := charset.NewEncoding(b.tp.Charset)
-	if isRetBinary {
-		enc = charset.NewEncoding(b.args[0].GetType().Charset)
-	}
-
+	validator := makeStringValidator(b.tp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
@@ -700,23 +693,11 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetString(i)
-		if isBinaryStr {
-			target, _, err := transform.String(decoder, exprI)
-			if err != nil {
-				result.AppendNull()
-				continue
-			}
-			result.AppendString(target)
+		if validator != nil {
+			exprI, _ = validator.Truncate(exprI, charset.TruncateStrategyReplace)
+			result.AppendString(exprI)
 		} else {
-			if isRetBinary {
-				str, err := enc.EncodeString(exprI)
-				if err != nil {
-					return err
-				}
-				result.AppendString(str)
-				continue
-			}
-			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
+			result.AppendString(exprI)
 		}
 	}
 	return nil

@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/text/transform"
 )
 
 var (
@@ -1150,18 +1149,27 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if encoding == nil {
 		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
-	// if expr is binary string and convert meet error, we should return NULL.
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		exprInternal, _, err := transform.String(encoding.NewDecoder(), expr)
-		return exprInternal, err != nil, nil
+	if v := makeStringValidator(b.tp.Charset); v != nil {
+		result, _ := v.Truncate(expr, charset.TruncateStrategyReplace)
+		return result, false, nil
+	} else {
+		return expr, false, nil
 	}
-	if types.IsBinaryStr(b.tp) {
-		enc := charset.NewEncoding(b.args[0].GetType().Charset)
-		expr, err = enc.EncodeString(expr)
-		return expr, false, err
+}
+
+func makeStringValidator(chs string) charset.StringValidator {
+	switch chs {
+	case charset.CharsetASCII:
+		return charset.StringValidatorASCII{}
+	case charset.CharsetUTF8:
+		return charset.StringValidatorUTF8{IsUTF8MB4: false}
+	case charset.CharsetUTF8MB4:
+		return charset.StringValidatorUTF8{IsUTF8MB4: true}
+	case charset.CharsetLatin1, charset.CharsetBinary:
+		return nil
+	default:
+		return charset.StringValidatorOther{Charset: chs}
 	}
-	enc := charset.NewEncoding(b.tp.Charset)
-	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
 type substringFunctionClass struct {
