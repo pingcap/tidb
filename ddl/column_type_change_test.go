@@ -2243,7 +2243,7 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// SOME ddl cases.
+	// Some ddl cases.
 	prepare := func() {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int null)")
