@@ -395,7 +395,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	}
 	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Clone().Columns...))
 	union.SetChildren(newChildren...)
-	appendAggPushDownAcrossUnionTraceStep(union, opt)
+	appendAggPushDownAcrossUnionTraceStep(union, agg, opt)
 	return nil
 }
 
@@ -485,12 +485,12 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				}
 			}
 			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
-				err := a.tryAggPushDownForUnion(union, agg)
+				err := a.tryAggPushDownForUnion(union, agg, opt)
 				if err != nil {
 					return nil, err
 				}
 			} else if union, ok1 := child.(*LogicalPartitionUnionAll); ok1 {
-				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg)
+				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg, opt)
 				if err != nil {
 					return nil, err
 				}
