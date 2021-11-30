@@ -35,15 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTableSuite{})
-
-type testTableSuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-
-	d *ddl
-}
-
 func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *model.TableInfo {
 	normalInfo, err := testTableInfo(d, name, num)
 	c.Assert(err, IsNil)
