@@ -207,6 +207,14 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
+// TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
+// compatible with mysql.
+func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
+	if avgRetType.Tp == mysql.TypeNewDecimal {
+		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.Flen+22)
+	}
+}
+
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
