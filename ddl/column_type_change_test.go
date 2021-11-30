@@ -2274,7 +2274,7 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
 
-	// SOME dml cases.
+	// Some dml cases.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a timestamp NOT NULL)")
 	_, err = tk.Exec("insert into t values()")
