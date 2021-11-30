@@ -10653,13 +10653,12 @@ func (s *testIntegrationSuite) TestIssue29755(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (NULL), (0x61);")
 	tk.MustExec("set tidb_enable_vectorized_expression = on;")
-	tk.MustQuery("select char(a) from t;").Check(testkit.Rows("", "a"))
+	tk.MustQuery("select char(123, NULL, 123)").Check(testkit.Rows("{{"))
+	tk.MustQuery("select char(NULL, 123, 123)").Check(testkit.Rows("{{"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
-	tk.MustQuery("select char(a) from t;").Check(testkit.Rows("", "a"))
+	tk.MustQuery("select char(123, NULL, 123)").Check(testkit.Rows("{{"))
+	tk.MustQuery("select char(NULL, 123, 123)").Check(testkit.Rows("{{"))
 }
 
 func (s *testIntegrationSuite) TestIssue30101(c *C) {
