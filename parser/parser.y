@@ -9155,6 +9155,7 @@ SubSelect:
 	{
 		subQuery := $2.(*ast.SubqueryExpr).Query
 		isRecursive := true
+		// remove redundant brackets like '((select 1))'
 		for isRecursive {
 			if _, isRecursive = subQuery.(*ast.SubqueryExpr); isRecursive {
 				subQuery = subQuery.(*ast.SubqueryExpr).Query
@@ -9165,7 +9166,6 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			// See the implementation of yyParse function
 			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
