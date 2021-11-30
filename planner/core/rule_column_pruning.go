@@ -243,13 +243,21 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 		}
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
-		// When this happened, we need to detect the extra column and keep the UnionAll's schema
-		// 	consistent with the children's schema.
-		if p.schema.Len() < p.Children()[0].Schema().Len() {
-			for _, col := range p.Children()[0].Schema().Columns {
-				if !p.schema.Contains(col) {
-					p.schema.Columns = append(p.schema.Columns, col.Clone().(*expression.Column))
+		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
+		for i, child := range p.Children() {
+			if p.schema.Len() < child.Schema().Len() {
+				// Copy and use the Union's schema as the Projection's Exprs and schema.
+				newCols := make([]expression.Column, len(p.schema.Columns))
+				exprs := make([]expression.Expression, len(p.schema.Columns))
+				for j, col := range p.schema.Columns {
+					newCols[j] = *col
+					exprs[j] = &newCols[j]
 				}
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.ctx, p.blockOffset)
+				proj.SetSchema(p.schema.Clone())
+
+				proj.SetChildren(child)
+				p.children[i] = proj
 			}
 		}
 	}
