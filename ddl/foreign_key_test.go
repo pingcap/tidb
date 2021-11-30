@@ -128,7 +128,8 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 	ctx := testNewContext(d)
 	s.ctx = ctx
 	testCreateSchema(c, ctx, d, s.dbInfo)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)

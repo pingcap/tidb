@@ -68,11 +68,6 @@ type Plan interface {
 	SelectBlockOffset() int
 }
 
-type OperatorExplainInfo interface {
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
-}
-
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
 		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
@@ -313,7 +308,7 @@ type LogicalPlan interface {
 	canPushToCop(store kv.StoreType) bool
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace(op OperatorExplainInfo) *tracing.LogicalPlanTrace
+	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -387,8 +382,8 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 }
 
 // buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace(info OperatorExplainInfo) *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: info.ExplainInfo()}
+func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
 	for _, child := range p.Children() {
 		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
 	}
