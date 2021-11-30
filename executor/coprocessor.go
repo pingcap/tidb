@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -118,8 +118,8 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	for _, c := range chunks {
-		resp := h.buildStreamResponse(&c)
+	for i := range chunks {
+		resp := h.buildStreamResponse(&chunks[i])
 		if err = stream.Send(resp); err != nil {
 			return err
 		}
@@ -144,8 +144,8 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 				Username: dagReq.User.UserName,
 				Hostname: dagReq.User.UserHost,
 			}
-			authName, authHost, success := pm.GetAuthWithoutVerification(dagReq.User.UserName, dagReq.User.UserHost)
-			if success {
+			authName, authHost, success := pm.MatchIdentity(dagReq.User.UserName, dagReq.User.UserHost, false)
+			if success && pm.GetAuthWithoutVerification(authName, authHost) {
 				h.sctx.GetSessionVars().User.AuthUsername = authName
 				h.sctx.GetSessionVars().User.AuthHostname = authHost
 				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)

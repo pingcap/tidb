@@ -18,16 +18,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -204,7 +205,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		for i, col := range cols {
 			v, ok := r[col.ID]
 			require.True(t, ok)
-			equal, err1 := v.CompareDatum(sc, &row.output[i])
+			equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}

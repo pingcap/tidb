@@ -17,17 +17,17 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil
 }
@@ -288,10 +288,14 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
+	// reset ParseToJSONFlag in order to keep the flag away from json column
+	if col.GetType().Tp == mysql.TypeJSON {
+		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	return col
 }
 

@@ -32,6 +32,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -40,11 +43,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -69,6 +75,9 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
+	if cfg.App.Config.File == "" {
+		return nil
+	}
 	return log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel)
 }
 
@@ -193,7 +202,9 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 }
 
 func (l *Lightning) RunServer() error {
+	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
+	l.serverLock.Unlock()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
 		zap.Stringer("address", l.serverAddr),
@@ -407,12 +418,13 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 		Current   *int64  `json:"current"`
 		QueuedIDs []int64 `json:"queue"`
 	}
-
+	l.serverLock.Lock()
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
 	} else {
 		response.QueuedIDs = []int64{}
 	}
+	l.serverLock.Unlock()
 
 	l.cancelLock.Lock()
 	if l.cancel != nil && l.curTask != nil {
@@ -454,7 +466,8 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 
 func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-
+	l.serverLock.Lock()
+	defer l.serverLock.Unlock()
 	if l.taskCfgs == nil {
 		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
 		// Without the server mode this pointer is default to be nil.
@@ -711,4 +724,109 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 		}
 	}
 	return nil
+}
+func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cpdb.Close()
+
+	// try to remove the metadata first.
+	taskCp, err := cpdb.TaskCheckpoint(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// a empty id means this task is not inited, we needn't further check metas.
+	if taskCp != nil && taskCp.TaskID != 0 {
+		// try to clean up table metas if exists
+		if err = CleanupMetas(ctx, cfg, tableName); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
+}
+
+func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
+	if tableName == "all" {
+		tableName = ""
+	}
+	// try to clean up table metas if exists
+	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tableMetaExist {
+		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
+		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
+	if err != nil || !exist {
+		return errors.Trace(err)
+	}
+	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
+}
+
+func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
+	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
+		tableName := engine[:index]
+		engineID, err := strconv.Atoi(engine[index+1:])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
+		return ce, errors.Trace(err)
+	}
+
+	engineUUID, err := uuid.Parse(engine)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
+	return ce, errors.Trace(err)
+}
+
+func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
+	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ce, err := UnsafeCloseEngine(ctx, importer, engine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(ce.Cleanup(ctx))
+}
+
+func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
+	var m import_sstpb.SwitchMode
+	switch mode {
+	case config.ImportMode:
+		m = import_sstpb.SwitchMode_Import
+	case config.NormalMode:
+		m = import_sstpb.SwitchMode_Normal
+	default:
+		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+	}
+
+	return tikv.ForAllStores(
+		ctx,
+		tls.WithHost(cfg.TiDB.PdAddr),
+		tikv.StoreStateDisconnected,
+		func(c context.Context, store *tikv.Store) error {
+			return tikv.SwitchMode(c, tls, store.Address, m)
+		},
+	)
 }

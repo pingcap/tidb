@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -38,8 +38,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ sessionctx.Context = (*Context)(nil)
-var _ sqlexec.SQLExecutor = (*Context)(nil)
+var (
+	_ sessionctx.Context  = (*Context)(nil)
+	_ sqlexec.SQLExecutor = (*Context)(nil)
+)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
@@ -245,7 +247,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
+		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}

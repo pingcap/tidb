@@ -19,9 +19,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -303,6 +303,19 @@ func extractStringFromUint64Slice(slice []uint64) string {
 	l := make([]string, 0, len(slice))
 	for _, k := range slice {
 		l = append(l, fmt.Sprintf(`%d`, k))
+	}
+	sort.Strings(l)
+	return strings.Join(l, ",")
+}
+
+// extractStringFromBoolSlice helps extract string info from bool slice.
+func extractStringFromBoolSlice(slice []bool) string {
+	if len(slice) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(slice))
+	for _, k := range slice {
+		l = append(l, fmt.Sprintf(`%t`, k))
 	}
 	sort.Strings(l)
 	return strings.Join(l, ",")

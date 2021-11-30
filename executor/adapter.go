@@ -29,11 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -41,6 +36,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -163,8 +163,13 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 }
 
 // NewChunk create a chunk base on top-level executor's newFirstChunk().
-func (a *recordSet) NewChunk() *chunk.Chunk {
-	return newFirstChunk(a.executor)
+func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	if alloc == nil {
+		return newFirstChunk(a.executor)
+	}
+
+	base := a.executor.base()
+	return alloc.Alloc(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 func (a *recordSet) Close() error {
@@ -505,8 +510,13 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
-	return newFirstChunk(c.e)
+func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	if alloc == nil {
+		return newFirstChunk(c.e)
+	}
+
+	base := c.e.base()
+	return alloc.Alloc(base.retFieldTypes, base.initCap, base.maxChunkSize)
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -625,6 +635,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
@@ -1000,7 +1011,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
+		ResultRows:        GetResultRowsCount(a.Ctx, a.Plan),
 		ExecRetryCount:    a.retryCount,
+		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1050,13 +1063,27 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 }
 
+// GetResultRowsCount gets the count of the statement result rows.
+func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
+	runtimeStatsColl := sctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return 0
+	}
+	rootPlanID := p.ID()
+	if !runtimeStatsColl.ExistsRootStats(rootPlanID) {
+		return 0
+	}
+	rootStats := runtimeStatsColl.GetRootStats(rootPlanID)
+	return rootStats.GetActRows()
+}
+
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	planTree, _ := getEncodedPlan(sctx, p, false, nil)
+	planTree, _ := getEncodedPlan(sctx, p, false)
 	if len(planTree) == 0 {
 		return planTree
 	}
@@ -1076,7 +1103,7 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
 	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
@@ -1134,7 +1161,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
-		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL, a.StmtNode)
+		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
@@ -1194,6 +1221,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
+		ResultRows:      GetResultRowsCount(a.Ctx, a.Plan),
 		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}

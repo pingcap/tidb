@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"

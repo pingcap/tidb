@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
@@ -240,10 +240,10 @@ func TestConvertType(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
 	require.Equal(t, "-9999.9999", v.(*MyDecimal).String())
 	v, err = Convert("1,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
 	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("1,999,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
 	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("199.00 ", ft)
 	require.NoError(t, err)
