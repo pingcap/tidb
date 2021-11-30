@@ -4734,7 +4734,6 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
