@@ -1387,3 +1387,13 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 	})
 	return regionsInfo, err
 }
+
+// GetDBCollation gets db collation from INFORMATION_SCHEMA.SCHEMATA
+func GetDBCollation(db *sql.Conn, database string) (string, error) {
+	query := fmt.Sprintf("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s'", database)
+	var collation string
+	err := simpleQuery(db, query, func(rows *sql.Rows) error {
+		return rows.Scan(&collation)
+	})
+	return collation, err
+}

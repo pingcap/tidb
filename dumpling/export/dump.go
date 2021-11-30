@@ -8,13 +8,14 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 
 	// import mysql driver
 	_ "github.com/go-sql-driver/mysql"
@@ -31,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -331,9 +335,16 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		}
 	}
 
+	parser1 := parser.New()
 	for dbName, tables := range allTables {
+		var dbCollation string
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
+			if err != nil {
+				return err
+			}
+			// adjust db collation
+			createDatabaseSQL, dbCollation, err = adjustDatabaseCollation(metaConn, parser1, createDatabaseSQL, dbName)
 			if err != nil {
 				return err
 			}
@@ -351,7 +362,17 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if err != nil {
 				return err
 			}
-
+			// adjust table collation
+			if table.Type == TableTypeBase {
+				newCreateSQL, defaultCollation, err := adjustTableCollation(metaConn, parser1, meta.ShowCreateTable(), dbCollation, dbName, table.Name)
+				if err != nil {
+					return err
+				}
+				if dbCollation == "" {
+					dbCollation = defaultCollation
+				}
+				meta.(*tableMeta).showCreateTable = newCreateSQL
+			}
 			if !conf.NoSchemas {
 				if table.Type == TableTypeView {
 					task := NewTaskViewMeta(dbName, table.Name, meta.ShowCreateTable(), meta.ShowCreateView())
@@ -377,6 +398,83 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 	}
 
 	return nil
+}
+
+// adjustDatabaseCollation adjusts db collation and return new create sql and collation
+func adjustDatabaseCollation(db *sql.Conn, parser1 *parser.Parser, originSQL string, dbName string) (string, string, error) {
+	stmt, err := parser1.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		return "", "", err
+	}
+	createStmt, ok := stmt.(*ast.CreateDatabaseStmt)
+	if !ok {
+		return originSQL, "", nil
+	}
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.DatabaseOptionCollate {
+			return originSQL, createOption.Value, nil
+		}
+	}
+	// get db collation
+	collation, err := GetDBCollation(db, dbName)
+	if err != nil {
+		return "", "", err
+	}
+	// add collation
+	createStmt.Options = append(createStmt.Options, &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: collation})
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags,
+		In:    bf,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return bf.String(), collation, nil
+}
+
+// adjustTableCollation adjusts table collation and return new create sql and default db collation
+func adjustTableCollation(db *sql.Conn, parser1 *parser.Parser, originSQL string, dbCollation string, dbName string, tableName string) (string, string, error) {
+	stmt, err := parser1.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		return "", "", err
+	}
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return originSQL, "", nil
+	}
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.TableOptionCollate {
+			return originSQL, dbCollation, nil
+		}
+	}
+
+	collation := dbCollation
+	if collation == "" {
+		// get db collation
+		collation, err = GetDBCollation(db, dbName)
+		if err != nil {
+			return "", "", err
+		}
+	}
+
+	// add collation
+	createStmt.Options = append(createStmt.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: collation})
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags,
+		In:    bf,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return bf.String(), collation, nil
 }
 
 func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {

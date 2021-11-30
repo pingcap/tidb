@@ -15,6 +15,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/parser"
 )
 
 func TestDumpBlock(t *testing.T) {
@@ -29,6 +30,9 @@ func TestDumpBlock(t *testing.T) {
 	mock.ExpectQuery(fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))).
 		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
 			AddRow("test", "CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	mock.ExpectQuery(fmt.Sprintf("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s'", escapeString(database))).
+		WillReturnRows(sqlmock.NewRows([]string{"DEFAULT_COLLATION_NAME"}).
+			AddRow("utf8mb4_bin"))
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
@@ -126,5 +130,103 @@ func TestGetListTableTypeByConf(t *testing.T) {
 		conf.Consistency = x.consistency
 		conf.ServerInfo = x.serverInfo
 		require.Equalf(t, x.expected, getListTableTypeByConf(conf), "server info: %s, consistency: %s", x.serverInfo, x.consistency)
+	}
+}
+
+func TestAdjustDatabaseCollation(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+
+	parser1 := parser.New()
+
+	originSQLs := []string{
+		"create database `test` CHARACTER SET=utf8mb4 COLLATE=utf8mb4_bin",
+		"create database `test` COLLATE=utf8mb4_bin",
+		"create database `test` CHARACTER SET=utf8mb4",
+		"create database if not exists `test`",
+	}
+
+	expectedSQLs := []string{
+		"create database `test` CHARACTER SET=utf8mb4 COLLATE=utf8mb4_bin",
+		"create database `test` COLLATE=utf8mb4_bin",
+		"CREATE DATABASE `test` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_bin",
+		"CREATE DATABASE IF NOT EXISTS `test` COLLATE = utf8mb4_bin",
+	}
+
+	for i, originSQL := range originSQLs {
+		if i > 1 {
+			mock.ExpectQuery("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'test'").
+				WillReturnRows(sqlmock.NewRows([]string{"DEFAULT_COLLATION_NAME"}).
+					AddRow("utf8mb4_bin"))
+		}
+		newSQL, collation, err := adjustDatabaseCollation(conn, parser1, originSQL, "test")
+		require.NoError(t, err)
+		require.Equal(t, expectedSQLs[i], newSQL)
+		require.Equal(t, "utf8mb4_bin", collation)
+	}
+}
+
+func TestAdjustTableCollation(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	defer cancel()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+
+	parser1 := parser.New()
+
+	originSQLs := []string{
+		"create table `test`.`t1` (id int) CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		"create table `test`.`t1` (id int) COLLATE=utf8mb4_bin",
+		"create table `test`.`t1` (id int) CHARSET=utf8mb4",
+		"create table `test`.`t1` (id int)",
+	}
+
+	expectedSQLs := []string{
+		"create table `test`.`t1` (id int) CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		"create table `test`.`t1` (id int) COLLATE=utf8mb4_bin",
+		"CREATE TABLE `test`.`t1` (`id` INT) DEFAULT CHARACTER SET = UTF8MB4 DEFAULT COLLATE = UTF8MB4_BIN",
+		"CREATE TABLE `test`.`t1` (`id` INT) DEFAULT COLLATE = UTF8MB4_BIN",
+	}
+
+	for i, originSQL := range originSQLs {
+		newSQL, collation, err := adjustTableCollation(conn, parser1, originSQL, "utf8mb4_bin", "test", "t1")
+		require.NoError(t, err)
+		require.Equal(t, expectedSQLs[i], newSQL)
+		require.Equal(t, "utf8mb4_bin", collation)
+	}
+
+	for i, originSQL := range originSQLs {
+		if i > 1 {
+			mock.ExpectQuery("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'test'").
+				WillReturnRows(sqlmock.NewRows([]string{"DEFAULT_COLLATION_NAME"}).
+					AddRow("utf8mb4_bin"))
+		}
+		newSQL, collation, err := adjustTableCollation(conn, parser1, originSQL, "", "test", "t1")
+		require.NoError(t, err)
+		require.Equal(t, expectedSQLs[i], newSQL)
+		if i > 1 {
+			require.Equal(t, "utf8mb4_bin", collation)
+		} else {
+			require.Equal(t, "", collation)
+		}
+
 	}
 }
