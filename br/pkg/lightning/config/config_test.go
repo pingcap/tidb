@@ -158,17 +158,15 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 
 func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 	tmpDir := c.MkDir()
-
-	relativePath, err := filepath.Rel(".", tmpDir)
-	c.Assert(err, IsNil)
+	// use slashPath in url to be compatible with windows
+	slashPath := filepath.ToSlash(tmpDir)
 
 	cfg := config.NewConfig()
-
 	cases := []string{
 		tmpDir,
-		relativePath,
-		"file://" + tmpDir,
-		"local://" + relativePath,
+		".",
+		"file://" + slashPath,
+		"local://" + slashPath,
 		"s3://bucket_name",
 		"s3://bucket_name/path/to/dir",
 		"gcs://bucketname/path/to/dir",
