@@ -1086,7 +1086,7 @@
           "6"
         ],
         "Plan": [
-          "Selection_5 6400.00 root  gt(plus(test.t.a, 0), 1), gt(plus(test.t.a, 0), 1)",
+          "Selection_5 6400.00 root  gt(plus(test.t.a, 0), 1)",
           "└─IndexReader_8 8000.00 root  index:Selection_7",
           "  └─Selection_7 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
           "    └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
@@ -1098,7 +1098,7 @@
           "6"
         ],
         "Plan": [
-          "Selection_5 6400.00 root  gt(plus(test.t.a, 0), 5), gt(plus(test.t.a, 0), 5)",
+          "Selection_5 6400.00 root  gt(plus(test.t.a, 0), 5)",
           "└─IndexReader_8 8000.00 root  index:Selection_7",
           "  └─Selection_7 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
           "    └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
@@ -1119,7 +1119,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_5 2666.67 root  gt(test.t.b, 1), gt(test.t.b, 1)",
+          "Selection_5 2666.67 root  gt(test.t.b, 1)",
           "└─TableReader_8 3333.33 root  data:Selection_7",
           "  └─Selection_7 3333.33 cop[tikv]  gt(test.t.b, 1)",
           "    └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1131,7 +1131,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_5 2666.67 root  gt(test.t.b, 5), gt(test.t.b, 5)",
+          "Selection_5 2666.67 root  gt(test.t.b, 5)",
           "└─TableReader_8 3333.33 root  data:Selection_7",
           "  └─Selection_7 3333.33 cop[tikv]  gt(test.t.b, 5)",
           "    └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1152,7 +1152,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_5 2133.33 root  gt(plus(test.t.a, 0), 1), gt(plus(test.t.a, 0), 1), gt(test.t.b, 1), gt(test.t.b, 1)",
+          "Selection_5 2133.33 root  gt(plus(test.t.a, 0), 1), gt(test.t.b, 1)",
           "└─IndexLookUp_10 2666.67 root  ",
           "  ├─Selection_8(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
           "  │ └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
@@ -1166,7 +1166,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "Selection_5 2133.33 root  gt(plus(test.t.a, 0), 5), gt(plus(test.t.a, 0), 5), gt(test.t.b, 5), gt(test.t.b, 5)",
+          "Selection_5 2133.33 root  gt(plus(test.t.a, 0), 5), gt(test.t.b, 5)",
           "└─IndexLookUp_10 2666.67 root  ",
           "  ├─Selection_8(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
           "  │ └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
@@ -1263,9 +1263,9 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_5 8000.00 root  group by:Column#8, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.b",
-          "  └─Projection_12 10000.00 root  cast(plus(test.t.c, 1), decimal(41,0) BINARY)->Column#6, test.t.b, test.t.b",
-          "    └─TableReader_9 10000.00 root  data:TableFullScan_8",
+          "└─HashAgg_9 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_10 8000.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#6",
           "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
@@ -1281,9 +1281,9 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_5 8000.00 root  group by:Column#8, funcs:sum(Column#6)->Column#5, funcs:firstrow(Column#7)->test.t.b",
-          "  └─Projection_12 10000.00 root  cast(plus(test.t.c, 5), decimal(41,0) BINARY)->Column#6, test.t.b, test.t.b",
-          "    └─TableReader_9 10000.00 root  data:TableFullScan_8",
+          "└─HashAgg_9 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_10 8000.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#6",
           "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
