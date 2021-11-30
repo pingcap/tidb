@@ -1443,7 +1443,6 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
-	log.InitLogger(&log.Config{}, "error")
 	cases := []struct {
 		s             string
 		ignoreColumns []*config.IgnoreColumns
