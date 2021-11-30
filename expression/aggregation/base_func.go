@@ -178,14 +178,6 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	return nil
 }
 
-// TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
-// compatible with mysql.
-func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
-	if avgRetType.Tp == mysql.TypeNewDecimal {
-		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.Flen+22)
-	}
-}
-
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
@@ -282,6 +274,16 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) &&
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
+	}
+	// valid the precision and scale of decimal type
+	if a.RetTp.Tp == mysql.TypeNewDecimal {
+		a.RetTp = a.RetTp.Clone()
+		if a.RetTp.Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
+		}
+		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
+			a.RetTp.Decimal = mysql.MaxDecimalScale
+		}
 	}
 }
 

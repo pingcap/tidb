@@ -427,14 +427,6 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 		funcName: funcName,
 		dataGen:  getDataGenFunc(ft),
 	}
-	if ft.Tp == mysql.TypeNewDecimal {
-		if ft.Decimal == types.UnspecifiedLength {
-			ft.Decimal = mysql.MaxDecimalScale
-		}
-		if ft.Flen == types.UnspecifiedLength {
-			ft.Flen = mysql.MaxDecimalWidth
-		}
-	}
 	for _, result := range results {
 		pt.results = append(pt.results, types.NewDatum(result))
 	}
