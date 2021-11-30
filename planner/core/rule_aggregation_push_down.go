@@ -368,7 +368,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 }
 
 func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return a.aggPushDown(p)
+	return a.aggPushDown(p, opt)
 }
 
 func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation) error {
@@ -395,9 +395,9 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
-func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	if agg, ok := p.(*LogicalAggregation); ok {
-		proj := a.tryToEliminateAggregation(agg)
+		proj := a.tryToEliminateAggregation(agg, opt)
 		if proj != nil {
 			p = proj
 		} else {
@@ -428,7 +428,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 					join.SetChildren(lChild, rChild)
 					join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 					buildKeyInfo(join)
-					proj := a.tryToEliminateAggregation(agg)
+					proj := a.tryToEliminateAggregation(agg, opt)
 					if proj != nil {
 						p = proj
 					}
@@ -487,7 +487,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.aggPushDown(child)
+		newChild, err := a.aggPushDown(child, opt)
 		if err != nil {
 			return nil, err
 		}
