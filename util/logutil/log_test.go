@@ -116,22 +116,23 @@ func TestGrpcLoggerCreation(t *testing.T) {
 
 func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "warn"
+	slowQueryFn := "slow-query.log"
 	fileConf := FileLogConfig{
 		log.FileLogConfig{
-			Filename:   "slow-query.log",
+			Filename:   slowQueryFn,
 			MaxSize:    10,
 			MaxDays:    10,
 			MaxBackups: 10,
 		},
 	}
-	conf := NewLogConfig(level, DefaultLogFormat, "", fileConf, false)
-	_, prop, sqConf, err := newSlowQueryLogger(conf)
+	conf := NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
+	_, prop, slowQueryConf, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
 	require.Equal(t, prop.Level.String(), conf.Level)
 	// make sure SlowQuery.MaxDays/MaxSize/MaxBackups are same with top config.
-	require.Equal(t, fileConf.FileLogConfig, sqConf.File)
+	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
