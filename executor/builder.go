@@ -4698,20 +4698,20 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in the recoverable goroutine",
-					zap.Reflect("r", r),
-					zap.Stack("stack trace"))
-			}
-		}()
-		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logutil.BgLogger().Error("panic in the recoverable goroutine",
+						zap.Reflect("r", r),
+						zap.Stack("stack trace"))
+				}
+			}()
 			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}
-		}
-	}()
+		}()
+	}
 	return nil
 }
