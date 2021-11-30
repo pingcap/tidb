@@ -9,22 +9,40 @@ import (
 	"go.uber.org/atomic"
 )
 
-// ExecCountMap represents Map<Timestamp, Map<SQL, Count>>
-type ExecCountMap map[int64]map[string]uint64
+const (
+	// execCounterManagerCollectDuration is the time period for execCounterManager
+	// to collect data from all ExecCounter s.
+	execCounterManagerCollectDuration = 3 * time.Second
 
+	// execCounterManagerUploadDuration is the time period for execCounterManager
+	// to report all aggregated data.
+	execCounterManagerUploadDuration = 30 * time.Second
+)
+
+// ExecCountMap represents Map<SQLDigest, Map<Timestamp, Count>>.
+// We put SQLDigest in front of the two-dimensional map, because SQLDigest
+// is larger than Timestamp. This can reduce unnecessary memory usage.
+type ExecCountMap map[string]map[int64]uint64
+
+// Merge merges other into ExecCountMap.
+// Values with the same SQL and same timestamp will be added.
 func (m ExecCountMap) Merge(other ExecCountMap) {
-	for newTs, newSqlCount := range other {
-		sqlCount, ok := m[newTs]
+	for newSQL, newTsCount := range other {
+		tsCount, ok := m[newSQL]
 		if !ok {
-			m[newTs] = newSqlCount
+			m[newSQL] = newTsCount
 			continue
 		}
-		for sql, count := range newSqlCount {
-			sqlCount[sql] += count
+		for ts, count := range newTsCount {
+			tsCount[ts] += count
 		}
 	}
 }
 
+// ExecCounter is a counter used locally in each session.
+// We can count the number of SQL executions on ExecCounter, and it
+// is expected that these statistics will eventually be collected
+// and merged in the background.
 type ExecCounter struct {
 	mu        sync.Mutex
 	execCount ExecCountMap
@@ -32,10 +50,8 @@ type ExecCounter struct {
 }
 
 // CreateExecCounter try to create and register an ExecCounter.
-//
-// If we are in the initialization phase and have not yet called
-// SetupTopSQL to initialize the top-sql, nothing will happen and
-// we will get nil.
+// If we are in the initialization phase and have not yet called SetupTopSQL
+// to initialize the top-sql, nothing will happen, and we will get nil.
 func CreateExecCounter() *ExecCounter {
 	if globalExecCounterManager == nil {
 		return nil
@@ -48,18 +64,26 @@ func CreateExecCounter() *ExecCounter {
 	return counter
 }
 
+// Count is used to count the number of executions of a certain SQL.
+// You don't need to provide execution time. By default, the time when
+// you call Count is considered the time when SQL is ready to execute.
+// The parameter sql is a universal string, and ExecCounter does not care
+// whether it is a normalized SQL or a stringified SQL digest.
+// Count is thread-safe.
 func (c *ExecCounter) Count(sql string, n uint64) {
 	ts := time.Now().Unix()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	sqlCount, ok := c.execCount[ts]
+	tsCount, ok := c.execCount[sql]
 	if !ok {
-		c.execCount[ts] = map[string]uint64{}
-		sqlCount = c.execCount[ts]
+		c.execCount[sql] = map[int64]uint64{}
+		tsCount = c.execCount[sql]
 	}
-	sqlCount[sql] += n
+	tsCount[ts] += n
 }
 
+// Take removes all existing data from ExecCounter.
+// Take is thread-safe.
 func (c *ExecCounter) Take() ExecCountMap {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -68,14 +92,21 @@ func (c *ExecCounter) Take() ExecCountMap {
 	return execCount
 }
 
+// Close marks ExecCounter as "closed".
+// The background goroutine will periodically detect whether each ExecCounter
+// has been closed, and if so, it will be cleaned up.
 func (c *ExecCounter) Close() {
 	c.closed.Store(true)
 }
 
+// Closed returns whether the ExecCounter has been closed.
 func (c *ExecCounter) Closed() bool {
 	return c.closed.Load()
 }
 
+// execCounterManager is used to manage all ExecCounter s.
+// It is responsible for collecting data from all ExecCounter s, aggregating
+// them together, and regularly cleaning up the closed ExecCounter s.
 type execCounterManager struct {
 	counters      sync.Map // map[uint64]*ExecCounter
 	nextCounterID atomic.Uint64
@@ -83,6 +114,7 @@ type execCounterManager struct {
 	closeCh       chan struct{}
 }
 
+// newExecCountManager creates an empty execCounterManager.
 func newExecCountManager() *execCounterManager {
 	return &execCounterManager{
 		execCount: ExecCountMap{},
@@ -90,27 +122,30 @@ func newExecCountManager() *execCounterManager {
 	}
 }
 
+// Run will block the current goroutine and execute the main task of execCounterManager.
 func (m *execCounterManager) Run() {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+	collectTicker := time.NewTicker(execCounterManagerCollectDuration)
+	defer collectTicker.Stop()
 
-	tmpTicker := time.NewTicker(10 * time.Second)
-	defer tmpTicker.Stop()
+	uploadTicker := time.NewTicker(execCounterManagerUploadDuration)
+	defer uploadTicker.Stop()
 
 	for {
 		select {
 		case <-m.closeCh:
 			return
-		case <-ticker.C:
+		case <-collectTicker.C:
 			m.collect()
-		case <-tmpTicker.C:
+		case <-uploadTicker.C:
 			b, _ := json.MarshalIndent(m.execCount, "", "  ")
-			fmt.Println(">>>>>", string(b))
+			fmt.Println(">>>", string(b))
 			m.execCount = ExecCountMap{}
 		}
 	}
 }
 
+// collect data from all associated ExecCounter s.
+// If an ExecCounter is closed, then remove it from the map.
 func (m *execCounterManager) collect() {
 	m.counters.Range(func(id_, counter_ interface{}) bool {
 		id := id_.(uint64)
@@ -124,10 +159,12 @@ func (m *execCounterManager) collect() {
 	})
 }
 
+// register binds ExecCounter to execCounterManager.
 func (m *execCounterManager) register(counter *ExecCounter) {
 	m.counters.Store(m.nextCounterID.Add(1), counter)
 }
 
+// close ends the execution of the current execCounterManager.
 func (m *execCounterManager) close() {
 	m.closeCh <- struct{}{}
 }
