@@ -678,10 +678,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
-	_, isSelection := innerChild.(*LogicalSelection)
+	sel, isSelection := innerChild.(*LogicalSelection)
 	if isSelection {
-		ds, isDataSource = innerChild.Children()[0].(*DataSource)
-		us, isUnionScan = innerChild.Children()[0].(*LogicalUnionScan)
+		if expression.MaybeOverOptimized4PlanCache(p.ctx, sel.Conditions) {
+			ds, isDataSource = innerChild.Children()[0].(*DataSource)
+			us, isUnionScan = innerChild.Children()[0].(*LogicalUnionScan)
+		}
 	}
 	if (!isDataSource && !isUnionScan) || (isDataSource && ds.preferStoreType&preferTiFlash != 0) {
 		return nil
