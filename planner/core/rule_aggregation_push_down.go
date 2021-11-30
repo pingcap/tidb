@@ -534,7 +534,17 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg *LogicalAggregation, aggFuncs [
 
 func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *logicalOptimizeOp) {
 	reason := fmt.Sprintf("agg[%v] push down across projection[%v]", agg.ID(), proj.ID())
-	action := fmt.Sprintf("aggregation changed into %s", agg.ExplainInfo())
+	action := func() string {
+		buffer := bytes.NewBufferString("agg's functions changed into[")
+		for i, aggFunc := range agg.AggFuncs {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(aggFunc.String())
+		}
+		buffer.WriteString("]")
+		return buffer.String()
+	}()
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
@@ -546,7 +556,7 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("[id:%v,tp:%s,info:%s]", child.ID(), child.TP(), child.ExplainInfo()))
+			buffer.WriteString(fmt.Sprintf("[id:%v,tp:%s]", child.ID(), child.TP()))
 		}
 		buffer.WriteString("]")
 		return buffer.String()

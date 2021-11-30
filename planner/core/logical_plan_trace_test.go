@@ -101,6 +101,36 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select count(*) from t a , t b, t c",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			assertRuleName: "aggregation_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "aggFuncs[count(Column#38)] pushed into join[5] right path",
+					assertReason: "agg[6] push down into join[5]",
+				},
+			},
+		},
+		{
+			sql:            "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b) x group by c2",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			assertRuleName: "aggregation_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "union's children changed into[[id:11,tp:Aggregation],[id:12,tp:Aggregation]]",
+					assertReason: "agg[8] push down across union[5]",
+				},
+				{
+					assertAction: "agg's functions changed into[sum(test.t.c),firstrow(test.t.d)]",
+					assertReason: "agg[11] push down across projection[6]",
+				},
+				{
+					assertAction: "agg's functions changed into[sum(test.t.a),firstrow(test.t.b)]",
+					assertReason: "agg[12] push down across projection[7]",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
@@ -112,6 +142,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		c.Assert(err, IsNil, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().AllowAggPushDown = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
