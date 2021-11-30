@@ -4721,6 +4721,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
+	// Ban setting replica count for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		if !ok {
+			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
+		}
+	}
+
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
