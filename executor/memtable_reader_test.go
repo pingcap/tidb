@@ -1548,6 +1548,10 @@ func regionsInfoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	writeResp(w, regionsInfo[uint64(id)])
 }
+func (s *testTikvRegionPeersTableSuite) TearDownSuite(c *C) {
+	s.httpServer.Close()
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
+}
 
 func (s *testTikvRegionPeersTableSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
