@@ -57,6 +57,55 @@ type PollTiFlashReplicaStatusContext struct {
 	HighPriority   bool
 }
 
+// PollTiFlashReplicaStatusBackoff records backoff for each TiFlash Table
+type PollTiFlashReplicaStatusBackoff struct {
+	Counter      int
+	Threshold    int
+}
+
+var (
+	PollTiFlashReplicaStatusBackoffMaxTick = 60
+	PollTiFlashReplicaStatusBackoffMinTick = 1
+	PollTiFlashReplicaStatusBackoffCapacity = 500
+)
+
+func NewPollTiFlashReplicaStatusBackoff() PollTiFlashReplicaStatusBackoff {
+	return PollTiFlashReplicaStatusBackoff {
+		Counter: 0,
+		Threshold: PollTiFlashReplicaStatusBackoffMinTick,
+	}
+}
+
+// Tick will increase Counter, and check if Threshold meets.
+func (b *PollTiFlashReplicaStatusBackoff) Tick() bool {
+	if b.Threshold < PollTiFlashReplicaStatusBackoffMinTick {
+		b.Threshold = PollTiFlashReplicaStatusBackoffMinTick
+	}
+	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick {
+		b.Threshold = PollTiFlashReplicaStatusBackoffMaxTick
+	}
+	defer func() {
+		b.Counter += 1
+		b.Counter %= b.Threshold
+	}()
+	if b.Counter % b.Threshold == 0 {
+		return true
+	}
+	return false
+}
+
+// Backoff will increase Threshold
+func (b *PollTiFlashReplicaStatusBackoff) Backoff() {
+	if b.Threshold < PollTiFlashReplicaStatusBackoffMinTick {
+		b.Threshold = PollTiFlashReplicaStatusBackoffMinTick
+	}
+	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick / 2 {
+		b.Threshold = PollTiFlashReplicaStatusBackoffMaxTick
+		return
+	}
+	b.Threshold *= 2
+}
+
 func makeBaseRule() placement.Rule {
 	return placement.Rule{
 		GroupID:  "tiflash",
@@ -195,7 +244,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (bool, error) {
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, backoffs *map[int64]*PollTiFlashReplicaStatusBackoff) (bool, error) {
 	allReplicaReady := true
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
@@ -233,7 +282,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (b
 	}
 
 	// Compute table_list
-	var tableList []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
+	var tableList = make([]PollTiFlashReplicaStatusContext, 0)
 
 	for _, db := range schema.AllSchemas() {
 		tbls := schema.SchemaTables(db.Name)
@@ -254,11 +303,23 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (b
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
 		if !tb.Available {
+			bo, ok := (*backoffs)[tb.ID]
+			if !ok {
+				if len(*backoffs) < PollTiFlashReplicaStatusBackoffCapacity {
+					newBackoff := NewPollTiFlashReplicaStatusBackoff()
+					(*backoffs)[tb.ID] = &newBackoff
+				}
+			} else {
+				if !bo.Tick() {
+					// Skip
+					continue
+				}
+			}
+
 			allReplicaReady = false
 
-			// We don't need to set_accelerate_schedule, since it is already done in DDL.
-
-			// compute_sync_data_process
+			// We don't need to set accelerate schedule, since it is already done in DDL.
+			// Compute sync data process by request TiFlash.
 			regionReplica := make(map[int64]int)
 			for _, store := range tiflashStores {
 				statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
@@ -306,7 +367,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) (b
 			flashRegionCount := len(regionReplica)
 			available := regionCount == flashRegionCount
 
-			log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+			if !available {
+				bo, ok := (*backoffs)[tb.ID]
+				if ok {
+					bo.Backoff()
+				}
+				log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+			} else{
+				log.Info("tiflash table is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
+			}
+
 			err := d.UpdateTableReplicaInfo(ctx, tb.ID, available)
 			if err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))

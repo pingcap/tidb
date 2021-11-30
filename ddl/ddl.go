@@ -427,6 +427,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return
 		}
 		iterTimes := 0
+		backoffs := make(map[int64]*PollTiFlashReplicaStatusBackoff)
 		for {
 			if d.sessPool == nil {
 				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
@@ -444,7 +445,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 							// This is because last pd rule failed.
 							handlePd = true
 						}
-						_, err := d.PollTiFlashReplicaStatus(sctx, handlePd)
+						_, err := d.PollTiFlashReplicaStatus(sctx, handlePd, &backoffs)
 						if err != nil {
 							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 						}
