@@ -336,6 +336,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
+		failpoint.Inject("TestIssue30211", nil)
 		task, err := ow.buildTask(ctx)
 		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")
