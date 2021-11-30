@@ -26,7 +26,8 @@ type LogicalPlanTrace struct {
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	Steps []*LogicalRuleOptimizeTracer `json:"steps"`
+	FinalLogicalPlan *LogicalPlanTrace            `json:"final"`
+	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
 }
@@ -50,9 +51,9 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, r
 	})
 }
 
-// TrackLogicalPlanAfterRuleOptimize add plan trace after optimize
-func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *LogicalPlanTrace) {
-	tracer.curRuleTracer.After = after
+// RecordFinalLogicalPlan add plan trace after logical optimize
+func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *LogicalPlanTrace) {
+	tracer.FinalLogicalPlan = final
 }
 
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
@@ -60,7 +61,6 @@ func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *Lo
 type LogicalRuleOptimizeTracer struct {
 	Index    int                            `json:"index"`
 	Before   *LogicalPlanTrace              `json:"before"`
-	After    *LogicalPlanTrace              `json:"after"`
 	RuleName string                         `json:"name"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
