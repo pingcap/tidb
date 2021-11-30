@@ -64,6 +64,11 @@ type tiflashDDLTestSuite struct {
 
 var _ = SerialSuites(&tiflashDDLTestSuite{})
 
+const (
+	RoundToBeAvailable               = 1
+	RoundToBeAvailablePartitionTable = 3
+)
+
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
@@ -197,7 +202,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
-	time.Sleep(ddl.PollTiFlashInterval * 1)
+
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
@@ -207,7 +212,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	lessThan := "40"
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	// Should get schema again
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
@@ -238,8 +243,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	// Make sure is available
-	time.Sleep(ddl.PollTiFlashInterval * 4)
-	// Should get schema right now
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	lessThan := "40"
@@ -277,13 +281,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	s.CheckFlashback(tk, c)
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
@@ -299,12 +303,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	// Should get schema right now
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
 }
 
@@ -327,25 +330,24 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int not null) partition by range (z) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tk.MustExec("drop table if exists ddltiflashp")
+	tk.MustExec("create table ddltiflashp(z int not null) partition by range (z) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	// Should get schema right now
 
-	tk.MustExec("truncate table ddltiflash")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	tk.MustExec("truncate table ddltiflashp")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
-	time.Sleep(ddl.PollTiFlashInterval * 3)
 	tk.MustExec("drop table if exists ddltiflash2")
 	tk.MustExec("create table ddltiflash2(z int)")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	// Should get schema right now
 
 	tk.MustExec("truncate table ddltiflash2")
-	time.Sleep(ddl.PollTiFlashInterval * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
@@ -437,7 +439,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 
 	tk.MustExec("drop table ddltiflash")
 
-	time.Sleep(5 * time.Second)
+	//time.Sleep(5 * time.Second)
 	// Now gc will trigger, and will remove dropped table.
 
 	gcWorker.Start()
