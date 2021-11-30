@@ -152,7 +152,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
-	tblInfo1 := testTableInfo(c, d, "t", 3)
+	tblInfo1, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
@@ -162,7 +163,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with 1034 records.
-	tblInfo2 := testTableInfo(c, d, "t1", 3)
+	tblInfo2, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)
