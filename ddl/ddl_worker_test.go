@@ -588,7 +588,7 @@ func doDDLJobErrWithSchemaStateT(ctx sessionctx.Context, d *ddl, t *testing.T, s
 	}
 	err := d.doDDLJob(ctx, job)
 	// TODO: Add the detail error check.
-	require.NoError(t, err, "err:%v", err)
+	require.Error(t, err, "err:%v", err)
 	testCheckJobCancelledT(t, d, job, state)
 
 	return job
