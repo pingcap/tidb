@@ -343,9 +343,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-
+		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
 		if err == nil {
+			metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err

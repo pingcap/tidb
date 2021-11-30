@@ -773,7 +773,7 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	metrics.PDApiExecutionHistogram.Observe(time.Since(start).Seconds())
+	metrics.PDApiExecutionHistogram.WithLabelValues("common").Observe(time.Since(start).Seconds())
 
 	defer func() {
 		err = resp.Body.Close()

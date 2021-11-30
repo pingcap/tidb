@@ -230,14 +230,14 @@ var (
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
 
-	PDApiExecutionHistogram = prometheus.NewHistogram(
+	PDApiExecutionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "pd_api_execution_duration_seconds",
 			Help:      "Bucketed histogram of all pd api execution time (s)",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
-		})
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
