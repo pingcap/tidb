@@ -63,7 +63,12 @@ type ExecCounter struct {
 
 // CreateExecCounter try to create and register an ExecCounter.
 // If we are in the initialization phase and have not yet called SetupTopSQL
-// to initialize the top-sql, nothing will happen, and we will get nil.
+// to initialize the top-sql, nothing will happen, and we will get nil. But
+// this scene should never appear, because we always call SetupTopSQL before
+// starting the server, at this moment we cannot receive connections and will
+// not create a valid session. So this case will never happen: "This function
+// returns nil, so this session will never count execution of SQL sent by peer
+// client".
 func CreateExecCounter() *ExecCounter {
 	if globalExecCounterManager == nil {
 		return nil
@@ -159,9 +164,9 @@ func (m *execCounterManager) Run() {
 // collect data from all associated ExecCounter s.
 // If an ExecCounter is closed, then remove it from the map.
 func (m *execCounterManager) collect() {
-	m.counters.Range(func(id_, counter_ interface{}) bool {
-		id := id_.(uint64)
-		counter := counter_.(*ExecCounter)
+	m.counters.Range(func(idRaw, counterRaw interface{}) bool {
+		id := idRaw.(uint64)
+		counter := counterRaw.(*ExecCounter)
 		if counter.Closed() {
 			m.counters.Delete(id)
 		}
@@ -172,6 +177,7 @@ func (m *execCounterManager) collect() {
 }
 
 // register binds ExecCounter to execCounterManager.
+// register is thread-safe.
 func (m *execCounterManager) register(counter *ExecCounter) {
 	m.counters.Store(m.curCounterID.Add(1), counter)
 }
