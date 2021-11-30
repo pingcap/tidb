@@ -157,13 +157,18 @@ func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 }
 
 func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
+	tmpDir := c.MkDir()
+
+	relativePath, err := filepath.Rel(".", tmpDir)
+	c.Assert(err, IsNil)
+
 	cfg := config.NewConfig()
 
 	cases := []string{
-		"/path/to/source/dir",
-		"relative/path/to/dir",
-		"file:///path/to/source/dir",
-		"local:///path/to/source/dir",
+		tmpDir,
+		relativePath,
+		"file://" + tmpDir,
+		"local://" + relativePath,
 		"s3://bucket_name",
 		"s3://bucket_name/path/to/dir",
 		"gcs://bucketname/path/to/dir",
@@ -174,7 +179,7 @@ func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 	for _, testCase := range cases {
 		cfg.Mydumper.SourceDir = testCase
 
-		err := cfg.CheckAndAdjustFilePath()
+		err = cfg.CheckAndAdjustFilePath()
 		c.Assert(err, IsNil)
 	}
 
