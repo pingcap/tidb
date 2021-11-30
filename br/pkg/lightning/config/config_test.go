@@ -177,7 +177,7 @@ func (s *configTestSuite) TestCheckAndAdjustFilePath(c *C) {
 	for _, testCase := range cases {
 		cfg.Mydumper.SourceDir = testCase
 
-		err = cfg.CheckAndAdjustFilePath()
+		err := cfg.CheckAndAdjustFilePath()
 		c.Assert(err, IsNil)
 	}
 
