@@ -1392,9 +1392,6 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 
 func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistoryError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	fpName := "github.com/pingcap/tidb/executor/mockTiDBHotRegionsHistory"
-	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	// Test without start time error
 	rs, err := tk.Exec("select * from information_schema.tidb_hot_regions_history")
