@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"math"
 	"strings"
 
@@ -478,11 +479,11 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	switch tp {
 	case types.ETInt:
-		//default signed, if one field is unsigned, return unsigned result
-		for _, arg := range args {
-			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+		if signed, err := isResIntSigned(c.funcName, args); err == nil {
+			if signed {
+				bf.tp.Flag &= ^mysql.UnsignedFlag
+			} else {
 				bf.tp.Flag |= mysql.UnsignedFlag
-				break
 			}
 		}
 		sig = &builtinGreatestIntSig{bf}
@@ -752,12 +753,11 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	switch tp {
 	case types.ETInt:
-		// default unsigned, if one field is signed, return signed result
-		bf.tp.Flag |= mysql.UnsignedFlag
-		for _, arg := range args {
-			if !mysql.HasUnsignedFlag(arg.GetType().Flag) {
+		if signed, err := isResIntSigned(c.funcName, args); err == nil {
+			if signed {
 				bf.tp.Flag &= ^mysql.UnsignedFlag
-				break
+			} else {
+				bf.tp.Flag |= mysql.UnsignedFlag
 			}
 		}
 		sig = &builtinLeastIntSig{bf}
@@ -2891,4 +2891,27 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// isResIntSigned return true if result should be unsigned, false if result should be signed, error to keep original
+func isResIntSigned(funcName string, args []Expression) (bool, error) {
+	switch funcName {
+	case ast.Greatest:
+		//if one field is unsigned return unsigned result, otherwise signed
+		for _, arg := range args {
+			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+				return false, nil
+			}
+		}
+		return true, nil
+	case ast.Least:
+		// if one field is signed return signed result, otherwise unsigned
+		for _, arg := range args {
+			if !mysql.HasUnsignedFlag(arg.GetType().Flag) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	return true, errors.New("can not check if signed, keep original")
 }
