@@ -108,10 +108,10 @@ func (c *ExecCounter) Closed() bool {
 // It is responsible for collecting data from all ExecCounter s, aggregating
 // them together, and regularly cleaning up the closed ExecCounter s.
 type execCounterManager struct {
-	counters      sync.Map // map[uint64]*ExecCounter
-	nextCounterID atomic.Uint64
-	execCount     ExecCountMap
-	closeCh       chan struct{}
+	counters     sync.Map // map[uint64]*ExecCounter
+	curCounterID atomic.Uint64
+	execCount    ExecCountMap
+	closeCh      chan struct{}
 }
 
 // newExecCountManager creates an empty execCounterManager.
@@ -137,6 +137,7 @@ func (m *execCounterManager) Run() {
 		case <-collectTicker.C:
 			m.collect()
 		case <-uploadTicker.C:
+			// TODO(mornyx): upload
 			b, _ := json.MarshalIndent(m.execCount, "", "  ")
 			fmt.Println(">>>", string(b))
 			m.execCount = ExecCountMap{}
@@ -161,7 +162,7 @@ func (m *execCounterManager) collect() {
 
 // register binds ExecCounter to execCounterManager.
 func (m *execCounterManager) register(counter *ExecCounter) {
-	m.counters.Store(m.nextCounterID.Add(1), counter)
+	m.counters.Store(m.curCounterID.Add(1), counter)
 }
 
 // close ends the execution of the current execCounterManager.

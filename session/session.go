@@ -228,9 +228,10 @@ type session struct {
 	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// execCounter is used to count the number of executions of each SQL in
-	// this session, and will be reported to the background periodically.
-	// Eventually all the local execCounter of the session will be aggregated
-	// and reported to the remote.
+	// this session at each point in time. These data will be periodically
+	// taken away by the background goroutine. The background goroutine will
+	// continue to aggregate all the local data in each session, and finally
+	// report them to the remote regularly.
 	execCounter *topsql.ExecCounter
 }
 

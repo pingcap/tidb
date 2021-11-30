@@ -322,7 +322,6 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-// TODO: exec count?
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
