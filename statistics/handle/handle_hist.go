@@ -52,7 +52,11 @@ func (h *Handle) AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, t
 var ErrExit = errors.New("Stop loading since domain is closed.")
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}) error {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg sync.WaitGroup) error {
+	defer func() {
+		exitWg.Done()
+		logutil.BgLogger().Info("SubLoadWorker exited.")
+	}()
 	reader, err0 := h.getStatsReader(0, ctx.(sqlexec.RestrictedSQLExecutor))
 	if err0 != nil {
 		return err0

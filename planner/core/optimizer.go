@@ -319,17 +319,19 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 	for col := range neededColumns {
 		missingColumns = append(missingColumns, col)
 	}
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmtCtx.StatsLoad.NeededColumns = missingColumns
-	wg := stmtCtx.StatsLoad.Wg
-	wg.Add(len(missingColumns))
-	waitTime := mathutil.Min(int(syncWait), int(stmtCtx.MaxExecutionTime*1000))
-	var timeout = time.Duration(waitTime)
-	for _, col := range missingColumns {
-		statsHandle.AppendNeededColumn(col, wg, timeout)
-	}
-	if util.WaitTimeout(wg, timeout) {
-		return false, errors.New("Fail to load stats for columns, timeout.")
+	if len(missingColumns) > 0 {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.StatsLoad.NeededColumns = missingColumns
+		wg := stmtCtx.StatsLoad.Wg
+		wg.Add(len(missingColumns))
+		waitTime := mathutil.Min(int(syncWait), int(stmtCtx.MaxExecutionTime*1000))
+		var timeout = time.Duration(waitTime)
+		for _, col := range missingColumns {
+			statsHandle.AppendNeededColumn(col, wg, timeout)
+		}
+		if util.WaitTimeout(wg, timeout) {
+			return false, errors.New("Fail to load stats for columns, timeout.")
+		}
 	}
 	return true, nil
 }

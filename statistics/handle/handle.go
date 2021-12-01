@@ -109,8 +109,8 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// subCtxs holds all sessions used by sub stats load workers
-	subCtxs []sessionctx.Context
+	// SubCtxs holds all sessions used by sub stats load workers
+	SubCtxs []sessionctx.Context
 	// HistogramNeeded buffers the histogram needs from optimizer/statistics and is consumed by stats worker.
 	HistogramNeeded NeededColumnsCh
 }
@@ -199,7 +199,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		feedback:         statistics.NewQueryFeedbackMap(),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
-		subCtxs:          make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency),
+		SubCtxs:          make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency),
 		HistogramNeeded:  NeededColumnsCh{ColumnsCh: make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize), TimeoutColumnsCh: make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)},
 	}
 	handle.lease.Store(lease)

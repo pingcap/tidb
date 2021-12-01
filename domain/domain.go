@@ -1245,7 +1245,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Add(1)
-		go do.loadStatsWorker(ctx)
+		go do.loadStatsWorker()
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1265,6 +1265,16 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+	statsHandle := do.StatsHandle()
+	for i, ctx := range ctxList {
+		statsHandle.SubCtxs[i] = ctx
+		do.wg.Add(1)
+		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+	}
+}
+
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
@@ -1281,7 +1291,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) loadStatsWorker(ctx sessionctx.Context) {
+func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
 	if lease == 0 {
@@ -1300,17 +1310,6 @@ func (do *Domain) loadStatsWorker(ctx sessionctx.Context) {
 		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
-	}
-	// start sub load worker if concurrent-stats-load is enabled
-	t = time.Now()
-	subCtxs, err := statsHandle.InitSubSessions(ctx.GetStore())
-	if err != nil {
-		logutil.BgLogger().Error("init sub load sessions failed", zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("init sub load sessions time", zap.Duration("take time", time.Since(t)))
-	}
-	for _, subCtx := range subCtxs {
-		go statsHandle.SubLoadWorker(subCtx, do.exit)
 	}
 	for {
 		select {
