@@ -190,10 +190,12 @@ func TestIssue29850(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
-		`Projection_7 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─MergeJoin_8 0.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
-		`  ├─Point_Get_34(Build) 1.00 root table:warehouse handle:1262`,
-		`  └─Point_Get_33(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+		`Projection_9 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─MergeJoin_10 0.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
+		`  ├─Selection_37(Build) 0.80 root  eq(test.warehouse.w_id, 1262)`,
+		`  │ └─Point_Get_38 1.00 root table:warehouse handle:1262`,
+		"  └─Selection_35(Probe) 0.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 1549), eq(test.customer.c_w_id, 1262)",
+		"    └─Point_Get_36 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) "))
 	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
 
@@ -206,9 +208,9 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
-		`Selection_7 1.00 root  ge(test.t.a, 1), le(test.t.a, 1)`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Selection_5 0.80 root  ge(test.t.a, 1), le(test.t.a, 1)`,
+		`└─TableReader_7 1.00 root  data:TableRangeScan_6`,
+		`  └─TableRangeScan_6 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
@@ -218,8 +220,8 @@ func TestIssue29850(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
-		`Selection_7 1.00 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
-		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
-		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+		`Selection_5 0.80 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
+		`└─TableReader_7 1.00 root  data:TableRangeScan_6`,
+		`  └─TableRangeScan_6 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
