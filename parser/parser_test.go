@@ -1298,10 +1298,12 @@ func TestSetVariable(t *testing.T) {
 		{"set xx.xx = 666", "xx.xx", false, true},
 		// Set session system variable xx.xx
 		{"set session xx.xx = 666", "xx.xx", false, true},
+		{"set local xx.xx = 666", "xx.xx", false, true},
 		{"set global xx.xx = 666", "xx.xx", true, true},
 
 		{"set @@xx.xx = 666", "xx.xx", false, true},
 		{"set @@session.xx.xx = 666", "xx.xx", false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, true},
 		{"set @@global.xx.xx = 666", "xx.xx", true, true},
 
 		// Set user defined variable xx.xx
@@ -3403,6 +3405,7 @@ func TestDDL(t *testing.T) {
 		{"create placement policy x primary_region='cn' regions='us' schedule='even'", true, "CREATE PLACEMENT POLICY `x` PRIMARY_REGION = 'cn' REGIONS = 'us' SCHEDULE = 'even'"},
 		{"create placement policy x primary_region='cn', leader_constraints='ww', leader_constraints='yy'", true, "CREATE PLACEMENT POLICY `x` PRIMARY_REGION = 'cn' LEADER_CONSTRAINTS = 'ww' LEADER_CONSTRAINTS = 'yy'"},
 		{"create placement policy if not exists x regions = 'us', follower_constraints='yy'", true, "CREATE PLACEMENT POLICY IF NOT EXISTS `x` REGIONS = 'us' FOLLOWER_CONSTRAINTS = 'yy'"},
+		{"create or replace placement policy x regions='us'", true, "CREATE OR REPLACE PLACEMENT POLICY `x` REGIONS = 'us'"},
 		{"create placement policy x placement policy y", false, ""},
 
 		{"alter placement policy x primary_region='us'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
@@ -4763,6 +4766,7 @@ func TestTrace(t *testing.T) {
 		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
 		{"trace format = 'row' select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
 		{"trace format = 'json' update t set id = id + 1 order by id desc;", true, "TRACE FORMAT = 'json' UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"},
+		{"trace plan select c1 from t1", true, "TRACE PLAN SELECT `c1` FROM `t1`"},
 	}
 	RunTest(t, table, false)
 }
@@ -5161,6 +5165,8 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t drop histogram on b", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `b`"},
 		{"analyze table t update histogram on c1, c2;", true, "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `c1`,`c2`"},
 		{"analyze table t drop histogram on c1, c2;", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `c1`,`c2`"},
+		{"analyze table t update histogram on t.c1, t.c2", false, ""},
+		{"analyze table t drop histogram on t.c1, t.c2", false, ""},
 		{"analyze table t1,t2 all columns", true, "ANALYZE TABLE `t1`,`t2` ALL COLUMNS"},
 		{"analyze table t partition a all columns", true, "ANALYZE TABLE `t` PARTITION `a` ALL COLUMNS"},
 		{"analyze table t1,t2 all columns with 4 topn", true, "ANALYZE TABLE `t1`,`t2` ALL COLUMNS WITH 4 TOPN"},
@@ -5171,6 +5177,8 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t partition a predicate columns with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS WITH 1024 BUCKETS"},
 		{"analyze table t columns c1,c2", true, "ANALYZE TABLE `t` COLUMNS `c1`,`c2`"},
 		{"analyze table t partition a columns c1,c2", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2`"},
+		{"analyze table t columns t.c1,t.c2", false, ""},
+		{"analyze table t partition a columns t.c1,t.c2", false, ""},
 		{"analyze table t columns c1,c2 with 4 topn", true, "ANALYZE TABLE `t` COLUMNS `c1`,`c2` WITH 4 TOPN"},
 		{"analyze table t partition a columns c1,c2 with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"},
 		{"analyze table t index a columns c", false, ""},

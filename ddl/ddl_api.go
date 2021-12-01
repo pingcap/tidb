@@ -2614,6 +2614,22 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
+func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
+	if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		if len(specs) > 1 {
+			return errRunMultiSchemaChanges
+		}
+		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+			return errRunMultiSchemaChanges
+		}
+	} else {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+			return errRunMultiSchemaChanges
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(sctx, specs)
 	if err != nil {
@@ -2625,29 +2641,26 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
+	err = checkMultiSpecs(sctx, validSpecs)
+	if err != nil {
+		return err
+	}
+
 	if len(validSpecs) > 1 {
-		if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		switch validSpecs[0].Tp {
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropColumn:
+			err = d.DropColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
+			err = d.DropIndexes(sctx, ident, validSpecs)
+		default:
 			return errRunMultiSchemaChanges
 		}
-
-		if isSameTypeMultiSpecs(validSpecs) {
-			switch validSpecs[0].Tp {
-			case ast.AlterTableAddColumns:
-				err = d.AddColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropColumn:
-				err = d.DropColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-				err = d.DropIndexes(sctx, ident, validSpecs)
-			default:
-				return errRunMultiSchemaChanges
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return nil
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		return errRunMultiSchemaChanges
+		return nil
 	}
 
 	for _, spec := range validSpecs {
@@ -2837,6 +2850,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTablePartitionOptions(sctx, ident, spec)
 		case ast.AlterTableCache:
 			err = d.AlterTableCache(sctx, ident)
+		case ast.AlterTableNoCache:
+			err = d.AlterTableNoCache(sctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -4671,6 +4686,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
+	// Ban setting replica count for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		if !ok {
+			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
+		}
+	}
+
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
@@ -4893,6 +4916,9 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	tb, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
@@ -5363,6 +5389,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
+	}
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := model.NewCIStr("expression_index")
@@ -5611,6 +5640,9 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
@@ -5664,6 +5696,9 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return err
 	}
 
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
+	}
 	indexNames := make([]model.CIStr, 0, len(specs))
 	ifExists := make([]bool, 0, len(specs))
 	for _, spec := range specs {
@@ -6517,6 +6552,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
+
 func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
@@ -6527,7 +6563,10 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return nil
 	}
 
-	if t.Meta().TempTableType != model.TempTableNone {
+	// forbit cache table in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterCacheForSysTable)
+	} else if t.Meta().TempTableType != model.TempTableNone {
 		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
 	}
 
@@ -6539,6 +6578,30 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		SchemaName: schema.Name.L,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAlterCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return err
+	}
+	// if a table is not in cache state, return directly
+	if t.Meta().TableCacheStatusType == model.TableCacheStatusDisable {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}

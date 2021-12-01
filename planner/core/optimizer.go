@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 )
 
@@ -83,9 +84,44 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
+type logicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during rule optimizing
+	tracer *tracing.LogicalOptimizeTracer
+}
+
+func defaultLogicalOptimizeOption() *logicalOptimizeOp {
+	return &logicalOptimizeOp{}
+}
+
+func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace(before))
+}
+
+func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
+}
+
+func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace(final))
+}
+
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(context.Context, LogicalPlan) (LogicalPlan, error)
+	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
 }
 
@@ -196,9 +232,14 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		// if table with lock-write table dropped, we can access other table, such as `rename` operation
+		if err == lock.ErrLockedTableDropped {
+			break
+		}
 		if err != nil {
 			return err
 		}
@@ -280,7 +321,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 // Todo: make more careful check here.
 func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 	}
 }
 
@@ -335,6 +376,17 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	opt := defaultLogicalOptimizeOption()
+	vars := logic.SCtx().GetSessionVars()
+	if vars.StmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			vars.StmtCtx.LogicalOptimizeTrace = tracer
+		}()
+	}
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -343,11 +395,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		logic, err = rule.optimize(ctx, logic)
+		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 	}
+	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 
