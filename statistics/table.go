@@ -404,6 +404,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	return result, errors.Trace(err)
 }
 
+// CETraceRange appends a list of ranges and related information into CE trace
 func CETraceRange(sc *stmtctx.StatementContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
 	allPoint := true
 	for _, ran := range ranges {
