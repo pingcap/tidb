@@ -38,7 +38,7 @@ type baseFuncDesc struct {
 	// Args represents the arguments of the function.
 	Args []expression.Expression
 	// RetTp represents the return type of the function.
-	RetTp *types.FieldType
+	RetTp *types.FieldTypeBuilder
 }
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
@@ -267,7 +267,7 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	// issue #13027, #13961
 	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) &&
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
-		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
+		a.RetTp = &types.FieldTypeBuilder{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
 }
 

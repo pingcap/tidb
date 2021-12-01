@@ -48,7 +48,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		schema: outerSchema,
 		rows:   6,
 		ctx:    sctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			return int64(row + 1)
 		},
 	})
@@ -59,7 +59,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		schema: innerSchema,
 		rows:   6,
 		ctx:    sctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			return int64(row + 1)
 		},
 	})

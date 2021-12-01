@@ -129,7 +129,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 type tidbFromBinaryFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -242,7 +242,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {

@@ -149,7 +149,7 @@ func SubTestBuild() func(*testing.T) {
 			MaxSampleSize:   1000,
 			MaxFMSketchSize: 1000,
 			Collators:       make([]collate.Collator, 1),
-			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
 		}
 		require.NoError(t, s.pk.Close())
 		collectors, _, err := builder.CollectColumnStats()

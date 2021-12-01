@@ -33,7 +33,7 @@ import (
 func TestPBToExpr(t *testing.T) {
 	t.Parallel()
 	sc := new(stmtctx.StatementContext)
-	fieldTps := make([]*types.FieldType, 1)
+	fieldTps := make([]*types.FieldTypeBuilder, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
 		types.NewDecimalDatum(newMyDecimal(t, "1")), types.NewDurationDatum(newDuration(time.Second))}
 
@@ -77,8 +77,8 @@ func TestPBToExpr(t *testing.T) {
 				Val: val,
 			},
 		},
-		Sig:       tipb.ScalarFuncSig_AbsInt,
-		FieldType: ToPBFieldType(newIntFieldType()),
+		Sig:              tipb.ScalarFuncSig_AbsInt,
+		FieldTypeBuilder: ToPBFieldType(newIntFieldType()),
 	}
 	_, err = PBToExpr(expr, fieldTps, sc)
 	require.Error(t, err)
@@ -88,7 +88,7 @@ func TestPBToExpr(t *testing.T) {
 func TestEval(t *testing.T) {
 	t.Parallel()
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
-	fieldTps := make([]*types.FieldType, 1)
+	fieldTps := make([]*types.FieldTypeBuilder, 1)
 	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
 	tests := []struct {
 		expr   *tipb.Expr
@@ -860,8 +860,8 @@ func columnExpr(columnID int64) *tipb.Expr {
 	return expr
 }
 
-// toPBFieldType converts *types.FieldType to *tipb.FieldType.
-func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+// toPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
+func toPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.Tp),
 		Flag:    uint32(ft.Flag),
@@ -892,14 +892,14 @@ func newDateTime(t *testing.T, s string) types.Time {
 	return tt
 }
 
-func newDateFieldType() *types.FieldType {
-	return &types.FieldType{
+func newDateFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp: mysql.TypeDate,
 	}
 }
 
-func newIntFieldType() *types.FieldType {
-	return &types.FieldType{
+func newIntFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeLonglong,
 		Flen:    mysql.MaxIntWidth,
 		Decimal: 0,
@@ -907,36 +907,36 @@ func newIntFieldType() *types.FieldType {
 	}
 }
 
-func newDurFieldType() *types.FieldType {
-	return &types.FieldType{
+func newDurFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeDuration,
 		Decimal: int(types.DefaultFsp),
 	}
 }
 
-func newStringFieldType() *types.FieldType {
-	return &types.FieldType{
+func newStringFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:   mysql.TypeVarString,
 		Flen: types.UnspecifiedLength,
 	}
 }
 
-func newRealFieldType() *types.FieldType {
-	return &types.FieldType{
+func newRealFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:   mysql.TypeFloat,
 		Flen: types.UnspecifiedLength,
 	}
 }
 
-func newDecimalFieldType() *types.FieldType {
-	return &types.FieldType{
+func newDecimalFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:   mysql.TypeNewDecimal,
 		Flen: types.UnspecifiedLength,
 	}
 }
 
-func newJSONFieldType() *types.FieldType {
-	return &types.FieldType{
+func newJSONFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeJSON,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
@@ -945,8 +945,8 @@ func newJSONFieldType() *types.FieldType {
 	}
 }
 
-func newFloatFieldType() *types.FieldType {
-	return &types.FieldType{
+func newFloatFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeFloat,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
@@ -955,8 +955,8 @@ func newFloatFieldType() *types.FieldType {
 	}
 }
 
-func newBinaryLiteralFieldType() *types.FieldType {
-	return &types.FieldType{
+func newBinaryLiteralFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeBit,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
@@ -965,8 +965,8 @@ func newBinaryLiteralFieldType() *types.FieldType {
 	}
 }
 
-func newBlobFieldType() *types.FieldType {
-	return &types.FieldType{
+func newBlobFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeBlob,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
@@ -975,8 +975,8 @@ func newBlobFieldType() *types.FieldType {
 	}
 }
 
-func newEnumFieldType() *types.FieldType {
-	return &types.FieldType{
+func newEnumFieldType() *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      mysql.TypeEnum,
 		Flen:    types.UnspecifiedLength,
 		Decimal: 0,
@@ -987,9 +987,9 @@ func newEnumFieldType() *types.FieldType {
 
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
 	return &tipb.Expr{
-		Tp:        tipb.ExprType_ScalarFunc,
-		Sig:       sigCode,
-		Children:  args,
-		FieldType: retType,
+		Tp:               tipb.ExprType_ScalarFunc,
+		Sig:              sigCode,
+		Children:         args,
+		FieldTypeBuilder: retType,
 	}
 }

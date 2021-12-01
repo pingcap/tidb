@@ -70,7 +70,7 @@ func TestWeightedSampling(t *testing.T) {
 		builder := &RowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
-			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
 			Collators:       make([]collate.Collator, 1),
 			ColGroups:       nil,
 			MaxSampleSize:   int(sampleNum),
@@ -113,7 +113,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 			builder := &RowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],
-				ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+				ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
 				Collators:       make([]collate.Collator, 1),
 				ColGroups:       nil,
 				MaxSampleSize:   int(sampleNum),

@@ -661,7 +661,7 @@ func getEvalTp4FloorAndCeil(arg Expression) (retTp, argTp types.EvalType) {
 }
 
 // setFlag4FloorAndCeil sets return flag of FLOOR and CEIL.
-func setFlag4FloorAndCeil(tp *types.FieldType, arg Expression) {
+func setFlag4FloorAndCeil(tp *types.FieldTypeBuilder, arg Expression) {
 	fieldTp := arg.GetType()
 	if (fieldTp.Tp == mysql.TypeLong || fieldTp.Tp == mysql.TypeLonglong || fieldTp.Tp == mysql.TypeNewDecimal) && mysql.HasUnsignedFlag(fieldTp.Flag) {
 		tp.Flag |= mysql.UnsignedFlag

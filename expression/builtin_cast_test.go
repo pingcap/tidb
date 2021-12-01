@@ -105,7 +105,7 @@ func TestCastFunctions(t *testing.T) {
 	sc.OverflowAsWarning = true
 
 	// cast('18446744073709551616' as unsigned);
-	tp1 := &types.FieldType{
+	tp1 := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeLonglong,
 		Flag:    mysql.BinaryFlag,
 		Charset: charset.CharsetBin,
@@ -216,7 +216,7 @@ func TestCastFunctions(t *testing.T) {
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
 	// select cast(s1 as decimal(7, 2)) from t1;
-	ft := &types.FieldType{
+	ft := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeNewDecimal,
 		Flag:    mysql.BinaryFlag | mysql.UnsignedFlag,
 		Charset: charset.CharsetBin,
@@ -240,7 +240,7 @@ func TestCastFunctions(t *testing.T) {
 	// create table tt(a bigint unsigned);
 	// insert into tt values(18446744073709551615);
 	// select cast(a as decimal(65, 0)) from tt;
-	ft = &types.FieldType{
+	ft = &types.FieldTypeBuilder{
 		Tp:      mysql.TypeNewDecimal,
 		Flag:    mysql.BinaryFlag,
 		Charset: charset.CharsetBin,
@@ -1276,7 +1276,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 		require.Equal(t, c.stringRes, strRes)
 	}
 
-	unsignedIntExpr := &Column{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag, Flen: mysql.MaxIntWidth, Decimal: 0}, Index: 0}
+	unsignedIntExpr := &Column{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag, Flen: mysql.MaxIntWidth, Decimal: 0}, Index: 0}
 
 	// test cast unsigned int as string.
 	strExpr := WrapWithCastAsString(ctx, unsignedIntExpr)
@@ -1319,7 +1319,7 @@ func TestWrapWithCastAsTime(t *testing.T) {
 	}()
 	cases := []struct {
 		expr Expression
-		tp   *types.FieldType
+		tp   *types.FieldTypeBuilder
 		res  types.Time
 	}{
 		{
@@ -1402,7 +1402,7 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
 
-	input := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON}}
+	input := &Column{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeJSON}}
 	expr := WrapWithCastAsJSON(ctx, input)
 
 	output, ok := expr.(*Column)

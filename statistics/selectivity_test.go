@@ -63,7 +63,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 }
 
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldTypeBuilder) *statistics.Histogram {
 	ndv := len(values)
 	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
 	for i := 0; i < ndv; i++ {

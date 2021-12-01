@@ -58,11 +58,11 @@ type requiredRowsDataSource struct {
 	expectedRowsRet []int
 	numNextCalled   int
 
-	generator func(valType *types.FieldType) interface{}
+	generator func(valType *types.FieldTypeBuilder) interface{}
 }
 
 func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
-	gen func(valType *types.FieldType) interface{}) *requiredRowsDataSource {
+	gen func(valType *types.FieldTypeBuilder) interface{}) *requiredRowsDataSource {
 	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
 	ds.generator = gen
 	return ds
@@ -70,7 +70,7 @@ func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows in
 
 func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
 	// the schema of output is fixed now, which is [Double, Long]
-	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
@@ -114,7 +114,7 @@ func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func defaultGenerator(valType *types.FieldType) interface{} {
+func defaultGenerator(valType *types.FieldTypeBuilder) interface{} {
 	switch valType.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -405,9 +405,9 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 }
 
 func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
-	gen01 := func() func(valType *types.FieldType) interface{} {
+	gen01 := func() func(valType *types.FieldTypeBuilder) interface{} {
 		closureCount := 0
-		return func(valType *types.FieldType) interface{} {
+		return func(valType *types.FieldTypeBuilder) interface{} {
 			switch valType.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				ret := int64(closureCount % 2)
@@ -428,7 +428,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldTypeBuilder) interface{}
 	}{
 		{
 			totalRows:      20,
@@ -611,10 +611,10 @@ func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, 
 	}
 }
 
-func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+func divGenerator(factor int) func(valType *types.FieldTypeBuilder) interface{} {
 	closureCountInt := 0
 	closureCountDouble := 0
-	return func(valType *types.FieldType) interface{} {
+	return func(valType *types.FieldTypeBuilder) interface{} {
 		switch valType.Tp {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			ret := int64(closureCountInt / factor)
@@ -638,7 +638,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldTypeBuilder) interface{}
 	}{
 		{
 			totalRows:      1000000,
@@ -690,7 +690,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 }
 
 func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
-	justReturn1 := func(valType *types.FieldType) interface{} {
+	justReturn1 := func(valType *types.FieldTypeBuilder) interface{} {
 		switch valType.Tp {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			return int64(1)
@@ -727,7 +727,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 	chkNum := len(chkRows)
 	numRows := 0
 	inputs = make([]*chunk.Chunk, chkNum)
-	fts := make([]*types.FieldType, 1)
+	fts := make([]*types.FieldTypeBuilder, 1)
 	fts[0] = types.NewFieldType(mysql.TypeLonglong)
 	for i := 0; i < chkNum; i++ {
 		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
@@ -765,7 +765,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 
 	expr = make([]expression.Expression, 1)
 	expr[0] = &expression.Column{
-		RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flen: mysql.MaxIntWidth},
+		RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLonglong, Flen: mysql.MaxIntWidth},
 		Index:   0,
 	}
 	return
@@ -878,12 +878,12 @@ func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
 	for _, mType := range mTypes {
 		exprs := make([]expression.Expression, 1)
 		exprs[0] = &expression.Column{
-			RetType: &types.FieldType{Tp: mType},
+			RetType: &types.FieldTypeBuilder{Tp: mType},
 			Index:   0,
 		}
 		vgc := newVecGroupChecker(ctx, exprs)
 
-		fts := []*types.FieldType{types.NewFieldType(mType)}
+		fts := []*types.FieldTypeBuilder{types.NewFieldType(mType)}
 		chk := chunk.New(fts, 1, 1)
 		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 			return chk.Column(0), nil

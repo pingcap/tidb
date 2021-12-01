@@ -79,7 +79,7 @@ func TestMutRow(t *testing.T) {
 	require.Equal(t, j, row.GetJSON(0))
 	require.Equal(t, time, row.GetTime(1))
 
-	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
 	dur, err := types.ParseDuration(sc, "01:23:45", 0)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func BenchmarkMutRowSetValues(b *testing.B) {
 
 func BenchmarkMutRowFromTypes(b *testing.B) {
 	b.ReportAllocs()
-	tps := []*types.FieldType{
+	tps := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeVarchar),
 	}
@@ -150,10 +150,10 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 func TestMutRowShallowCopyPartialRow(t *testing.T) {
 	t.Parallel()
 
-	colTypes := make([]*types.FieldType, 0, 3)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeTimestamp})
+	colTypes := make([]*types.FieldTypeBuilder, 0, 3)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeTimestamp})
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
@@ -180,12 +180,12 @@ var rowsNum = 1024
 
 func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	b.ReportAllocs()
-	colTypes := make([]*types.FieldType, 0, 8)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	colTypes := make([]*types.FieldTypeBuilder, 0, 8)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeDatetime})
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()

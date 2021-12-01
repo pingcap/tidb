@@ -54,8 +54,8 @@ const (
 type data struct {
 	encodedTestKVDatas []*encodedTestKVData
 	colInfos           []*tipb.ColumnInfo
-	rows               map[int64][]types.Datum    // handle -> row
-	colTypes           map[int64]*types.FieldType // colId -> fieldType
+	rows               map[int64][]types.Datum           // handle -> row
+	colTypes           map[int64]*types.FieldTypeBuilder // colId -> fieldType
 }
 
 type encodedTestKVData struct {
@@ -96,13 +96,13 @@ func makeATestMutaion(op kvrpcpb.Op, key []byte, value []byte) *kvrpcpb.Mutation
 func prepareTestTableData(t *testing.T, keyNumber int, tableID int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeDouble),
 	}
 	colInfos := make([]*tipb.ColumnInfo, 3)
-	colTypeMap := map[int64]*types.FieldType{}
+	colTypeMap := map[int64]*types.FieldTypeBuilder{}
 	for i := 0; i < 3; i++ {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId: colIds[i],
@@ -375,19 +375,19 @@ func TestClosureExecutor(t *testing.T) {
 
 func buildEQIntExpr(colID, val int64) *tipb.Expr {
 	return &tipb.Expr{
-		Tp:        tipb.ExprType_ScalarFunc,
-		Sig:       tipb.ScalarFuncSig_EQInt,
-		FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+		Tp:               tipb.ExprType_ScalarFunc,
+		Sig:              tipb.ScalarFuncSig_EQInt,
+		FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
 		Children: []*tipb.Expr{
 			{
-				Tp:        tipb.ExprType_ColumnRef,
-				Val:       codec.EncodeInt(nil, colID),
-				FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+				Tp:               tipb.ExprType_ColumnRef,
+				Val:              codec.EncodeInt(nil, colID),
+				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
 			},
 			{
-				Tp:        tipb.ExprType_Int64,
-				Val:       codec.EncodeInt(nil, val),
-				FieldType: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+				Tp:               tipb.ExprType_Int64,
+				Val:              codec.EncodeInt(nil, val),
+				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
 			},
 		},
 	}

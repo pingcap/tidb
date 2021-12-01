@@ -155,7 +155,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal}, geners: []dataGenerator{newRangeInt64Gener(-1000, 1000)}},
 		{
 			retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETReal},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners:             []dataGenerator{newRangeInt64Gener(-1000, 1000)},
 		},
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal, types.ETReal, types.ETReal}, geners: []dataGenerator{newRangeRealGener(-1000.0, 1000.0, 0.1)}},
@@ -191,7 +191,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETInt,
 			childrenTypes: []types.EvalType{types.ETDatetime},
-			childrenFieldTypes: []*types.FieldType{
+			childrenFieldTypes: []*types.FieldTypeBuilder{
 				{
 					Tp:      mysql.TypeDatetime,
 					Flen:    types.UnspecifiedLength,
@@ -363,7 +363,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			childrenFieldTypes: []*types.FieldType{nil, {
+			childrenFieldTypes: []*types.FieldTypeBuilder{nil, {
 				Tp:      mysql.TypeString,
 				Flen:    types.UnspecifiedLength,
 				Decimal: types.UnspecifiedLength,
@@ -378,7 +378,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDate), types.NewFieldType(mysql.TypeDatetime)},
 		},
 	},
 	ast.AddTime: {
@@ -387,7 +387,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			childrenFieldTypes: []*types.FieldType{nil, {
+			childrenFieldTypes: []*types.FieldTypeBuilder{nil, {
 				Tp:      mysql.TypeString,
 				Flen:    types.UnspecifiedLength,
 				Decimal: types.UnspecifiedLength,
@@ -593,7 +593,7 @@ func TestVecMonth(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
-	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
+	input := chunk.New([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
 	input.AppendNull(0)

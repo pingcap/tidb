@@ -37,7 +37,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	}()
 
 	columnInfo := &model.ColumnInfo{
-		FieldType: types.FieldType{
+		FieldTypeBuilder: types.FieldTypeBuilder{
 			Flag: mysql.AutoIncrementFlag,
 		},
 	}
@@ -93,7 +93,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, autoid.ErrAutoincReadFailed))
 
 	// test unsigned
-	columnInfo.FieldType.Flag |= mysql.UnsignedFlag
+	columnInfo.FieldTypeBuilder.Flag |= mysql.UnsignedFlag
 	alloc = autoid.NewAllocatorFromTempTblInfo(tblInfo)
 	require.NotNil(t, alloc)
 

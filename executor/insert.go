@@ -352,17 +352,17 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		extraLen = e.SelectExec.Schema().Len() - e.rowLen
 	}
 
-	evalBufferTypes := make([]*types.FieldType, 0, numCols+numWritableCols+extraLen)
+	evalBufferTypes := make([]*types.FieldTypeBuilder, 0, numCols+numWritableCols+extraLen)
 
 	// Append the old row before the new row, to be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	for _, col := range e.Table.WritableCols() {
-		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+		evalBufferTypes = append(evalBufferTypes, &col.FieldTypeBuilder)
 	}
 	if extraLen > 0 {
 		evalBufferTypes = append(evalBufferTypes, e.SelectExec.base().retFieldTypes[numWritableCols:]...)
 	}
 	for _, col := range e.Table.Cols() {
-		evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+		evalBufferTypes = append(evalBufferTypes, &col.FieldTypeBuilder)
 	}
 	if e.hasExtraHandle {
 		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))

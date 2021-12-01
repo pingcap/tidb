@@ -79,7 +79,7 @@ type partitionedTable struct {
 	TableCommon
 	partitionExpr   *PartitionExpr
 	partitions      map[int64]*partition
-	evalBufferTypes []*types.FieldType
+	evalBufferTypes []*types.FieldTypeBuilder
 	evalBufferPool  sync.Pool
 }
 
@@ -158,9 +158,9 @@ func initEvalBufferType(t *partitionedTable) {
 		hasExtraHandle = true
 		numCols++
 	}
-	t.evalBufferTypes = make([]*types.FieldType, numCols)
+	t.evalBufferTypes = make([]*types.FieldTypeBuilder, numCols)
 	for i, col := range t.Cols() {
-		t.evalBufferTypes[i] = &col.FieldType
+		t.evalBufferTypes[i] = &col.FieldTypeBuilder
 	}
 
 	if hasExtraHandle {
@@ -250,7 +250,7 @@ func (item *btreeListColumnItem) Less(other btree.Item) bool {
 // ForListColumnPruning is used for list columns partition pruning.
 type ForListColumnPruning struct {
 	ExprCol  *expression.Column
-	valueTp  *types.FieldType
+	valueTp  *types.FieldTypeBuilder
 	valueMap map[string]ListPartitionLocation
 	sorted   *btree.BTree
 }
@@ -662,7 +662,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 		}
 		colPrune := &ForListColumnPruning{
 			ExprCol:  columns[idx],
-			valueTp:  &colInfo.FieldType,
+			valueTp:  &colInfo.FieldTypeBuilder,
 			valueMap: make(map[string]ListPartitionLocation),
 			sorted:   btree.New(btreeDegree),
 		}

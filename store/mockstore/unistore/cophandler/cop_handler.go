@@ -189,7 +189,7 @@ func getTopNInfo(ctx *evalContext, topN *tipb.TopN) (heap *topNHeap, conds []exp
 
 type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
-	fieldTps    []*types.FieldType
+	fieldTps    []*types.FieldTypeBuilder
 	primaryCols []int64
 	sc          *stmtctx.StatementContext
 }
@@ -198,14 +198,14 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
 	copy(e.columnInfos, cols)
 
-	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
+	e.fieldTps = make([]*types.FieldTypeBuilder, 0, len(e.columnInfos))
 	for _, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
 	}
 }
 
-func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, primaryCols []int64, timeZone *time.Location) (*rowcodec.ChunkDecoder, error) {
+func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldTypeBuilder, primaryCols []int64, timeZone *time.Location) (*rowcodec.ChunkDecoder, error) {
 	var (
 		pkCols []int64
 		cols   = make([]rowcodec.ColInfo, 0, len(columnInfos))
@@ -444,10 +444,10 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 	return chunks
 }
 
-// fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
-func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+// fieldTypeFromPBColumn creates a types.FieldTypeBuilder from tipb.ColumnInfo.
+func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldTypeBuilder {
 	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
-	return &types.FieldType{
+	return &types.FieldTypeBuilder{
 		Tp:      byte(col.GetTp()),
 		Flag:    uint(col.Flag),
 		Flen:    int(col.GetColumnLen()),

@@ -32,14 +32,14 @@ func (s *testPartitionSuite) TestPartitionRangeSplitter(c *C) {
 	ctx := mock.NewContext()
 	concurrency := 2
 
-	tp := &types.FieldType{Tp: mysql.TypeVarchar}
+	tp := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar}
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,
 	}
 	byItems := []expression.Expression{col0}
 
-	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
+	input := chunk.New([]*types.FieldTypeBuilder{tp}, 1024, 1024)
 	input.Reset()
 	input.Column(0).AppendString("a")
 	input.Column(0).AppendString("a")

@@ -32,7 +32,7 @@ import (
 )
 
 type windowTest struct {
-	dataType    *types.FieldType
+	dataType    *types.FieldTypeBuilder
 	numRows     int
 	funcName    string
 	args        []expression.Expression
@@ -41,7 +41,7 @@ type windowTest struct {
 }
 
 func (p *windowTest) genSrcChk() *chunk.Chunk {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.dataType}, p.numRows)
 	dataGen := getDataGenFunc(p.dataType)
 	for i := 0; i < p.numRows; i++ {
 		dt := dataGen(i)
@@ -64,7 +64,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 	require.NoError(t, err)
 	finalFunc := aggfuncs.BuildWindowFunctions(ctx, desc, 0, p.orderByCols)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {

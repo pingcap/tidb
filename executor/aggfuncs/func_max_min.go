@@ -947,7 +947,7 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, getRow func(uint6
 
 type maxMin4String struct {
 	baseMaxMinAggFunc
-	retTp *types.FieldType
+	retTp *types.FieldTypeBuilder
 }
 
 func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {

@@ -104,7 +104,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.Flag) {
-				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
+				recordID, err := getAutoRecordID(newData[i], &col.FieldTypeBuilder, false)
 				if err != nil {
 					return false, err
 				}
@@ -224,14 +224,14 @@ func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table
 	if !tableInfo.ContainsAutoRandomBits() {
 		return nil
 	}
-	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	recordID, err := getAutoRecordID(*newData, &col.FieldTypeBuilder, false)
 	if err != nil {
 		return err
 	}
 	if recordID < 0 {
 		return nil
 	}
-	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	layout := autoid.NewShardIDLayout(&col.FieldTypeBuilder, tableInfo.AutoRandomBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & (1<<layout.IncrementalBits - 1)
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)

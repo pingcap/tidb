@@ -45,7 +45,7 @@ func NewPool(initCap int) *Pool {
 }
 
 // GetChunk gets a Chunk from the Pool.
-func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
+func (p *Pool) GetChunk(fields []*types.FieldTypeBuilder) *Chunk {
 	chk := new(Chunk)
 	chk.capacity = p.initCap
 	chk.columns = make([]*Column, len(fields))
@@ -67,7 +67,7 @@ func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 }
 
 // PutChunk puts a Chunk back to the Pool.
-func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
+func (p *Pool) PutChunk(fields []*types.FieldTypeBuilder, chk *Chunk) {
 	for i, f := range fields {
 		switch elemLen := getFixedLen(f); elemLen {
 		case varElemLen:

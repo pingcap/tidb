@@ -38,7 +38,7 @@ func boolToInt64(v bool) int64 {
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
 // Here `valid` means it is consistent with the given fieldType's Decimal.
-func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
+func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTypeBuilder) bool {
 	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
 	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
 		return false

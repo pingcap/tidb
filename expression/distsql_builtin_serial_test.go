@@ -27,7 +27,7 @@ import (
 
 func TestPBToExprWithNewCollation(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
-	fieldTps := make([]*types.FieldType, 1)
+	fieldTps := make([]*types.FieldTypeBuilder, 1)
 
 	cases := []struct {
 		name    string

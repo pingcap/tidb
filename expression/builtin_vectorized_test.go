@@ -90,7 +90,7 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 		panic(err)
 	}
 	plus := &mockVecPlusIntBuiltinFunc{bf, nil, false}
-	input := chunk.New([]*types.FieldType{tp, tp}, 1024, 1024)
+	input := chunk.New([]*types.FieldTypeBuilder{tp, tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	for i := 0; i < 1024; i++ {
 		input.AppendInt64(0, int64(i))
@@ -438,7 +438,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 		return nil, nil, nil, err
 	}
 	rowDouble := &mockBuiltinDouble{bf, eType, enableVec}
-	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
+	input := chunk.New([]*types.FieldTypeBuilder{tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(convertETType(eType)), 1024)
 	for i := 0; i < 1024; i++ {
 		switch eType {
@@ -778,7 +778,7 @@ func TestVectorizedCheck(t *testing.T) {
 func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
 	typeFloat := types.NewFieldType(mysql.TypeFloat)
 	col := &Column{Index: 0, RetType: typeFloat}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{typeFloat}, 1024)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{typeFloat}, 1024)
 	for i := 0; i < 1024; i++ {
 		chk.AppendFloat32(0, rand.Float32())
 	}

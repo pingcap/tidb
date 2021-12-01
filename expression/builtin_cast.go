@@ -111,7 +111,7 @@ var (
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -161,7 +161,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 type castAsRealFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -217,7 +217,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 type castAsDecimalFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -272,7 +272,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 type castAsStringFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -324,7 +324,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 type castAsTimeFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -368,7 +368,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 type castAsDurationFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -412,7 +412,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 type castAsJSONFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -1571,7 +1571,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, 
 	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
-func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context) (string, bool, error) {
+func padZeroForBinaryType(s string, tp *types.FieldTypeBuilder, ctx sessionctx.Context) (string, bool, error) {
 	flen := tp.Flen
 	if tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
 		sc := ctx.GetSessionVars().StmtCtx
@@ -1813,7 +1813,7 @@ func CanImplicitEvalReal(expr Expression) bool {
 
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
-func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) (res Expression) {
 	ctx.SetValue(inUnionCastContext, struct{}{})
 	defer func() {
 		ctx.SetValue(inUnionCastContext, nil)
@@ -1822,7 +1822,7 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
-func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) (res Expression) {
 	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
@@ -1944,7 +1944,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 
 // WrapWithCastAsTime wraps `expr` with `cast` if the return type of expr is not
 // same as type of the specified `tp` , otherwise, returns `expr` directly.
-func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
+func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) Expression {
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
 		return expr
@@ -2004,7 +2004,7 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType().Flag) {
 		return expr
 	}
-	tp := &types.FieldType{
+	tp := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.
 		Decimal: 0,
@@ -2022,7 +2022,7 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 // For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
 // If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
 // `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
-func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) (res Expression) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {
 		return expr
@@ -2038,7 +2038,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Ex
 		return expr
 	}
 
-	isHybrid := func(ft *types.FieldType) bool {
+	isHybrid := func(ft *types.FieldTypeBuilder) bool {
 		// todo: compatible with mysql control function using bit type. issue 24725
 		return ft.Hybrid() && ft.Tp != mysql.TypeBit
 	}

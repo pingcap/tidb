@@ -205,7 +205,7 @@ func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.Record
 			if row.IsNull(j) {
 				resultRow[j] = "<nil>"
 			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldTypeBuilder)
 				resultRow[j], err = d.ToString()
 				tk.require.NoError(err, comment)
 			}

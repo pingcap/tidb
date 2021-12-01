@@ -23,7 +23,7 @@ import (
 // The typical usage is to call Reset() to recycle objects into a pool,
 // and Alloc() allocates from the pool.
 type Allocator interface {
-	Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chunk
+	Alloc(fields []*types.FieldTypeBuilder, cap, maxChunkSize int) *Chunk
 	Reset()
 }
 
@@ -48,7 +48,7 @@ type allocator struct {
 }
 
 // Alloc implements the Allocator interface.
-func (a *allocator) Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+func (a *allocator) Alloc(fields []*types.FieldTypeBuilder, cap, maxChunkSize int) *Chunk {
 	var chk *Chunk
 	// Try to alloc from the free list.
 	if len(a.free) > 0 {
@@ -101,7 +101,7 @@ type poolColumnAllocator struct {
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
-func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Column {
+func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldTypeBuilder, count int) *Column {
 	typeSize := getFixedLen(ft)
 	l := alloc.pool[typeSize]
 	if l != nil && !l.empty() {

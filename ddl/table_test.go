@@ -54,7 +54,7 @@ func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *m
 		idxs = append(idxs, idx)
 	}
 	normalInfo.Indices = idxs
-	normalInfo.Columns[0].FieldType.Flen = 11
+	normalInfo.Columns[0].FieldTypeBuilder.Flen = 11
 	return normalInfo
 }
 
@@ -79,7 +79,7 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 			State:        model.StatePublic,
 		}
 
-		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		col.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}

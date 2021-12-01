@@ -1067,7 +1067,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 	if len(rows) == 0 {
 		return "", errResultIsEmpty
 	}
-	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldTypeBuilder)
 	value, err := d.ToString()
 	if err != nil {
 		return "", err

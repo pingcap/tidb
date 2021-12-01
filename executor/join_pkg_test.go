@@ -28,7 +28,7 @@ import (
 func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
 	}
@@ -38,7 +38,7 @@ func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 		opt1 := mockDataSourceParameters{
 			rows: casTest.rows,
 			ctx:  casTest.ctx,
-			genDataFunc: func(row int, typ *types.FieldType) interface{} {
+			genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 				switch typ.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					return int64(row)

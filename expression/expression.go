@@ -128,7 +128,7 @@ type Expression interface {
 	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
-	GetType() *types.FieldType
+	GetType() *types.FieldTypeBuilder
 
 	// Clone copies an expression totally.
 	Clone() Expression
@@ -402,7 +402,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -880,7 +880,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldTypeBuilder.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -924,7 +924,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
+func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldTypeBuilder) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
@@ -1008,7 +1008,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
-func isValidTiFlashDecimalType(tp *types.FieldType) bool {
+func isValidTiFlashDecimalType(tp *types.FieldTypeBuilder) bool {
 	if tp.Tp != mysql.TypeNewDecimal {
 		return false
 	}

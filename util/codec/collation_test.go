@@ -31,7 +31,7 @@ import (
 
 func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 	tp := types.NewFieldType(mysql.TypeString)
-	tps := []*types.FieldType{tp}
+	tps := []*types.FieldTypeBuilder{tp}
 	chk1 := chunk.New(tps, 3, 3)
 	chk2 := chunk.New(tps, 3, 3)
 	chk1.Reset()
@@ -89,7 +89,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeString)
-	tps := []*types.FieldType{tp}
+	tps := []*types.FieldTypeBuilder{tp}
 	n, chk1, chk2 := prepareCollationData()
 	cols := []int{0}
 	buf := make([]byte, 1)

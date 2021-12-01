@@ -188,7 +188,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 }
 
 func genCastRealAsTime() *chunk.Chunk {
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
+	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDouble)}, 10)
 	gen := newDefaultRandGen()
 	for i := 0; i < 10; i++ {
 		if i < 5 {
@@ -241,7 +241,7 @@ func genCastStringAsDecimal(isNegative bool) *chunk.Chunk {
 		sign = 1
 	}
 
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1024)
+	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 1024)
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
 		f := sign * rand.Float64() * 100000

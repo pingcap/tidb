@@ -554,11 +554,11 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 	return definitions, nil
 }
 
-func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
+func collectColumnsType(tbInfo *model.TableInfo) []types.FieldTypeBuilder {
 	if len(tbInfo.Partition.Columns) > 0 {
-		colTypes := make([]types.FieldType, 0, len(tbInfo.Partition.Columns))
+		colTypes := make([]types.FieldTypeBuilder, 0, len(tbInfo.Partition.Columns))
 		for _, col := range tbInfo.Partition.Columns {
-			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldType)
+			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldTypeBuilder)
 		}
 
 		return colTypes
@@ -831,22 +831,22 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]string, error) {
 	defs := tblInfo.Partition.Definitions
 	pi := tblInfo.Partition
-	var colTps []*types.FieldType
+	var colTps []*types.FieldTypeBuilder
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
 			tp.Flag |= mysql.UnsignedFlag
 		}
-		colTps = []*types.FieldType{tp}
+		colTps = []*types.FieldTypeBuilder{tp}
 	} else {
-		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		colTps = make([]*types.FieldTypeBuilder, 0, len(pi.Columns))
 		for _, colName := range pi.Columns {
 			colInfo := findColumnByName(colName.L, tblInfo)
 			if colInfo == nil {
 				return nil, errors.Trace(ErrFieldNotFoundPart)
 			}
-			colTps = append(colTps, colInfo.FieldType.Clone())
+			colTps = append(colTps, colInfo.FieldTypeBuilder.Clone())
 			cols = append(cols, colInfo)
 		}
 	}

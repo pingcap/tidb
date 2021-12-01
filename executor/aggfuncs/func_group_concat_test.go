@@ -89,7 +89,7 @@ func TestMemGroupConcat(t *testing.T) {
 	}
 }
 
-func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldTypeBuilder, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	buffer := new(bytes.Buffer)
 	valBuffer := new(bytes.Buffer)
@@ -118,7 +118,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*typ
 	return memDeltas, nil
 }
 
-func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldTypeBuilder, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		buffer := new(bytes.Buffer)
@@ -143,7 +143,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType [
 	return memDeltas, nil
 }
 
-func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldTypeBuilder, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	buffer := new(bytes.Buffer)
 	valsBuf := new(bytes.Buffer)
@@ -181,7 +181,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataTyp
 	return memDeltas, nil
 }
 
-func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldTypeBuilder, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	var encodeBytesBuffer []byte
 	for i := 0; i < srcChk.NumRows(); i++ {

@@ -254,7 +254,7 @@ func evalOneCell(ctx sessionctx.Context, expr Expression, row chunk.Row, output 
 	return err
 }
 
-func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalInt(ctx, row)
 	if err != nil {
 		return err
@@ -284,7 +284,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 	return nil
 }
 
-func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalReal(ctx, row)
 	if err != nil {
 		return err
@@ -301,7 +301,7 @@ func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.Fie
 	return nil
 }
 
-func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDecimal(ctx, row)
 	if err != nil {
 		return err
@@ -314,7 +314,7 @@ func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.
 	return nil
 }
 
-func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalTime(ctx, row)
 	if err != nil {
 		return err
@@ -327,7 +327,7 @@ func executeToDatetime(ctx sessionctx.Context, expr Expression, fieldType *types
 	return nil
 }
 
-func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalDuration(ctx, row)
 	if err != nil {
 		return err
@@ -340,7 +340,7 @@ func executeToDuration(ctx sessionctx.Context, expr Expression, fieldType *types
 	return nil
 }
 
-func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalJSON(ctx, row)
 	if err != nil {
 		return err
@@ -353,7 +353,7 @@ func executeToJSON(ctx sessionctx.Context, expr Expression, fieldType *types.Fie
 	return nil
 }
 
-func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+func executeToString(ctx sessionctx.Context, expr Expression, fieldType *types.FieldTypeBuilder, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalString(ctx, row)
 	if err != nil {
 		return err

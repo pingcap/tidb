@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta int64) {
+func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldTypeBuilder) (memDelta int64) {
 	switch dataType.Tp {
 	case mysql.TypeString:
 		memDelta = int64(len(row.GetString(0)))
@@ -34,7 +34,7 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 	return
 }
 
-func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	lastMemDelta := int64(0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -47,7 +47,7 @@ func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types
 }
 
 func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
-	return func(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return func(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 		memDeltas = make([]int64, 0)
 		for i := 0; i < srcChk.NumRows(); i++ {
 			memDeltas = append(memDeltas, int64(0))

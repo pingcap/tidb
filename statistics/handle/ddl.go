@@ -250,7 +250,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		count := req.GetRow(0).GetInt64(0)
 		for _, colInfo := range colInfos {
 			value := types.NewDatum(colInfo.GetOriginDefaultValue())
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldTypeBuilder)
 			if err != nil {
 				return
 			}

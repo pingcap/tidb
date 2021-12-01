@@ -526,7 +526,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldTypeBuilder, colCharset, colCollate string) error {
 	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
@@ -672,7 +672,7 @@ func isExplicitTimeStamp() bool {
 
 // processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
 func processColumnFlags(col *table.Column) {
-	if col.FieldType.EvalType().IsStringKind() {
+	if col.FieldTypeBuilder.EvalType().IsStringKind() {
 		if col.Charset == charset.CharsetBin {
 			col.Flag |= mysql.BinaryFlag
 		} else {
@@ -698,7 +698,7 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
-func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
+func adjustBlobTypesFlen(tp *types.FieldTypeBuilder, colCharset string) error {
 	cs, err := charset.GetCharsetInfo(colCharset)
 	// when we meet the unsupported charset, we do not adjust.
 	if err != nil {
@@ -730,9 +730,9 @@ func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
-		Offset:    offset,
-		Name:      colDef.Name.Name,
-		FieldType: *colDef.Tp,
+		Offset:           offset,
+		Name:             colDef.Name.Name,
+		FieldTypeBuilder: *colDef.Tp,
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
@@ -825,7 +825,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.Dependences = dependColNames
 			case ast.ColumnOptionCollate:
 				if field_types.HasCharset(colDef.Tp) {
-					col.FieldType.Collate = v.StrValue
+					col.FieldTypeBuilder.Collate = v.StrValue
 				}
 			case ast.ColumnOptionFulltext:
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
@@ -845,7 +845,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
-	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
+	tp, fsp := col.FieldTypeBuilder.Tp, col.FieldTypeBuilder.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
@@ -923,7 +923,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration:
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldTypeBuilder); err != nil {
 			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
@@ -1262,7 +1262,7 @@ func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
-		if err := checkColumnAttributes(colDef.Name.O, &colDef.FieldType); err != nil {
+		if err := checkColumnAttributes(colDef.Name.O, &colDef.FieldTypeBuilder); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1294,7 +1294,7 @@ func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error 
 }
 
 // checkColumnAttributes check attributes for single column.
-func checkColumnAttributes(colName string, tp *types.FieldType) error {
+func checkColumnAttributes(colName string, tp *types.FieldTypeBuilder) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
@@ -2284,7 +2284,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		// DATE and DATETIME
 		// CHAR, VARCHAR, BINARY, and VARBINARY
 		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
-		switch colInfo.FieldType.Tp {
+		switch colInfo.FieldTypeBuilder.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 		case mysql.TypeVarchar, mysql.TypeString:
@@ -2359,11 +2359,11 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 }
 
 func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
-	lexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, l, tbInfo, &colInfo.FieldType)
+	lexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, l, tbInfo, &colInfo.FieldTypeBuilder)
 	if err != nil {
 		return false, err
 	}
-	rexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, r, tbInfo, &colInfo.FieldType)
+	rexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, r, tbInfo, &colInfo.FieldTypeBuilder)
 	if err != nil {
 		return false, err
 	}
@@ -2896,10 +2896,10 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		if tbInfo.AutoRandomBits == 0 {
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
 		}
-		var autoRandColTp types.FieldType
+		var autoRandColTp types.FieldTypeBuilder
 		for _, c := range tbInfo.Columns {
 			if mysql.HasPriKeyFlag(c.Flag) {
-				autoRandColTp = c.FieldType
+				autoRandColTp = c.FieldTypeBuilder
 				break
 			}
 		}
@@ -3418,7 +3418,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	return errors.Trace(err)
 }
 
-func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
+func checkFieldTypeCompatible(ft *types.FieldTypeBuilder, other *types.FieldTypeBuilder) bool {
 	// int(1) could match the type with int(8)
 	partialEqual := ft.Tp == other.Tp &&
 		ft.Decimal == other.Decimal &&
@@ -3483,7 +3483,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		// It should strictyle compare expressions for generated columns
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
-			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
+			!checkFieldTypeCompatible(&sourceCol.FieldTypeBuilder, &targetCol.FieldTypeBuilder) ||
 			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
 			return errors.Trace(ErrTablesDifferentMetadata)
 		}
@@ -3801,7 +3801,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // There are two cases when types incompatible:
 // 1. returned canReorg == true: types can be changed by reorg
 // 2. returned canReorg == false: type change not supported yet
-func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, err error) {
+func CheckModifyTypeCompatible(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder) (canReorg bool, err error) {
 	// Deal with the same type.
 	if origin.Tp == to.Tp {
 		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
@@ -3860,7 +3860,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
+func needReorgToChange(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder) (needReorg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
 	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
@@ -3880,7 +3880,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		}
 
 		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
-		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		isBinaryType := func(tp *types.FieldTypeBuilder) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
 		if isBinaryType(origin) && isBinaryType(to) {
 			return true, "can't change binary types of different length"
 		}
@@ -3894,7 +3894,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 	return false, ""
 }
 
-func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
+func checkTypeChangeSupported(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder) bool {
 	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
 		types.IsString(origin.Tp) || origin.Tp == mysql.TypeJSON) &&
 		to.Tp == mysql.TypeBit {
@@ -3928,7 +3928,7 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
 // supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder, needRewriteCollationData bool) error {
 	canReorg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		if !canReorg {
@@ -3983,7 +3983,7 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) erro
 	// https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
 	// Set the default value for binary type should append the paddings.
 	if value != nil {
-		if col.Tp == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.Flen {
+		if col.Tp == mysql.TypeString && types.IsBinaryStr(&col.FieldTypeBuilder) && len(value.(string)) < col.Flen {
 			padding := make([]byte, col.Flen-len(value.(string)))
 			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
 		}
@@ -4034,7 +4034,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldType) {
+				if !expression.IsValidCurrentTimestampExpr(opt.Expr, &col.FieldTypeBuilder) {
 					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {
@@ -4150,7 +4150,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		State:                 col.State,
 		OriginDefaultValue:    col.OriginDefaultValue,
 		OriginDefaultValueBit: col.OriginDefaultValueBit,
-		FieldType:             *specNewColumn.Tp,
+		FieldTypeBuilder:      *specNewColumn.Tp,
 		Name:                  newColName,
 		Version:               col.Version,
 	})
@@ -4159,9 +4159,9 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
 	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
 	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
-	if len(newCol.FieldType.Charset) == 0 && t.Meta().Version < model.TableInfoVersion1 {
-		chs = col.FieldType.Charset
-		coll = col.FieldType.Collate
+	if len(newCol.FieldTypeBuilder.Charset) == 0 && t.Meta().Version < model.TableInfoVersion1 {
+		chs = col.FieldTypeBuilder.Charset
+		coll = col.FieldTypeBuilder.Collate
 	} else {
 		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn)
 		if err != nil {
@@ -4178,7 +4178,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldTypeBuilder, chs, coll); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4192,10 +4192,10 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	}
 
 	// Copy index related options to the new spec.
-	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
-	newCol.FieldType.Flag |= indexFlags
-	if mysql.HasPriKeyFlag(col.FieldType.Flag) {
-		newCol.FieldType.Flag |= mysql.NotNullFlag
+	indexFlags := col.FieldTypeBuilder.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newCol.FieldTypeBuilder.Flag |= indexFlags
+	if mysql.HasPriKeyFlag(col.FieldTypeBuilder.Flag) {
+		newCol.FieldTypeBuilder.Flag |= mysql.NotNullFlag
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
@@ -4203,7 +4203,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(sctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if err = checkModifyTypes(sctx, &col.FieldTypeBuilder, &newCol.FieldTypeBuilder, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
@@ -4354,7 +4354,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 		}
 
 		prefixLength := types.UnspecifiedLength
-		if types.IsTypePrefixable(col.FieldType.Tp) && col.FieldType.Flen > ic.Length {
+		if types.IsTypePrefixable(col.FieldTypeBuilder.Tp) && col.FieldTypeBuilder.Flen > ic.Length {
 			// When the index column is changed, prefix length is only valid
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
@@ -5378,11 +5378,11 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Version:             model.CurrLatestColumnInfoVersion,
 			Dependences:         make(map[string]struct{}),
 			Hidden:              true,
-			FieldType:           *expr.GetType(),
+			FieldTypeBuilder:    *expr.GetType(),
 		}
 		if colInfo.Tp == mysql.TypeDatetime || colInfo.Tp == mysql.TypeDate || colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDuration {
-			if colInfo.FieldType.Decimal == types.UnspecifiedLength {
-				colInfo.FieldType.Decimal = int(types.MaxFsp)
+			if colInfo.FieldTypeBuilder.Decimal == types.UnspecifiedLength {
+				colInfo.FieldTypeBuilder.Decimal = int(types.MaxFsp)
 			}
 		}
 		checkDependencies := make(map[string]struct{})

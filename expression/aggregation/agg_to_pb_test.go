@@ -41,7 +41,7 @@ func TestAggFunc2Pb(t *testing.T) {
 	client := new(mock.Client)
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
-	funcTypes := []*types.FieldType{
+	funcTypes := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),

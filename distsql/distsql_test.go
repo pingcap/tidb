@@ -287,9 +287,9 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 			rows := mathutil.Min(numRows, 1024)
 			numRows -= rows
 
-			colTypes := make([]*types.FieldType, 4)
+			colTypes := make([]*types.FieldTypeBuilder, 4)
 			for i := 0; i < 4; i++ {
-				colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+				colTypes[i] = &types.FieldTypeBuilder{Tp: mysql.TypeLonglong}
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 
@@ -355,7 +355,7 @@ func newMockSessionContext() sessionctx.Context {
 	return ctx
 }
 
-func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldTypeBuilder) {
 	request, _ := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -365,7 +365,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		Build()
 
 	// 4 int64 types.
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
@@ -391,7 +391,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 	return result, colTypes
 }
 
-func testChunkSize(t *testing.T, response SelectResult, colTypes []*types.FieldType) {
+func testChunkSize(t *testing.T, response SelectResult, colTypes []*types.FieldTypeBuilder) {
 	chk := chunk.New(colTypes, 32, 32)
 
 	require.NoError(t, response.Next(context.TODO(), chk))
@@ -429,7 +429,7 @@ func testChunkSize(t *testing.T, response SelectResult, colTypes []*types.FieldT
 	require.Equal(t, 32, chk.NumRows())
 }
 
-func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx sessionctx.Context) (*selectResult, []*types.FieldTypeBuilder) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -440,7 +440,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	require.NoError(t, err)
 
 	// 4 int64 types.
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
@@ -483,7 +483,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	return result, colTypes
 }
 
-func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldType) {
+func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldTypeBuilder) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -494,7 +494,7 @@ func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, [
 	require.NoError(t, err)
 
 	// 4 int64 types.
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,

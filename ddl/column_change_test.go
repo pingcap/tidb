@@ -180,10 +180,10 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	tableID := ids[0]
 	c.Assert(err, IsNil)
 	colInfo := &model.ColumnInfo{
-		Name:      model.NewCIStr("a"),
-		Offset:    0,
-		State:     model.StatePublic,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		Name:             model.NewCIStr("a"),
+		Offset:           0,
+		State:            model.StatePublic,
+		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
 	}
 	tblInfo := &model.TableInfo{
 		ID:             tableID,

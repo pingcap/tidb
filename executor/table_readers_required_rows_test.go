@@ -36,7 +36,7 @@ import (
 )
 
 type requiredRowsSelectResult struct {
-	retTypes        []*types.FieldType
+	retTypes        []*types.FieldTypeBuilder
 	totalRows       int
 	count           int
 	expectedRowsRet []int
@@ -78,7 +78,7 @@ func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{} {
+func (r *requiredRowsSelectResult) genValue(valType *types.FieldTypeBuilder) interface{} {
 	switch valType.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -111,7 +111,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldTypeBuilder, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -143,7 +143,7 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 }
 
 func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
-	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}

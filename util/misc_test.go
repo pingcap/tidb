@@ -171,22 +171,22 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 func TestToPB(t *testing.T) {
 	t.Parallel()
 	column := &model.ColumnInfo{
-		ID:           1,
-		Name:         model.NewCIStr("c"),
-		Offset:       0,
-		DefaultValue: 0,
-		FieldType:    *types.NewFieldType(0),
-		Hidden:       true,
+		ID:               1,
+		Name:             model.NewCIStr("c"),
+		Offset:           0,
+		DefaultValue:     0,
+		FieldTypeBuilder: *types.NewFieldType(0),
+		Hidden:           true,
 	}
 	column.Collate = "utf8mb4_general_ci"
 
 	column2 := &model.ColumnInfo{
-		ID:           1,
-		Name:         model.NewCIStr("c"),
-		Offset:       0,
-		DefaultValue: 0,
-		FieldType:    *types.NewFieldType(0),
-		Hidden:       true,
+		ID:               1,
+		Name:             model.NewCIStr("c"),
+		Offset:           0,
+		DefaultValue:     0,
+		FieldTypeBuilder: *types.NewFieldType(0),
+		Hidden:           true,
 	}
 	column2.Collate = "utf8mb4_bin"
 

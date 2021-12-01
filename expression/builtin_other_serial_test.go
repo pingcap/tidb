@@ -94,7 +94,7 @@ func TestInFunc(t *testing.T) {
 	require.Equalf(t, int64(1), d, "%v, %v", strD1, strD2)
 	chk1 := chunk.NewChunkWithCapacity(nil, 1)
 	chk1.SetNumVirtualRows(1)
-	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
+	chk2 := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeTiny)}, 1)
 	err = fn.vecEvalInt(chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))

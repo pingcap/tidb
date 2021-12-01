@@ -198,7 +198,7 @@ func TestDefaultTypeForValue(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		var ft FieldType
+		var ft FieldTypeBuilder
 		DefaultTypeForValue(tt.value, &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		require.Equalf(t, tt.tp, ft.Tp, "%v %v %v", i, ft.Tp, tt.tp)
 		require.Equalf(t, tt.flen, ft.Flen, "%v %v %v", i, ft.Flen, tt.flen)
@@ -212,7 +212,7 @@ func TestDefaultTypeForValue(t *testing.T) {
 func TestAggFieldType(t *testing.T) {
 	t.Parallel()
 
-	fts := []*FieldType{
+	fts := []*FieldTypeBuilder{
 		NewFieldType(mysql.TypeUnspecified),
 		NewFieldType(mysql.TypeTiny),
 		NewFieldType(mysql.TypeShort),
@@ -247,7 +247,7 @@ func TestAggFieldType(t *testing.T) {
 		aggTp := AggFieldType(fts[i : i+1])
 		require.Equal(t, fts[i].Tp, aggTp.Tp)
 
-		aggTp = AggFieldType([]*FieldType{fts[i], fts[i]})
+		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], fts[i]})
 		switch fts[i].Tp {
 		case mysql.TypeDate:
 			require.Equal(t, mysql.TypeDate, aggTp.Tp)
@@ -261,7 +261,7 @@ func TestAggFieldType(t *testing.T) {
 			require.Equal(t, fts[i].Tp, aggTp.Tp)
 		}
 
-		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)})
+		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeLong)})
 		switch fts[i].Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeYear, mysql.TypeInt24, mysql.TypeNull:
@@ -291,7 +291,7 @@ func TestAggFieldType(t *testing.T) {
 			require.Equal(t, mysql.TypeLongBlob, aggTp.Tp)
 		}
 
-		aggTp = AggFieldType([]*FieldType{fts[i], NewFieldType(mysql.TypeJSON)})
+		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeJSON)})
 		switch fts[i].Tp {
 		case mysql.TypeJSON, mysql.TypeNull:
 			require.Equal(t, mysql.TypeJSON, aggTp.Tp)
@@ -308,7 +308,7 @@ func TestAggFieldType(t *testing.T) {
 func TestAggFieldTypeForTypeFlag(t *testing.T) {
 	t.Parallel()
 
-	types := []*FieldType{
+	types := []*FieldTypeBuilder{
 		NewFieldType(mysql.TypeLonglong),
 		NewFieldType(mysql.TypeLonglong),
 	}
@@ -337,7 +337,7 @@ func TestAggFieldTypeForTypeFlag(t *testing.T) {
 func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
 	t.Parallel()
 
-	fts := []*FieldType{
+	fts := []*FieldTypeBuilder{
 		NewFieldType(mysql.TypeTiny),
 		NewFieldType(mysql.TypeShort),
 		NewFieldType(mysql.TypeInt24),
@@ -377,7 +377,7 @@ func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
 func TestAggregateEvalType(t *testing.T) {
 	t.Parallel()
 
-	fts := []*FieldType{
+	fts := []*FieldTypeBuilder{
 		NewFieldType(mysql.TypeUnspecified),
 		NewFieldType(mysql.TypeTiny),
 		NewFieldType(mysql.TypeShort),
@@ -432,7 +432,7 @@ func TestAggregateEvalType(t *testing.T) {
 		}
 
 		flag = 0
-		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], fts[i]}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], fts[i]}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeUnspecified, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
@@ -453,7 +453,7 @@ func TestAggregateEvalType(t *testing.T) {
 			require.Equal(t, mysql.BinaryFlag, flag)
 		}
 		flag = 0
-		aggregatedEvalType = AggregateEvalType([]*FieldType{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,

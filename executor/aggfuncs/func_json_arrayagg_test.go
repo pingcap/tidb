@@ -93,7 +93,7 @@ func TestJsonArrayagg(t *testing.T) {
 	}
 }
 
-func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)

@@ -49,7 +49,7 @@ type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
 	ctx          sessionctx.Context
-	tp           *types.FieldType
+	tp           *types.FieldTypeBuilder
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
@@ -152,31 +152,31 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	var fieldType *types.FieldType
+	var fieldType *types.FieldTypeBuilder
 	switch retType {
 	case types.ETInt:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeLonglong,
 			Flen:    mysql.MaxIntWidth,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETReal:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeDouble,
 			Flen:    mysql.MaxRealWidth,
 			Decimal: types.UnspecifiedLength,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETDecimal:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeNewDecimal,
 			Flen:    11,
 			Decimal: 0,
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETString:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeVarString,
 			Decimal: types.UnspecifiedLength,
 			Charset: ec.Charset,
@@ -184,28 +184,28 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			Flen:    types.UnspecifiedLength,
 		}
 	case types.ETDatetime:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeDatetime,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETTimestamp:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeTimestamp,
 			Flen:    mysql.MaxDatetimeWidthWithFsp,
 			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETDuration:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeDuration,
 			Flen:    mysql.MaxDurationWidthWithFsp,
 			Decimal: int(types.MaxFsp),
 			Flag:    mysql.BinaryFlag,
 		}
 	case types.ETJson:
-		fieldType = &types.FieldType{
+		fieldType = &types.FieldTypeBuilder{
 			Tp:      mysql.TypeJSON,
 			Flen:    mysql.MaxBlobWidth,
 			Decimal: 0,
@@ -236,9 +236,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
-// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
+// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldTypeBuilder charset and collation.
 // do not check and compute collation.
-func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldTypeBuilder, args []Expression) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -354,7 +354,7 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 	return b.childrenVectorized
 }
 
-func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
+func (b *baseBuiltinFunc) getRetTp() *types.FieldTypeBuilder {
 	switch b.tp.EvalType() {
 	case types.ETString:
 		if b.tp.Flen >= mysql.MaxBlobWidth {
@@ -500,7 +500,7 @@ type builtinFunc interface {
 	// getCtx returns this function's context.
 	getCtx() sessionctx.Context
 	// getRetTp returns the return type of the built-in function.
-	getRetTp() *types.FieldType
+	getRetTp() *types.FieldTypeBuilder
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.

@@ -72,7 +72,7 @@ func (mockTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...tabl
 }
 
 func (s *kvSuite) TestEncode(c *C) {
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
@@ -145,7 +145,7 @@ func (s *kvSuite) TestEncode(c *C) {
 }
 
 func (s *kvSuite) TestDecode(c *C) {
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
@@ -186,8 +186,8 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 			},
 		},
 		Columns: []*model.ColumnInfo{
-			{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
+			{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeInt24)},
+			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldType(mysql.TypeString)},
 		},
 		State:      model.StatePublic,
 		PKIsHandle: false,
@@ -230,7 +230,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 	// Test encoding in row format v2, as described in <https://github.com/pingcap/tidb/blob/master/docs/design/2018-07-19-row-format.md>.
 
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
@@ -272,13 +272,13 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	ty := *types.NewFieldType(mysql.TypeDatetime)
 	ty.Flag |= mysql.NotNullFlag
 	c1 := &model.ColumnInfo{
-		ID:           1,
-		Name:         model.NewCIStr("c1"),
-		State:        model.StatePublic,
-		Offset:       0,
-		FieldType:    ty,
-		DefaultValue: "CURRENT_TIMESTAMP",
-		Version:      1,
+		ID:               1,
+		Name:             model.NewCIStr("c1"),
+		State:            model.StatePublic,
+		Offset:           0,
+		FieldTypeBuilder: ty,
+		DefaultValue:     "CURRENT_TIMESTAMP",
+		Version:          1,
 	}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}

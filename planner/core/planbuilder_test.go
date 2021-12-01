@@ -205,10 +205,10 @@ func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType")
+	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder")
 
 	expr2.RetType = types.NewFieldType(mysql.TypeString)
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8")
+	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder.uint8")
 
 	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	c.Assert(checkDeepClone(sort1, sort2), IsNil)
@@ -357,7 +357,7 @@ func checkPhysicalPlanClone(p PhysicalPlan) error {
 	if err != nil {
 		return err
 	}
-	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
+	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldTypeBuilder"}
 	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
 }
 

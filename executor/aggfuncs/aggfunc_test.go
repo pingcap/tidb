@@ -47,7 +47,7 @@ const (
 )
 
 type aggTest struct {
-	dataType *types.FieldType
+	dataType *types.FieldTypeBuilder
 	numRows  int
 	dataGen  func(i int) types.Datum
 	funcName string
@@ -56,7 +56,7 @@ type aggTest struct {
 }
 
 func (p *aggTest) genSrcChk() *chunk.Chunk {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
@@ -76,8 +76,8 @@ func (p *aggTest) messUpChunk(c *chunk.Chunk) {
 }
 
 type multiArgsAggTest struct {
-	dataTypes []*types.FieldType
-	retType   *types.FieldType
+	dataTypes []*types.FieldTypeBuilder
+	retType   *types.FieldTypeBuilder
 	numRows   int
 	dataGens  []func(i int) types.Datum
 	funcName  string
@@ -109,9 +109,9 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 	}
 }
 
-type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) (memDeltas []int64, err error)
+type updateMemDeltaGens func(*chunk.Chunk, *types.FieldTypeBuilder) (memDeltas []int64, err error)
 
-func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDeltas = append(memDeltas, int64(0))
@@ -119,7 +119,7 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (
 	return memDeltas, nil
 }
 
-func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 
 	buf := make([]byte, 8)
@@ -151,7 +151,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 	return memDeltas, nil
 }
 
-func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -211,7 +211,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
-func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDelta := aggfuncs.DefRowSize
@@ -220,9 +220,9 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 	return memDeltas, nil
 }
 
-type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType, []*util.ByItems) (memDeltas []int64, err error)
+type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldTypeBuilder, []*util.ByItems) (memDeltas []int64, err error)
 
-func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldTypeBuilder, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	m := make(map[string]bool)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -338,12 +338,12 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	// build final func for final phase.
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.dataType}, 1)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 1)
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeJSON)}, 1)
 	}
 
 	// update partial result.
@@ -395,10 +395,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.NoError(t, err)
 
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}, 1)
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeJSON)}, 1)
 	}
 	resultChk.Reset()
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
@@ -420,7 +420,7 @@ func buildAggTester(funcName string, tp byte, numRows int, results ...interface{
 	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
 }
 
-func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...interface{}) aggTest {
+func buildAggTesterWithFieldType(funcName string, ft *types.FieldTypeBuilder, numRows int, results ...interface{}) aggTest {
 	pt := aggTest{
 		dataType: ft,
 		numRows:  numRows,
@@ -459,7 +459,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 	// build final func for final phase.
 	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.retType}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.retType}, 1)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -509,14 +509,14 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 
 // for multiple args in aggfuncs such as json_objectagg(c1, c2)
 func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...interface{}) multiArgsAggTest {
-	fts := make([]*types.FieldType, len(tps))
+	fts := make([]*types.FieldTypeBuilder, len(tps))
 	for i := 0; i < len(tps); i++ {
 		fts[i] = types.NewFieldType(tps[i])
 	}
 	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
 }
 
-func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...interface{}) multiArgsAggTest {
+func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTypeBuilder, rt *types.FieldTypeBuilder, numRows int, results ...interface{}) multiArgsAggTest {
 	dataGens := make([]func(i int) types.Datum, len(fts))
 	for i := 0; i < len(fts); i++ {
 		dataGens[i] = getDataGenFunc(fts[i])
@@ -534,7 +534,7 @@ func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTyp
 	return mt
 }
 
-func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
+func getDataGenFunc(ft *types.FieldTypeBuilder) func(i int) types.Datum {
 	switch ft.Tp {
 	case mysql.TypeLonglong:
 		return func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
@@ -589,7 +589,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	}
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -679,7 +679,7 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	}
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -757,7 +757,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	ctor := collate.GetCollator(args[0].GetType().Collate)
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
 	finalPr, _ := finalFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -861,7 +861,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 }
 
 func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
@@ -882,7 +882,7 @@ func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
 		}
 	}
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	input := make([]chunk.Row, 0, iter.Len())
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -936,7 +936,7 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgs
 		}
 	}
 	finalFunc := aggfuncs.Build(ctx, desc, 0)
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{desc.RetTp}, 1)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	input := make([]chunk.Row, 0, iter.Len())
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {

@@ -774,11 +774,11 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	collector statistics.RowSampleCollector,
-	fieldTps []*types.FieldType,
+	fieldTps []*types.FieldTypeBuilder,
 	virtualColIdx []int,
 	schema *expression.Schema,
 ) error {
-	totFts := make([]*types.FieldType, 0, e.schemaForVirtualColEval.Len())
+	totFts := make([]*types.FieldTypeBuilder, 0, e.schemaForVirtualColEval.Len())
 	for _, col := range e.schemaForVirtualColEval.Columns {
 		totFts = append(totFts, col.RetType)
 	}
@@ -887,7 +887,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// handling virtual columns
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
 	if len(virtualColIdx) > 0 {
-		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))
+		fieldTps := make([]*types.FieldTypeBuilder, 0, len(virtualColIdx))
 		for _, colOffset := range virtualColIdx {
 			fieldTps = append(fieldTps, e.schemaForVirtualColEval.Columns[colOffset].RetType)
 		}
@@ -899,7 +899,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
 		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
-				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldTypeBuilder, sc.TimeZone)
 				if err != nil {
 					return 0, nil, nil, nil, nil, err
 				}
@@ -940,7 +940,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
 			rootRowCollector: rootRowCollector,
-			tp:               &col.FieldType,
+			tp:               &col.FieldTypeBuilder,
 			isColumn:         true,
 			slicePos:         i,
 		}
@@ -1219,7 +1219,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 type samplingBuildTask struct {
 	id               int64
 	rootRowCollector statistics.RowSampleCollector
-	tp               *types.FieldType
+	tp               *types.FieldTypeBuilder
 	isColumn         bool
 	slicePos         int
 }
@@ -1263,7 +1263,7 @@ workLoop:
 					continue
 				}
 				val := row.Columns[task.slicePos]
-				ft := e.colsInfo[task.slicePos].FieldType
+				ft := e.colsInfo[task.slicePos].FieldTypeBuilder
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
 				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
@@ -1296,7 +1296,7 @@ workLoop:
 				for _, col := range idx.Columns {
 					if col.Length != types.UnspecifiedLength {
 						row.Columns[col.Offset].Copy(&tmpDatum)
-						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldTypeBuilder)
 						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
 						if err != nil {
 							resultCh <- err
@@ -1432,7 +1432,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for i, col := range e.colsInfo {
 		if e.StatsVersion < 2 {
 			// In analyze version 2, we don't collect TopN this way. We will collect TopN from samples in `BuildColumnHistAndTopN()` below.
-			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldType, timeZone)
+			err := collectors[i].ExtractTopN(uint32(e.opts[ast.AnalyzeOptNumTopN]), e.ctx.GetSessionVars().StmtCtx, &col.FieldTypeBuilder, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
@@ -1440,7 +1440,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
-			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldTypeBuilder, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
@@ -1454,9 +1454,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		var err error
 		var topn *statistics.TopN
 		if e.StatsVersion < 2 {
-			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
+			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldTypeBuilder)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldTypeBuilder, true)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
@@ -1698,13 +1698,13 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	return nil
 }
 
-func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte, wantCols map[int64]*types.FieldType) (values map[int64]types.Datum, err error) {
+func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte, wantCols map[int64]*types.FieldTypeBuilder) (values map[int64]types.Datum, err error) {
 	loc := e.ctx.GetSessionVars().Location()
 	values, err = tablecodec.DecodeRowToDatumMap(sValue, wantCols, loc)
 	if err != nil || e.handleCols == nil {
 		return values, err
 	}
-	wantCols = make(map[int64]*types.FieldType, e.handleCols.NumCols())
+	wantCols = make(map[int64]*types.FieldTypeBuilder, e.handleCols.NumCols())
 	handleColIDs := make([]int64, e.handleCols.NumCols())
 	for i := 0; i < e.handleCols.NumCols(); i++ {
 		c := e.handleCols.GetCol(i)
@@ -1730,9 +1730,9 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	}
 
 	// Decode cols for analyze table
-	wantCols := make(map[int64]*types.FieldType, len(e.colsInfo))
+	wantCols := make(map[int64]*types.FieldTypeBuilder, len(e.colsInfo))
 	for _, col := range e.colsInfo {
-		wantCols[col.ID] = &col.FieldType
+		wantCols[col.ID] = &col.FieldTypeBuilder
 	}
 
 	// Pre-build index->cols relationship and refill wantCols if not exists(analyze index)
@@ -1741,7 +1741,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		for _, idxCol := range idxInfo.Columns {
 			colInfo := e.tblInfo.Columns[idxCol.Offset]
 			index2Cols[i] = append(index2Cols[i], colInfo)
-			wantCols[colInfo.ID] = &colInfo.FieldType
+			wantCols[colInfo.ID] = &colInfo.FieldTypeBuilder
 		}
 	}
 
@@ -1911,7 +1911,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	}
 }
 
-func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, *statistics.FMSketch, error) {
+func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldTypeBuilder, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, *statistics.TopN, *statistics.FMSketch, error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	data := make([][]byte, 0, len(collector.Samples))
 	fmSketch := statistics.NewFMSketch(maxSketchSize)
@@ -2034,7 +2034,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 			pkCol := e.handleCols.GetCol(i)
 			hists[i], cms[i], topNs[i], fms[i], err = e.buildColumnStats(pkCol.ID, e.collectors[i], pkCol.RetType, rowCount)
 		} else if i < pkColCount+len(e.colsInfo) {
-			hists[i], cms[i], topNs[i], fms[i], err = e.buildColumnStats(e.colsInfo[i-pkColCount].ID, e.collectors[i], &e.colsInfo[i-pkColCount].FieldType, rowCount)
+			hists[i], cms[i], topNs[i], fms[i], err = e.buildColumnStats(e.colsInfo[i-pkColCount].ID, e.collectors[i], &e.colsInfo[i-pkColCount].FieldTypeBuilder, rowCount)
 		} else {
 			hists[i], cms[i], topNs[i], err = e.buildIndexStats(e.idxsInfo[i-pkColCount-len(e.colsInfo)], e.collectors[i], rowCount)
 		}

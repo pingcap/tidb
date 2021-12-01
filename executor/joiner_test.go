@@ -40,8 +40,8 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 	}
 	rTypes := lTypes
 
-	convertTypes := func(mysqlTypes []byte) []*types.FieldType {
-		fieldTypes := make([]*types.FieldType, 0, len(mysqlTypes))
+	convertTypes := func(mysqlTypes []byte) []*types.FieldTypeBuilder {
+		fieldTypes := make([]*types.FieldTypeBuilder, 0, len(mysqlTypes))
 		for _, t := range mysqlTypes {
 			fieldTypes = append(fieldTypes, types.NewFieldType(t))
 		}
@@ -62,7 +62,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 				}
 				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil)
 
-				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
+				fields := make([]*types.FieldTypeBuilder, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)
 				fields = append(fields, lfields...)
 				result := chunk.New(fields, maxChunkSize, maxChunkSize)
@@ -82,7 +82,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 	}
 }
 
-func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chunk.Chunk {
+func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldTypeBuilder) *chunk.Chunk {
 	chk := chunk.New(fields, maxChunkSize, maxChunkSize)
 	for numRows > 0 {
 		numRows--

@@ -27,7 +27,7 @@ import (
 type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
 // GetCompareFunc gets a compare function for the field type.
-func GetCompareFunc(tp *types.FieldType) CompareFunc {
+func GetCompareFunc(tp *types.FieldTypeBuilder) CompareFunc {
 	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		if mysql.HasUnsignedFlag(tp.Flag) {

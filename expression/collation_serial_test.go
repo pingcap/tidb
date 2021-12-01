@@ -58,7 +58,7 @@ func TestCompareString(t *testing.T) {
 		RetType: ft,
 		Index:   1,
 	}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{ft, ft}, 4)
 	chk.Column(0).AppendString("a")
 	chk.Column(1).AppendString("A")
 	chk.Column(0).AppendString("À")

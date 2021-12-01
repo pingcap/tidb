@@ -35,7 +35,7 @@ import (
 
 type testData struct {
 	id     int64
-	ft     *types.FieldType
+	ft     *types.FieldTypeBuilder
 	input  types.Datum
 	output types.Datum
 	def    *types.Datum
@@ -143,9 +143,9 @@ func TestDecodeRowWithHandle(t *testing.T) {
 			// transform test data into input.
 			colIDs := make([]int64, 0, len(td))
 			dts := make([]types.Datum, 0, len(td))
-			fts := make([]*types.FieldType, 0, len(td))
+			fts := make([]*types.FieldTypeBuilder, 0, len(td))
 			cols := make([]rowcodec.ColInfo, 0, len(td))
-			handleColFtMap := make(map[int64]*types.FieldType)
+			handleColFtMap := make(map[int64]*types.FieldTypeBuilder)
 			for _, d := range td {
 				if d.handle {
 					handleColFtMap[handleID] = d.ft
@@ -234,7 +234,7 @@ func TestEncodeKindNullDatum(t *testing.T) {
 	nilDt.SetNull()
 	dts := []types.Datum{nilDt, types.NewIntDatum(2)}
 	ft := types.NewFieldType(mysql.TypeLonglong)
-	fts := []*types.FieldType{ft, ft}
+	fts := []*types.FieldTypeBuilder{ft, ft}
 	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
@@ -263,7 +263,7 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	dts := []types.Datum{dec}
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 4
-	fts := []*types.FieldType{ft}
+	fts := []*types.FieldTypeBuilder{ft}
 	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
@@ -342,7 +342,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			25,
-			&types.FieldType{Tp: mysql.TypeString, Collate: mysql.DefaultCollationName},
+			&types.FieldTypeBuilder{Tp: mysql.TypeString, Collate: mysql.DefaultCollationName},
 			types.NewStringDatum("ab"),
 			types.NewBytesDatum([]byte("ab")),
 			nil,
@@ -446,7 +446,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		},
 		{
 			119,
-			&types.FieldType{Tp: mysql.TypeVarString, Collate: mysql.DefaultCollationName},
+			&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Collate: mysql.DefaultCollationName},
 			types.NewStringDatum(""),
 			types.NewBytesDatum([]byte("")),
 			nil,
@@ -490,7 +490,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 			// transform test data into input.
 			colIDs := make([]int64, 0, len(td))
 			dts := make([]types.Datum, 0, len(td))
-			fts := make([]*types.FieldType, 0, len(td))
+			fts := make([]*types.FieldTypeBuilder, 0, len(td))
 			cols := make([]rowcodec.ColInfo, 0, len(td))
 			for _, d := range td {
 				colIDs = append(colIDs, d.id)
@@ -588,7 +588,7 @@ func TestNilAndDefault(t *testing.T) {
 	colIDs := make([]int64, 0, len(td))
 	dts := make([]types.Datum, 0, len(td))
 	cols := make([]rowcodec.ColInfo, 0, len(td))
-	fts := make([]*types.FieldType, 0, len(td))
+	fts := make([]*types.FieldTypeBuilder, 0, len(td))
 	for i := range td {
 		d := td[i]
 		if d.def == nil {
@@ -758,7 +758,7 @@ func TestCodecUtil(t *testing.T) {
 	t.Parallel()
 
 	colIDs := []int64{1, 2, 3, 4}
-	tps := make([]*types.FieldType, 4)
+	tps := make([]*types.FieldTypeBuilder, 4)
 	for i := 0; i < 3; i++ {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
@@ -810,7 +810,7 @@ func TestOldRowCodec(t *testing.T) {
 	t.Parallel()
 
 	colIDs := []int64{1, 2, 3, 4}
-	tps := make([]*types.FieldType, 4)
+	tps := make([]*types.FieldTypeBuilder, 4)
 	for i := 0; i < 3; i++ {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
@@ -847,7 +847,7 @@ func Test65535Bug(t *testing.T) {
 	t.Parallel()
 
 	colIds := []int64{1}
-	tps := make([]*types.FieldType, 1)
+	tps := make([]*types.FieldTypeBuilder, 1)
 	tps[0] = types.NewFieldType(mysql.TypeString)
 	sc := new(stmtctx.StatementContext)
 	text65535 := strings.Repeat("a", 65535)
@@ -869,24 +869,24 @@ func Test65535Bug(t *testing.T) {
 }
 
 var (
-	withUnsigned = func(ft *types.FieldType) *types.FieldType {
+	withUnsigned = func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 		ft.Flag = ft.Flag | mysql.UnsignedFlag
 		return ft
 	}
-	withEnumElems = func(elem ...string) func(ft *types.FieldType) *types.FieldType {
-		return func(ft *types.FieldType) *types.FieldType {
+	withEnumElems = func(elem ...string) func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
+		return func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 			ft.Elems = elem
 			return ft
 		}
 	}
-	withFsp = func(fsp int) func(ft *types.FieldType) *types.FieldType {
-		return func(ft *types.FieldType) *types.FieldType {
+	withFsp = func(fsp int) func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
+		return func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 			ft.Decimal = fsp
 			return ft
 		}
 	}
-	withFlen = func(flen int) func(ft *types.FieldType) *types.FieldType {
-		return func(ft *types.FieldType) *types.FieldType {
+	withFlen = func(flen int) func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
+		return func(ft *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 			ft.Flen = flen
 			return ft
 		}

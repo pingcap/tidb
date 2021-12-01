@@ -43,7 +43,7 @@ func TestPushCollationDown(t *testing.T) {
 	client := new(mock.Client)
 	sc := new(stmtctx.StatementContext)
 
-	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
+	tps := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
 		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)

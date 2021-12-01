@@ -363,7 +363,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 }
 
 // DecodeColumnValue decodes data to a Datum according to the column info.
-func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+func DecodeColumnValue(data []byte, ft *types.FieldTypeBuilder, loc *time.Location) (types.Datum, error) {
 	_, d, err := codec.DecodeOne(data)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -376,7 +376,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldTypeBuilder,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
@@ -403,7 +403,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
@@ -458,7 +458,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 // DecodeRowToDatumMap decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 // Default value columns, generated columns and handle columns are unprocessed.
-func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *time.Location) (map[int64]types.Datum, error) {
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
@@ -467,7 +467,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
-	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	cols map[int64]*types.FieldTypeBuilder, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -500,7 +500,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 }
 
 // decodeHandleToDatum decodes a handle to a specific column datum.
-func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
+func decodeHandleToDatum(handle kv.Handle, ft *types.FieldTypeBuilder, idx int) (types.Datum, error) {
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
@@ -556,7 +556,7 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 }
 
 // UnflattenDatums converts raw datums to column datums.
-func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
+func UnflattenDatums(datums []types.Datum, fts []*types.FieldTypeBuilder, loc *time.Location) ([]types.Datum, error) {
 	for i, datum := range datums {
 		ft := fts[i]
 		uDatum, err := Unflatten(datum, ft, loc)
@@ -569,7 +569,7 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Loc
 }
 
 // Unflatten converts a raw datum to a column datum.
-func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+func Unflatten(datum types.Datum, ft *types.FieldTypeBuilder, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
@@ -1150,7 +1150,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		return pkColIds
 	}
 	for _, idxCol := range pkIdx.Columns {
-		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
+		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldTypeBuilder) {
 			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
@@ -1182,7 +1182,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 			if mysql.HasPriKeyFlag(col.Flag) {
 				continue
 			}
-			if types.NeedRestoredData(&col.FieldType) {
+			if types.NeedRestoredData(&col.FieldTypeBuilder) {
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(col.Collate) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))

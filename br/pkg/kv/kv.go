@@ -355,7 +355,7 @@ func (kvcodec *tableKVEncoder) AddRecord(
 		}
 		if isAutoIncCol {
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
-			_ = alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false)
+			_ = alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldTypeBuilder), false)
 		}
 	}
 
@@ -392,7 +392,7 @@ func (kvcodec *tableKVEncoder) AddRecord(
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
 // TODO: merge this with pkg/lightning/backend/kv/sql2kv.go
-func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
+func getAutoRecordID(d types.Datum, target *types.FieldTypeBuilder) int64 {
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return int64(math.Round(d.GetFloat64()))

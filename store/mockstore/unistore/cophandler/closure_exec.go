@@ -106,7 +106,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 	} else if scanExec.Tp == tipb.ExecType_TypeIndexScan {
 		ce.processor = &indexScanProcessor{closureExecutor: ce}
 	}
-	outputFieldTypes := make([]*types.FieldType, 0, 1)
+	outputFieldTypes := make([]*types.FieldTypeBuilder, 0, 1)
 	lastExecutor := executors[len(executors)-1]
 	originalOutputFieldTypes := dagCtx.fieldTps
 	if lastExecutor.Tp == tipb.ExecType_TypeAggregation || lastExecutor.Tp == tipb.ExecType_TypeStreamAgg {
@@ -183,7 +183,7 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closure
 	return ce, nil
 }
 
-func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldTypeBuilder, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := expression.PBToExpr(expr, fieldTps, sc)
@@ -459,7 +459,7 @@ const (
 type closureExecutor struct {
 	*dagContext
 	outputOff       []uint32
-	resultFieldType []*types.FieldType
+	resultFieldType []*types.FieldTypeBuilder
 	seCtx           sessionctx.Context
 	kvRanges        []kv.KeyRange
 	startTS         uint64
@@ -486,7 +486,7 @@ type closureExecutor struct {
 	curNdv int64
 }
 
-func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.FieldType) error {
+func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.FieldTypeBuilder) error {
 	rowsData := pbChk.RowsData
 	var err error
 	decoder := codec.NewDecoder(chk, timeutil.SystemLocation())

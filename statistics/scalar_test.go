@@ -54,7 +54,7 @@ func getBinaryLiteral(value string) types.BinaryLiteral {
 	return b
 }
 
-func getUnsignedFieldType() *types.FieldType {
+func getUnsignedFieldType() *types.FieldTypeBuilder {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flag |= mysql.UnsignedFlag
 	return tp
@@ -68,7 +68,7 @@ func TestCalcFraction(t *testing.T) {
 		upper    types.Datum
 		value    types.Datum
 		fraction float64
-		tp       *types.FieldType
+		tp       *types.FieldTypeBuilder
 	}{
 		{
 			lower:    types.NewIntDatum(0),

@@ -703,7 +703,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 				PhysicalID: fakePhysicalID,
 				Info:       col,
 				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldTypeBuilder, 0, 0),
 			}
 		}
 	}

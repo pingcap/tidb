@@ -128,7 +128,7 @@ type selectResult struct {
 	resp  kv.Response
 
 	rowLen     int
-	fieldTypes []*types.FieldType
+	fieldTypes []*types.FieldTypeBuilder
 	ctx        sessionctx.Context
 
 	selectResp       *tipb.SelectResponse

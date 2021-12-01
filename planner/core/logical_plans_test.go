@@ -40,7 +40,7 @@ func (s *testUnitTestSuit) SetUpSuite(c *C) {
 	s.ctx = MockContext()
 }
 
-func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.FieldType {
+func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.FieldTypeBuilder {
 	tp := types.NewFieldType(typeByte)
 	tp.Flen = flen
 	return tp

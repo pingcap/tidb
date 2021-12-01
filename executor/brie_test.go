@@ -60,7 +60,7 @@ func brieTaskInfoToResult(info *brieTaskInfo) string {
 	return strings.Join(arr, ", ") + "\n"
 }
 
-func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldType) string {
+func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldTypeBuilder) string {
 	e.result = newFirstChunk(e)
 	require.NoError(t, e.fetchShowBRIE(ast.BRIEKindBackup))
 	return e.result.ToString(brieColTypes)
@@ -107,7 +107,7 @@ func TestFetchShowBRIE(t *testing.T) {
 
 	tp := mysql.TypeDatetime
 	lateTime := types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration+1)), tp, 0)
-	brieColTypes := make([]*types.FieldType, 0, len(schema.Columns))
+	brieColTypes := make([]*types.FieldTypeBuilder, 0, len(schema.Columns))
 	for _, col := range schema.Columns {
 		brieColTypes = append(brieColTypes, col.RetType)
 	}

@@ -415,13 +415,13 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldTypeBuilder.Collate])),
+		ColumnLen: int32(c.FieldTypeBuilder.Flen),
+		Decimal:   int32(c.FieldTypeBuilder.Decimal),
 		Flag:      int32(c.Flag),
 		Elems:     c.Elems,
 	}
-	pc.Tp = int32(c.FieldType.Tp)
+	pc.Tp = int32(c.FieldTypeBuilder.Tp)
 	return pc
 }
 

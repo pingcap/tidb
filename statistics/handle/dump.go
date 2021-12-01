@@ -296,7 +296,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
+			hist, err := hist.ConvertTo(sc, &colInfo.FieldTypeBuilder)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

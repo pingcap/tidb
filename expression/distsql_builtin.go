@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// PbTypeToFieldType converts tipb.FieldType to FieldType
-func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
+// PbTypeToFieldType converts tipb.FieldType to FieldTypeBuilder
+func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      byte(tp.Tp),
 		Flag:    uint(tp.Flag),
 		Flen:    int(tp.Flen),
@@ -1077,7 +1077,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 }
 
 // PBToExprs converts pb structures to expressions.
-func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) ([]Expression, error) {
+func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldTypeBuilder, sc *stmtctx.StatementContext) ([]Expression, error) {
 	exprs := make([]Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := PBToExpr(expr, fieldTps, sc)
@@ -1093,7 +1093,7 @@ func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 }
 
 // PBToExpr converts pb structure to expression.
-func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementContext) (Expression, error) {
+func PBToExpr(expr *tipb.Expr, tps []*types.FieldTypeBuilder, sc *stmtctx.StatementContext) (Expression, error) {
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
@@ -1211,7 +1211,7 @@ func convertUint(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
+	return &Constant{Value: d, RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {

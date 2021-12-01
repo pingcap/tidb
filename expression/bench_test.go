@@ -48,8 +48,8 @@ type benchHelper struct {
 	ctx   sessionctx.Context
 	exprs []Expression
 
-	inputTypes  []*types.FieldType
-	outputTypes []*types.FieldType
+	inputTypes  []*types.FieldTypeBuilder
+	outputTypes []*types.FieldTypeBuilder
 	inputChunk  *chunk.Chunk
 	outputChunk *chunk.Chunk
 }
@@ -62,8 +62,8 @@ func (h *benchHelper) init() {
 	h.ctx.GetSessionVars().InitChunkSize = 32
 	h.ctx.GetSessionVars().MaxChunkSize = numRows
 
-	h.inputTypes = make([]*types.FieldType, 0, 10)
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
+	h.inputTypes = make([]*types.FieldTypeBuilder, 0, 10)
+	h.inputTypes = append(h.inputTypes, &types.FieldTypeBuilder{
 		Tp:      mysql.TypeLonglong,
 		Flen:    mysql.MaxIntWidth,
 		Decimal: 0,
@@ -71,7 +71,7 @@ func (h *benchHelper) init() {
 		Charset: charset.CharsetBin,
 		Collate: charset.CollationBin,
 	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
+	h.inputTypes = append(h.inputTypes, &types.FieldTypeBuilder{
 		Tp:      mysql.TypeDouble,
 		Flen:    mysql.MaxRealWidth,
 		Decimal: types.UnspecifiedLength,
@@ -79,7 +79,7 @@ func (h *benchHelper) init() {
 		Charset: charset.CharsetBin,
 		Collate: charset.CollationBin,
 	})
-	h.inputTypes = append(h.inputTypes, &types.FieldType{
+	h.inputTypes = append(h.inputTypes, &types.FieldTypeBuilder{
 		Tp:      mysql.TypeNewDecimal,
 		Flen:    11,
 		Decimal: 0,
@@ -90,7 +90,7 @@ func (h *benchHelper) init() {
 
 	// Use 20 string columns to show the cache performance.
 	for i := 0; i < 20; i++ {
-		h.inputTypes = append(h.inputTypes, &types.FieldType{
+		h.inputTypes = append(h.inputTypes, &types.FieldTypeBuilder{
 			Tp:      mysql.TypeVarString,
 			Flen:    0,
 			Decimal: types.UnspecifiedLength,
@@ -169,7 +169,7 @@ func (h *benchHelper) init() {
 	h.exprs = append(h.exprs, cols[2])
 	h.exprs = append(h.exprs, cols[2])
 
-	h.outputTypes = make([]*types.FieldType, 0, len(h.exprs))
+	h.outputTypes = make([]*types.FieldTypeBuilder, 0, len(h.exprs))
 	for i := 0; i < len(h.exprs); i++ {
 		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
 	}
@@ -986,7 +986,7 @@ type vecExprBenchCase struct {
 	// childrenFieldTypes is the field types of the expression children(arguments).
 	// If childrenFieldTypes is not set, it will be converted from childrenTypes.
 	// This field is optional.
-	childrenFieldTypes []*types.FieldType
+	childrenFieldTypes []*types.FieldTypeBuilder
 	// geners are used to generate data for children and geners[i] generates data for children[i].
 	// If geners[i] is nil, the default dataGenerator will be used for its corresponding child.
 	// The geners slice can be shorter than the children slice, if it has 3 children, then
@@ -1061,7 +1061,7 @@ func randString(r *rand.Rand) string {
 	return string(buf)
 }
 
-func eType2FieldType(eType types.EvalType) *types.FieldType {
+func eType2FieldType(eType types.EvalType) *types.FieldTypeBuilder {
 	switch eType {
 	case types.ETInt:
 		return types.NewFieldType(mysql.TypeLonglong)
@@ -1082,8 +1082,8 @@ func eType2FieldType(eType types.EvalType) *types.FieldType {
 	}
 }
 
-func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldType, input *chunk.Chunk, output *chunk.Chunk) {
-	fts = make([]*types.FieldType, len(testCase.childrenTypes))
+func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (expr Expression, fts []*types.FieldTypeBuilder, input *chunk.Chunk, output *chunk.Chunk) {
+	fts = make([]*types.FieldTypeBuilder, len(testCase.childrenTypes))
 	for i := range fts {
 		if i < len(testCase.childrenFieldTypes) && testCase.childrenFieldTypes[i] != nil {
 			fts[i] = testCase.childrenFieldTypes[i]
@@ -1111,7 +1111,7 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 		panic(err)
 	}
 
-	output = chunk.New([]*types.FieldType{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
+	output = chunk.New([]*types.FieldTypeBuilder{eType2FieldType(expr.GetType().EvalType())}, testCase.chunkSize, testCase.chunkSize)
 	return expr, fts, input, output
 }
 
@@ -1223,9 +1223,9 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 	}
 }
 
-func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldType, input *chunk.Chunk, result *chunk.Column) {
+func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCase vecExprBenchCase) (baseFunc builtinFunc, fts []*types.FieldTypeBuilder, input *chunk.Chunk, result *chunk.Column) {
 	childrenNumber := len(testCase.childrenTypes)
-	fts = make([]*types.FieldType, childrenNumber)
+	fts = make([]*types.FieldTypeBuilder, childrenNumber)
 	for i := range fts {
 		if i < len(testCase.childrenFieldTypes) && testCase.childrenFieldTypes[i] != nil {
 			fts[i] = testCase.childrenFieldTypes[i]
@@ -1299,7 +1299,7 @@ func genVecBuiltinFuncBenchCase(ctx sessionctx.Context, funcName string, testCas
 
 // a hack way to calculate length of a chunk.Column.
 func getColumnLen(col *chunk.Column, eType types.EvalType) int {
-	chk := chunk.New([]*types.FieldType{eType2FieldType(eType)}, 1024, 1024)
+	chk := chunk.New([]*types.FieldTypeBuilder{eType2FieldType(eType)}, 1024, 1024)
 	chk.SetCol(0, col)
 	return chk.NumRows()
 }
@@ -1768,7 +1768,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 
 	ts := make([]types.EvalType, 0, numCols)
 	gs := make([]dataGenerator, 0, numCols)
-	fts := make([]*types.FieldType, 0, numCols)
+	fts := make([]*types.FieldTypeBuilder, 0, numCols)
 	randGen := newDefaultRandGen()
 	for i := 0; i < numCols; i++ {
 		idx := randGen.Intn(len(eTypes))

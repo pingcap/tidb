@@ -1177,7 +1177,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
-			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			// Wrap a cast here to avoid changing the original FieldTypeBuilder of the column expression.
 			exprType := arg.GetType().Clone()
 			exprType.Collate = v.Collate
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
@@ -1201,7 +1201,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 }
 
 // newFunction chooses which expression.NewFunctionImpl() will be used.
-func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldTypeBuilder, args ...expression.Expression) (ret expression.Expression, err error) {
 	if er.disableFoldCounter > 0 {
 		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
 	} else if er.tryFoldCounter > 0 {
@@ -1218,7 +1218,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 	return
 }
 
-func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+func (er *expressionRewriter) checkTimePrecision(ft *types.FieldTypeBuilder) error {
 	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
@@ -1357,7 +1357,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
+func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldTypeBuilder,
 	args ...expression.Expression) expression.Expression {
 	opFunc, err := er.newFunction(op, tp, args...)
 	if err != nil {
@@ -1429,7 +1429,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
 // a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
-func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
+func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldTypeBuilder) {
 	stkLen := len(er.ctxStack)
 	l := expression.GetRowLen(er.ctxStack[stkLen-lLen-1])
 	for i := 0; i < lLen; i++ {
@@ -1564,7 +1564,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 
 	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
-	fieldType := &types.FieldType{}
+	fieldType := &types.FieldTypeBuilder{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
@@ -2043,9 +2043,9 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		if idxInfo == nil {
 			return "", errors.Trace(errors.Errorf("primary key not found when decoding record key: %X", key))
 		}
-		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+		cols := make(map[int64]*types.FieldTypeBuilder, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &col.FieldType
+			cols[col.ID] = &col.FieldTypeBuilder
 		}
 		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 		for _, col := range idxInfo.Columns {

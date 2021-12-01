@@ -138,7 +138,7 @@ func TestGetVar(t *testing.T) {
 	}
 	for _, kv := range sessionVars {
 		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
-		var tp *types.FieldType
+		var tp *types.FieldTypeBuilder
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
 		} else {
@@ -210,10 +210,10 @@ func TestSetVarFromColumn(t *testing.T) {
 	// Construct arguments.
 	argVarName := &Constant{
 		Value:   types.NewStringDatum("a"),
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: &types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 20},
 	}
 	argCol := &Column{
-		RetType: &types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		RetType: &types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 20},
 		Index:   0,
 	}
 
@@ -221,15 +221,15 @@ func TestSetVarFromColumn(t *testing.T) {
 	funcSetVar, err := NewFunction(
 		ctx,
 		ast.SetVar,
-		&types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
+		&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 20},
 		[]Expression{argVarName, argCol}...,
 	)
 	require.NoError(t, err)
 
 	// Construct input and output Chunks.
-	inputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+	inputChunk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{argCol.RetType}, 1)
 	inputChunk.AppendString(0, "a")
-	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{argCol.RetType}, 1)
 
 	// Evaluate the SetVar function.
 	err = evalOneCell(ctx, funcSetVar, inputChunk.GetRow(0), outputChunk, 0)

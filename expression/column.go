@@ -193,7 +193,7 @@ func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
 
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldTypeBuilder
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -365,7 +365,7 @@ func (col *Column) MarshalJSON() ([]byte, error) {
 }
 
 // GetType implements Expression interface.
-func (col *Column) GetType() *types.FieldType {
+func (col *Column) GetType() *types.FieldTypeBuilder {
 	return col.RetType
 }
 
@@ -528,8 +528,8 @@ func (col *Column) Vectorized() bool {
 // beware it doesn't fill all the fields of the model.ColumnInfo.
 func (col *Column) ToInfo() *model.ColumnInfo {
 	return &model.ColumnInfo{
-		ID:        col.ID,
-		FieldType: *col.RetType,
+		ID:               col.ID,
+		FieldTypeBuilder: *col.RetType,
 	}
 }
 
@@ -556,7 +556,7 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.Flen > col.Length {
+			if col.Length > 0 && info.FieldTypeBuilder.Flen > col.Length {
 				c := *cols[i]
 				c.IsPrefix = true
 				return &c

@@ -80,7 +80,7 @@ var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETInt,
 			childrenTypes:      []types.EvalType{types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
 		},
 	},
@@ -167,7 +167,7 @@ func TestBuiltinUnaryMinusIntSig(t *testing.T) {
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
 	require.NoError(t, err)
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
+	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 
 	require.False(t, mysql.HasUnsignedFlag(col0.GetType().Flag))

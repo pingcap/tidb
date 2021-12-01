@@ -203,11 +203,11 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
 		fieldType.Flag = builder.flags[i]
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
-			ID:        int64(i + 1),
-			Name:      model.NewCIStr(colName),
-			Offset:    i,
-			FieldType: *fieldType,
-			State:     model.StatePublic,
+			ID:               int64(i + 1),
+			Name:             model.NewCIStr(colName),
+			Offset:           i,
+			FieldTypeBuilder: *fieldType,
+			State:            model.StatePublic,
 		})
 	}
 	return ti
@@ -220,7 +220,7 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 		schema.Append(&Column{
 			UniqueID: int64(i),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  &col.FieldTypeBuilder,
 		})
 	}
 	return schema
@@ -234,7 +234,7 @@ func TestEvalExpr(t *testing.T) {
 	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		colExpr := &Column{Index: 0, RetType: ft}
-		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		input := chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		colBuf2 := chunk.NewColumn(ft, 1024)

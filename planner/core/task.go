@@ -588,7 +588,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 
 // TiDB only require that the types fall into the same catalog but TiFlash require the type to be exactly the same, so
 // need to check if the conversion is a must
-func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+func needConvert(tp *types.FieldTypeBuilder, rtp *types.FieldTypeBuilder) bool {
 	// all the string type are mapped to the same type in TiFlash, so
 	// do not need convert for string types
 	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
@@ -619,8 +619,8 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	return true
 }
 
-func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
-	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
+func negotiateCommonType(lType, rType *types.FieldTypeBuilder) (*types.FieldTypeBuilder, bool, bool) {
+	commonType := types.AggFieldType([]*types.FieldTypeBuilder{lType, rType})
 	if commonType.Tp == mysql.TypeNewDecimal {
 		lExtend := 0
 		rExtend := 0
@@ -685,7 +685,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	// to mark if any partition key needs to convert
 	lMask := make([]bool, len(lTask.hashCols))
 	rMask := make([]bool, len(rTask.hashCols))
-	cTypes := make([]*types.FieldType, len(lTask.hashCols))
+	cTypes := make([]*types.FieldTypeBuilder, len(lTask.hashCols))
 	lChanged := false
 	rChanged := false
 	for i := range lTask.hashCols {

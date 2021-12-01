@@ -1004,7 +1004,7 @@ func TestHashGroup(t *testing.T) {
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tps := []*types.FieldType{tp}
+	tps := []*types.FieldTypeBuilder{tp}
 	chk1 := chunk.New(tps, 3, 3)
 	chk1.Reset()
 	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
@@ -1025,12 +1025,12 @@ func TestHashGroup(t *testing.T) {
 	require.Error(t, err)
 }
 
-func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
+func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTypeBuilder) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.Decimal = 2
 	table := []struct {
 		value interface{}
-		tp    *types.FieldType
+		tp    *types.FieldTypeBuilder
 	}{
 		{nil, types.NewFieldType(mysql.TypeNull)},
 		{nil, types.NewFieldType(mysql.TypeLonglong)},
@@ -1066,16 +1066,16 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
-		{types.Enum{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
-		{types.Set{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
-		{types.Set{Name: "f", Value: 32}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a", "b", "c", "d", "e", "f"}}},
-		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
+		{types.Enum{Name: "a", Value: 1}, &types.FieldTypeBuilder{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
+		{types.Set{Name: "a", Value: 1}, &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.Set{Name: "f", Value: 32}, &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a", "b", "c", "d", "e", "f"}}},
+		{types.BinaryLiteral{100}, &types.FieldTypeBuilder{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
 	}
 
 	datums := make([]types.Datum, 0, len(table)+2)
-	tps := make([]*types.FieldType, 0, len(table)+2)
+	tps := make([]*types.FieldTypeBuilder, 0, len(table)+2)
 	for _, t := range table {
 		tps = append(tps, t.tp)
 		d := types.NewDatum(t.value)
@@ -1084,7 +1084,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	return datums, tps
 }
 
-func chunkForTest(t *testing.T, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
+func chunkForTest(t *testing.T, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldTypeBuilder, rowCount int) *chunk.Chunk {
 	decoder := NewDecoder(chunk.New(tps, 32, 32), sc.TimeZone)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
@@ -1128,25 +1128,25 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)
 
-	tp1 := new(types.FieldType)
+	tp1 := new(types.FieldTypeBuilder)
 	types.DefaultTypeForValue(a, tp1, mysql.DefaultCharset, mysql.DefaultCollationName)
-	chk1 := chunk.New([]*types.FieldType{tp1}, 1, 1)
+	chk1 := chunk.New([]*types.FieldTypeBuilder{tp1}, 1, 1)
 	d := types.Datum{}
 	d.SetValue(a, tp1)
 	chk1.AppendDatum(0, &d)
 
-	tp2 := new(types.FieldType)
+	tp2 := new(types.FieldTypeBuilder)
 	types.DefaultTypeForValue(b, tp2, mysql.DefaultCharset, mysql.DefaultCollationName)
-	chk2 := chunk.New([]*types.FieldType{tp2}, 1, 1)
+	chk2 := chunk.New([]*types.FieldTypeBuilder{tp2}, 1, 1)
 	d = types.Datum{}
 	d.SetValue(b, tp2)
 	chk2.AppendDatum(0, &d)
 
 	h := crc32.NewIEEE()
-	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldType{tp1}, []int{0}, buf1)
+	err1 := HashChunkRow(sc, h, chk1.GetRow(0), []*types.FieldTypeBuilder{tp1}, []int{0}, buf1)
 	sum1 := h.Sum32()
 	h.Reset()
-	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldType{tp2}, []int{0}, buf2)
+	err2 := HashChunkRow(sc, h, chk2.GetRow(0), []*types.FieldTypeBuilder{tp2}, []int{0}, buf2)
 	sum2 := h.Sum32()
 	require.NoError(t, err1)
 	require.NoError(t, err2)
@@ -1156,8 +1156,8 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 		require.NotEqual(t, sum2, sum1)
 	}
 	e, err := EqualChunkRow(sc,
-		chk1.GetRow(0), []*types.FieldType{tp1}, []int{0},
-		chk2.GetRow(0), []*types.FieldType{tp2}, []int{0})
+		chk1.GetRow(0), []*types.FieldTypeBuilder{tp1}, []int{0},
+		chk2.GetRow(0), []*types.FieldTypeBuilder{tp2}, []int{0})
 	require.NoError(t, err)
 	if equal {
 		require.True(t, e)

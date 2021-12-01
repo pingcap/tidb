@@ -108,7 +108,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			origColName = names[i].ColName
 		}
 		rf := &ast.ResultField{
-			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
+			Column:       &model.ColumnInfo{Name: origColName, FieldTypeBuilder: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
 			Table:        &model.TableInfo{Name: names[i].OrigTblName},
 			TableAsName:  names[i].TblName,

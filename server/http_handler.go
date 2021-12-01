@@ -242,7 +242,7 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 			data[i].SetNull()
 		case 1:
 			bDatum := types.NewStringDatum(vals[0])
-			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
+			cDatum, err := bDatum.ConvertTo(sc, &col.FieldTypeBuilder)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -463,14 +463,14 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Construct field type.
 	defaultDecimal := 6
-	ft := &types.FieldType{
+	ft := &types.FieldTypeBuilder{
 		Tp:      byte(colTp),
 		Flag:    uint(colFlag),
 		Flen:    int(colLen),
 		Decimal: defaultDecimal,
 	}
 	// Decode a column.
-	m := make(map[int64]*types.FieldType, 1)
+	m := make(map[int64]*types.FieldTypeBuilder, 1)
 	m[colID] = ft
 	loc := time.UTC
 	vals, err := tablecodec.DecodeRowToDatumMap(valData, m, loc)
@@ -1732,9 +1732,9 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	if len(values.Get("decode")) == 0 {
 		return resp, nil
 	}
-	colMap := make(map[int64]*types.FieldType, 3)
+	colMap := make(map[int64]*types.FieldTypeBuilder, 3)
 	for _, col := range tb.Meta().Columns {
-		colMap[col.ID] = &col.FieldType
+		colMap[col.ID] = &col.FieldTypeBuilder
 	}
 
 	respValue := resp.Value
@@ -1769,7 +1769,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	return result, nil
 }
 
-func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldTypeBuilder, tb *model.TableInfo) ([]map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	var record []map[string]string
 	for _, col := range tb.Columns {

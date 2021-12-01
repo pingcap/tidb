@@ -58,7 +58,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	for i := 0; i < len(tps); i++ {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		rf.Column.FieldTypeBuilder = *types.NewFieldType(tps[i])
 		r.fields[i] = rf
 	}
 }
@@ -88,9 +88,9 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 }
 
 func (r *recordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
-	fields := make([]*types.FieldType, 0, len(r.fields))
+	fields := make([]*types.FieldTypeBuilder, 0, len(r.fields))
 	for _, field := range r.fields {
-		fields = append(fields, &field.Column.FieldType)
+		fields = append(fields, &field.Column.FieldTypeBuilder)
 	}
 	return chunk.NewChunkWithCapacity(fields, 32)
 }
@@ -193,9 +193,9 @@ func TestPseudoTable(t *testing.T) {
 	t.Parallel()
 	ti := &model.TableInfo{}
 	colInfo := &model.ColumnInfo{
-		ID:        1,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
+		ID:               1,
+		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+		State:            model.StatePublic,
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
@@ -210,10 +210,10 @@ func TestPseudoTable(t *testing.T) {
 	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	require.Equal(t, 250, int(count))
 	ti.Columns = append(ti.Columns, &model.ColumnInfo{
-		ID:        2,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		Hidden:    true,
-		State:     model.StatePublic,
+		ID:               2,
+		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+		Hidden:           true,
+		State:            model.StatePublic,
 	})
 	tbl = PseudoTable(ti)
 	// We added a hidden column. The pseudo table still only have one column.

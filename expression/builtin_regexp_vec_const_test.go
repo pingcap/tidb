@@ -26,14 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenFieldTypes []*types.FieldType, input *chunk.Chunk, output *chunk.Column) {
+func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenFieldTypes []*types.FieldTypeBuilder, input *chunk.Chunk, output *chunk.Column) {
 	const (
 		numArgs = 2
 		batchSz = 1024
 		rePat   = `\A[A-Za-z]{3,5}\d{1,5}[[:alpha:]]*\z`
 	)
 
-	childrenFieldTypes = make([]*types.FieldType, numArgs)
+	childrenFieldTypes = make([]*types.FieldTypeBuilder, numArgs)
 	for i := 0; i < numArgs; i++ {
 		childrenFieldTypes[i] = eType2FieldType(types.ETString)
 	}

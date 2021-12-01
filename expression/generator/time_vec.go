@@ -726,7 +726,7 @@ func (g gener) gen() interface{} {
 				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}},
 				{{- end }}
 				{{- if ne .FieldTypeA "" }}
-				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
+				childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
 				{{- end }}
 				geners: []dataGenerator{
 					{{- if eq .TestTypeA "" }}

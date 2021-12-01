@@ -36,8 +36,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
-	fields := []*types.FieldType{
+func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldTypeBuilder) {
+	fields := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeVarString),
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeVarString),
@@ -146,7 +146,7 @@ type listInDiskWriteDisk struct {
 	ListInDisk
 }
 
-func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
+func newListInDiskWriteDisk(fieldTypes []*types.FieldTypeBuilder) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
 	disk, err := os.CreateTemp(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
@@ -265,7 +265,7 @@ func testReaderWithCache(t *testing.T) {
 	}
 	buf.WriteString("0123")
 
-	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
+	field := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, buf.String())
 	l := NewListInDisk(field)
@@ -341,7 +341,7 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 
 	testData := "0123456789"
 
-	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
+	field := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, testData)
 	l := NewListInDisk(field)

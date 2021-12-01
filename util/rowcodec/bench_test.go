@@ -64,7 +64,7 @@ func BenchmarkDecode(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
 	colIDs := []int64{-1, 2, 3}
-	tps := []*types.FieldType{
+	tps := []*types.FieldTypeBuilder{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeDouble),

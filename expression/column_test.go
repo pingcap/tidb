@@ -181,7 +181,7 @@ func TestColHybird(t *testing.T) {
 	// bit
 	ft := types.NewFieldType(mysql.TypeBit)
 	col := &Column{RetType: ft, Index: 0}
-	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	input := chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 	for i := 0; i < 1024; i++ {
 		num, err := types.ParseBitStr(fmt.Sprintf("0b%b", i))
 		require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestColHybird(t *testing.T) {
 	// enum
 	ft = types.NewFieldType(mysql.TypeEnum)
 	col.RetType = ft
-	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	input = chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 	for i := 0; i < 1024; i++ {
 		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
@@ -226,7 +226,7 @@ func TestColHybird(t *testing.T) {
 	// set
 	ft = types.NewFieldType(mysql.TypeSet)
 	col.RetType = ft
-	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
+	input = chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 	for i := 0; i < 1024; i++ {
 		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}

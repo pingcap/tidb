@@ -76,7 +76,7 @@ type BatchPointGetExec struct {
 	virtualColumnIndex []int
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
-	virtualColumnRetFieldTypes []*types.FieldType
+	virtualColumnRetFieldTypes []*types.FieldTypeBuilder
 
 	snapshot   kv.Snapshot
 	stats      *runtimeStatsWithSnapshot
@@ -87,7 +87,7 @@ type BatchPointGetExec struct {
 func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		e.virtualColumnRetFieldTypes = make([]*types.FieldTypeBuilder, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {
 			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
 		}

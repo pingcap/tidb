@@ -64,7 +64,7 @@ func TestTableCodecInvalid(t *testing.T) {
 // column is a structure used for test
 type column struct {
 	id int64
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 func TestRowCodec(t *testing.T) {
@@ -72,9 +72,9 @@ func TestRowCodec(t *testing.T) {
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
-	c4 := &column{id: 4, tp: &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}}
-	c5 := &column{id: 5, tp: &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}}
-	c6 := &column{id: 6, tp: &types.FieldType{Tp: mysql.TypeBit, Flen: 8}}
+	c4 := &column{id: 4, tp: &types.FieldTypeBuilder{Tp: mysql.TypeEnum, Elems: []string{"a"}}}
+	c5 := &column{id: 5, tp: &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a"}}}
+	c6 := &column{id: 6, tp: &types.FieldTypeBuilder{Tp: mysql.TypeBit, Flen: 8}}
 	cols := []*column{c1, c2, c3, c4, c5, c6}
 
 	row := make([]types.Datum, 6)
@@ -96,7 +96,7 @@ func TestRowCodec(t *testing.T) {
 	require.NotNil(t, bs)
 
 	// Decode
-	colMap := make(map[int64]*types.FieldType, len(row))
+	colMap := make(map[int64]*types.FieldTypeBuilder, len(row))
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
@@ -224,7 +224,7 @@ func TestUnflattenDatums(t *testing.T) {
 	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
-	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	tps := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
@@ -232,7 +232,7 @@ func TestUnflattenDatums(t *testing.T) {
 	require.Equal(t, 0, cmp)
 
 	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci")}
-	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
+	tps = []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeBlob)}
 	tps[0].Collate = "utf8mb4_unicode_ci"
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestTimeCodec(t *testing.T) {
 	require.NotNil(t, bs)
 
 	// Decode
-	colMap := make(map[int64]*types.FieldType, colLen)
+	colMap := make(map[int64]*types.FieldTypeBuilder, colLen)
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}

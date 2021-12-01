@@ -42,7 +42,7 @@ type memIndexReader struct {
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
 	addedRowsLen  int
-	retFieldTypes []*types.FieldType
+	retFieldTypes []*types.FieldTypeBuilder
 	outputOffset  []int
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
@@ -70,16 +70,16 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 }
 
 func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
-	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
+	tps := make([]*types.FieldTypeBuilder, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
-		tps = append(tps, &cols[col.Offset].FieldType)
+		tps = append(tps, &cols[col.Offset].FieldTypeBuilder)
 	}
 	switch {
 	case m.table.PKIsHandle:
 		for _, col := range m.table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				tps = append(tps, &col.FieldType)
+				tps = append(tps, &col.FieldTypeBuilder)
 				break
 			}
 		}
@@ -87,7 +87,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		pkIdx := tables.FindPrimaryIndex(m.table)
 		for _, pkCol := range pkIdx.Columns {
 			colInfo := m.table.Columns[pkCol.Offset]
-			tps = append(tps, &colInfo.FieldType)
+			tps = append(tps, &colInfo.FieldTypeBuilder)
 		}
 	default: // ExtraHandle Column tp.
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
@@ -119,7 +119,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
+func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldTypeBuilder) ([]types.Datum, error) {
 	hdStatus := tablecodec.HandleDefault
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
 		hdStatus = tablecodec.HandleIsUnsigned
@@ -150,7 +150,7 @@ type memTableReader struct {
 	desc          bool
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
-	retFieldTypes []*types.FieldType
+	retFieldTypes []*types.FieldTypeBuilder
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
@@ -247,7 +247,7 @@ func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.
 	ds := make([]types.Datum, 0, len(m.columns))
 	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldTypeBuilder, m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +278,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID && !types.NeedRestoredData(&col.FieldType) {
+				if colID == col.ID && !types.NeedRestoredData(&col.FieldTypeBuilder) {
 					// Only try to decode handle when there is no corresponding column in the value.
 					// This is because the information in handle may be incomplete in some cases.
 					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
@@ -412,7 +412,7 @@ type memIndexLookUpReader struct {
 	table         table.Table
 	desc          bool
 	conditions    []expression.Expression
-	retFieldTypes []*types.FieldType
+	retFieldTypes []*types.FieldTypeBuilder
 
 	idxReader *memIndexReader
 

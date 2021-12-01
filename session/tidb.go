@@ -356,7 +356,7 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldTypeBuilder)
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err

@@ -25,7 +25,7 @@ import (
 func TestAllocator(t *testing.T) {
 	alloc := NewAllocator()
 
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},
@@ -75,7 +75,7 @@ func TestAllocator(t *testing.T) {
 }
 
 func TestColumnAllocator(t *testing.T) {
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},
@@ -122,7 +122,7 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 	// Some chunk columns are just references to other chunk columns.
 	// So when reusing Chunk, some columns may point to the same memory address.
 
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},

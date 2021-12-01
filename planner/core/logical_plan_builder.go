@@ -1020,7 +1020,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	// check expr field types.
 	for i, expr := range cnfExpres {
 		if expr.GetType().EvalType() == types.ETString {
-			tp := &types.FieldType{
+			tp := &types.FieldTypeBuilder{
 				Tp:      mysql.TypeDouble,
 				Flag:    expr.GetType().Flag,
 				Flen:    mysql.MaxRealWidth,
@@ -1347,7 +1347,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
-func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
+func unionJoinFieldType(a, b *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	// We ignore the pure NULL type.
 	if a.Tp == mysql.TypeNull {
 		return b
@@ -4130,7 +4130,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldTypeBuilder.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
@@ -4291,7 +4291,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  &col.FieldTypeBuilder,
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			handleCols = &IntHandleCols{col: newCol}

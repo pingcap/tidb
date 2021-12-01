@@ -42,7 +42,7 @@ type RowDecoder struct {
 	tbl         table.Table
 	mutRow      chunk.MutRow
 	colMap      map[int64]Column
-	colTypes    map[int64]*types.FieldType
+	colTypes    map[int64]*types.FieldTypeBuilder
 	defaultVals []types.Datum
 	cols        []*table.Column
 	pkCols      []int64
@@ -51,15 +51,15 @@ type RowDecoder struct {
 // NewRowDecoder returns a new RowDecoder.
 func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
 	tblInfo := tbl.Meta()
-	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
+	colFieldMap := make(map[int64]*types.FieldTypeBuilder, len(decodeColMap))
 	for id, col := range decodeColMap {
-		colFieldMap[id] = &col.Col.ColumnInfo.FieldType
+		colFieldMap[id] = &col.Col.ColumnInfo.FieldTypeBuilder
 	}
 
-	tps := make([]*types.FieldType, len(cols))
+	tps := make([]*types.FieldTypeBuilder, len(cols))
 	for _, col := range cols {
 		// Even for changing column in column type change, we target field type uniformly.
-		tps[col.Offset] = &col.FieldType
+		tps[col.Offset] = &col.FieldTypeBuilder
 	}
 	var pkCols []int64
 	switch {

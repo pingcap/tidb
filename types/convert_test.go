@@ -34,7 +34,7 @@ type invalidMockType struct {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val interface{}, target *FieldTypeBuilder) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
@@ -952,7 +952,7 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
-		target *FieldType
+		target *FieldTypeBuilder
 		expect Time
 	}{
 		{

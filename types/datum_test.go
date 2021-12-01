@@ -357,7 +357,7 @@ func TestCloneDatum(t *testing.T) {
 	}
 }
 
-func newTypeWithFlag(tp byte, flag uint) *FieldType {
+func newTypeWithFlag(tp byte, flag uint) *FieldTypeBuilder {
 	t := NewFieldType(tp)
 	t.Flag |= flag
 	return t
@@ -370,8 +370,8 @@ func newMyDecimal(val string, t *testing.T) *MyDecimal {
 	return &d
 }
 
-func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
-	return &FieldType{
+func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldTypeBuilder {
+	return &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    flen,
 		Decimal: decimal,
@@ -407,7 +407,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	testData := []struct {
 		a         Datum
 		res       Datum
-		retType   *FieldType
+		retType   *FieldTypeBuilder
 		roundType RoundingType
 	}{
 		// int64 reserve to uint64

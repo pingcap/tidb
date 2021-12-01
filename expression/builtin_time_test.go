@@ -2313,7 +2313,7 @@ func TestMakeTime(t *testing.T) {
 	}
 
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
-	tp1 := &types.FieldType{
+	tp1 := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeLonglong,
 		Flag:    mysql.UnsignedFlag,
 		Charset: charset.CharsetBin,

@@ -32,7 +32,7 @@ func TestColumnToProto(t *testing.T) {
 	tp.Flag = 10
 	tp.Collate = "utf8_bin"
 	col := &model.ColumnInfo{
-		FieldType: *tp,
+		FieldTypeBuilder: *tp,
 	}
 	pc := util.ColumnToProto(col)
 	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
@@ -53,7 +53,7 @@ func TestColumnToProto(t *testing.T) {
 	tp.Flag = 10
 	tp.Collate = "latin1_swedish_ci"
 	col1 := &model.ColumnInfo{
-		FieldType: *tp,
+		FieldTypeBuilder: *tp,
 	}
 	pc = util.ColumnToProto(col1)
 	require.Equal(t, int32(8), pc.Collation)
@@ -75,7 +75,7 @@ func TestColumnToProto(t *testing.T) {
 	tp.Flag = 10
 	tp.Elems = []string{"a", "b"}
 	col2 := &model.ColumnInfo{
-		FieldType: *tp,
+		FieldTypeBuilder: *tp,
 	}
 	pc = util.ColumnToProto(col2)
 	require.Len(t, pc.Elems, 2)

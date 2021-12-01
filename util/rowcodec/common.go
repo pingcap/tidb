@@ -232,10 +232,10 @@ func IsNewFormat(rowData []byte) bool {
 	return rowData[0] == CodecVer
 }
 
-// FieldTypeFromModelColumn creates a types.FieldType from model.ColumnInfo.
+// FieldTypeFromModelColumn creates a types.FieldTypeBuilder from model.ColumnInfo.
 // export for test case and CDC.
-func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
-	return &types.FieldType{
+func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      col.Tp,
 		Flag:    col.Flag,
 		Flen:    col.Flen,

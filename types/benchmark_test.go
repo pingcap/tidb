@@ -36,7 +36,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 
 	b.Run("LenOfUint64_input full range", func(b *testing.B) {
 		b.StartTimer()
-		var ft FieldType
+		var ft FieldTypeBuilder
 		for i := 0; i < b.N; i++ {
 			DefaultTypeForValue(numsFull[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
@@ -44,7 +44,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 
 	b.Run("LenOfUint64_input 0 to 64K  ", func(b *testing.B) {
 		b.StartTimer()
-		var ft FieldType
+		var ft FieldTypeBuilder
 		for i := 0; i < b.N; i++ {
 			DefaultTypeForValue(nums64k[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
@@ -52,7 +52,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 
 	b.Run("LenOfUint64_input 0 to 512  ", func(b *testing.B) {
 		b.StartTimer()
-		var ft FieldType
+		var ft FieldTypeBuilder
 		for i := 0; i < b.N; i++ {
 			DefaultTypeForValue(nums512[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}

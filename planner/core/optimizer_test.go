@@ -61,7 +61,7 @@ func (t *testPlannerFunctionSuite) TestMPPDecimalConvert(c *C) {
 	testDecimalConvert(0, 40, 0, 60, false, false, 0, 60, c)
 }
 
-func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldType, lConvert, rConvert bool, c *C) {
+func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldTypeBuilder, lConvert, rConvert bool, c *C) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
 	c.Assert(cType.Tp, Equals, retType.Tp)
 	c.Assert(cType.Flen, Equals, retType.Flen)
@@ -72,29 +72,29 @@ func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldType, lConv
 }
 
 func (t *testPlannerFunctionSuite) TestMPPJoinKeyTypeConvert(c *C) {
-	tinyIntType := &types.FieldType{
+	tinyIntType := &types.FieldTypeBuilder{
 		Tp: mysql.TypeTiny,
 	}
 	tinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
 
-	unsignedTinyIntType := &types.FieldType{
+	unsignedTinyIntType := &types.FieldTypeBuilder{
 		Tp: mysql.TypeTiny,
 	}
 	unsignedTinyIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
 	unsignedTinyIntType.Flag = mysql.UnsignedFlag
 
-	bigIntType := &types.FieldType{
+	bigIntType := &types.FieldTypeBuilder{
 		Tp: mysql.TypeLonglong,
 	}
 	bigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 
-	unsignedBigIntType := &types.FieldType{
+	unsignedBigIntType := &types.FieldTypeBuilder{
 		Tp: mysql.TypeLonglong,
 	}
 	unsignedBigIntType.Flen, tinyIntType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	unsignedBigIntType.Flag = mysql.UnsignedFlag
 
-	decimalType := &types.FieldType{
+	decimalType := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeNewDecimal,
 		Flen:    20,
 		Decimal: 0,

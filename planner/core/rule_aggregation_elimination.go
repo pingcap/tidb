@@ -141,7 +141,7 @@ func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool
 	}
 }
 
-func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldTypeBuilder) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z), we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	// If is count(expr not null), we will change it to constant 1.
@@ -160,7 +160,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	return newExpr
 }
 
-func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldTypeBuilder) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
 	innerCast := expression.WrapWithCastAsInt(ctx, arg)
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
@@ -174,7 +174,7 @@ func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expr
 }
 
 // wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
-func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldTypeBuilder) expression.Expression {
 	if arg.GetType().Equal(targetTp) {
 		return arg
 	}

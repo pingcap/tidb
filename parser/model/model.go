@@ -106,13 +106,13 @@ type ColumnInfo struct {
 	DefaultValue          interface{} `json:"default"`
 	DefaultValueBit       []byte      `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
-	DefaultIsExpr       bool                `json:"default_is_expr"`
-	GeneratedExprString string              `json:"generated_expr_string"`
-	GeneratedStored     bool                `json:"generated_stored"`
-	Dependences         map[string]struct{} `json:"dependences"`
-	types.FieldType     `json:"type"`
-	State               SchemaState `json:"state"`
-	Comment             string      `json:"comment"`
+	DefaultIsExpr          bool                `json:"default_is_expr"`
+	GeneratedExprString    string              `json:"generated_expr_string"`
+	GeneratedStored        bool                `json:"generated_stored"`
+	Dependences            map[string]struct{} `json:"dependences"`
+	types.FieldTypeBuilder `json:"type"`
+	State                  SchemaState `json:"state"`
+	Comment                string      `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -195,7 +195,7 @@ func (c *ColumnInfo) GetDefaultValue() interface{} {
 
 // GetTypeDesc gets the description for column type.
 func (c *ColumnInfo) GetTypeDesc() string {
-	desc := c.FieldType.CompactStr()
+	desc := c.FieldTypeBuilder.CompactStr()
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
 		desc += " unsigned"
 	}

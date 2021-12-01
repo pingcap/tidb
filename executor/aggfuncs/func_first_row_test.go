@@ -83,7 +83,7 @@ func TestMemFirstRow(t *testing.T) {
 	}
 }
 
-func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if i > 0 {

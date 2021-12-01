@@ -236,7 +236,7 @@ const (
 )
 
 // DumpRealOutfile dumps a real number to lineBuf.
-func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) ([]byte, []byte) {
+func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldTypeBuilder) ([]byte, []byte) {
 	prec := types.UnspecifiedLength
 	if tp.Decimal > 0 && tp.Decimal != mysql.NotFixedDec {
 		prec = tp.Decimal

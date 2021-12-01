@@ -112,7 +112,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	}
 }
 
-func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, tps []*types.FieldType, stream tikvpb.Tikv_CoprocessorStreamServer) error {
+func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, tps []*types.FieldTypeBuilder, stream tikvpb.Tikv_CoprocessorStreamServer) error {
 	chunks, err := h.buildChunk(chk, tps)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
@@ -174,7 +174,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	return b.build(plan), nil
 }
 
-func (h *CoprocessorDAGHandler) buildChunk(chk *chunk.Chunk, tps []*types.FieldType) (chunks []tipb.Chunk, err error) {
+func (h *CoprocessorDAGHandler) buildChunk(chk *chunk.Chunk, tps []*types.FieldTypeBuilder) (chunks []tipb.Chunk, err error) {
 	switch h.dagReq.EncodeType {
 	case tipb.EncodeType_TypeDefault:
 		chunks, err = h.encodeDefault(chk, tps)
@@ -230,9 +230,9 @@ func (h *CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Respo
 	}
 }
 
-func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldType) ([]tipb.Chunk, error) {
+func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.FieldTypeBuilder) ([]tipb.Chunk, error) {
 	colOrdinal := h.dagReq.OutputOffsets
-	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
+	respColTypes := make([]*types.FieldTypeBuilder, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
@@ -242,7 +242,7 @@ func (h *CoprocessorDAGHandler) encodeChunk(chk *chunk.Chunk, colTypes []*types.
 	return []tipb.Chunk{cur}, nil
 }
 
-func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldType) ([]tipb.Chunk, error) {
+func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.FieldTypeBuilder) ([]tipb.Chunk, error) {
 	colOrdinal := h.dagReq.OutputOffsets
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)

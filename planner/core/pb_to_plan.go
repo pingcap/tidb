@@ -34,7 +34,7 @@ import (
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
 	sctx   sessionctx.Context
-	tps    []*types.FieldType
+	tps    []*types.FieldTypeBuilder
 	is     infoschema.InfoSchema
 	ranges []*coprocessor.KeyRange
 }
@@ -136,7 +136,7 @@ func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns [
 			newCol := &expression.Column{
 				UniqueID: b.sctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID,
-				RetType:  &col.FieldType,
+				RetType:  &col.FieldTypeBuilder,
 			}
 			schema.Append(newCol)
 		}
@@ -231,13 +231,13 @@ func (b *PBPlanBuilder) getAggInfo(executor *tipb.Executor) ([]*aggregation.AggF
 
 func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []*tipb.ColumnInfo) ([]*model.ColumnInfo, error) {
 	columns := make([]*model.ColumnInfo, 0, len(pbColumns))
-	tps := make([]*types.FieldType, 0, len(pbColumns))
+	tps := make([]*types.FieldTypeBuilder, 0, len(pbColumns))
 	for _, col := range pbColumns {
 		found := false
 		for _, colInfo := range tblInfo.Columns {
 			if col.ColumnId == colInfo.ID {
 				columns = append(columns, colInfo)
-				tps = append(tps, colInfo.FieldType.Clone())
+				tps = append(tps, colInfo.FieldTypeBuilder.Clone())
 				found = true
 				break
 			}

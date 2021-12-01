@@ -609,7 +609,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldTypeBuilder, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -792,7 +792,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			}
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldTypeBuilder, 0, totColSize),
 				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
@@ -806,7 +806,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
+			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldTypeBuilder, distinct, 0, histVer, nullCount, totColSize, correlation)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1269,7 +1269,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	return err
 }
 
-func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
+func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldTypeBuilder, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
 	rows, fields, err := reader.read("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1283,13 +1283,13 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
 		if isIndex == 1 {
-			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldTypeBuilder)
+			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldTypeBuilder)
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			d := rows[i].GetDatum(2, &fields[2].Column.FieldTypeBuilder)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.Flen of this column.
+			// longer than the FieldTypeBuilder.Flen of this column.
 			// We change it to TypeBlob to bypass the length check here.
 			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
@@ -1298,7 +1298,7 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			d = rows[i].GetDatum(3, &fields[3].Column.FieldTypeBuilder)
 			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)

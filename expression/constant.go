@@ -58,7 +58,7 @@ func NewNull() *Constant {
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
-	RetType *types.FieldType
+	RetType *types.FieldTypeBuilder
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
 	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
@@ -106,10 +106,10 @@ func (c *Constant) Clone() Expression {
 }
 
 // GetType implements Expression interface.
-func (c *Constant) GetType() *types.FieldType {
+func (c *Constant) GetType() *types.FieldTypeBuilder {
 	if c.ParamMarker != nil {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
-		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
+		// so it should avoid data race. We achieve this by returning different FieldTypeBuilder pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)

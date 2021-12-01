@@ -237,7 +237,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		op    string
 		value types.Datum
 		err   error
-		ft    *types.FieldType
+		ft    *types.FieldTypeBuilder
 	)
 
 	// refineValueAndOp refines the constant datum and operator:
@@ -375,7 +375,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 // handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleUnsignedCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
 		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
@@ -409,7 +409,7 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 // handleBoundCol handles the case when column meets overflow value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+func handleBoundCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
 	if isUnsigned {
@@ -450,7 +450,7 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
-func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldTypeBuilder, val types.Datum, op string) []*point {
 	res := make([]*point, 0, len(ft.Elems)*2)
 	appendPointFunc := func(d types.Datum) {
 		res = append(res, &point{value: d, excl: false, start: true})

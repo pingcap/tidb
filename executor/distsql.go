@@ -388,7 +388,7 @@ const (
 
 // nolint:structcheck
 type checkIndexValue struct {
-	idxColTps  []*types.FieldType
+	idxColTps  []*types.FieldTypeBuilder
 	idxTblCols []*table.Column
 }
 
@@ -505,14 +505,14 @@ func (e *IndexLookUpExecutor) isCommonHandle() bool {
 	return !(len(e.handleCols) == 1 && e.handleCols[0].ID == model.ExtraHandleID) && e.table.Meta() != nil && e.table.Meta().IsCommonHandle
 }
 
-func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
-	var tps []*types.FieldType
+func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldTypeBuilder {
+	var tps []*types.FieldTypeBuilder
 	if e.isCommonHandle() {
 		for _, handleCol := range e.handleCols {
 			tps = append(tps, handleCol.RetType)
 		}
 	} else {
-		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+		tps = []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
 	}
 	if e.index.Global {
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
@@ -1167,13 +1167,13 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
-				vals = append(vals, row.GetDatum(i, &col.FieldType))
+				vals = append(vals, row.GetDatum(i, &col.FieldTypeBuilder))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
 			for i := range vals {
 				col := w.idxTblCols[i]
-				tp := &col.FieldType
+				tp := &col.FieldTypeBuilder
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
 				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])

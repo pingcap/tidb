@@ -2783,7 +2783,7 @@ ColumnDefList:
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
-		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
+		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldTypeBuilder), Options: $3.([]*ast.ColumnOption)}
 		if !colDef.Validate() {
 			yylex.AppendError(yylex.Errorf("Invalid column definition"))
 			return 1
@@ -6800,7 +6800,7 @@ SimpleExpr:
 |	builtinCast '(' Expression "AS" CastType ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
-		tp := $5.(*types.FieldType)
+		tp := $5.(*types.FieldTypeBuilder)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
 		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
@@ -6831,7 +6831,7 @@ SimpleExpr:
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		tp := $5.(*types.FieldType)
+		tp := $5.(*types.FieldTypeBuilder)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
 		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
@@ -7809,7 +7809,7 @@ CastType:
 	}
 |	"REAL"
 	{
-		var x *types.FieldType
+		var x *types.FieldTypeBuilder
 		if parser.lexer.GetSQLMode().HasRealAsFloatMode() {
 			x = types.NewFieldType(mysql.TypeFloat)
 		} else {
@@ -11641,7 +11641,7 @@ StringType:
 	}
 |	BlobType
 	{
-		x := $1.(*types.FieldType)
+		x := $1.(*types.FieldTypeBuilder)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		x.Flag |= mysql.BinaryFlag
@@ -11649,7 +11649,7 @@ StringType:
 	}
 |	TextType OptCharsetWithOptBinary
 	{
-		x := $1.(*types.FieldType)
+		x := $1.(*types.FieldTypeBuilder)
 		x.Charset = $2.(*ast.OptBinary).Charset
 		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag

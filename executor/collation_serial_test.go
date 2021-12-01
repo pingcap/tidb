@@ -30,7 +30,7 @@ func TestVecGroupChecker(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	tp := &types.FieldType{Tp: mysql.TypeVarchar}
+	tp := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar}
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,
@@ -38,7 +38,7 @@ func TestVecGroupChecker(t *testing.T) {
 	ctx := mock.NewContext()
 	groupChecker := newVecGroupChecker(ctx, []expression.Expression{col0})
 
-	chk := chunk.New([]*types.FieldType{tp}, 6, 6)
+	chk := chunk.New([]*types.FieldTypeBuilder{tp}, 6, 6)
 	chk.Reset()
 	chk.Column(0).AppendString("aaa")
 	chk.Column(0).AppendString("AAA")

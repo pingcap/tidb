@@ -60,11 +60,11 @@ func TestBasic(t *testing.T) {
 	colID, err := genGlobalID(store)
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
-		ID:        colID,
-		Name:      colName,
-		Offset:    0,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
+		ID:               colID,
+		Name:             colName,
+		Offset:           0,
+		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+		State:            model.StatePublic,
 	}
 
 	idxInfo := &model.IndexInfo{
@@ -222,11 +222,11 @@ func TestMockInfoSchema(t *testing.T) {
 		State: model.StatePublic,
 	}
 	colInfo := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    0,
-		Name:      model.NewCIStr("h"),
-		FieldType: *types.NewFieldType(mysql.TypeLong),
-		ID:        1,
+		State:            model.StatePublic,
+		Offset:           0,
+		Name:             model.NewCIStr("h"),
+		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLong),
+		ID:               1,
 	}
 	tableInfo.Columns = []*model.ColumnInfo{colInfo}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
@@ -418,11 +418,11 @@ func TestLocalTemporaryTables(t *testing.T) {
 		require.NoError(t, err)
 
 		colInfo := &model.ColumnInfo{
-			ID:        colID,
-			Name:      model.NewCIStr("col1"),
-			Offset:    0,
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-			State:     model.StatePublic,
+			ID:               colID,
+			Name:             model.NewCIStr("col1"),
+			Offset:           0,
+			FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+			State:            model.StatePublic,
 		}
 
 		tbID, err := genGlobalID(store)

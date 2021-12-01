@@ -31,11 +31,11 @@ type Codec struct {
 	// colTypes is used to check whether a Column is fixed sized and what the
 	// fixed size for every element.
 	// NOTE: It's only used for decoding.
-	colTypes []*types.FieldType
+	colTypes []*types.FieldTypeBuilder
 }
 
 // NewCodec creates a new Codec object for encode or decode a Chunk.
-func NewCodec(colTypes []*types.FieldType) *Codec {
+func NewCodec(colTypes []*types.FieldTypeBuilder) *Codec {
 	return &Codec{colTypes}
 }
 
@@ -169,7 +169,7 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 // varElemLen indicates this Column is a variable length Column.
 const varElemLen = -1
 
-func getFixedLen(colType *types.FieldType) int {
+func getFixedLen(colType *types.FieldTypeBuilder) int {
 	switch colType.Tp {
 	case mysql.TypeFloat:
 		return 4
@@ -187,7 +187,7 @@ func getFixedLen(colType *types.FieldType) int {
 
 // GetFixedLen get the memory size of a fixed-length type.
 // if colType is not fixed-length, it returns varElemLen, aka -1.
-func GetFixedLen(colType *types.FieldType) int {
+func GetFixedLen(colType *types.FieldTypeBuilder) int {
 	return getFixedLen(colType)
 }
 
@@ -196,7 +196,7 @@ func GetFixedLen(colType *types.FieldType) int {
 // it's OK (and expected) to guess if we don't know for sure.
 //
 // mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
-func EstimateTypeWidth(colType *types.FieldType) int {
+func EstimateTypeWidth(colType *types.FieldTypeBuilder) int {
 	colLen := getFixedLen(colType)
 	// Easy if it's a fixed-width type
 	if colLen != varElemLen {
@@ -248,7 +248,7 @@ type Decoder struct {
 }
 
 // NewDecoder creates a new Decoder object for decode a Chunk.
-func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
+func NewDecoder(chk *Chunk, colTypes []*types.FieldTypeBuilder) *Decoder {
 	return &Decoder{intermChk: chk, codec: NewCodec(colTypes), remainedRows: 0}
 }
 

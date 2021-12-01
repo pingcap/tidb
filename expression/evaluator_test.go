@@ -36,8 +36,8 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func kindToFieldType(kind byte) types.FieldType {
-	ft := types.FieldType{}
+func kindToFieldType(kind byte) types.FieldTypeBuilder {
+	ft := types.FieldTypeBuilder{}
 	switch kind {
 	case types.KindNull:
 		ft.Tp = mysql.TypeNull

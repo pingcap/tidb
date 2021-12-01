@@ -625,7 +625,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 				Name:   model.NewCIStr(columnName),
 				Offset: curColOffset,
 				State:  model.StatePublic,
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Flag: flag,
 				},
 				GeneratedExprString: generationExpr,

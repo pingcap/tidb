@@ -78,7 +78,7 @@ func (m *mutexForRowContainer) RUnlock() {
 type RowContainer struct {
 	m *mutexForRowContainer
 
-	fieldType []*types.FieldType
+	fieldType []*types.FieldTypeBuilder
 	chunkSize int
 	numRow    int
 
@@ -88,7 +88,7 @@ type RowContainer struct {
 }
 
 // NewRowContainer creates a new RowContainer in memory.
-func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
+func NewRowContainer(fieldType []*types.FieldTypeBuilder, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
 	rLock := new(sync.RWMutex)
 	rc := &RowContainer{
@@ -439,7 +439,7 @@ type SortedRowContainer struct {
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
-func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsDesc []bool,
+func NewSortedRowContainer(fieldType []*types.FieldTypeBuilder, chunkSize int, ByItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []CompareFunc) *SortedRowContainer {
 	return &SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
 		ByItemsDesc: ByItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}

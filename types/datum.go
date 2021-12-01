@@ -503,7 +503,7 @@ func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 }
 
 // SetValue sets any kind of value.
-func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
+func (d *Datum) SetValue(val interface{}, tp *types.FieldTypeBuilder) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -961,7 +961,7 @@ func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, 
 
 // ConvertTo converts a datum to the target field type.
 // change this method need sync modification to type2Kind in rowcodec/types.go
-func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
 	}
@@ -1002,7 +1002,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 	}
 }
 
-func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var (
 		f   float64
 		ret Datum
@@ -1051,7 +1051,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 }
 
 // ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
-func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.StatementContext) (_ float64, err error) {
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldTypeBuilder, sc *stmtctx.StatementContext) (_ float64, err error) {
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
@@ -1072,7 +1072,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 	return f, nil
 }
 
-func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var ret Datum
 	var s string
 	switch d.k {
@@ -1126,7 +1126,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 
 // ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`. Param `padZero` indicates
 // whether we should pad `\0` for `binary(flen)` type.
-func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
+func ProduceStrWithSpecifiedTp(s string, tp *FieldTypeBuilder, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
 		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
@@ -1181,12 +1181,12 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 	return s, errors.Trace(sc.HandleTruncate(err))
 }
 
-func (d *Datum) convertToInt(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToInt(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	i64, err := d.toSignedInteger(sc, target.Tp)
 	return NewIntDatum(i64), errors.Trace(err)
 }
 
-func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	tp := target.Tp
 	upperBound := IntergerUnsignedUpperBound(tp)
 	var (
@@ -1254,7 +1254,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var (
 		ret Datum
 		t   Time
@@ -1305,7 +1305,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -1368,7 +1368,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
@@ -1440,7 +1440,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var ret Datum
 	ret.SetLength(target.Flen)
 	ret.SetFrac(target.Decimal)
@@ -1494,7 +1494,7 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 }
 
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
-func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
+func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldTypeBuilder, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
 	flen, decimal := tp.Flen, tp.Decimal
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		if flen < decimal {
@@ -1530,7 +1530,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 }
 
 // ConvertToMysqlYear converts a datum to MySQLYear.
-func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var (
 		ret    Datum
 		y      int64
@@ -1582,7 +1582,7 @@ func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, e
 	return bitStr.ToInt(sc)
 }
 
-func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
 	var err error
@@ -1626,7 +1626,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var (
 		ret Datum
 		e   Enum
@@ -1658,7 +1658,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (Datum, error) {
 	var (
 		ret Datum
 		s   Set
@@ -1685,7 +1685,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
+func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTypeBuilder) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
@@ -2240,7 +2240,7 @@ func CloneRow(dr []Datum) []Datum {
 }
 
 // GetMaxValue returns the max value datum for each type.
-func GetMaxValue(ft *FieldType) (max Datum) {
+func GetMaxValue(ft *FieldTypeBuilder) (max Datum) {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.Flag) {
@@ -2271,7 +2271,7 @@ func GetMaxValue(ft *FieldType) (max Datum) {
 }
 
 // GetMinValue returns the min value datum for each type.
-func GetMinValue(ft *FieldType) (min Datum) {
+func GetMinValue(ft *FieldTypeBuilder) (min Datum) {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.Flag) {
@@ -2311,7 +2311,7 @@ const (
 	Floor
 )
 
-func getDatumBound(retType *FieldType, rType RoundingType) Datum {
+func getDatumBound(retType *FieldTypeBuilder, rType RoundingType) Datum {
 	if rType == Ceiling {
 		return GetMaxValue(retType)
 	}
@@ -2330,7 +2330,7 @@ func getDatumBound(retType *FieldType, rType RoundingType) Datum {
 // 		1.0 and get the reverse result 2.0.
 func ChangeReverseResultByUpperLowerBound(
 	sc *stmtctx.StatementContext,
-	retType *FieldType,
+	retType *FieldTypeBuilder,
 	res Datum,
 	rType RoundingType) (Datum, error) {
 	d, err := res.ConvertTo(sc, retType)
@@ -2340,7 +2340,7 @@ func ChangeReverseResultByUpperLowerBound(
 	if err != nil {
 		return d, err
 	}
-	resRetType := FieldType{}
+	resRetType := FieldTypeBuilder{}
 	switch res.Kind() {
 	case KindInt64:
 		resRetType.Tp = mysql.TypeLonglong

@@ -1329,7 +1329,7 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 	return errors.Trace(h.DumpFeedbackToKV(q))
 }
 
-func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location) error {
+func convertRangeType(ran *ranger.Range, ft *types.FieldTypeBuilder, loc *time.Location) error {
 	err := statistics.ConvertDatumsType(ran.LowVal, ft, loc)
 	if err != nil {
 		return err

@@ -142,7 +142,7 @@ func needCollectModifyColOps(actionType uint64) bool {
 	return actionType&(1<<model.ActionModifyColumn) != 0
 }
 
-func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
+func fieldTypeDeepEquals(ft1 *types.FieldTypeBuilder, ft2 *types.FieldTypeBuilder) bool {
 	if ft1.Tp == ft2.Tp &&
 		ft1.Flag == ft2.Flag &&
 		ft1.Flen == ft2.Flen &&
@@ -164,15 +164,15 @@ func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
 // length is allowed for committing concurrent pessimistic transactions.
 func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
 	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
-	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
-		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
+	if !fieldTypeDeepEquals(&colAtStart.FieldTypeBuilder, &colAtCommit.FieldTypeBuilder) {
+		if colAtStart.FieldTypeBuilder.Flag != colAtCommit.FieldTypeBuilder.Flag {
 			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
-				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
+				colAtCommit.Name.String(), colAtStart.FieldTypeBuilder.Flag, colAtCommit.FieldTypeBuilder.Flag))
 		}
 		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
-		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldTypeBuilder, &colAtCommit.FieldTypeBuilder)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -247,9 +247,9 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 				opInfo.relatedOldIdxCols = append(opInfo.relatedOldIdxCols, oldColInfo)
 			}
 			opInfo.schemaAndDecoder = newSchemaAndDecoder(sctx, tblAtStart.Meta())
-			fieldTypes := make([]*types.FieldType, 0, len(tblAtStart.Meta().Columns))
+			fieldTypes := make([]*types.FieldTypeBuilder, 0, len(tblAtStart.Meta().Columns))
 			for _, col := range tblAtStart.Meta().Columns {
-				fieldTypes = append(fieldTypes, &col.FieldType)
+				fieldTypes = append(fieldTypes, &col.FieldTypeBuilder)
 			}
 			opInfo.chk = chunk.NewChunkWithCapacity(fieldTypes, 4)
 			addNewIndexOp := &amendOperationAddIndex{
@@ -418,7 +418,7 @@ func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range tbl.Cols() {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
+			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldTypeBuilder))
 		}
 	}
 	return datumBuf
@@ -443,7 +443,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	}
 	idxVals := make([]types.Datum, 0, len(a.indexInfoAtCommit.Meta().Columns))
 	for _, oldCol := range a.relatedOldIdxCols {
-		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldType))
+		idxVals = append(idxVals, chk.GetRow(0).GetDatum(oldCol.Offset, &oldCol.FieldTypeBuilder))
 	}
 
 	rsData := tables.TryGetHandleRestoredDataWrapper(a.tblInfoAtCommit, getCommonHandleDatum(a.tblInfoAtCommit, chk.GetRow(0)), nil, a.indexInfoAtCommit.Meta())
@@ -691,7 +691,7 @@ func newSchemaAndDecoder(ctx sessionctx.Context, tbl *model.TableInfo) *schemaAn
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tbl.Columns))...)
 	for _, col := range tbl.Columns {
 		colExpr := &expression.Column{
-			RetType: &col.FieldType,
+			RetType: &col.FieldTypeBuilder,
 			ID:      col.ID,
 		}
 		if col.IsGenerated() && !col.GeneratedStored {

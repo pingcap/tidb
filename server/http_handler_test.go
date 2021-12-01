@@ -684,7 +684,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	// column is a structure used for test
 	type column struct {
 		id int64
-		tp *types.FieldType
+		tp *types.FieldTypeBuilder
 	}
 	// Backfill columns.
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}

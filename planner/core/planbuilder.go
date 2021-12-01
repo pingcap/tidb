@@ -1678,7 +1678,7 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				DBName:  tn.Schema,
 			})
 			schema.Append(&expression.Column{
-				RetType:  &col.FieldType,
+				RetType:  &col.FieldTypeBuilder,
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
@@ -1736,7 +1736,7 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo,
 		}
 		handleCols = &IntHandleCols{col: &expression.Column{
 			ID:      pkCol.ID,
-			RetType: &pkCol.FieldType,
+			RetType: &pkCol.FieldTypeBuilder,
 			Index:   index,
 		}}
 	case tblInfo.IsCommonHandle:
@@ -1755,7 +1755,7 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo,
 			}
 			columns[i] = &expression.Column{
 				ID:      colInfo.ID,
-				RetType: &colInfo.FieldType,
+				RetType: &colInfo.FieldTypeBuilder,
 				Index:   index,
 			}
 		}
@@ -2468,7 +2468,7 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 		flag = 0
 	}
 
-	fieldType := &types.FieldType{
+	fieldType := &types.FieldTypeBuilder{
 		Charset: cs,
 		Collate: cl,
 		Tp:      tp,
@@ -2917,7 +2917,7 @@ func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, 
 	if err != nil {
 		return nil, err
 	}
-	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
+	return &expression.Constant{Value: value, RetType: &col.FieldTypeBuilder}, nil
 }
 
 func (b *PlanBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnName) (*expression.Constant, error) {
@@ -3461,8 +3461,8 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
 
-		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
-		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+		schema4NewRow.Columns[ordinal].RetType = &types.FieldTypeBuilder{}
+		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldTypeBuilder
 
 		names4NewRow[ordinal] = names[i]
 	}
@@ -3653,7 +3653,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if err != nil {
 		return d, err
 	}
-	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldType)
+	d, err = value.ConvertTo(b.ctx.GetSessionVars().StmtCtx, &col.FieldTypeBuilder)
 	if err != nil {
 		if !types.ErrTruncated.Equal(err) && !types.ErrTruncatedWrongVal.Equal(err) && !types.ErrBadNumber.Equal(err) {
 			return d, err
