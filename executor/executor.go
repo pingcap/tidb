@@ -983,7 +983,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		}
 		if mutation := req.Mutations[0]; mutation != nil {
 			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
-			return seVars.StmtCtx.GetResourceGroupTagByLabel(label)
+			normalized, digest := seVars.StmtCtx.SQLDigest()
+			if len(normalized) == 0 {
+				return nil
+			}
+			_, planDigest := seVars.StmtCtx.GetPlanDigest()
+			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
 		}
 		return nil
 	}
