@@ -93,8 +93,14 @@ func (cfg *StreamConfig) ParseTSFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	cfg.endTS, err = ParseTSString(tsString)
-	return errors.Trace(err)
+	if cfg.endTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.startTS > cfg.endTS {
+		return errors.Annotate(berrors.ErrInvalidArgument, "startTS should be smaller than endTS")
+	}
+	return nil
 }
 
 func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
