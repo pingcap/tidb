@@ -779,12 +779,12 @@ func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, imp
 	logger := m.logger
 	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
 
-	pool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from tikv")
+	taskPool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from tikv")
 	regionPool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
-		pool.ApplyOnErrorGroup(g, func() error {
+		taskPool.ApplyOnErrorGroup(g, func() error {
 			taskLogger := logger.With(
 				logutil.Key("startKey", task.StartKey),
 				logutil.Key("endKey", task.EndKey),
