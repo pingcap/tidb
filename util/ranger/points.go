@@ -627,7 +627,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
-	_, collation := expr.CharsetAndCollation(expr.GetCtx())
+	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
 		return getFullRange()
 	}
@@ -684,7 +684,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate)
 		return []*point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := &point{start: true, excl: exclude}

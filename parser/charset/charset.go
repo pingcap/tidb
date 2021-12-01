@@ -68,6 +68,15 @@ var supportedCollationNames = map[string]struct{}{
 	CollationBin:     {},
 }
 
+// TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
+var TiFlashSupportedCharsets = map[string]struct{}{
+	CharsetUTF8:    {},
+	CharsetUTF8MB4: {},
+	CharsetASCII:   {},
+	CharsetLatin1:  {},
+	CharsetBin:     {},
+}
+
 // GetSupportedCharsets gets descriptions for all charsets supported so far.
 func GetSupportedCharsets() []*Charset {
 	charsets := make([]*Charset, 0, len(charsetInfos))
@@ -148,7 +157,13 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 	if collation, ok := collationsIDMap[coID]; ok {
 		return collation.CharsetName, collation.Name, nil
 	}
-	return "", "", errors.Errorf("Unknown charset id %d", coID)
+
+	// TODO: uncomment it when issue #29697 be closed
+	// log.Warn(
+	// 	"Unable to get collation name from collation ID, return default charset and collation instead.",
+	//	zap.Int("ID", coID),
+	//	zap.Stack("stack"))
+	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
 // GetCollations returns a list for all collations.

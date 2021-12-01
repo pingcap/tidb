@@ -42,7 +42,8 @@ type testTableSuite struct {
 }
 
 func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *model.TableInfo {
-	normalInfo := testTableInfo(c, d, name, num)
+	normalInfo, err := testTableInfo(d, name, num)
+	c.Assert(err, IsNil)
 	idxs := make([]*model.IndexInfo, 0, 2)
 	for i := range idxs {
 		idx := &model.IndexInfo{
@@ -58,12 +59,15 @@ func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *m
 }
 
 // testTableInfo creates a test table with num int columns and with no index.
-func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
+func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+
+	if err != nil {
+		return nil, err
+	}
 	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
@@ -82,12 +86,13 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo.Columns = cols
 	tblInfo.Charset = "utf8"
 	tblInfo.Collate = "utf8_bin"
-	return tblInfo
+	return tblInfo, nil
 }
 
 // testTableInfoWithPartition creates a test table with num int columns and with no index.
 func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
-	tblInfo := testTableInfo(c, d, name, num)
+	tblInfo, err := testTableInfo(d, name, num)
+	c.Assert(err, IsNil)
 	genIDs, err := d.genGlobalIDs(1)
 	c.Assert(err, IsNil)
 	pid := genIDs[0]
@@ -349,14 +354,16 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = testNewDDLAndStart(
+	ddl, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
+	s.d = ddl
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
+	s.dbInfo, err = testSchemaInfo(s.d, "test_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
@@ -373,13 +380,15 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	ctx := testNewContext(d)
 
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
 	// Create an existing table.
-	newTblInfo := testTableInfo(c, d, "t", 3)
+	newTblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
 
 	count := 2000
@@ -393,7 +402,8 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, false)
 
 	// for truncate table
-	tblInfo = testTableInfo(c, d, "tt", 3)
+	tblInfo, err = testTableInfo(d, "tt", 3)
+	c.Assert(err, IsNil)
 	job = testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
@@ -402,7 +412,8 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
-	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
+	dbInfo1, err := testSchemaInfo(s.d, "test_rename_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, s.dbInfo.Name, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
@@ -417,6 +428,11 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 	checkTableCacheTest(c, d, dbInfo1, tblInfo)
+	// for alter no cache table
+	job = testAlterNoCacheTable(c, ctx, d, dbInfo1.ID, tblInfo)
+	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+	checkTableNoCacheTest(c, d, dbInfo1, tblInfo)
 }
 
 func checkTableCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
@@ -427,6 +443,18 @@ func checkTableCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 		c.Assert(info, NotNil)
 		c.Assert(info.TableCacheStatusType, NotNil)
 		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusEnable)
+		return nil
+	})
+	c.Assert(err, IsNil)
+}
+
+func checkTableNoCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
+		c.Assert(err, IsNil)
+		c.Assert(info, NotNil)
+		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusDisable)
 		return nil
 	})
 	c.Assert(err, IsNil)
@@ -449,9 +477,27 @@ func testAlterCacheTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64
 	return job
 }
 
+func testAlterNoCacheTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterNoCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v})
+	return job
+}
+
 // for drop indexes
 func createTestTableForDropIndexes(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
-	tableInfo := testTableInfo(c, d, name, num)
+	tableInfo, err := testTableInfo(d, name, num)
+	c.Assert(err, IsNil)
 	var idxs []*model.IndexInfo
 	for i := 0; i < num; i++ {
 		idxName := model.NewCIStr(fmt.Sprintf("i%d", i+1))

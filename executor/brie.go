@@ -235,6 +235,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+	case "hdfs":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be hdfs when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			return nil
+		}
 	case "local", "file", "":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
@@ -461,6 +467,12 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 		return err
 	}
 	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
+	return err
+}
+
+func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	exec := gs.se.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err
 }
 

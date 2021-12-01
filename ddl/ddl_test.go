@@ -82,6 +82,7 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 
@@ -95,16 +96,14 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
-	c.Assert(err, IsNil)
-
-	return d
+	return d, err
 }
 
 func testCreateStore(c *C, name string) kv.Storage {

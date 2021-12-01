@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -88,7 +87,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 
-	dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
+	dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,7 +181,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -212,7 +211,11 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
+	}
+
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, tb.Meta().PlacementPolicyRef, tb.Meta().DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -231,7 +234,10 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 	return errors.Trace(err)
 }
 
-func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.PolicyRefInfo, *model.PlacementSettings, error) {
+func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings, fallbackPlacementPolicyRef *model.PolicyRefInfo, fallbackDirectPlacementOpts *model.PlacementSettings) (*model.PolicyRefInfo, *model.PlacementSettings, error) {
+	if !ctx.GetSessionVars().EnableAlterPlacement && (placementPolicyRef != nil || directPlacementOpts != nil) {
+		return nil, nil, ErrPlacementDisabled
+	}
 	if placementPolicyRef != nil && directPlacementOpts != nil {
 		return nil, nil, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
 	}
@@ -244,6 +250,10 @@ func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *mode
 	if placementPolicyRef != nil {
 		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
 		if !ok {
+			if !ctx.GetSessionVars().EnablePlacementChecks {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
+				return fallbackPlacementPolicyRef, fallbackDirectPlacementOpts, nil
+			}
 			return nil, nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
 		}
 		placementPolicyRef.ID = policy.ID
@@ -1747,20 +1757,6 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 	}
 
-	tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if tbInfo.Partition != nil {
-		for _, partition := range tbInfo.Partition.Definitions {
-			partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -1928,12 +1924,25 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
+	if tbInfo.TempTableType == model.TempTableNone && tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
 		// Set the defaults from Schema. Note: they are mutual exclusive!
 		if placementPolicyRef != nil {
 			tbInfo.PlacementPolicyRef = placementPolicyRef
 		} else if directPlacementOpts != nil {
 			tbInfo.DirectPlacementOpts = directPlacementOpts
+		}
+	}
+	tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, placementPolicyRef, directPlacementOpts)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tbInfo.Partition != nil {
+		for _, partition := range tbInfo.Partition.Definitions {
+			partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts, nil, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
@@ -2625,6 +2634,22 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
+func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
+	if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		if len(specs) > 1 {
+			return errRunMultiSchemaChanges
+		}
+		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+			return errRunMultiSchemaChanges
+		}
+	} else {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+			return errRunMultiSchemaChanges
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(sctx, specs)
 	if err != nil {
@@ -2636,29 +2661,26 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
+	err = checkMultiSpecs(sctx, validSpecs)
+	if err != nil {
+		return err
+	}
+
 	if len(validSpecs) > 1 {
-		if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		switch validSpecs[0].Tp {
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropColumn:
+			err = d.DropColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
+			err = d.DropIndexes(sctx, ident, validSpecs)
+		default:
 			return errRunMultiSchemaChanges
 		}
-
-		if isSameTypeMultiSpecs(validSpecs) {
-			switch validSpecs[0].Tp {
-			case ast.AlterTableAddColumns:
-				err = d.AddColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropColumn:
-				err = d.DropColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-				err = d.DropIndexes(sctx, ident, validSpecs)
-			default:
-				return errRunMultiSchemaChanges
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return nil
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		return errRunMultiSchemaChanges
+		return nil
 	}
 
 	for _, spec := range validSpecs {
@@ -2755,12 +2777,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(sctx, ident, newIdent, isAlterTable)
-		case ast.AlterTableAlterPartition:
-			if sctx.GetSessionVars().EnableAlterPlacement {
-				err = d.AlterTableAlterPartition(sctx, ident, spec)
-			} else {
-				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
-			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -2854,6 +2870,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTablePartitionOptions(sctx, ident, spec)
 		case ast.AlterTableCache:
 			err = d.AlterTableCache(sctx, ident)
+		case ast.AlterTableNoCache:
+			err = d.AlterTableNoCache(sctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -4703,6 +4721,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
 
+	// Ban setting replica count for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		if !ok {
+			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
+		}
+	}
+
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
@@ -4925,6 +4951,9 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	tb, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
@@ -5395,6 +5424,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
+	}
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := model.NewCIStr("expression_index")
@@ -5659,6 +5691,9 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
@@ -5712,6 +5747,9 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return err
 	}
 
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
+	}
 	indexNames := make([]model.CIStr, 0, len(specs))
 	ifExists := make([]bool, 0, len(specs))
 	for _, spec := range specs {
@@ -6295,62 +6333,6 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	meta := tb.Meta()
-	if meta.Partition == nil {
-		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
-	}
-
-	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// TODO: the old placement rules should be migrated to new format. use the bundle from meta directly.
-	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
-
-	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)
-	if err != nil {
-		var sb strings.Builder
-		sb.Reset()
-
-		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
-
-		if e := spec.Restore(restoreCtx); e != nil {
-			return ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
-		}
-		return ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
-	}
-
-	err = bundle.Tidy()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	bundle.Reset(placement.RuleIndexPartition, []int64{partitionID})
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionAlterTableAlterPartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, bundle},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
 func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6491,7 +6473,8 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	if err != nil {
 		return errors.Trace(err)
 	}
-	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings)
+	ptPlacementPolicyRef, ptPlacementSettings := tblInfo.Partition.GetPlacementByID(partitionID)
+	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings, ptPlacementPolicyRef, ptPlacementSettings)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6620,6 +6603,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
+
 func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
@@ -6629,11 +6613,46 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if t.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
 		return nil
 	}
+
+	// forbit cache table in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterCacheForSysTable)
+	} else if t.Meta().TempTableType != model.TempTableNone {
+		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+	}
+
+	if t.Meta().Partition != nil {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		SchemaName: schema.Name.L,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAlterCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return err
+	}
+	// if a table is not in cache state, return directly
+	if t.Meta().TableCacheStatusType == model.TableCacheStatusDisable {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}

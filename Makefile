@@ -44,7 +44,8 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS))
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(BR_PACKAGE_DIRECTORIES)) --config .golangci_br.yml
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
@@ -108,11 +109,11 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-upload-coverage: SHELL:=/bin/bash
 upload-coverage:
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
+ifneq ($(CODECOV_TOKEN), "")
+	curl -LO ${FILE_SERVER_URL}/download/cicd/ci-tools/codecov
+	chmod +x codecov
+	./codecov -t ${CODECOV_TOKEN}
 endif
 
 devgotest: failpoint-enable
@@ -128,7 +129,7 @@ devgotest: failpoint-enable
 gotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
