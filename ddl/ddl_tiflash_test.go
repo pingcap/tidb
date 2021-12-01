@@ -249,7 +249,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	lessThan := "40"
 	// Stop loop
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
-	// TODO Need failpoints to stop
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop", `return`), IsNil)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop")
@@ -403,7 +402,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	c.Assert(res, Equals, true)
 
 	// Wait GC
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
@@ -446,7 +445,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	defer gcWorker.Close()
 
 	// Wait GC
-	time.Sleep(ddl.PollTiFlashInterval * 5)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }

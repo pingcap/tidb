@@ -4779,7 +4779,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			RegionCache: tikvStore.GetRegionCache(),
 		}
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
-			// TODO Can we make it as a batch request?
 			for _, p := range pi.Definitions {
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
