@@ -104,7 +104,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDuration)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDuration)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETDuration)},
@@ -114,7 +114,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeString)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeString)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETString)},
@@ -133,7 +133,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDatetime)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDatetime)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
@@ -209,7 +209,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDuration},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDuration)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDuration)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETDuration)},
@@ -219,7 +219,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETString},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeString)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeString)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETString)},
@@ -238,7 +238,7 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:        types.ETString,
 			childrenTypes:      []types.EvalType{types.ETDatetime, types.ETDatetime},
-			childrenFieldTypes: []*types.FieldType{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDatetime)},
+			childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDatetime)},
 			geners: []dataGenerator{
 				gener{*newDefaultGener(0.2, types.ETDatetime)},
 				gener{*newDefaultGener(0.2, types.ETDatetime)},

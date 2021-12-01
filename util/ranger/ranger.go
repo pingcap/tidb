@@ -296,7 +296,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	newTp := newFieldType(tp)
+	newTp := newFieldTypeBuilder(tp)
 	if tableRange {
 		ranges, err = points2TableRanges(sctx, rangePoints, newTp)
 	} else {
@@ -347,7 +347,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldTypeBuilder,
 		err    error
 	)
 	for _, col := range d.cols {
-		newTp = append(newTp, newFieldType(col.RetType))
+		newTp = append(newTp, newFieldTypeBuilder(col.RetType))
 	}
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -540,7 +540,7 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder) bool
 
 // We cannot use the FieldTypeBuilder of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldTypeBuilder of column a.
-func newFieldType(tp *types.FieldTypeBuilder) *types.FieldTypeBuilder {
+func newFieldTypeBuilder(tp *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	switch tp.Tp {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:

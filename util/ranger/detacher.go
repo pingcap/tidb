@@ -767,7 +767,7 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 	res := &DetachRangeResult{}
 	newTpSlice := make([]*types.FieldTypeBuilder, 0, len(d.cols))
 	for _, col := range d.cols {
-		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
+		newTpSlice = append(newTpSlice, newFieldTypeBuilder(col.RetType))
 	}
 	if len(d.allConds) == 1 {
 		if sf, ok := d.allConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -796,7 +796,7 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions [
 	cols []*expression.Column, lengths []int) ([]*Range, []expression.Expression, error) {
 	newTpSlice := make([]*types.FieldTypeBuilder, 0, len(cols))
 	for _, col := range cols {
-		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
+		newTpSlice = append(newTpSlice, newFieldTypeBuilder(col.RetType))
 	}
 	d := &rangeDetacher{
 		sctx:             sctx,
