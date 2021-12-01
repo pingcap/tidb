@@ -101,6 +101,17 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select 1+num from (select 1+a as num from t) t1;",
+			flags:          []uint64{flagEliminateProjection},
+			assertRuleName: "projection_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Proj[2] is eliminated, Proj[3]'s expressions changed into[plus(1, plus(1, test.t.a))]",
+					assertReason: "Proj[3]'s child proj[2] is redundant",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
