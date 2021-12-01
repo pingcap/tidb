@@ -98,7 +98,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -109,7 +109,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffset(dnfItem, cols)
+			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
 				return -1
 			}
@@ -129,7 +129,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1
@@ -151,7 +151,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					return -1
 				}
 				for i, col := range cols {
@@ -517,7 +517,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(cond, cols)
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue

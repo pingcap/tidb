@@ -1200,7 +1200,11 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) 
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
+<<<<<<< HEAD
 		p.Ranges[0].IsPoint(sc)
+=======
+		p.Ranges[0].IsPointNonNullable(sctx)
+>>>>>>> a90344c5a... planner: regard NULL as point when accessing composite index (#30244)
 }
 
 // PhysicalSelection represents a filter.

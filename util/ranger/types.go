@@ -80,6 +80,7 @@ func (ran *Range) Clone() *Range {
 }
 
 // IsPoint returns if the range is a point.
+<<<<<<< HEAD
 func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
@@ -103,6 +104,10 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
+=======
+func (ran *Range) IsPoint(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx, sctx.GetSessionVars().RegardNULLAsPoint)
+>>>>>>> a90344c5a... planner: regard NULL as point when accessing composite index (#30244)
 }
 
 // IsPointNullable returns if the range is a point.
@@ -133,6 +138,19 @@ func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+<<<<<<< HEAD
+=======
+// IsPointNonNullable returns if the range is a point without NULL.
+func (ran *Range) IsPointNonNullable(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx, false)
+}
+
+// IsPointNullable returns if the range is a point.
+func (ran *Range) IsPointNullable(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx, true)
+}
+
+>>>>>>> a90344c5a... planner: regard NULL as point when accessing composite index (#30244)
 // IsFullRange check if the range is full scan range
 func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 	if unsignedIntHandle {

@@ -1840,6 +1840,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRegardNULLAsPoint, Value: BoolToOnOff(DefTiDBRegardNULLAsPoint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.RegardNULLAsPoint = TiDBOptOn(val)
+		return nil
+	}},
 
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},

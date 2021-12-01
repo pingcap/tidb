@@ -860,7 +860,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
+<<<<<<< HEAD
 				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+=======
+				if !ran.IsPointNonNullable(ds.ctx) {
+					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
+>>>>>>> a90344c5a... planner: regard NULL as point when accessing composite index (#30244)
 					allRangeIsPoint = false
 					break
 				}
