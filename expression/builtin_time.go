@@ -300,7 +300,7 @@ func (b *builtinDateSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if expr.IsZero() {
+	if expr.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
 	}
 

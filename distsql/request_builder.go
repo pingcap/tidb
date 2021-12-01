@@ -721,6 +721,8 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		}
 	}
 
+	// NOTE: this is a hard-code operation to avoid wrong results when accessing unique index with NULL;
+	// Please see https://github.com/pingcap/tidb/issues/29650 for more details
 	if hasNull {
 		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
 		high = kv.Key(high).Next()
