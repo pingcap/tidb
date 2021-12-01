@@ -59,10 +59,15 @@ type Manager interface {
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) (string, string, bool)
+	// Requires exact match on user name and host name.
+	ConnectionVerification(user, host string, auth, salt []byte, tlsState *tls.ConnectionState) bool
 
 	// GetAuthWithoutVerification uses to get auth name without verification.
-	GetAuthWithoutVerification(user, host string) (string, string, bool)
+	// Requires exact match on user name and host name.
+	GetAuthWithoutVerification(user, host string) bool
+
+	// MatchIdentity matches an identity
+	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
