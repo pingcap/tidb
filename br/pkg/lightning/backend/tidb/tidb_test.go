@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -408,7 +409,100 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	}, tableInfos)
 }
 
-func TestWriteRowsErrorDowngrading(t *testing.T) {
+func TestWriteRowsErrorNoRetry(t *testing.T) {
+	t.Parallel()
+	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+
+	// batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(nonRetryableError)
+
+	// disable error record, should not expect retry statements one by one.
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{}),
+	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	ctx := context.Background()
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.Error(t, err)
+	require.False(t, utils.IsRetryableError(err), "err: %v", err)
+}
+
+func TestWriteRowsErrorDowngradingAll(t *testing.T) {
+	t.Parallel()
+	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	// First, batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(nonRetryableError)
+	// Then, insert row-by-row due to the non-retryable error.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "11.csv", int64(0), nonRetryableError.Error(), "(5)").
+		WillReturnResult(driver.ResultNoRows)
+
+	// disable error record, should not expect retry statements one by one.
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{
+			App: config.Lightning{
+				TaskInfoSchemaName: "tidb_lightning_errors",
+				MaxError: config.MaxError{
+					Type: *atomic.NewInt64(10),
+				},
+			},
+		}),
+	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	ctx := context.Background()
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.NoError(t, err)
+}
+
+func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
@@ -444,9 +538,6 @@ func TestWriteRowsErrorDowngrading(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
 
-	ctx := context.Background()
-	logger := log.L()
-
 	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
 		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
@@ -457,15 +548,27 @@ func TestWriteRowsErrorDowngrading(t *testing.T) {
 			},
 		}),
 	)
+	dataRows := encodeRowsTiDB(t, ignoreBackend, s.tbl)
+	ctx := context.Background()
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.Error(t, err)
+	st, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
 
-	dataRows := ignoreBackend.MakeEmptyRows()
+func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
+	dataRows := b.MakeEmptyRows()
 	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
-	indexRows := ignoreBackend.MakeEmptyRows()
+	indexRows := b.MakeEmptyRows()
 	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+	logger := log.L()
 
-	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	encoder, err := b.NewEncoder(tbl, &kv.SessionOptions{})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
@@ -501,12 +604,27 @@ func TestWriteRowsErrorDowngrading(t *testing.T) {
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+	return dataRows
+}
 
-	writer, err := engine.LocalWriter(ctx, nil)
-	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
-	require.Error(t, err)
-	st, err := writer.Close(ctx)
-	require.NoError(t, err)
-	require.Nil(t, st)
+func TestEncodeRowForRecord(t *testing.T) {
+	t.Parallel()
+	s := createMysqlSuite(t)
+
+	// for a correct row, the will encode a correct result
+	row := tidb.EncodeRowForRecord(s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+		types.NewIntDatum(5),
+		types.NewStringDatum("test test"),
+		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
+	}, []int{0, -1, -1, -1, -1, -1, -1, -1, 1, 2, -1, -1, -1, -1})
+	require.Equal(t, row, "(5,'test test',x'000000abcdef')")
+
+	// the following row will result in column count mismatch error, there for encode
+	// result will fallback to a "," separated string list.
+	row = tidb.EncodeRowForRecord(s.tbl, mysql.ModeStrictTransTables, []types.Datum{
+		types.NewIntDatum(5),
+		types.NewStringDatum("test test"),
+		types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0xabcdef, 6)),
+	}, []int{0, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, -1, -1, -1})
+	require.Equal(t, row, "(5, \"test test\", \x00\x00\x00\xab\xcd\xef)")
 }
