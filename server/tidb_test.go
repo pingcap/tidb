@@ -488,7 +488,7 @@ func TestSocketAndIp(t *testing.T) {
 		err := server.Run()
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
+	cli.waitUntilServerCanConnect()
 	defer server.Close()
 
 	// Test with Socket connection + Setup user1@% for all host access
@@ -689,17 +689,19 @@ func TestOnlySocket(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
-		config.Addr = "127.0.0.1"
 	}))
-	require.NoErrorf(t, err, "Connect succeeded when not configured!?!")
-	defer db.Close()
+	require.NoErrorf(t, err, "Open failed")
+	err = db.Ping()
+	require.Errorf(t, err, "Connect succeeded when not configured!?!")
+	db.Close()
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
-		config.Addr = "127.0.0.1"
 	}))
-	require.NoErrorf(t, err, "Connect succeeded when not configured!?!")
-	defer db.Close()
+	require.NoErrorf(t, err, "Open failed")
+	err = db.Ping()
+	require.Errorf(t, err, "Connect succeeded when not configured!?!")
+	db.Close()
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
@@ -1676,4 +1678,104 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn fu
 		}
 		fn(db)
 	}
+}
+
+func TestLocalhostClientMapping(t *testing.T) {
+	t.Parallel()
+	osTempDir := os.TempDir()
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
+	require.NoError(t, err)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = socketFile
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	defer server.Close()
+	cli.waitUntilServerCanConnect()
+
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	// Create a db connection for root
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.DBName = "test"
+		config.Addr = socketFile
+	}))
+	require.NoErrorf(t, err, "Open failed")
+	err = db.Ping()
+	require.NoErrorf(t, err, "Ping failed")
+	defer db.Close()
+	dbt := testkit.NewDBTestKit(t, db)
+	rows := dbt.MustQuery("select user()")
+	cli.checkRows(t, rows, "root@localhost")
+	rows = dbt.MustQuery("show grants")
+	cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+
+	dbt.MustExec("CREATE USER 'localhostuser'@'localhost'")
+	dbt.MustExec("CREATE USER 'localhostuser'@'%'")
+	defer func() {
+		dbt.MustExec("DROP USER IF EXISTS 'localhostuser'@'%'")
+		dbt.MustExec("DROP USER IF EXISTS 'localhostuser'@'localhost'")
+		dbt.MustExec("DROP USER IF EXISTS 'localhostuser'@'127.0.0.1'")
+	}()
+
+	dbt.MustExec("GRANT SELECT ON test.* TO 'localhostuser'@'%'")
+	dbt.MustExec("GRANT SELECT,UPDATE ON test.* TO 'localhostuser'@'localhost'")
+
+	// Test with loopback interface - Should get access to localhostuser@localhost!
+	cli.runTests(t, func(config *mysql.Config) {
+		config.User = "localhostuser"
+		config.DBName = "test"
+	},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report localhostuser@localhost also for 127.0.0.1)
+			cli.checkRows(t, rows, "localhostuser@127.0.0.1")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'localhost'\nGRANT SELECT,UPDATE ON test.* TO 'localhostuser'@'localhost'")
+		})
+
+	dbt.MustExec("DROP USER IF EXISTS 'localhostuser'@'localhost'")
+	dbt.MustExec("CREATE USER 'localhostuser'@'127.0.0.1'")
+	dbt.MustExec("GRANT SELECT,UPDATE ON test.* TO 'localhostuser'@'127.0.0.1'")
+	// Test with unix domain socket file connection - Should get access to '%'
+	cli.runTests(t, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "localhostuser"
+		config.DBName = "test"
+	},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "localhostuser@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'%'\nGRANT SELECT ON test.* TO 'localhostuser'@'%'")
+		})
+
+	// Test if only localhost exists
+	dbt.MustQuery("DROP USER 'localhostuser'@'%'")
+	dbSocket, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "localhostuser"
+		config.Net = "unix"
+		config.DBName = "test"
+		config.Addr = socketFile
+	}))
+	require.NoErrorf(t, err, "Open failed")
+	defer dbSocket.Close()
+	err = dbSocket.Ping()
+	require.Errorf(t, err, "Connection successful without matching host for unix domain socket!")
 }
