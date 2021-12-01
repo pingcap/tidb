@@ -481,9 +481,15 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
 		c.Assert(err, IsNil)
 		var cmp int
+<<<<<<< HEAD
 		cmp, err = reverseRes.CompareDatum(sc, &test.res)
 		c.Assert(err, IsNil)
 		c.Assert(cmp, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, reverseRes, test.res))
+=======
+		cmp, err = reverseRes.Compare(sc, &test.res, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
+>>>>>>> 94be83bfa... *: replace compareDatum by compare and fix wrong optimize order by (#30273)
 	}
 }
 
