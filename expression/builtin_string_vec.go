@@ -676,13 +676,14 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
 		return err
 	}
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	argTp, resultTp := b.args[0].GetType(), b.tp
+	var encodingFn func(src string) (string, error)
+	if types.IsBinaryStr(argTp) {
+		enc := charset.NewEncoding(resultTp.Charset)
+		encodingFn = enc.DecodeString
+	} else if types.IsBinaryStr(resultTp) {
+		enc := charset.NewEncoding(argTp.Charset)
+		encodingFn = enc.EncodeString
 	}
 	validator := makeStringValidator(b.tp.Charset)
 	result.ReserveString(n)
@@ -692,6 +693,15 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetString(i)
+		if encodingFn != nil {
+			exprI, err = encodingFn(exprI)
+			if err != nil {
+				result.AppendNull()
+			} else {
+				result.AppendString(exprI)
+			}
+			continue
+		}
 		if validator != nil {
 			exprI, _ = validator.Truncate(exprI, charset.TruncateStrategyReplace)
 			result.AppendString(exprI)

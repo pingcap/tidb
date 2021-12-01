@@ -1141,13 +1141,18 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	argTp, resultTp := b.args[0].GetType(), b.tp
+	if types.IsBinaryStr(argTp) {
+		// Convert charset to utf8. If it meets error, NULL is returned.
+		enc := charset.NewEncoding(resultTp.Charset)
+		utf8Expr, err := enc.DecodeString(expr)
+		return utf8Expr, err != nil, nil
+	}
+	if types.IsBinaryStr(resultTp) {
+		// Convert charset from utf8. If it meets error, NULL is returned.
+		enc := charset.NewEncoding(argTp.Charset)
+		expr, err = enc.EncodeString(expr)
+		return expr, false, err
 	}
 	if v := makeStringValidator(b.tp.Charset); v != nil {
 		result, _ := v.Truncate(expr, charset.TruncateStrategyReplace)
