@@ -157,7 +157,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+	if dbInfo.GetCharset() == toCharset && dbInfo.Collate == toCollate {
 		return nil
 	}
 	// Do the DDL job.
@@ -279,7 +279,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	)
 
 	for _, val := range stmt.Options {
-		switch val.Tp {
+		switch val.GetTp() {
 		case ast.DatabaseOptionCharset:
 			if toCharset == "" {
 				toCharset = val.Value
@@ -303,7 +303,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			if directPlacementOpts == nil {
 				directPlacementOpts = &model.PlacementSettings{}
 			}
-			err = SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
+			err = SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.GetTp()), val.Value, val.UintValue)
 			if err != nil {
 				return err
 			}
@@ -383,7 +383,7 @@ func checkTooLongIndex(index model.CIStr) error {
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
-	switch v.Tp {
+	switch v.GetTp() {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
 			if key.Expr != nil {
@@ -505,7 +505,7 @@ func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (
 	if ignoreBinFlag {
 		return chs, coll
 	}
-	needOverwriteBinColl := types.IsString(colDef.Tp.Tp) && mysql.HasBinaryFlag(colDef.Tp.Flag)
+	needOverwriteBinColl := types.IsString(colDef.Tp.GetTp()) && mysql.HasBinaryFlag(colDef.Tp.Flag)
 	if needOverwriteBinColl {
 		newColl, err := charset.GetDefaultCollation(chs)
 		if err != nil {
@@ -528,7 +528,7 @@ func typesNeedCharset(tp byte) bool {
 
 func setCharsetCollationFlenDecimal(tp *types.FieldTypeBuilder, colCharset, colCollate string) error {
 	var err error
-	if typesNeedCharset(tp.Tp) {
+	if typesNeedCharset(tp.GetTp()) {
 		tp.Charset = colCharset
 		tp.Collate = colCollate
 	} else {
@@ -537,13 +537,13 @@ func setCharsetCollationFlenDecimal(tp *types.FieldTypeBuilder, colCharset, colC
 	}
 
 	// Use default value for flen or decimal when they are unspecified.
-	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.GetTp())
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = defaultDecimal
 	}
-	if tp.Flen == types.UnspecifiedLength {
+	if tp.GetFlen() == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
-		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
+		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.GetTp()) {
 			// Issue #4684: the flen of unsigned integer(except bigint) is 1 digit shorter than signed integer
 			// because it has no prefix "+" or "-" character.
 			tp.Flen--
@@ -621,7 +621,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
-		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
+		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.GetTp()) {
 		if vv, ok := value.(string); ok {
 			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
 			if err != nil {
@@ -636,7 +636,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 }
 
 func checkSequenceDefaultValue(col *table.Column) error {
-	if mysql.IsIntegerType(col.Tp) {
+	if mysql.IsIntegerType(col.GetTp()) {
 		return nil
 	}
 	return ErrColumnTypeUnsupportedNextValue.GenWithStackByArgs(col.ColumnInfo.Name.O)
@@ -673,7 +673,7 @@ func isExplicitTimeStamp() bool {
 // processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
 func processColumnFlags(col *table.Column) {
 	if col.FieldTypeBuilder.EvalType().IsStringKind() {
-		if col.Charset == charset.CharsetBin {
+		if col.GetCharset() == charset.CharsetBin {
 			col.Flag |= mysql.BinaryFlag
 		} else {
 			col.Flag &= ^mysql.BinaryFlag
@@ -707,17 +707,17 @@ func adjustBlobTypesFlen(tp *types.FieldTypeBuilder, colCharset string) error {
 	l := tp.Flen * cs.Maxlen
 	if tp.Tp == mysql.TypeBlob {
 		if l <= tinyBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.GetFlen()))
 			tp.Flen = tinyBlobMaxLength
 			tp.Tp = mysql.TypeTinyBlob
 		} else if l <= blobMaxLength {
 			tp.Flen = blobMaxLength
 		} else if l <= mediumBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.GetFlen()))
 			tp.Flen = mediumBlobMaxLength
 			tp.Tp = mysql.TypeMediumBlob
 		} else if l <= longBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.GetFlen()))
 			tp.Flen = longBlobMaxLength
 			tp.Tp = mysql.TypeLongBlob
 		}
@@ -765,7 +765,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 		for _, v := range colDef.Options {
-			switch v.Tp {
+			switch v.GetTp() {
 			case ast.ColumnOptionNotNull:
 				col.Flag |= mysql.NotNullFlag
 			case ast.ColumnOptionNull:
@@ -800,7 +800,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.Tp) {
+					if !expression.IsValidCurrentTimestampExpr(v.Expr, colDef.GetTp()) {
 						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
@@ -824,7 +824,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
 			case ast.ColumnOptionCollate:
-				if field_types.HasCharset(colDef.Tp) {
+				if field_types.HasCharset(colDef.GetTp()) {
 					col.FieldTypeBuilder.Collate = v.StrValue
 				}
 			case ast.ColumnOptionFulltext:
@@ -1295,9 +1295,9 @@ func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error 
 
 // checkColumnAttributes check attributes for single column.
 func checkColumnAttributes(colName string, tp *types.FieldTypeBuilder) error {
-	switch tp.Tp {
+	switch tp.GetTp() {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
-		if tp.Flen < tp.Decimal {
+		if tp.GetFlen() < tp.Decimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
 		}
 	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
@@ -1454,7 +1454,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
 			if col.Tp.Tp != mysql.TypeLonglong {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(
-					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.GetTp())))
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
 				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
@@ -1601,7 +1601,7 @@ func buildTableInfo(
 			addIndexColumnFlag(tbInfo, idxInfo)
 		}
 		// check if the index is primary or unique.
-		switch constr.Tp {
+		switch constr.GetTp() {
 		case ast.ConstraintPrimaryKey:
 			idxInfo.Primary = true
 			idxInfo.Unique = true
@@ -1676,7 +1676,7 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 	if len(constr.Keys) != 1 {
 		return false
 	}
-	switch lastCol.Tp {
+	switch lastCol.GetTp() {
 	case mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 		return true
@@ -2284,7 +2284,7 @@ func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 		// DATE and DATETIME
 		// CHAR, VARCHAR, BINARY, and VARBINARY
 		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
-		switch colInfo.FieldTypeBuilder.Tp {
+		switch colInfo.FieldTypeBuilder.GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 		case mysql.TypeVarchar, mysql.TypeString:
@@ -2438,7 +2438,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.TableOptionAutoIncrement:
 			tbInfo.AutoIncID = int64(op.UintValue)
 		case ast.TableOptionAutoIdCache:
@@ -2482,7 +2482,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.DirectPlacementOpts == nil {
 				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
 			}
-			err := SetDirectPlacementOpt(tbInfo.DirectPlacementOpts, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+			err := SetDirectPlacementOpt(tbInfo.DirectPlacementOpts, ast.PlacementOptionType(op.GetTp()), op.StrValue, op.UintValue)
 			if err != nil {
 				return err
 			}
@@ -2544,7 +2544,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
-		switch opt.Tp {
+		switch opt.GetTp() {
 		case ast.TableOptionCharset:
 			info, err := charset.GetCharsetInfo(opt.StrValue)
 			if err != nil {
@@ -2595,7 +2595,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 			// Find the last AlterTableAlgorithm.
 			algorithm = spec.Algorithm
 		}
-		if isIgnorableSpec(spec.Tp) {
+		if isIgnorableSpec(spec.GetTp()) {
 			continue
 		}
 		validSpecs = append(validSpecs, spec)
@@ -2667,7 +2667,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	if len(validSpecs) > 1 {
-		switch validSpecs[0].Tp {
+		switch validSpecs[0].GetTp() {
 		case ast.AlterTableAddColumns:
 			err = d.AddColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropColumn:
@@ -2685,7 +2685,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
-		switch spec.Tp {
+		switch spec.GetTp() {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
 				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
@@ -2742,7 +2742,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.ExchangeTablePartition(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
-			switch spec.Constraint.Tp {
+			switch spec.Constraint.GetTp() {
 			case ast.ConstraintKey, ast.ConstraintIndex:
 				err = d.CreateIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
@@ -2784,7 +2784,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			var placementSettings *model.PlacementSettings
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
-				switch opt.Tp {
+				switch opt.GetTp() {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > shardRowIDBitsMax {
 						opt.UintValue = shardRowIDBitsMax
@@ -2830,7 +2830,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 					if placementSettings == nil {
 						placementSettings = &model.PlacementSettings{}
 					}
-					err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+					err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(opt.GetTp()), opt.StrValue, opt.UintValue)
 				case ast.TableOptionEngine:
 				default:
 					err = errUnsupportedAlterTableOption
@@ -2997,7 +2997,7 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 
 func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	for _, constraint := range col.Options {
-		switch constraint.Tp {
+		switch constraint.GetTp() {
 		case ast.ColumnOptionAutoIncrement:
 			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		case ast.ColumnOptionPrimaryKey:
@@ -3030,7 +3030,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		}
 		return nil, err
 	}
-	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(colName, specNewColumn.GetTp()); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
@@ -3422,9 +3422,9 @@ func checkFieldTypeCompatible(ft *types.FieldTypeBuilder, other *types.FieldType
 	// int(1) could match the type with int(8)
 	partialEqual := ft.Tp == other.Tp &&
 		ft.Decimal == other.Decimal &&
-		ft.Charset == other.Charset &&
+		ft.GetCharset() == other.Charset &&
 		ft.Collate == other.Collate &&
-		(ft.Flen == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
+		(ft.GetFlen() == other.Flen || ft.StorageLength() != types.VarStorageLen) &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag) &&
 		mysql.HasAutoIncrementFlag(ft.Flag) == mysql.HasAutoIncrementFlag(other.Flag) &&
 		mysql.HasNotNullFlag(ft.Flag) == mysql.HasNotNullFlag(other.Flag) &&
@@ -3846,8 +3846,8 @@ func CheckModifyTypeCompatible(origin *types.FieldTypeBuilder, to *types.FieldTy
 	}
 
 	// Check if different type can directly convert and no need to reorg.
-	stringToString := types.IsString(origin.Tp) && types.IsString(to.Tp)
-	integerToInteger := mysql.IsIntegerType(origin.Tp) && mysql.IsIntegerType(to.Tp)
+	stringToString := types.IsString(origin.GetTp()) && types.IsString(to.GetTp())
+	integerToInteger := mysql.IsIntegerType(origin.GetTp()) && mysql.IsIntegerType(to.GetTp())
 	if stringToString || integerToInteger {
 		needReorg, reason := needReorgToChange(origin, to)
 		if !needReorg {
@@ -3863,14 +3863,14 @@ func CheckModifyTypeCompatible(origin *types.FieldTypeBuilder, to *types.FieldTy
 func needReorgToChange(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder) (needReorg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
-	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
+	if mysql.IsIntegerType(to.GetTp()) && mysql.IsIntegerType(origin.GetTp()) {
 		// For integers, we should ignore the potential display length represented by flen, using
 		// the default flen of the type.
-		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
-		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.GetTp())
+		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.GetTp())
 	}
 
-	if convertBetweenCharAndVarchar(origin.Tp, to.Tp) {
+	if convertBetweenCharAndVarchar(origin.Tp, to.GetTp()) {
 		return true, "conversion between char and varchar string needs reorganization"
 	}
 
@@ -3895,14 +3895,14 @@ func needReorgToChange(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilde
 }
 
 func checkTypeChangeSupported(origin *types.FieldTypeBuilder, to *types.FieldTypeBuilder) bool {
-	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
-		types.IsString(origin.Tp) || origin.Tp == mysql.TypeJSON) &&
+	if (types.IsTypeTime(origin.GetTp()) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		types.IsString(origin.GetTp()) || origin.Tp == mysql.TypeJSON) &&
 		to.Tp == mysql.TypeBit {
 		// TODO: Currently date/datetime/timestamp/time/year/string/json data type cast to bit are not compatible with mysql, should fix here after compatible.
 		return false
 	}
 
-	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+	if (types.IsTypeTime(origin.GetTp()) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
 		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble || origin.Tp == mysql.TypeJSON || origin.Tp == mysql.TypeBit) &&
 		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently date/datetime/timestamp/time/year/decimal/float/double/json/bit cast to enum/set are not support yet, should fix here after supported.
@@ -3911,7 +3911,7 @@ func checkTypeChangeSupported(origin *types.FieldTypeBuilder, to *types.FieldTyp
 
 	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit ||
 		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
-		(types.IsTypeTime(to.Tp)) {
+		(types.IsTypeTime(to.GetTp())) {
 		// TODO: Currently enum/set/bit/decimal/float/double cast to date/datetime/timestamp type are not support yet, should fix here after supported.
 		return false
 	}
@@ -4011,7 +4011,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	var err error
 	var hasNullFlag bool
 	for _, opt := range options {
-		switch opt.Tp {
+		switch opt.GetTp() {
 		case ast.ColumnOptionDefaultValue:
 			hasDefaultValue, err = setDefaultValue(ctx, col, opt)
 			if err != nil {
@@ -4030,7 +4030,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.Tp)
+			return errUnsupportedModifyColumn.GenWithStack("can't change column constraint - %v", opt.GetTp())
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
@@ -4066,7 +4066,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:
-			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.GetTp())))
 		}
 	}
 
@@ -4133,7 +4133,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.GetTp()); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4354,7 +4354,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 		}
 
 		prefixLength := types.UnspecifiedLength
-		if types.IsTypePrefixable(col.FieldTypeBuilder.Tp) && col.FieldTypeBuilder.Flen > ic.Length {
+		if types.IsTypePrefixable(col.FieldTypeBuilder.GetTp()) && col.FieldTypeBuilder.GetFlen() > ic.Length {
 			// When the index column is changed, prefix length is only valid
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
@@ -4406,7 +4406,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
 		}
 		if originCol.Tp != mysql.TypeLonglong {
-			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(originCol.Tp)))
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(originCol.GetTp())))
 		}
 		// Disallow changing from auto_random to auto_increment column.
 		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) {
@@ -4884,10 +4884,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		// nothing to do.
 		doNothing = true
 		for _, col := range tblInfo.Columns {
-			if col.Charset == charset.CharsetBin {
+			if col.GetCharset() == charset.CharsetBin {
 				continue
 			}
-			if col.Charset == toCharset && col.Collate == toCollate {
+			if col.GetCharset() == toCharset && col.Collate == toCollate {
 				continue
 			}
 			doNothing = false
@@ -4921,7 +4921,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 				return doNothing, err
 			}
 		}
-		if col.Charset == charset.CharsetBin {
+		if col.GetCharset() == charset.CharsetBin {
 			continue
 		}
 		if len(col.Charset) == 0 {
@@ -5900,7 +5900,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		}
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		vkind := val.Kind()
-		switch colType.Tp {
+		switch colType.GetTp() {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
@@ -6424,7 +6424,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 	var placementSettings *model.PlacementSettings
 	if spec.Options != nil {
 		for _, op := range spec.Options {
-			switch op.Tp {
+			switch op.GetTp() {
 			case ast.TableOptionPlacementPolicy:
 				policyRefInfo = &model.PolicyRefInfo{
 					Name: model.NewCIStr(op.StrValue),
@@ -6438,7 +6438,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 				if placementSettings == nil {
 					placementSettings = &model.PlacementSettings{}
 				}
-				err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+				err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.GetTp()), op.StrValue, op.UintValue)
 				if err != nil {
 					return err
 				}

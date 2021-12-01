@@ -401,7 +401,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 		col := ColumnToProto(c)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.FieldType.GetFlag())) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false
@@ -415,13 +415,13 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldTypeBuilder.Collate])),
-		ColumnLen: int32(c.FieldTypeBuilder.Flen),
-		Decimal:   int32(c.FieldTypeBuilder.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.GetCollate()])),
+		ColumnLen: int32(c.FieldType.GetFlen()),
+		Decimal:   int32(c.FieldType.GetDecimal()),
+		Flag:      int32(c.FieldType.GetFlag()),
+		Elems:     c.FieldType.GetElems(),
 	}
-	pc.Tp = int32(c.FieldTypeBuilder.Tp)
+	pc.Tp = int32(c.FieldType.GetTp())
 	return pc
 }
 

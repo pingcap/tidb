@@ -108,11 +108,11 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		iter := chunk.NewIterator4Chunk(e.result)
 		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
 			retType := e.Schema().Columns[colIdx].RetType
-			if !types.IsTypeVarchar(retType.Tp) {
+			if !types.IsTypeVarchar(retType.GetTp()) {
 				continue
 			}
 			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				if valLen := len(row.GetString(colIdx)); retType.Flen < valLen {
+				if valLen := len(row.GetString(colIdx)); retType.GetFlen() < valLen {
 					retType.Flen = valLen
 				}
 			}
@@ -128,7 +128,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ShowExec) fetchAll(ctx context.Context) error {
-	switch e.Tp {
+	switch e.GetTp() {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
 	case ast.ShowCollation:

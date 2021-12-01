@@ -335,7 +335,7 @@ func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
 	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
 		return info.Charset
 	}
-	if info.Charset == mysql.BinaryDefaultCollationID {
+	if info.GetCharset() == mysql.BinaryDefaultCollationID {
 		return mysql.BinaryDefaultCollationID
 	}
 	return uint16(mysql.CharsetNameToID(d.chsName))

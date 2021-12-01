@@ -141,7 +141,7 @@ func (col *column) parseColumn(cd *ast.ColumnDef) {
 
 func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 	for _, op := range ops {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionAutoIncrement:
 			col.table.uniqIndices[col.name] = col
 		case ast.ColumnOptionComment:
@@ -209,7 +209,7 @@ func (t *table) findCol(cols []*column, name string) *column {
 }
 
 func (t *table) parseTableConstraint(cons *ast.Constraint) {
-	switch cons.Tp {
+	switch cons.GetTp() {
 	case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintUniq,
 		ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 		for _, indexCol := range cons.Keys {

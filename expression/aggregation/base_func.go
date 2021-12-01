@@ -158,7 +158,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
 	}
 
-	switch a.Args[0].GetType().Tp {
+	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	case mysql.TypeDouble, mysql.TypeFloat:
@@ -181,17 +181,17 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
-	switch a.Args[0].GetType().Tp {
+	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
-		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+22, a.Args[0].GetType().Decimal
-		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
@@ -210,12 +210,12 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
-	switch a.Args[0].GetType().Tp {
+	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 		a.RetTp.Decimal = types.DivFracIncr
-		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().Tp)
-		a.RetTp.Flen = flen + types.DivFracIncr
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetTp())
+		a.RetTp.Flen = GetFlen() + types.DivFracIncr
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().Decimal < 0 {
@@ -224,7 +224,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
 		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
-		if a.Args[0].GetType().Flen < 0 {
+		if a.Args[0].GetType().GetFlen() < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeDouble, mysql.TypeFloat:
@@ -434,7 +434,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		// need to set a new variable for it to avoid modifying the
 		// definition in `infoschema`.
 		if col, ok := a.Args[i].(*expression.Column); ok {
-			col.RetType = types.NewFieldTypeBuilder(col.RetType.Tp)
+			col.RetType = types.NewFieldTypeBuilder(col.RetType.GetTp())
 		}
 		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.

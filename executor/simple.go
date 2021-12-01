@@ -1551,7 +1551,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 }
 
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
-	switch s.Tp {
+	switch s.GetTp() {
 	case ast.FlushTables:
 		if s.ReadLock {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")

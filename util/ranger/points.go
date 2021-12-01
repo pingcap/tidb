@@ -416,7 +416,7 @@ func handleBoundCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (typ
 		return val, op, true
 	}
 
-	switch ft.Tp {
+	switch ft.GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !isNegative && val.GetUint64() > math.MaxInt64 {
 			switch op {
@@ -688,7 +688,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := &point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
+	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.GetFlen()))
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := &point{excl: true}
@@ -698,7 +698,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
+			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.GetFlen()))
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
@@ -727,7 +727,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 			return nil
 		}
 		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
-			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.GetTp())
 		}
 		// negative ranges can be directly ignored for unsigned int columns.
 		if isUnsignedIntCol {

@@ -115,13 +115,13 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldTypeB
 
 // GetLower gets the lower bound of bucket `idx`.
 func (hg *Histogram) GetLower(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.Tp)
+	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.GetTp())
 	return &d
 }
 
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
+	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.GetTp())
 	return &d
 }
 
@@ -155,7 +155,7 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	switch c.Histogram.Tp.Tp {
+	switch c.Histogram.Tp.GetTp() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
@@ -173,7 +173,7 @@ func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	fixedLen := chunk.GetFixedLen(c.Histogram.GetTp())
 	if fixedLen != -1 {
 		return float64(fixedLen)
 	}
@@ -198,7 +198,7 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	size := chunk.GetFixedLen(c.Histogram.Tp)
+	size := chunk.GetFixedLen(c.Histogram.GetTp())
 	if size != -1 {
 		return float64(size) * notNullRatio
 	}
@@ -256,7 +256,7 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		d := row.GetDatum(0, hg.Tp)
+		d := row.GetDatum(0, hg.GetTp())
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -440,7 +440,7 @@ func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count 
 		return hg.notNullCount() / float64(hg.NDV), false
 	}
 	if match {
-		cmp := chunk.GetCompareFunc(hg.Tp)
+		cmp := chunk.GetCompareFunc(hg.GetTp())
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat), true
 		}
@@ -684,7 +684,7 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*range
 		// Split according to the lower bound.
 		cmp := chunk.Compare(lowerBound, 0, &ranges[0].LowVal[0])
 		if cmp > 0 {
-			lower := lowerBound.GetDatum(0, hg.Tp)
+			lower := lowerBound.GetDatum(0, hg.GetTp())
 			newRange := &ranger.Range{
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
@@ -1508,7 +1508,7 @@ func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHi
 			bkt.Repeat = cntPerVal
 		}
 		newHist.Buckets = append(newHist.Buckets, bkt)
-		switch newHist.Tp.EvalType() {
+		switch newHist.GetTp().EvalType() {
 		case types.ETString, types.ETDecimal, types.ETDatetime, types.ETTimestamp:
 			newHist.scalars = append(newHist.scalars, oldHist.scalars[boundIdx/2])
 		}
@@ -1992,7 +1992,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			if types.IsTypeTime(hists[0].Tp.Tp) {
+			if types.IsTypeTime(hists[0].Tp.GetTp()) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
 			} else {

@@ -138,7 +138,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
 			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
 		} else {
-			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
+			resultFieldType.Flen = maxlen(lhs.Flen, rhs.GetFlen())
 		}
 	}
 	// Fix decimal for int and string.
@@ -174,10 +174,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
 		decimal = mathutil.Max(decimal, args[i].GetType().Decimal)
-		if args[i].GetType().Flen == -1 {
+		if args[i].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[i].GetType().Flen)
+			flen = mathutil.Max(flen, args[i].GetType().GetFlen())
 		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[i].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
@@ -185,10 +185,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
 		decimal = mathutil.Max(decimal, args[l-1].GetType().Decimal)
-		if args[l-1].GetType().Flen == -1 {
+		if args[l-1].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
+			flen = mathutil.Max(flen, args[l-1].GetType().GetFlen())
 		}
 		isBinaryStr = isBinaryStr || types.IsBinaryStr(args[l-1].GetType())
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
@@ -206,7 +206,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
-		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
+		if fieldTp.GetCharset() == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
 			// When args are Json and Numerical type(eg. Int), the fieldTp is String.
 			// Both their charset/collation is binary, but the String need a default charset/collation.
 			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()

@@ -234,14 +234,6 @@ func IsNewFormat(rowData []byte) bool {
 
 // FieldTypeFromModelColumn creates a types.FieldTypeBuilder from model.ColumnInfo.
 // export for test case and CDC.
-func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldTypeBuilder {
-	return &types.FieldTypeBuilder{
-		Tp:      col.Tp,
-		Flag:    col.Flag,
-		Flen:    col.Flen,
-		Decimal: col.Decimal,
-		Elems:   col.Elems,
-		Charset: col.Charset,
-		Collate: col.Collate,
-	}
+func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
+	return &col.FieldType
 }

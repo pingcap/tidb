@@ -106,13 +106,13 @@ type ColumnInfo struct {
 	DefaultValue          interface{} `json:"default"`
 	DefaultValueBit       []byte      `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
-	DefaultIsExpr          bool                `json:"default_is_expr"`
-	GeneratedExprString    string              `json:"generated_expr_string"`
-	GeneratedStored        bool                `json:"generated_stored"`
-	Dependences            map[string]struct{} `json:"dependences"`
-	types.FieldTypeBuilder `json:"type"`
-	State                  SchemaState `json:"state"`
-	Comment                string      `json:"comment"`
+	DefaultIsExpr       bool                `json:"default_is_expr"`
+	GeneratedExprString string              `json:"generated_expr_string"`
+	GeneratedStored     bool                `json:"generated_stored"`
+	Dependences         map[string]struct{} `json:"dependences"`
+	types.FieldType     `json:"type"`
+	State               SchemaState `json:"state"`
+	Comment             string      `json:"comment"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -141,7 +141,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 // The mysql.TypeBit type supports the null default value.
 func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
 	c.OriginDefaultValue = value
-	if c.Tp == mysql.TypeBit {
+	if c.GetTp() == mysql.TypeBit {
 		if value == nil {
 			return nil
 		}
@@ -156,7 +156,7 @@ func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
 
 // GetOriginDefaultValue gets the origin default value.
 func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
-	if c.Tp == mysql.TypeBit && c.OriginDefaultValueBit != nil {
+	if c.GetTp() == mysql.TypeBit && c.OriginDefaultValueBit != nil {
 		// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted,
 		// because the content before json.Marshal is INCONSISTENT with the content after json.Unmarshal.
 		return string(c.OriginDefaultValueBit)
@@ -167,7 +167,7 @@ func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
 // SetDefaultValue sets the default value.
 func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	c.DefaultValue = value
-	if c.Tp == mysql.TypeBit {
+	if c.GetTp() == mysql.TypeBit {
 		// For mysql.TypeBit type, the default value storage format must be a string.
 		// Other value such as int must convert to string format first.
 		// The mysql.TypeBit type supports the null default value.
@@ -187,7 +187,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // Default value use to stored in DefaultValue field, but now,
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
-	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
+	if c.FieldType.GetTp() == mysql.TypeBit && c.DefaultValueBit != nil {
 		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue
@@ -195,11 +195,11 @@ func (c *ColumnInfo) GetDefaultValue() interface{} {
 
 // GetTypeDesc gets the description for column type.
 func (c *ColumnInfo) GetTypeDesc() string {
-	desc := c.FieldTypeBuilder.CompactStr()
-	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
+	desc := c.FieldType.CompactStr()
+	if mysql.HasUnsignedFlag(c.GetFlag()) && c.GetTp() != mysql.TypeBit && c.GetTp() != mysql.TypeYear {
 		desc += " unsigned"
 	}
-	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
+	if mysql.HasZerofillFlag(c.GetFlag()) && c.GetTp() != mysql.TypeYear {
 		desc += " zerofill"
 	}
 	return desc
@@ -540,7 +540,7 @@ func (t *TableInfo) Clone() *TableInfo {
 // GetPkName will return the pk name if pk exists.
 func (t *TableInfo) GetPkName() CIStr {
 	for _, colInfo := range t.Columns {
-		if mysql.HasPriKeyFlag(colInfo.Flag) {
+		if mysql.HasPriKeyFlag(colInfo.FieldType.GetFlag()) {
 			return colInfo.Name
 		}
 	}
@@ -551,7 +551,7 @@ func (t *TableInfo) GetPkName() CIStr {
 // Make sure PkIsHandle checked before call this method.
 func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	for _, colInfo := range t.Columns {
-		if mysql.HasPriKeyFlag(colInfo.Flag) {
+		if mysql.HasPriKeyFlag(colInfo.FieldType.GetFlag()) {
 			return colInfo
 		}
 	}
@@ -560,7 +560,7 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 
 func (t *TableInfo) GetAutoIncrementColInfo() *ColumnInfo {
 	for _, colInfo := range t.Columns {
-		if mysql.HasAutoIncrementFlag(colInfo.Flag) {
+		if mysql.HasAutoIncrementFlag(colInfo.FieldType.GetFlag()) {
 			return colInfo
 		}
 	}
@@ -572,7 +572,7 @@ func (t *TableInfo) IsAutoIncColUnsigned() bool {
 	if col == nil {
 		return false
 	}
-	return mysql.HasUnsignedFlag(col.Flag)
+	return mysql.HasUnsignedFlag(col.FieldType.GetFlag())
 }
 
 // ContainsAutoRandomBits indicates whether a table contains auto_random column.
@@ -585,7 +585,7 @@ func (t *TableInfo) IsAutoRandomBitColUnsigned() bool {
 	if !t.PKIsHandle || t.AutoRandomBits == 0 {
 		return false
 	}
-	return mysql.HasUnsignedFlag(t.GetPkColInfo().Flag)
+	return mysql.HasUnsignedFlag(t.GetPkColInfo().FieldType.GetFlag())
 }
 
 // Cols returns the columns of the table in public state.
@@ -625,9 +625,11 @@ func NewExtraHandleColInfo() *ColumnInfo {
 		ID:   ExtraHandleID,
 		Name: ExtraHandleName,
 	}
-	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
-	colInfo.Tp = mysql.TypeLonglong
-	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	var builder types.FieldTypeBuilder
+	builder.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	builder.Tp = mysql.TypeLonglong
+	builder.Flen, builder.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.FieldType = *builder.Build()
 	return colInfo
 }
 
@@ -637,8 +639,10 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 		ID:   ExtraPidColID,
 		Name: ExtraPartitionIdName,
 	}
-	colInfo.Tp = mysql.TypeLonglong
-	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	var builder types.FieldTypeBuilder
+	builder.Tp = mysql.TypeLonglong
+	builder.Flen, builder.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.FieldType = *builder.Build()
 	return colInfo
 }
 

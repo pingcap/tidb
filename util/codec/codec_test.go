@@ -1077,7 +1077,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	datums := make([]types.Datum, 0, len(table)+2)
 	tps := make([]*types.FieldTypeBuilder, 0, len(table)+2)
 	for _, t := range table {
-		tps = append(tps, t.tp)
+		tps = append(tps, t.GetTp())
 		d := types.NewDatum(t.value)
 		datums = append(datums, d)
 	}

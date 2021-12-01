@@ -119,7 +119,7 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 	// In partition table, union need to compute partial result into partial result.
 	// We can detect and handle this case by checking whether return type is string.
 
-	switch aggFuncDesc.RetTp.Tp {
+	switch aggFuncDesc.RetTp.GetTp() {
 	case mysql.TypeLonglong:
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode:
@@ -325,7 +325,7 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	// Build avg functions which consume the partial result of other avg
 	// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
-		switch aggFuncDesc.RetTp.Tp {
+		switch aggFuncDesc.RetTp.GetTp() {
 		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
@@ -354,7 +354,7 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
-		switch fieldType.Tp {
+		switch fieldType.GetTp() {
 		case mysql.TypeEnum:
 			return &firstRow4Enum{base}
 		case mysql.TypeSet:
@@ -365,7 +365,7 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		case types.ETInt:
 			return &firstRow4Int{base}
 		case types.ETReal:
-			switch fieldType.Tp {
+			switch fieldType.GetTp() {
 			case mysql.TypeFloat:
 				return &firstRow4Float32{base}
 			case mysql.TypeDouble:
@@ -408,7 +408,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
-		switch fieldType.Tp {
+		switch fieldType.GetTp() {
 		case mysql.TypeEnum:
 			return &maxMin4Enum{base}
 		case mysql.TypeSet:
@@ -422,7 +422,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			}
 			return &maxMin4Int{base}
 		case types.ETReal:
-			switch fieldType.Tp {
+			switch fieldType.GetTp() {
 			case mysql.TypeFloat:
 				return &maxMin4Float32{base}
 			case mysql.TypeDouble:

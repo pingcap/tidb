@@ -131,7 +131,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			continue
 		}
 		oldMemUsage := p.MemUsage()
-		switch dataType.Tp {
+		switch dataType.GetTp() {
 		case mysql.TypeLonglong:
 			val := row.GetInt64(0)
 			*(*int64)(unsafe.Pointer(&buf[0])) = val
@@ -139,7 +139,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			val := row.GetString(0)
 			buf = codec.EncodeCompactBytes(buf, hack.Slice(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetTp())
 		}
 
 		x := farm.Hash64(buf)
@@ -162,7 +162,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBu
 		}
 		val := ""
 		memDelta := int64(0)
-		switch dataType.Tp {
+		switch dataType.GetTp() {
 		case mysql.TypeLonglong:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size
@@ -199,7 +199,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBu
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetTp())
 		}
 		if valSet.Exist(val) {
 			memDeltas = append(memDeltas, int64(0))
@@ -250,7 +250,7 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 		memDelta += int64(len(key))
 
 		memDelta += aggfuncs.DefInterfaceSize
-		switch dataTypes[1].Tp {
+		switch dataTypes[1].GetTp() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
 		case mysql.TypeDouble:
@@ -269,7 +269,7 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefMyDecimalSize
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].GetTp())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -535,7 +535,7 @@ func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTyp
 }
 
 func getDataGenFunc(ft *types.FieldTypeBuilder) func(i int) types.Datum {
-	switch ft.Tp {
+	switch ft.GetTp() {
 	case mysql.TypeLonglong:
 		return func(i int) types.Datum { return types.NewIntDatum(int64(i)) }
 	case mysql.TypeFloat:

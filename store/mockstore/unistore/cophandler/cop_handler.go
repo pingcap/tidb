@@ -61,7 +61,7 @@ func HandleCopRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore
 // HandleCopRequest(after mpp test is supported), however, go does not support function overloading,
 // I have to rename it to HandleCopRequestWithMPPCtx.
 func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request, mppCtx *MPPCtx) *coprocessor.Response {
-	switch req.Tp {
+	switch req.GetTp() {
 	case kv.ReqTypeDAG:
 		if mppCtx != nil && mppCtx.TaskHandler != nil {
 			return HandleMPPDAGReq(dbReader, req, mppCtx)
@@ -307,7 +307,7 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int
 				selResp.ExecutionSummaries = execSummary
 				continue
 			}
-			switch executors[i].Tp {
+			switch executors[i].GetTp() {
 			case tipb.ExecType_TypeTableScan:
 				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
 			case tipb.ExecType_TypeIndexScan:

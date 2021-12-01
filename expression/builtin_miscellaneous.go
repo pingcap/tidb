@@ -529,7 +529,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf.tp.Flen = 16
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
@@ -1079,7 +1079,7 @@ func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 	bf.tp.Flen = 20 //64 bit unsigned
 	bf.tp.Flag |= mysql.UnsignedFlag
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 
 	sig := &builtinVitessHashSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VitessHash)
@@ -1127,7 +1127,7 @@ func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 
 	bf.tp.Flen = 16
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 	bf.tp.Decimal = 0
 	sig := &builtinUUIDToBinSig{bf}
 	return sig, nil

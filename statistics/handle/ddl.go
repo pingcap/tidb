@@ -31,7 +31,7 @@ import (
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
-	switch t.Tp {
+	switch t.GetTp() {
 	case model.ActionCreateTable, model.ActionTruncateTable:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {

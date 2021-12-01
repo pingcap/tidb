@@ -260,7 +260,7 @@ func TestFeedbackEncoding(t *testing.T) {
 	val, err := EncodeFeedback(q)
 	require.NoError(t, err)
 	rq := &QueryFeedback{}
-	require.NoError(t, DecodeFeedback(val, rq, nil, nil, hist.Tp))
+	require.NoError(t, DecodeFeedback(val, rq, nil, nil, hist.GetTp()))
 	for _, fb := range rq.Feedback {
 		fb.Lower.SetBytes(codec.EncodeInt(nil, fb.Lower.GetInt64()))
 		fb.Upper.SetBytes(codec.EncodeInt(nil, fb.Upper.GetInt64()))
@@ -275,7 +275,7 @@ func TestFeedbackEncoding(t *testing.T) {
 	require.NoError(t, err)
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
-	require.NoError(t, DecodeFeedback(val, rq, cms, nil, hist.Tp))
+	require.NoError(t, DecodeFeedback(val, rq, cms, nil, hist.GetTp()))
 	require.Equal(t, uint64(1), cms.QueryBytes(codec.EncodeInt(nil, 0)))
 	q.Feedback = q.Feedback[:1]
 	require.True(t, q.Equal(rq))

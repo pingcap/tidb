@@ -443,7 +443,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	sort.Slice(nodes, func(i int, j int) bool {
-		if r := compareType(nodes[i].Tp, nodes[j].Tp); r != 0 {
+		if r := compareType(nodes[i].Tp, nodes[j].GetTp()); r != 0 {
 			return r < 0
 		}
 		return nodes[i].ID < nodes[j].ID

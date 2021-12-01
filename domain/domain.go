@@ -462,7 +462,7 @@ func (do *Domain) topNSlowQueryLoop() {
 			do.slowQuery.Append(info)
 		case msg := <-do.slowQuery.msgCh:
 			req := msg.request
-			switch req.Tp {
+			switch req.GetTp() {
 			case ast.ShowSlowTop:
 				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
 			case ast.ShowSlowRecent:

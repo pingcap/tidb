@@ -58,7 +58,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldTypeBuilder, sc *stm
 		}
 		args = append(args, arg)
 	}
-	switch expr.Tp {
+	switch expr.GetTp() {
 	case tipb.ExprType_Sum:
 		return &sumFunction{aggFunction: newAggFunc(ast.AggFuncSum, args, false)}, nil
 	case tipb.ExprType_Count:
@@ -80,7 +80,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldTypeBuilder, sc *stm
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
 	}
-	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
+	return nil, errors.Errorf("Unknown aggregate function type %v", expr.GetTp())
 }
 
 // AggEvaluateContext is used to store intermediate result when calculating aggregate functions.

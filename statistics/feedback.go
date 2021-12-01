@@ -422,7 +422,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	}
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	min, max := types.GetMinValue(h.Tp), types.GetMaxValue(h.Tp)
+	min, max := types.GetMinValue(h.GetTp()), types.GetMaxValue(h.GetTp())
 	for _, fb := range feedback.Feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
@@ -891,7 +891,7 @@ func encodeColumnFeedback(q *QueryFeedback) (*queryFeedback, error) {
 func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var pb *queryFeedback
 	var err error
-	switch q.Tp {
+	switch q.GetTp() {
 	case PkType:
 		pb, err = encodePKFeedback(q)
 	case IndexType:
@@ -1061,7 +1061,7 @@ func setNextValue(d *types.Datum) {
 
 // SupportColumnType checks if the type of the column can be updated by feedback.
 func SupportColumnType(ft *types.FieldTypeBuilder) bool {
-	switch ft.Tp {
+	switch ft.GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

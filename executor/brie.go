@@ -260,7 +260,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	e.info.storage = cfg.Storage
 
 	for _, opt := range s.Options {
-		switch opt.Tp {
+		switch opt.GetTp() {
 		case ast.BRIEOptionRateLimit:
 			cfg.RateLimit = opt.UintValue
 		case ast.BRIEOptionConcurrency:
@@ -294,7 +294,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		e.backupCfg = &task.BackupConfig{Config: cfg}
 
 		for _, opt := range s.Options {
-			switch opt.Tp {
+			switch opt.GetTp() {
 			case ast.BRIEOptionLastBackupTS:
 				tso, err := b.parseTSString(opt.StrValue)
 				if err != nil {
@@ -321,7 +321,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case ast.BRIEKindRestore:
 		e.restoreCfg = &task.RestoreConfig{Config: cfg}
 		for _, opt := range s.Options {
-			switch opt.Tp {
+			switch opt.GetTp() {
 			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
 			}

@@ -38,7 +38,7 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType  *types.FieldTypeBuilder
+	RetType  *types.FieldType
 	Function builtinFunc
 	hashcode []byte
 }
@@ -90,7 +90,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // SupportReverseEval returns if this expression supports reversed evaluation.
 func (sf *ScalarFunction) SupportReverseEval() bool {
-	switch sf.RetType.Tp {
+	switch sf.RetType.GetTp() {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
@@ -144,10 +144,10 @@ func typeInferForNull(args []Expression) {
 	}
 	var isNull = func(expr Expression) bool {
 		cons, ok := expr.(*Constant)
-		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
+		return ok && cons.RetType.GetTp() == mysql.TypeNull && cons.Value.IsNull()
 	}
 	// Infer the actual field type of the NULL constant.
-	var retFieldTp *types.FieldTypeBuilder
+	var retFieldTp *types.FieldType
 	var hasNullArg bool
 	for i := len(args) - 1; i >= 0; i-- {
 		isNullArg := isNull(args[i])
@@ -246,22 +246,22 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
-func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTypeBuilder, args ...Expression) (Expression, error) {
+func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 1, funcName, retType, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
-func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldTypeBuilder, args ...Expression) (Expression, error) {
+func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 0, funcName, retType, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
-func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldTypeBuilder, args ...Expression) (Expression, error) {
+func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, -1, funcName, retType, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
-func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldTypeBuilder, args ...Expression) Expression {
+func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
 	terror.Log(err)
 	return expr
@@ -290,8 +290,13 @@ func (sf *ScalarFunction) Clone() Expression {
 }
 
 // GetType implements Expression interface.
-func (sf *ScalarFunction) GetType() *types.FieldTypeBuilder {
+func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
+}
+
+// SetType implements Expression interface.
+func (sf *ScalarFunction) SetType(tp *types.FieldType) {
+	sf.RetType = tp
 }
 
 // Equal implements Expression interface.

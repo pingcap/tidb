@@ -754,7 +754,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						d.SetBytes(val.Encoded)
 					} else {
 						var err error
-						if types.IsTypeTime(hists[0].Tp.Tp) {
+						if types.IsTypeTime(hists[0].Tp.GetTp()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.Tp, sc.TimeZone)
 						} else {

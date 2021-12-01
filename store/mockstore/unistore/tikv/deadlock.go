@@ -43,7 +43,7 @@ type DetectorServer struct {
 
 // Detect detects deadlock.
 func (ds *DetectorServer) Detect(req *deadlockPb.DeadlockRequest) *deadlockPb.DeadlockResponse {
-	switch req.Tp {
+	switch req.GetTp() {
 	case deadlockPb.DeadlockRequestType_Detect:
 		err := ds.Detector.Detect(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash, diagnosticContext{
 			key:              req.Entry.Key,

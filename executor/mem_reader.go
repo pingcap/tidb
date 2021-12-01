@@ -42,7 +42,7 @@ type memIndexReader struct {
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
 	addedRowsLen  int
-	retFieldTypes []*types.FieldTypeBuilder
+	retFieldTypes []*types.FieldType
 	outputOffset  []int
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
@@ -70,16 +70,16 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 }
 
 func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
-	tps := make([]*types.FieldTypeBuilder, 0, len(m.index.Columns)+1)
+	tps := make([]*types.FieldType, 0, len(m.index.Columns)+1)
 	cols := m.table.Columns
 	for _, col := range m.index.Columns {
-		tps = append(tps, &cols[col.Offset].FieldTypeBuilder)
+		tps = append(tps, &cols[col.Offset].FieldType)
 	}
 	switch {
 	case m.table.PKIsHandle:
 		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				tps = append(tps, &col.FieldTypeBuilder)
+			if mysql.HasPriKeyFlag(col.FieldType.GetFlag()) {
+				tps = append(tps, &col.FieldType)
 				break
 			}
 		}
@@ -87,10 +87,10 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 		pkIdx := tables.FindPrimaryIndex(m.table)
 		for _, pkCol := range pkIdx.Columns {
 			colInfo := m.table.Columns[pkCol.Offset]
-			tps = append(tps, &colInfo.FieldTypeBuilder)
+			tps = append(tps, &colInfo.FieldType)
 		}
 	default: // ExtraHandle Column tp.
-		tps = append(tps, types.NewFieldTypeBuilder(mysql.TypeLonglong))
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
@@ -119,9 +119,9 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	return m.addedRows, nil
 }
 
-func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldTypeBuilder) ([]types.Datum, error) {
+func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
 	hdStatus := tablecodec.HandleDefault
-	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
+	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
@@ -150,7 +150,7 @@ type memTableReader struct {
 	desc          bool
 	conditions    []expression.Expression
 	addedRows     [][]types.Datum
-	retFieldTypes []*types.FieldTypeBuilder
+	retFieldTypes []*types.FieldType
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
@@ -174,7 +174,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		col := us.columns[i]
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
@@ -247,7 +247,7 @@ func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.
 	ds := make([]types.Datum, 0, len(m.columns))
 	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldTypeBuilder, m.ctx.GetSessionVars().Location())
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +278,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID && !types.NeedRestoredData(&col.FieldTypeBuilder) {
+				if colID == col.ID && !types.NeedRestoredData(&col.FieldType) {
 					// Only try to decode handle when there is no corresponding column in the value.
 					// This is because the information in handle may be incomplete in some cases.
 					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
@@ -288,9 +288,9 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 					}
 				}
 			}
-		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
+		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.FieldType.GetFlag())) || id == model.ExtraHandleID {
 			var handleDatum types.Datum
-			if mysql.HasUnsignedFlag(col.Flag) {
+			if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
 				// PK column is Unsigned.
 				handleDatum = types.NewUintDatum(uint64(handle.IntValue()))
 			} else {
@@ -412,7 +412,7 @@ type memIndexLookUpReader struct {
 	table         table.Table
 	desc          bool
 	conditions    []expression.Expression
-	retFieldTypes []*types.FieldTypeBuilder
+	retFieldTypes []*types.FieldType
 
 	idxReader *memIndexReader
 
@@ -497,7 +497,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		col := m.columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}

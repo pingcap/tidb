@@ -221,7 +221,7 @@ func TestCollation(t *testing.T) {
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NotNil(t, f)
 	require.NoError(t, err)
-	require.Equal(t, 64, f.getRetTp().Flen)
+	require.Equal(t, 64, f.getRetTp().GetFlen())
 }
 
 func TestRowCount(t *testing.T) {
@@ -289,11 +289,11 @@ func TestLastInsertID(t *testing.T) {
 		}
 		tp := f.GetType()
 		require.NoError(t, err)
-		require.Equal(t, mysql.TypeLonglong, tp.Tp)
+		require.Equal(t, mysql.TypeLonglong, tp.GetTp())
 		require.Equal(t, charset.CharsetBin, tp.Charset)
 		require.Equal(t, charset.CollationBin, tp.Collate)
 		require.Equal(t, mysql.BinaryFlag, tp.Flag&mysql.BinaryFlag)
-		require.Equal(t, mysql.MaxIntWidth, tp.Flen)
+		require.Equal(t, mysql.MaxIntWidth, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)

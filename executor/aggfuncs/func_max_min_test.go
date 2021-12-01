@@ -43,7 +43,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuil
 		if row.IsNull(0) {
 			continue
 		}
-		switch dataType.Tp {
+		switch dataType.GetTp() {
 		case mysql.TypeString:
 			curVal := row.GetString(0)
 			if i == 0 {

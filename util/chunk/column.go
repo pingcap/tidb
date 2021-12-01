@@ -70,19 +70,19 @@ type Column struct {
 
 // ColumnAllocator defines an allocator for Column.
 type ColumnAllocator interface {
-	NewColumn(ft *types.FieldTypeBuilder, cap int) *Column
+	NewColumn(ft *types.FieldType, cap int) *Column
 }
 
 // DefaultColumnAllocator is the default implementation of ColumnAllocator.
 type DefaultColumnAllocator struct{}
 
 // NewColumn implements the ColumnAllocator interface.
-func (DefaultColumnAllocator) NewColumn(ft *types.FieldTypeBuilder, cap int) *Column {
+func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
 }
 
 // NewColumn creates a new column with the specific type and capacity.
-func NewColumn(ft *types.FieldTypeBuilder, cap int) *Column {
+func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
 }
 

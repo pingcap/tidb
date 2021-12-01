@@ -1254,7 +1254,7 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 			return false
 		}
 	}
-	switch col.FieldTypeBuilder.Tp {
+	switch col.FieldTypeBuilder.GetTp() {
 	case mysql.TypeBit:
 		switch kind {
 		case types.KindString:

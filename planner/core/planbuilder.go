@@ -1291,7 +1291,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, error) {
 	var ret Plan
 	var err error
-	switch as.Tp {
+	switch as.GetTp() {
 	case ast.AdminCheckTable, ast.AdminCheckIndex:
 		ret, err = b.buildAdminCheckTable(ctx, as)
 		if err != nil {
@@ -2541,7 +2541,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}.Init(b.ctx)
 	isView := false
 	isSequence := false
-	switch show.Tp {
+	switch show.GetTp() {
 	case ast.ShowTables, ast.ShowTableStatus:
 		if p.DBName == "" {
 			return nil, ErrNoDB
@@ -4220,7 +4220,7 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *expression.Schema, outputNames []*types.FieldName) {
 	var names []string
 	var ftypes []byte
-	switch s.Tp {
+	switch s.GetTp() {
 	case ast.ShowProcedureStatus:
 		return buildShowProcedureSchema()
 	case ast.ShowTriggers:

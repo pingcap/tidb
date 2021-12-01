@@ -104,7 +104,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuil
 
 		memDelta := int64(0)
 		memDelta += aggfuncs.DefInterfaceSize
-		switch dataType.Tp {
+		switch dataType.GetTp() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
 		case mysql.TypeDouble:
@@ -123,7 +123,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuil
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefMyDecimalSize
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetTp())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}

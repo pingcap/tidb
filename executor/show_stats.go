@@ -77,7 +77,7 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 		sb.WriteString("]")
 		colNames := sb.String()
 		var statsType, statsVal string
-		switch item.Tp {
+		switch item.GetTp() {
 		case ast.StatsTypeCorrelation:
 			statsType = "correlation"
 			statsVal = fmt.Sprintf("%f", item.ScalarVals)

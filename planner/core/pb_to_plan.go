@@ -62,7 +62,7 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 }
 
 func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err error) {
-	switch e.Tp {
+	switch e.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		p, err = b.pbToTableScan(e)
 	case tipb.ExecType_TypeSelection:

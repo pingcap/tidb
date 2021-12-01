@@ -147,7 +147,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if resultFieldType.Tp == mysql.TypeNull {
-		types.SetBinChsClnFlag(bf.tp)
+		types.SetBinChsClnFlag(bf.GetTp())
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
@@ -170,7 +170,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			if argIntLen > maxIntLen {
 				maxIntLen = argIntLen
 			}
-			if argTp.Flen > maxFlen || argTp.Flen == types.UnspecifiedLength {
+			if argTp.GetFlen() > maxFlen || argTp.GetFlen() == types.UnspecifiedLength {
 				maxFlen = argTp.Flen
 			}
 		}
@@ -189,7 +189,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			bf.tp.Flen = maxFlen
 		}
 		// Set the field length to maxFlen for other types.
-		if bf.tp.Flen > mysql.MaxDecimalWidth {
+		if bf.tp.GetFlen() > mysql.MaxDecimalWidth {
 			bf.tp.Flen = mysql.MaxDecimalWidth
 		}
 	}
@@ -397,7 +397,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 			cmpTp = types.ETDuration
 		} else {
 			for _, arg := range args {
-				if types.IsTypeTemporal(arg.GetType().Tp) {
+				if types.IsTypeTemporal(arg.GetType().GetTp()) {
 					hasTemporal = true
 					break
 				}
@@ -425,14 +425,14 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 		for i := range args {
 			item := args[i].GetType()
 			// Find the temporal value in the arguments but prefer DateTime value.
-			if types.IsTypeTemporal(item.Tp) {
+			if types.IsTypeTemporal(item.GetTp()) {
 				if temporalItem == nil || item.Tp == mysql.TypeDatetime {
 					temporalItem = item
 				}
 			}
 		}
 
-		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
+		if !types.IsTypeTemporal(aggType.GetTp()) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
 			cmpStringAsDatetime = true
 		}
@@ -1214,8 +1214,8 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldTypeBuilder) t
 	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
-	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.Tp) && rft.Tp == mysql.TypeYear ||
-		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp)) {
+	} else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.GetTp()) && rft.Tp == mysql.TypeYear ||
+		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.GetTp())) {
 		return types.ETDatetime
 	}
 	return types.ETReal
@@ -1230,7 +1230,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 	if (lhsEvalType.IsStringKind() && rhsFieldType.Tp == mysql.TypeJSON) ||
 		(lhsFieldType.Tp == mysql.TypeJSON && rhsEvalType.IsStringKind()) {
 		cmpType = types.ETJson
-	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.Tp) || types.IsTypeTime(rhsFieldType.Tp)) {
+	} else if cmpType == types.ETString && (types.IsTypeTime(lhsFieldType.GetTp()) || types.IsTypeTime(rhsFieldType.GetTp())) {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
@@ -1306,7 +1306,7 @@ func isTemporalColumn(expr Expression) bool {
 	if _, isCol := expr.(*Column); !isCol {
 		return false
 	}
-	if !types.IsTypeTime(ft.Tp) && ft.Tp != mysql.TypeDuration {
+	if !types.IsTypeTime(ft.GetTp()) && ft.Tp != mysql.TypeDuration {
 		return false
 	}
 	return true
@@ -1582,7 +1582,7 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 					op = symmetricOp[c.op]
 				}
 				if op == opcode.EQ || op == opcode.NullEQ {
-					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.GetTp()), col.RetType.GetTp()); err != nil {
 						args[i], args[1-i] = NewOne(), NewZero()
 						return args
 					}

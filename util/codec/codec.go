@@ -296,15 +296,15 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false)
 }
 
-func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldTypeBuilder, idx int) (flag byte, b []byte, err error) {
+func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
 		flag = NilFlag
 		return
 	}
-	switch tp.Tp {
+	switch tp.GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		flag = uvarintFlag
-		if !mysql.HasUnsignedFlag(tp.Flag) && row.GetInt64(idx) < 0 {
+		if !mysql.HasUnsignedFlag(tp.GetFlag()) && row.GetInt64(idx) < 0 {
 			flag = varintFlag
 		}
 		b = row.GetRaw(idx)
@@ -353,7 +353,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			return
 		}
 	case mysql.TypeEnum:
-		if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+		if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 			flag = uvarintFlag
 			v := uint64(row.GetEnum(idx).ToNumber())
 			b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
@@ -361,7 +361,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			flag = compactBytesFlag
 			v := uint64(row.GetEnum(idx).ToNumber())
 			str := ""
-			if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+			if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
 				// str will be empty string if v out of definition of enum.
 				str = enum.Name
 			}
@@ -369,7 +369,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		}
 	case mysql.TypeSet:
 		flag = compactBytesFlag
-		s, err := types.ParseSetValue(tp.Elems, row.GetSet(idx).Value)
+		s, err := types.ParseSetValue(tp.GetElems(), row.GetSet(idx).Value)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -384,24 +384,24 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		flag = jsonFlag
 		b = row.GetBytes(idx)
 	default:
-		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.Tp)
+		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.GetTp())
 	}
 	return
 }
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
-func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldTypeBuilder, colIdx int, buf []byte, isNull []bool) (err error) {
+func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
 	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil, false)
 }
 
 // HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
 // sel indicates which rows are selected. If it is nil, all rows are selected.
-func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldTypeBuilder, colIdx int, buf []byte,
+func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
 	isNull, sel []bool, ignoreNull bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
 	rows := chk.NumRows()
-	switch tp.Tp {
+	switch tp.GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		i64s := column.Int64s()
 		for i, v := range i64s {
@@ -413,7 +413,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = uvarintFlag
-				if !mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
+				if !mysql.HasUnsignedFlag(tp.GetFlag()) && v < 0 {
 					buf[0] = varintFlag
 				}
 				b = column.GetRaw(i)
@@ -568,7 +568,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
 				isNull[i] = !ignoreNull
-			} else if mysql.HasEnumSetAsIntFlag(tp.Flag) {
+			} else if mysql.HasEnumSetAsIntFlag(tp.GetFlag()) {
 				buf[0] = uvarintFlag
 				v := uint64(column.GetEnum(i).ToNumber())
 				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
@@ -576,7 +576,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
 				str := ""
-				if enum, err := types.ParseEnumValue(tp.Elems, v); err == nil {
+				if enum, err := types.ParseEnumValue(tp.GetElems(), v); err == nil {
 					// str will be empty string if v out of definition of enum.
 					str = enum.Name
 				}
@@ -598,7 +598,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = compactBytesFlag
-				s, err := types.ParseSetValue(tp.Elems, column.GetSet(i).Value)
+				s, err := types.ParseSetValue(tp.GetElems(), column.GetSet(i).Value)
 				if err != nil {
 					return err
 				}
@@ -659,14 +659,14 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			_, _ = h[i].Write(buf)
 		}
 	default:
-		return errors.Errorf("unsupport column type for encode %d", tp.Tp)
+		return errors.Errorf("unsupport column type for encode %d", tp.GetTp())
 	}
 	return
 }
 
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
-func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldTypeBuilder, colIdx []int, buf []byte) (err error) {
+func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
 	for i, idx := range colIdx {
 		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[i], idx)
@@ -688,8 +688,8 @@ func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allT
 // EqualChunkRow returns a boolean reporting whether row1 and row2
 // with their types and column index are logically equal.
 func EqualChunkRow(sc *stmtctx.StatementContext,
-	row1 chunk.Row, allTypes1 []*types.FieldTypeBuilder, colIdx1 []int,
-	row2 chunk.Row, allTypes2 []*types.FieldTypeBuilder, colIdx2 []int,
+	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
+	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
 	if len(colIdx1) != len(colIdx2) {
 		return false, errors.Errorf("Internal error: Hash columns count mismatch, col1: %d, col2: %d", len(colIdx1), len(colIdx2))
@@ -1042,7 +1042,7 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 }
 
 // DecodeOne decodes one value to chunk and returns the remained bytes.
-func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldTypeBuilder) (remain []byte, err error) {
+func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
@@ -1105,9 +1105,9 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldTypeBuild
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if ft.Decimal != types.UnspecifiedLength && frac > ft.Decimal {
+		if ft.GetDecimal() != types.UnspecifiedLength && frac > ft.GetDecimal() {
 			to := new(types.MyDecimal)
-			err := dec.Round(to, ft.Decimal, types.ModeHalfEven)
+			err := dec.Round(to, ft.GetDecimal(), types.ModeHalfEven)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -1120,7 +1120,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldTypeBuild
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.Decimal)}
+		v := types.Duration{Duration: time.Duration(r), Fsp: int8(ft.GetDecimal())}
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -1141,26 +1141,26 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldTypeBuild
 	return b, nil
 }
 
-func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder) {
-	switch ft.Tp {
+func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+	switch ft.GetTp() {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
+		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.GetDecimal())}
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)
 	}
 }
 
-func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder, loc *time.Location) error {
-	switch ft.Tp {
+func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) error {
+	switch ft.GetTp() {
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.GetTp(), int8(ft.GetDecimal()))
 		var err error
 		err = t.FromPackedUint(val)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.GetTp() == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
 				return errors.Trace(err)
@@ -1169,19 +1169,19 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 		chk.AppendTime(colIdx, t)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(ft.Elems, val)
+		enum, err := types.ParseEnumValue(ft.GetElems(), val)
 		if err != nil {
 			enum = types.Enum{}
 		}
 		chk.AppendEnum(colIdx, enum)
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(ft.Elems, val)
+		set, err := types.ParseSetValue(ft.GetElems(), val)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		chk.AppendSet(colIdx, set)
 	case mysql.TypeBit:
-		byteSize := (ft.Flen + 7) >> 3
+		byteSize := (ft.GetFlen() + 7) >> 3
 		chk.AppendBytes(colIdx, types.NewBinaryLiteralFromUint(val, byteSize))
 	default:
 		chk.AppendUint64(colIdx, val)
@@ -1189,8 +1189,8 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	return nil
 }
 
-func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder) {
-	if ft.Tp == mysql.TypeFloat {
+func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+	if ft.GetTp() == mysql.TypeFloat {
 		chk.AppendFloat32(colIdx, float32(val))
 	} else {
 		chk.AppendFloat64(colIdx, val)
@@ -1199,7 +1199,7 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 
 // HashGroupKey encodes each row of this column and append encoded data into buf.
 // Only use in the aggregate executor.
-func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldTypeBuilder) ([][]byte, error) {
+func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
 	var err error
 	switch ft.EvalType() {
 	case types.ETInt:
@@ -1228,7 +1228,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = append(buf[i], NilFlag)
 			} else {
 				buf[i] = append(buf[i], decimalFlag)
-				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.Flen, ft.Decimal)
+				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.GetFlen(), ft.GetDecimal())
 				if terror.ErrorEqual(err, types.ErrTruncated) {
 					err = sc.HandleTruncate(err)
 				} else if terror.ErrorEqual(err, types.ErrOverflow) {
@@ -1286,14 +1286,14 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 }
 
 // ConvertByCollation converts these bytes according to its collation.
-func ConvertByCollation(raw []byte, tp *types.FieldTypeBuilder) []byte {
-	collator := collate.GetCollator(tp.Collate)
+func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
+	collator := collate.GetCollator(tp.GetCollate())
 	return collator.Key(string(hack.String(raw)))
 }
 
 // ConvertByCollationStr converts this string according to its collation.
-func ConvertByCollationStr(str string, tp *types.FieldTypeBuilder) string {
-	collator := collate.GetCollator(tp.Collate)
+func ConvertByCollationStr(str string, tp *types.FieldType) string {
+	collator := collate.GetCollator(tp.GetCollate())
 	return string(hack.String(collator.Key(str)))
 }
 

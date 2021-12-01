@@ -372,10 +372,10 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen == types.UnspecifiedLength {
+	if fld.Column.GetFlen() == types.UnspecifiedLength {
 		ci.ColumnLength = 0
 	} else {
-		ci.ColumnLength = uint32(fld.Column.Flen)
+		ci.ColumnLength = uint32(fld.Column.GetFlen())
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
@@ -384,7 +384,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if types.IsString(fld.Column.Tp) ||
+	} else if types.IsString(fld.Column.GetTp()) ||
 		fld.Column.Tp == mysql.TypeEnum || fld.Column.Tp == mysql.TypeSet { // issue #18870
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.

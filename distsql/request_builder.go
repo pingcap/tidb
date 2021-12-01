@@ -216,7 +216,7 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 }
 
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
-	switch builder.Tp {
+	switch builder.GetTp() {
 	case kv.ReqTypeAnalyze:
 		return kv.RC
 	}

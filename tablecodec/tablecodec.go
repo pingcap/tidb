@@ -363,7 +363,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 }
 
 // DecodeColumnValue decodes data to a Datum according to the column info.
-func DecodeColumnValue(data []byte, ft *types.FieldTypeBuilder, loc *time.Location) (types.Datum, error) {
+func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	_, d, err := codec.DecodeOne(data)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
@@ -376,7 +376,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldTypeBuilder, loc *time.Locati
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldTypeBuilder,
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
@@ -403,7 +403,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldTypeBuilder,
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
@@ -458,7 +458,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *tim
 // DecodeRowToDatumMap decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 // Default value columns, generated columns and handle columns are unprocessed.
-func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *time.Location) (map[int64]types.Datum, error) {
+func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
@@ -467,7 +467,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldTypeBuilder, loc *
 
 // DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
-	cols map[int64]*types.FieldTypeBuilder, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
@@ -500,11 +500,11 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 }
 
 // decodeHandleToDatum decodes a handle to a specific column datum.
-func decodeHandleToDatum(handle kv.Handle, ft *types.FieldTypeBuilder, idx int) (types.Datum, error) {
+func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
-		if mysql.HasUnsignedFlag(ft.Flag) {
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
 			d = types.NewUintDatum(uint64(handle.IntValue()))
 		} else {
 			d = types.NewIntDatum(handle.IntValue())
@@ -556,7 +556,7 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 }
 
 // UnflattenDatums converts raw datums to column datums.
-func UnflattenDatums(datums []types.Datum, fts []*types.FieldTypeBuilder, loc *time.Location) ([]types.Datum, error) {
+func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
 	for i, datum := range datums {
 		ft := fts[i]
 		uDatum, err := Unflatten(datum, ft, loc)
@@ -569,28 +569,28 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldTypeBuilder, loc *t
 }
 
 // Unflatten converts a raw datum to a column datum.
-func Unflatten(datum types.Datum, ft *types.FieldTypeBuilder, loc *time.Location) (types.Datum, error) {
+func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	if datum.IsNull() {
 		return datum, nil
 	}
-	switch ft.Tp {
+	switch ft.GetTp() {
 	case mysql.TypeFloat:
 		datum.SetFloat32(float32(datum.GetFloat64()))
 		return datum, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob,
 		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		datum.SetString(datum.GetString(), ft.Collate)
+		datum.SetString(datum.GetString(), ft.GetCollate())
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
 		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble:
 		return datum, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
+		t := types.NewTime(types.ZeroCoreTime, ft.GetTp(), int8(ft.GetDecimal()))
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+		if ft.GetTp() == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
 				return datum, errors.Trace(err)
@@ -600,27 +600,27 @@ func Unflatten(datum types.Datum, ft *types.FieldTypeBuilder, loc *time.Location
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: // duration should read fsp from column meta data
-		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.GetDecimal())}
 		datum.SetMysqlDuration(dur)
 		return datum, nil
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
-		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		enum, err := types.ParseEnumValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			enum = types.Enum{}
 		}
-		datum.SetMysqlEnum(enum, ft.Collate)
+		datum.SetMysqlEnum(enum, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeSet:
-		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
+		set, err := types.ParseSetValue(ft.GetElems(), datum.GetUint64())
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlSet(set, ft.Collate)
+		datum.SetMysqlSet(set, ft.GetCollate())
 		return datum, nil
 	case mysql.TypeBit:
 		val := datum.GetUint64()
-		byteSize := (ft.Flen + 7) >> 3
+		byteSize := (ft.GetFlen() + 7) >> 3
 		datum.SetUint64(0)
 		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
@@ -770,12 +770,12 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restor
 			newResults[i] = results[i]
 			continue
 		}
-		if collate.IsBinCollation(columns[i].Ft.Collate) {
+		if collate.IsBinCollation(columns[i].Ft.GetCollate()) {
 			noPaddingDatum, err := DecodeColumnValue(results[i], columns[i].Ft, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldTypeBuilder(mysql.TypeLonglong), nil)
+			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldType(mysql.TypeLonglong), nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -812,9 +812,9 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		copyColInfo := rowcodec.ColInfo{
 			ID: col.ID,
 		}
-		if collate.IsBinCollation(col.Ft.Collate) {
+		if collate.IsBinCollation(col.Ft.GetCollate()) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
-			copyColInfo.Ft = types.NewFieldTypeBuilder(mysql.TypeLonglong)
+			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
 		} else {
 			copyColInfo.Ft = allCols[i].Ft
 		}
@@ -1150,7 +1150,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		return pkColIds
 	}
 	for _, idxCol := range pkIdx.Columns {
-		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldTypeBuilder) {
+		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
 			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
@@ -1179,12 +1179,12 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 			col := tblInfo.Columns[idxCol.Offset]
 			// If  the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if types.NeedRestoredData(&col.FieldTypeBuilder) {
+			if types.NeedRestoredData(&col.FieldType) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.Collate) {
+				if collate.IsBinCollation(col.GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1301,19 +1301,19 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 		return
 	}
 	originalKind := v.Kind()
-	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
+	isUTF8Charset := tblCol.GetCharset() == charset.CharsetUTF8 || tblCol.GetCharset() == charset.CharsetUTF8MB4
 	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
 		rs := bytes.Runes(v.GetBytes())
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
-		v.SetString(truncateStr, tblCol.Collate)
+		v.SetString(truncateStr, tblCol.GetCollate())
 		if v.Kind() == types.KindBytes {
 			v.SetBytes(v.GetBytes())
 		}
 	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
 		v.SetBytes(v.GetBytes()[:idxCol.Length])
 		if originalKind == types.KindString {
-			v.SetString(v.GetString(), tblCol.Collate)
+			v.SetString(v.GetString(), tblCol.GetCollate())
 		}
 	}
 }

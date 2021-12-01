@@ -91,7 +91,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 		startSetFlag bool
 	)
 	for _, op := range seqOptions {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.SequenceOptionIncrementBy:
 			sequenceInfo.Increment = op.IntValue
 		case ast.SequenceStartWith:
@@ -170,7 +170,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 
 	// Handle table comment options.
 	for _, op := range stmt.TblOptions {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.TableOptionComment:
 			sequenceInfo.Comment = op.StrValue
 		case ast.TableOptionEngine:
@@ -194,7 +194,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	)
 	// Override the old sequence value with new option.
 	for _, op := range sequenceOptions {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.SequenceOptionIncrementBy:
 			oldSequence.Increment = op.IntValue
 		case ast.SequenceStartWith:

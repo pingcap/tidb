@@ -75,7 +75,7 @@ func (dn *dmlNode) dmlStatement() {}
 // Expression implementations should embed it in.
 type exprNode struct {
 	node
-	Type types.FieldTypeBuilder
+	Type *types.FieldType
 	flag uint64
 }
 
@@ -83,13 +83,13 @@ type exprNode struct {
 type TexprNode = exprNode
 
 // SetType implements ExprNode interface.
-func (en *exprNode) SetType(tp *types.FieldTypeBuilder) {
-	en.Type = *tp
+func (en *exprNode) SetType(tp *types.FieldType) {
+	en.Type = tp
 }
 
 // GetType implements ExprNode interface.
-func (en *exprNode) GetType() *types.FieldTypeBuilder {
-	return &en.Type
+func (en *exprNode) GetType() *types.FieldType {
+	return en.Type
 }
 
 // SetFlag implements ExprNode interface.

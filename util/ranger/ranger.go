@@ -541,7 +541,7 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder) bool
 // We cannot use the FieldTypeBuilder of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldTypeBuilder of column a.
 func newFieldTypeBuilder(tp *types.FieldTypeBuilder) *types.FieldTypeBuilder {
-	switch tp.Tp {
+	switch tp.GetTp() {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		newTp := types.NewFieldTypeBuilder(mysql.TypeLonglong)

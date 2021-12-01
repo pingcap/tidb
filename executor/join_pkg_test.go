@@ -39,7 +39,7 @@ func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 			rows: casTest.rows,
 			ctx:  casTest.ctx,
 			genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
-				switch typ.Tp {
+				switch typ.GetTp() {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					return int64(row)
 				case mysql.TypeDouble:

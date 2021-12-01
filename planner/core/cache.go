@@ -158,7 +158,7 @@ func (s FieldSlice) Equal(tps []*types.FieldTypeBuilder) bool {
 	for i := range tps {
 		// We only use part of logic of `func (ft *FieldTypeBuilder) Equal(other *FieldTypeBuilder)` here because (1) only numeric and
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
-		tpEqual := (s[i].Tp == tps[i].Tp) ||
+		tpEqual := (s[i].Tp == tps[i].GetTp()) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
 			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
 			// TypeNull should be considered the same as other types.

@@ -689,18 +689,18 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	needTruncationOrToggleSign := func() bool {
-		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
+		return (newCol.GetFlen() > 0 && newCol.GetFlen() < oldCol.GetFlen()) || (toUnsigned != originUnsigned)
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
-	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
-	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetTp())
+	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.GetTp())
 	needTruncationOrToggleSignForInteger := func() bool {
 		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
 	if oldCol.Tp == newCol.Tp {
-		switch oldCol.Tp {
+		switch oldCol.GetTp() {
 		case mysql.TypeNewDecimal:
 			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
 			// cut to eliminate data reorg change for column type change between decimal.
@@ -719,24 +719,24 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return needTruncationOrToggleSign()
 	}
 
-	if convertBetweenCharAndVarchar(oldCol.Tp, newCol.Tp) {
+	if convertBetweenCharAndVarchar(oldCol.Tp, newCol.GetTp()) {
 		return true
 	}
 
 	// Deal with the different type.
-	switch oldCol.Tp {
+	switch oldCol.GetTp() {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch newCol.Tp {
+		switch newCol.GetTp() {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			return needTruncationOrToggleSign()
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch newCol.Tp {
+		switch newCol.GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSignForInteger()
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
-		switch newCol.Tp {
+		switch newCol.GetTp() {
 		case mysql.TypeFloat, mysql.TypeDouble:
 			return needTruncationOrToggleSign()
 		}
@@ -919,8 +919,8 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			newIdxChangingCol := newIdxInfo.Columns[offsets[i]]
 			newIdxChangingCol.Name = newColName
 			newIdxChangingCol.Offset = jobParam.changingCol.Offset
-			canPrefix := types.IsTypePrefixable(jobParam.changingCol.Tp)
-			if !canPrefix || (canPrefix && jobParam.changingCol.Flen < newIdxChangingCol.Length) {
+			canPrefix := types.IsTypePrefixable(jobParam.changingCol.GetTp())
+			if !canPrefix || (canPrefix && jobParam.changingCol.GetFlen() < newIdxChangingCol.Length) {
 				newIdxChangingCol.Length = types.UnspecifiedLength
 			}
 			jobParam.changingIdxs = append(jobParam.changingIdxs, newIdxInfo)
@@ -974,7 +974,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
+			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.GetTp())
 			if err != nil {
 				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -1018,7 +1018,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
+			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.GetTp())
 			if err != nil {
 				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -1483,7 +1483,7 @@ func (w *worker) doModifyColumn(
 		}
 
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.Tp)
+		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol.Name, oldCol.Tp != newCol.GetTp())
 		if err != nil {
 			if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -1837,7 +1837,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		switch col.Tp {
+		switch col.GetTp() {
 		// Just use enum field's first element for OriginDefaultValue.
 		case mysql.TypeEnum:
 			defEnum, verr := types.ParseEnumValue(col.FieldTypeBuilder.Elems, 1)

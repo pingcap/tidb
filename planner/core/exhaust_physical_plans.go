@@ -1244,7 +1244,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 		ijHelper.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if ijHelper.curIdxOff2KeyOff[i] >= 0 {
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
-			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.Tp) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.Tp) {
+			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetTp()) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetTp()) {
 				_, coll := expression.DeriveCollationFromExprs(nil, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
 				if !collate.CompatibleCollate(idxCol.GetType().Collate, coll) {
 					ijHelper.curIdxOff2KeyOff[i] = -1

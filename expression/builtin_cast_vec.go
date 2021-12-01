@@ -616,7 +616,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		tm, err := duration.ConvertToTime(stmtCtx, b.tp.Tp)
+		tm, err := duration.ConvertToTime(stmtCtx, b.tp.GetTp())
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -1478,7 +1478,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := times[i].Convert(stmt, b.tp.Tp)
+		res, err := times[i].Convert(stmt, b.tp.GetTp())
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -1494,7 +1494,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if b.tp.Tp == mysql.TypeDate {
 			// Truncate hh:mm:ss part if the type is Date.
 			times[i].SetCoreTime(types.FromDate(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0))
-			times[i].SetType(b.tp.Tp)
+			times[i].SetType(b.tp.GetTp())
 		}
 	}
 	return nil

@@ -1058,7 +1058,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 				if strings.HasSuffix(rule.item, "duration") {
 					detail = fmt.Sprintf("max duration of %s %s %s is too slow", row.GetString(0), rule.tp, rule.item)
 				} else if strings.HasSuffix(rule.item, "hit") {
-					detail = fmt.Sprintf("min %s rate of %s %s is too low", rule.item, row.GetString(0), rule.tp)
+					detail = fmt.Sprintf("min %s rate of %s %s is too low", rule.item, row.GetString(0), rule.GetTp())
 				}
 			} else {
 				detail = fmt.Sprintf(detail, row.GetString(0))

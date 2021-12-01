@@ -31,7 +31,7 @@ import (
 func TestFieldType(t *testing.T) {
 	t.Parallel()
 	ft := NewFieldTypeBuilder(mysql.TypeDuration)
-	require.Equal(t, UnspecifiedLength, ft.Flen)
+	require.Equal(t, UnspecifiedLength, ft.GetFlen())
 	require.Equal(t, UnspecifiedLength, ft.Decimal)
 	ft.Decimal = 5
 	require.Equal(t, "time(5)", ft.String())
@@ -241,7 +241,7 @@ func TestHasCharsetFromStmt(t *testing.T) {
 		require.NoError(t, err)
 
 		col := stmt.(*ast.CreateTableStmt).Cols[0]
-		require.Equal(t, typ.hasCharset, HasCharset(col.Tp))
+		require.Equal(t, typ.hasCharset, HasCharset(col.GetTp()))
 	}
 }
 
@@ -273,7 +273,7 @@ func TestEnumSetFlen(t *testing.T) {
 		stmt, err := p.ParseOneStmt(fmt.Sprintf("create table t (e %v)", ca.sql), "", "")
 		require.NoError(t, err)
 		col := stmt.(*ast.CreateTableStmt).Cols[0]
-		require.Equal(t, ca.ex, col.Tp.Flen)
+		require.Equal(t, ca.ex, col.Tp.GetFlen())
 
 	}
 }

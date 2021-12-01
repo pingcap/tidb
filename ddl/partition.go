@@ -356,7 +356,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	var enable bool
-	switch s.Tp {
+	switch s.GetTp() {
 	case model.PartitionTypeRange:
 		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
@@ -381,7 +381,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.GetTp())))
 		return nil
 	}
 
@@ -454,7 +454,7 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
 	// when policy x is altered.
 	for _, opt := range options {
-		switch opt.Tp {
+		switch opt.GetTp() {
 		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
 			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
 			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
@@ -464,7 +464,7 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 			if partition.DirectPlacementOpts == nil {
 				partition.DirectPlacementOpts = &model.PlacementSettings{}
 			}
-			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.GetTp()), opt.StrValue, opt.UintValue)
 			if err != nil {
 				return err
 			}
@@ -2017,7 +2017,7 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 		if columnInfo == nil {
 			return nil, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
-		ts = append(ts, columnInfo.Tp)
+		ts = append(ts, columnInfo.GetTp())
 	}
 
 	return ts, nil

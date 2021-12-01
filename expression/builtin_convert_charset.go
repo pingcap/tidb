@@ -205,7 +205,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 
 func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, error) {
 	var transferString func([]byte) ([]byte, error)
-	if b.tp.Charset == charset.CharsetUTF8MB4 || b.tp.Charset == charset.CharsetUTF8 {
+	if b.tp.GetCharset() == charset.CharsetUTF8MB4 || b.tp.GetCharset() == charset.CharsetUTF8 {
 		transferString = func(s []byte) ([]byte, error) {
 			if !utf8.Valid(s) {
 				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
@@ -264,9 +264,9 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 		ast.Substring, ast.Mid, ast.Translate, ast.InsertFunc, ast.Lpad, ast.Rpad, ast.Elt, ast.ExportSet, ast.MakeSet,
 		ast.FindInSet, ast.Regexp, ast.Field, ast.Locate, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
 		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat:
-		if ec.Charset == charset.CharsetBin && expr.GetType().Charset != charset.CharsetBin {
+		if ec.GetCharset() == charset.CharsetBin && expr.GetType().Charset != charset.CharsetBin {
 			return BuildToBinaryFunction(ctx, expr)
-		} else if ec.Charset != charset.CharsetBin && expr.GetType().Charset == charset.CharsetBin {
+		} else if ec.Charset != charset.CharsetBin && expr.GetType().GetCharset() == charset.CharsetBin {
 			ft := expr.GetType().Clone()
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)

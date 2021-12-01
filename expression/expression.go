@@ -128,7 +128,10 @@ type Expression interface {
 	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
-	GetType() *types.FieldTypeBuilder
+	GetType() *types.FieldType
+
+	// SetType sets a new type to the expression.
+	SetType(tp *types.FieldType)
 
 	// Clone copies an expression totally.
 	Clone() Expression
@@ -219,7 +222,7 @@ func ExprNotNull(expr Expression) bool {
 	}
 	// For ScalarFunction, the result would not be correct until we support maintaining
 	// NotNull flag for it.
-	return mysql.HasNotNullFlag(expr.GetType().Flag)
+	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
@@ -402,7 +405,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -465,7 +468,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder, eType type
 				var err error
 				sVal := buf.GetString(i)
 				if tp.Hybrid() {
-					switch tp.Tp {
+					switch tp.GetTp() {
 					case mysql.TypeSet, mysql.TypeEnum:
 						fVal = float64(len(sVal))
 						if fVal == 0 {
@@ -473,7 +476,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder, eType type
 							// with 1. The index value of the empty string error value (distinguish from a "normal"
 							// empty string) is 0. Thus we need to check whether it's an empty string error value when
 							// `fVal==0`.
-							for idx, elem := range tp.Elems {
+							for idx, elem := range tp.GetElems() {
 								if elem == sVal {
 									fVal = float64(idx + 1)
 									break
@@ -701,7 +704,7 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 		return conditions[0]
 	}
 	expr := NewFunctionInternal(ctx, funcName,
-		types.NewFieldTypeBuilder(mysql.TypeTiny),
+		types.NewFieldType(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
 	return expr
@@ -811,7 +814,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		if !schema.Contains(x) {
 			return x
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldTypeBuilder(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
 			return FoldConstant(x)
@@ -837,7 +840,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 			find := false
 			for i, col := range tbl.Columns {
 				if idxCol.Name.L == col.Name.L {
-					if !mysql.HasNotNullFlag(col.Flag) {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
 						break
 					}
 					newKey = append(newKey, cols[i])
@@ -856,7 +859,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	}
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				keys = append(keys, KeyInfo{cols[i]})
 				break
 			}
@@ -880,7 +883,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  col.FieldTypeBuilder.Clone(),
+			RetType:  &col.FieldType,
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -924,7 +927,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldTypeBuilder) *ScalarFunction {
+func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
@@ -1008,11 +1011,11 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
-func isValidTiFlashDecimalType(tp *types.FieldTypeBuilder) bool {
-	if tp.Tp != mysql.TypeNewDecimal {
+func isValidTiFlashDecimalType(tp *types.FieldType) bool {
+	if tp.GetTp() != mysql.TypeNewDecimal {
 		return false
 	}
-	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
+	return tp.GetFlen() > 0 && tp.GetFlen() <= 65 && tp.GetDecimal() >= 0 && tp.GetDecimal() <= 30 && tp.GetFlen() >= tp.GetDecimal()
 }
 
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
@@ -1076,11 +1079,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
 			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
 			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
-			return (sourceType.Tp == retType.Tp && mysql.HasUnsignedFlag(sourceType.Flag) == mysql.HasUnsignedFlag(retType.Flag)) || retType.Tp == mysql.TypeLonglong
+			return (sourceType.GetTp() == retType.GetTp() && mysql.HasUnsignedFlag(sourceType.GetFlag()) == mysql.HasUnsignedFlag(retType.GetFlag())) || retType.GetTp() == mysql.TypeLonglong
 		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
 			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
 			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
-			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
+			return sourceType.GetTp() == retType.GetTp() || retType.GetTp() == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return isValidTiFlashDecimalType(function.RetType)
@@ -1090,7 +1093,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
 			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
-			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
+			return function.GetArgs()[0].GetType().GetTp() != mysql.TypeYear
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1252,13 +1255,13 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
-		switch expr.GetType().Tp {
+		switch expr.GetType().GetTp() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-			if expr.GetType().Tp == mysql.TypeEnum && canEnumPush {
+			if expr.GetType().GetTp() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().Tp) + "'."))
+				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetTp()) + "'."))
 			}
 			return false
 		}
@@ -1375,8 +1378,8 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
 		expr := args[0]
-		oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
-		newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
+		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
 		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
 		if newFlen < newDecimal {
 			newFlen = oldFlen - oldDecimal + newDecimal
@@ -1384,20 +1387,19 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 		if oldFlen != newFlen || oldDecimal != newDecimal {
 			if col, ok := args[0].(*Column); ok {
 				newCol := col.Clone()
-				newCol.(*Column).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
 			if col, ok := args[0].(*CorrelatedColumn); ok {
 				newCol := col.Clone()
-				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
-			if args[0].GetType().Tp == mysql.TypeNewDecimal {
+			if args[0].GetType().GetTp() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
 				}
 			}
-			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
+			builder := args[0].GetType().ToBuilder()
+			builder.Flen, builder.Decimal = newFlen, newDecimal
 		}
 	}
 }

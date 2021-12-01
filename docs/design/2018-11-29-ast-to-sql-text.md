@@ -89,7 +89,7 @@ and [ast.DropDatabaseStmt](https://github.com/pingcap/parser/blob/ce5a9247faef2b
 ```go
 // Restore implements Node interface.
 func (n *DatabaseOption) Restore(ctx *RestoreCtx) error {
-	switch n.Tp {
+	switch n.GetTp() {
 	case DatabaseOptionCharset:
 		ctx.WriteKeyWord("CHARACTER SET")
 		ctx.WritePlain(" = ")
@@ -99,7 +99,7 @@ func (n *DatabaseOption) Restore(ctx *RestoreCtx) error {
 		ctx.WritePlain(" = ")
 		ctx.WritePlain(n.Value)
 	default:
-		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
+		return errors.Errorf("invalid DatabaseOptionType: %d", n.GetTp())
 	}
 	return nil
 }

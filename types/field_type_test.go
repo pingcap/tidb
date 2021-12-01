@@ -26,7 +26,7 @@ func TestFieldType(t *testing.T) {
 	t.Parallel()
 
 	ft := NewFieldTypeBuilder(mysql.TypeDuration)
-	require.Equal(t, UnspecifiedLength, ft.Flen)
+	require.Equal(t, UnspecifiedLength, ft.GetFlen())
 	require.Equal(t, UnspecifiedLength, ft.Decimal)
 
 	ft.Decimal = 5
@@ -200,8 +200,8 @@ func TestDefaultTypeForValue(t *testing.T) {
 	for i, tt := range tests {
 		var ft FieldTypeBuilder
 		DefaultTypeForValue(tt.value, &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
-		require.Equalf(t, tt.tp, ft.Tp, "%v %v %v", i, ft.Tp, tt.tp)
-		require.Equalf(t, tt.flen, ft.Flen, "%v %v %v", i, ft.Flen, tt.flen)
+		require.Equalf(t, tt.tp, ft.Tp, "%v %v %v", i, ft.Tp, tt.GetTp())
+		require.Equalf(t, tt.flen, ft.Flen, "%v %v %v", i, ft.Flen, tt.GetFlen())
 		require.Equalf(t, tt.charset, ft.Charset, "%v %v %v", i, ft.Charset, tt.charset)
 		require.Equalf(t, tt.decimal, ft.Decimal, "%v %v %v", i, ft.Decimal, tt.decimal)
 		require.Equalf(t, tt.collation, ft.Collate, "%v %v %v", i, ft.Collate, tt.collation)
@@ -245,62 +245,62 @@ func TestAggFieldType(t *testing.T) {
 
 	for i := range fts {
 		aggTp := AggFieldType(fts[i : i+1])
-		require.Equal(t, fts[i].Tp, aggTp.Tp)
+		require.Equal(t, fts[i].Tp, aggTp.GetTp())
 
 		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], fts[i]})
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeDate:
-			require.Equal(t, mysql.TypeDate, aggTp.Tp)
+			require.Equal(t, mysql.TypeDate, aggTp.GetTp())
 		case mysql.TypeJSON:
-			require.Equal(t, mysql.TypeJSON, aggTp.Tp)
+			require.Equal(t, mysql.TypeJSON, aggTp.GetTp())
 		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeVarString:
-			require.Equal(t, mysql.TypeVarchar, aggTp.Tp)
+			require.Equal(t, mysql.TypeVarchar, aggTp.GetTp())
 		case mysql.TypeUnspecified:
-			require.Equal(t, mysql.TypeNewDecimal, aggTp.Tp)
+			require.Equal(t, mysql.TypeNewDecimal, aggTp.GetTp())
 		default:
-			require.Equal(t, fts[i].Tp, aggTp.Tp)
+			require.Equal(t, fts[i].Tp, aggTp.GetTp())
 		}
 
 		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeLong)})
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeYear, mysql.TypeInt24, mysql.TypeNull:
-			require.Equal(t, mysql.TypeLong, aggTp.Tp)
+			require.Equal(t, mysql.TypeLong, aggTp.GetTp())
 		case mysql.TypeLonglong:
-			require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+			require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 		case mysql.TypeFloat, mysql.TypeDouble:
-			require.Equal(t, mysql.TypeDouble, aggTp.Tp)
+			require.Equal(t, mysql.TypeDouble, aggTp.GetTp())
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet,
 			mysql.TypeVarString, mysql.TypeGeometry:
-			require.Equal(t, mysql.TypeVarchar, aggTp.Tp)
+			require.Equal(t, mysql.TypeVarchar, aggTp.GetTp())
 		case mysql.TypeBit:
-			require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+			require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 		case mysql.TypeString:
-			require.Equal(t, mysql.TypeString, aggTp.Tp)
+			require.Equal(t, mysql.TypeString, aggTp.GetTp())
 		case mysql.TypeUnspecified, mysql.TypeNewDecimal:
-			require.Equal(t, mysql.TypeNewDecimal, aggTp.Tp)
+			require.Equal(t, mysql.TypeNewDecimal, aggTp.GetTp())
 		case mysql.TypeTinyBlob:
-			require.Equal(t, mysql.TypeTinyBlob, aggTp.Tp)
+			require.Equal(t, mysql.TypeTinyBlob, aggTp.GetTp())
 		case mysql.TypeBlob:
-			require.Equal(t, mysql.TypeBlob, aggTp.Tp)
+			require.Equal(t, mysql.TypeBlob, aggTp.GetTp())
 		case mysql.TypeMediumBlob:
-			require.Equal(t, mysql.TypeMediumBlob, aggTp.Tp)
+			require.Equal(t, mysql.TypeMediumBlob, aggTp.GetTp())
 		case mysql.TypeLongBlob:
-			require.Equal(t, mysql.TypeLongBlob, aggTp.Tp)
+			require.Equal(t, mysql.TypeLongBlob, aggTp.GetTp())
 		}
 
 		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeJSON)})
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeJSON, mysql.TypeNull:
-			require.Equal(t, mysql.TypeJSON, aggTp.Tp)
+			require.Equal(t, mysql.TypeJSON, aggTp.GetTp())
 		case mysql.TypeLongBlob, mysql.TypeMediumBlob, mysql.TypeTinyBlob, mysql.TypeBlob:
-			require.Equal(t, mysql.TypeLongBlob, aggTp.Tp)
+			require.Equal(t, mysql.TypeLongBlob, aggTp.GetTp())
 		case mysql.TypeString:
-			require.Equal(t, mysql.TypeString, aggTp.Tp)
+			require.Equal(t, mysql.TypeString, aggTp.GetTp())
 		default:
-			require.Equal(t, mysql.TypeVarchar, aggTp.Tp)
+			require.Equal(t, mysql.TypeVarchar, aggTp.GetTp())
 		}
 	}
 }
@@ -314,23 +314,23 @@ func TestAggFieldTypeForTypeFlag(t *testing.T) {
 	}
 
 	aggTp := AggFieldType(types)
-	require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+	require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 	require.Equal(t, uint(0), aggTp.Flag)
 
 	types[0].Flag = mysql.NotNullFlag
 	aggTp = AggFieldType(types)
-	require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+	require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 	require.Equal(t, uint(0), aggTp.Flag)
 
 	types[0].Flag = 0
 	types[1].Flag = mysql.NotNullFlag
 	aggTp = AggFieldType(types)
-	require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+	require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 	require.Equal(t, uint(0), aggTp.Flag)
 
 	types[0].Flag = mysql.NotNullFlag
 	aggTp = AggFieldType(types)
-	require.Equal(t, mysql.TypeLonglong, aggTp.Tp)
+	require.Equal(t, mysql.TypeLonglong, aggTp.GetTp())
 	require.Equal(t, mysql.NotNullFlag, aggTp.Flag)
 }
 
@@ -352,24 +352,24 @@ func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
 		tps[0].Flag = 0
 		tps[1].Flag = 0
 		aggTp := AggFieldType(tps)
-		require.Equal(t, fts[i].Tp, aggTp.Tp)
+		require.Equal(t, fts[i].Tp, aggTp.GetTp())
 		require.Equal(t, uint(0), aggTp.Flag)
 
 		tps[0].Flag = mysql.UnsignedFlag
 		aggTp = AggFieldType(tps)
-		require.Equal(t, fts[i].Tp, aggTp.Tp)
+		require.Equal(t, fts[i].Tp, aggTp.GetTp())
 		require.Equal(t, uint(0), aggTp.Flag)
 
 		tps[0].Flag = mysql.UnsignedFlag
 		tps[1].Flag = mysql.UnsignedFlag
 		aggTp = AggFieldType(tps)
-		require.Equal(t, fts[i].Tp, aggTp.Tp)
+		require.Equal(t, fts[i].Tp, aggTp.GetTp())
 		require.Equal(t, mysql.UnsignedFlag, aggTp.Flag)
 
 		tps[0].Flag = 0
 		tps[1].Flag = mysql.UnsignedFlag
 		aggTp = AggFieldType(tps)
-		require.Equal(t, fts[i+1].Tp, aggTp.Tp)
+		require.Equal(t, fts[i+1].Tp, aggTp.GetTp())
 		require.Equal(t, uint(0), aggTp.Flag)
 	}
 }
@@ -411,7 +411,7 @@ func TestAggregateEvalType(t *testing.T) {
 	for i := range fts {
 		var flag uint
 		aggregatedEvalType := AggregateEvalType(fts[i:i+1], &flag)
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeUnspecified, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
@@ -433,7 +433,7 @@ func TestAggregateEvalType(t *testing.T) {
 
 		flag = 0
 		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], fts[i]}, &flag)
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeUnspecified, mysql.TypeNull, mysql.TypeTimestamp, mysql.TypeDate,
 			mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar,
 			mysql.TypeJSON, mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob,
@@ -454,7 +454,7 @@ func TestAggregateEvalType(t *testing.T) {
 		}
 		flag = 0
 		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeLong)}, &flag)
-		switch fts[i].Tp {
+		switch fts[i].GetTp() {
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeTinyBlob, mysql.TypeMediumBlob,

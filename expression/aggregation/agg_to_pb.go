@@ -110,7 +110,7 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 // PBExprToAggFuncDesc converts pb to aggregate function.
 func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldTypeBuilder) (*AggFuncDesc, error) {
 	var name string
-	switch aggFunc.Tp {
+	switch aggFunc.GetTp() {
 	case tipb.ExprType_Count:
 		name = ast.AggFuncCount
 	case tipb.ExprType_ApproxCountDistinct:
@@ -134,7 +134,7 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 	case tipb.ExprType_Agg_BitAnd:
 		name = ast.AggFuncBitAnd
 	default:
-		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.Tp)
+		return nil, errors.Errorf("unknown aggregation function type: %v", aggFunc.GetTp())
 	}
 
 	args, err := expression.PBToExprs(aggFunc.Children, fieldTps, ctx.GetSessionVars().StmtCtx)

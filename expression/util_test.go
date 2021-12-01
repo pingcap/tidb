@@ -588,6 +588,7 @@ func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 	return types.Datum{}, m.err
 }
 func (m *MockExpr) GetType() *types.FieldTypeBuilder                              { return m.t }
+func (m *MockExpr) SetType(tp *types.FieldTypeBuilder)                            { m.t = tp }
 func (m *MockExpr) Clone() Expression                                             { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
 func (m *MockExpr) IsCorrelated() bool                                            { return false }

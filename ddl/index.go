@@ -122,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 }
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
-	if col.Flen == 0 && (types.IsTypeChar(col.FieldTypeBuilder.Tp) || types.IsTypeVarchar(col.FieldTypeBuilder.Tp)) {
+	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldTypeBuilder.GetTp()) || types.IsTypeVarchar(col.FieldTypeBuilder.GetTp())) {
 		if col.Hidden {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
@@ -138,7 +138,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldTypeBuilder.Tp) {
+	if types.IsTypeBlob(col.FieldTypeBuilder.GetTp()) {
 		if indexColumnLen == types.UnspecifiedLength {
 			if col.Hidden {
 				return errFunctionalIndexOnBlob
@@ -151,14 +151,14 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length can only be specified for specifiable types.
-	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldTypeBuilder.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldTypeBuilder.GetTp()) {
 		return errors.Trace(errIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
 	if indexColumnLen != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldTypeBuilder.Tp) {
-		if col.Flen < indexColumnLen {
+		types.IsTypeChar(col.FieldTypeBuilder.GetTp()) {
+		if col.GetFlen() < indexColumnLen {
 			return errors.Trace(errIncorrectPrefixKey)
 		}
 		// Length must be non-zero for char.
@@ -167,7 +167,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
-	if types.IsString(col.FieldTypeBuilder.Tp) {
+	if types.IsString(col.FieldTypeBuilder.GetTp()) {
 		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return err
@@ -190,7 +190,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 		length = col.Flen
 	}
 
-	switch col.Tp {
+	switch col.GetTp() {
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:

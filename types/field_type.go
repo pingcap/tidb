@@ -30,8 +30,23 @@ const UnspecifiedLength = -1
 // ErrorLength is error length for blob or text.
 const ErrorLength = 0
 
+// FieldType records field type information.
+type FieldType = ast.FieldType
+
 // FieldTypeBuilder records field type information.
 type FieldTypeBuilder = ast.FieldTypeBuilder
+
+// NewFieldType returns a FieldType,
+// with a type and other information about field type.
+func NewFieldType(tp byte) *FieldType {
+	return NewFieldTypeBuilder(tp).Build()
+}
+
+// NewFieldTypeWithCollation returns a FieldType,
+// with a type and other information about field type.
+func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	return NewFieldTypeBuilderWithCollation(tp, collation, length).Build()
+}
 
 // NewFieldTypeBuilder returns a FieldTypeBuilder,
 // with a type and other information about field type.
@@ -61,24 +76,24 @@ func NewFieldTypeBuilderWithCollation(tp byte, collation string, length int) *Fi
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
-func AggFieldType(tps []*FieldTypeBuilder) *FieldTypeBuilder {
+func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldTypeBuilder
 	isMixedSign := false
 	for i, t := range tps {
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
-			currType = *t
+			currType = *t.ToBuilder()
 			continue
 		}
-		mtp := MergeFieldType(currType.Tp, t.Tp)
-		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.Flag) != mysql.HasUnsignedFlag(t.Flag))
+		mtp := MergeFieldType(currType.Tp, t.GetTp())
+		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.Flag) != mysql.HasUnsignedFlag(t.GetFlag()))
 		currType.Tp = mtp
-		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
+		currType.Flag = mergeTypeFlag(currType.Flag, t.GetFlag())
 	}
 	// integral promotion when tps contains signed and unsigned
 	if isMixedSign && IsTypeInteger(currType.Tp) {
 		bumpRange := false // indicate one of tps bump currType range
 		for _, t := range tps {
-			bumpRange = bumpRange || (mysql.HasUnsignedFlag(t.Flag) && (t.Tp == currType.Tp || t.Tp == mysql.TypeBit))
+			bumpRange = bumpRange || (mysql.HasUnsignedFlag(t.GetFlag()) && (t.GetTp() == currType.Tp || t.GetTp() == mysql.TypeBit))
 		}
 		if bumpRange {
 			switch currType.Tp {
@@ -100,11 +115,11 @@ func AggFieldType(tps []*FieldTypeBuilder) *FieldTypeBuilder {
 		currType.Flag |= mysql.UnsignedFlag
 	}
 
-	return &currType
+	return currType.Build()
 }
 
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
-func AggregateEvalType(fts []*FieldTypeBuilder, flag *uint) EvalType {
+func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	var (
 		aggregatedEvalType = ETString
 		unsigned           bool
@@ -113,21 +128,21 @@ func AggregateEvalType(fts []*FieldTypeBuilder, flag *uint) EvalType {
 	)
 	lft := fts[0]
 	for _, ft := range fts {
-		if ft.Tp == mysql.TypeNull {
+		if ft.GetTp() == mysql.TypeNull {
 			continue
 		}
 		et := ft.EvalType()
 		rft := ft
-		if (IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeChar(ft.Tp)) && mysql.HasBinaryFlag(ft.Flag) {
+		if (IsTypeBlob(ft.GetTp()) || IsTypeVarchar(ft.GetTp()) || IsTypeChar(ft.GetTp())) && mysql.HasBinaryFlag(ft.GetFlag()) {
 			gotBinString = true
 		}
 		if !gotFirst {
 			gotFirst = true
 			aggregatedEvalType = et
-			unsigned = mysql.HasUnsignedFlag(ft.Flag)
+			unsigned = mysql.HasUnsignedFlag(ft.GetFlag())
 		} else {
-			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, lft, rft, unsigned, mysql.HasUnsignedFlag(ft.Flag))
-			unsigned = unsigned && mysql.HasUnsignedFlag(ft.Flag)
+			aggregatedEvalType = mergeEvalType(aggregatedEvalType, et, lft, rft, unsigned, mysql.HasUnsignedFlag(ft.GetFlag()))
+			unsigned = unsigned && mysql.HasUnsignedFlag(ft.GetFlag())
 		}
 		lft = rft
 	}
@@ -136,12 +151,12 @@ func AggregateEvalType(fts []*FieldTypeBuilder, flag *uint) EvalType {
 	return aggregatedEvalType
 }
 
-func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldTypeBuilder, isLHSUnsigned, isRHSUnsigned bool) EvalType {
-	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
-		if lft.Tp == rft.Tp {
+func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSUnsigned bool) EvalType {
+	if lft.GetTp() == mysql.TypeUnspecified || rft.GetTp() == mysql.TypeUnspecified {
+		if lft.GetTp() == rft.GetTp() {
 			return ETString
 		}
-		if lft.Tp == mysql.TypeUnspecified {
+		if lft.GetTp() == mysql.TypeUnspecified {
 			lhs = rhs
 		} else {
 			rhs = lhs
@@ -175,7 +190,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldTypeBuilder) {
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp, mysql.DefaultCharset, mysql.DefaultCollationName)
-		if hasVariantFieldLength(tp) {
+		if hasVariantFieldLength(tp.Tp) {
 			tp.Flen = UnspecifiedLength
 		}
 		if tp.Tp == mysql.TypeUnspecified {
@@ -184,8 +199,8 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldTypeBuilder) {
 	}
 }
 
-func hasVariantFieldLength(tp *FieldTypeBuilder) bool {
-	switch tp.Tp {
+func hasVariantFieldLength(tp byte) bool {
+	switch tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
 		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
 		return true

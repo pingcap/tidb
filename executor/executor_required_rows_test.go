@@ -115,7 +115,7 @@ func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 }
 
 func defaultGenerator(valType *types.FieldTypeBuilder) interface{} {
-	switch valType.Tp {
+	switch valType.GetTp() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
 	case mysql.TypeDouble:
@@ -408,7 +408,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 	gen01 := func() func(valType *types.FieldTypeBuilder) interface{} {
 		closureCount := 0
 		return func(valType *types.FieldTypeBuilder) interface{} {
-			switch valType.Tp {
+			switch valType.GetTp() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				ret := int64(closureCount % 2)
 				closureCount++
@@ -615,7 +615,7 @@ func divGenerator(factor int) func(valType *types.FieldTypeBuilder) interface{} 
 	closureCountInt := 0
 	closureCountDouble := 0
 	return func(valType *types.FieldTypeBuilder) interface{} {
-		switch valType.Tp {
+		switch valType.GetTp() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			ret := int64(closureCountInt / factor)
 			closureCountInt++
@@ -691,7 +691,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 
 func (s *testExecSuite) TestMergeJoinRequiredRows(c *C) {
 	justReturn1 := func(valType *types.FieldTypeBuilder) interface{} {
-		switch valType.Tp {
+		switch valType.GetTp() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			return int64(1)
 		case mysql.TypeDouble:

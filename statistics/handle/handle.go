@@ -1130,7 +1130,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			return err
 		}
 		strColIDs := string(bytes)
-		switch item.Tp {
+		switch item.GetTp() {
 		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
 			statsStr = fmt.Sprintf("%f", item.ScalarVals)
 		case ast.StatsTypeDependency:
@@ -1622,7 +1622,7 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 }
 
 func (h *Handle) fillExtendedStatsItemVals(item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
-	switch item.Tp {
+	switch item.GetTp() {
 	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
 		return nil
 	case ast.StatsTypeCorrelation:
@@ -1727,7 +1727,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		}
 		strColIDs := string(bytes)
 		var statsStr string
-		switch item.Tp {
+		switch item.GetTp() {
 		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
 			statsStr = fmt.Sprintf("%f", item.ScalarVals)
 		case ast.StatsTypeDependency:

@@ -49,7 +49,7 @@ type baseBuiltinFunc struct {
 	bufAllocator columnBufferAllocator
 	args         []Expression
 	ctx          sessionctx.Context
-	tp           *types.FieldTypeBuilder
+	tp           *types.FieldType
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
@@ -103,7 +103,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldTypeBuilder(mysql.TypeUnspecified),
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
@@ -142,9 +142,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsString(ctx, args[i])
 			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
 		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldTypeBuilder(mysql.TypeDatetime))
+			args[i] = WrapWithCastAsTime(ctx, args[i], mysql.TypeDatetime)
 		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldTypeBuilder(mysql.TypeTimestamp))
+			args[i] = WrapWithCastAsTime(ctx, args[i], mysql.TypeTimestamp)
 		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
@@ -227,7 +227,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 
 		args: args,
 		ctx:  ctx,
-		tp:   fieldType,
+		tp:   fieldType.Build(),
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
@@ -236,9 +236,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
-// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldTypeBuilder charset and collation.
+// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
 // do not check and compute collation.
-func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldTypeBuilder, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -249,10 +249,10 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldTypeBuilder(mysql.TypeUnspecified),
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	bf.SetCharsetAndCollation(tp.Charset, tp.Collate)
-	bf.setCollator(collate.GetCollator(tp.Collate))
+	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
+	bf.setCollator(collate.GetCollator(tp.GetCollate()))
 	return bf, nil
 }
 
@@ -354,19 +354,25 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 	return b.childrenVectorized
 }
 
-func (b *baseBuiltinFunc) getRetTp() *types.FieldTypeBuilder {
+func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	switch b.tp.EvalType() {
 	case types.ETString:
-		if b.tp.Flen >= mysql.MaxBlobWidth {
-			b.tp.Tp = mysql.TypeLongBlob
-		} else if b.tp.Flen >= 65536 {
-			b.tp.Tp = mysql.TypeMediumBlob
+		if b.tp.GetFlen() >= mysql.MaxBlobWidth {
+			b.tp = b.tp.SetTp(mysql.TypeLongBlob)
+		} else if b.tp.GetFlen() >= 65536 {
+			b.tp = b.tp.SetTp(mysql.TypeMediumBlob)
 		}
-		if len(b.tp.Charset) <= 0 {
-			b.tp.Charset, b.tp.Collate = charset.GetDefaultCharsetAndCollate()
+		if len(b.tp.GetCharset()) <= 0 {
+			builder := b.tp.ToBuilder()
+			builder.Charset, builder.Collate = charset.GetDefaultCharsetAndCollate()
+			b.tp = builder.Build()
 		}
 	}
 	return b.tp
+}
+
+func (b *baseBuiltinFunc) setRetTp(tp *types.FieldType) {
+	b.tp = tp
 }
 
 func (b *baseBuiltinFunc) equal(fun builtinFunc) bool {
@@ -500,7 +506,9 @@ type builtinFunc interface {
 	// getCtx returns this function's context.
 	getCtx() sessionctx.Context
 	// getRetTp returns the return type of the built-in function.
-	getRetTp() *types.FieldTypeBuilder
+	getRetTp() *types.FieldType
+	// setRetTp sets the new return type to the built-in function.
+	setRetTp(tp *types.FieldType)
 	// setPbCode sets pbCode for signature.
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
@@ -927,25 +935,31 @@ func GetBuiltinList() []string {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
-	b.tp.Decimal = fsp
-	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
+	builder := b.tp.ToBuilder()
+	builder.Decimal = fsp
+	builder.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.Flen++
+		builder.Flen++
 	}
+	b.tp = builder.Build()
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
-	b.tp.Decimal = 0
-	b.tp.Flen = mysql.MaxDateWidth
-	b.tp.Tp = mysql.TypeDate
+	builder := b.tp.ToBuilder()
+	builder.Decimal = 0
+	builder.Flen = mysql.MaxDateWidth
+	builder.Tp = mysql.TypeDate
+	b.tp = builder.Build()
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
-	b.tp.Decimal = fsp
-	b.tp.Flen = mysql.MaxDurationWidthNoFsp + fsp
+	builder := b.tp.ToBuilder()
+	builder.Decimal = fsp
+	builder.Flen = mysql.MaxDurationWidthNoFsp + fsp
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.Flen++
+		builder.Flen++
 	}
+	b.tp = builder.Build()
 }

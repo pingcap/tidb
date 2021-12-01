@@ -218,7 +218,7 @@ func buildValueEvaluator(tp *types.FieldTypeBuilder) (ve valueEvaluator, memDelt
 	case types.ETInt:
 		return &value4Int{}, DefValue4IntSize
 	case types.ETReal:
-		switch tp.Tp {
+		switch tp.GetTp() {
 		case mysql.TypeFloat:
 			return &value4Float32{}, DefValue4Float32Size
 		case mysql.TypeDouble:
@@ -250,7 +250,7 @@ type partialResult4FirstValue struct {
 }
 
 func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	ve, veMemDelta := buildValueEvaluator(v.tp)
+	ve, veMemDelta := buildValueEvaluator(v.GetTp())
 	p := &partialResult4FirstValue{evaluator: ve}
 	return PartialResult(p), DefPartialResult4FirstValueSize + veMemDelta
 }
@@ -297,7 +297,7 @@ type partialResult4LastValue struct {
 }
 
 func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	ve, veMemDelta := buildValueEvaluator(v.tp)
+	ve, veMemDelta := buildValueEvaluator(v.GetTp())
 	p := &partialResult4FirstValue{evaluator: ve}
 	return PartialResult(p), DefPartialResult4LastValueSize + veMemDelta
 }
@@ -342,7 +342,7 @@ type partialResult4NthValue struct {
 }
 
 func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	ve, veMemDelta := buildValueEvaluator(v.tp)
+	ve, veMemDelta := buildValueEvaluator(v.GetTp())
 	p := &partialResult4FirstValue{evaluator: ve}
 	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
 }

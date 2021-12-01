@@ -25,7 +25,7 @@ import (
 )
 
 func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldTypeBuilder) (memDelta int64) {
-	switch dataType.Tp {
+	switch dataType.GetTp() {
 	case mysql.TypeString:
 		memDelta = int64(len(row.GetString(0)))
 	case mysql.TypeJSON:

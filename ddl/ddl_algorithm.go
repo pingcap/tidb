@@ -71,7 +71,7 @@ func getProperAlgorithm(specify ast.AlgorithmType, algorithm *AlterAlgorithm) (a
 // E.g. INSTANT may be returned if specify=INPLACE
 // If failed to choose any valid algorithm, AlgorithmTypeDefault and errAlterOperationNotSupported will be returned
 func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlgorithmType) (ast.AlgorithmType, error) {
-	switch alterSpec.Tp {
+	switch alterSpec.GetTp() {
 	// For now, TiDB only support inplace algorithm and instant algorithm.
 	case ast.AlterTableAddConstraint:
 		return getProperAlgorithm(specify, inplaceAlgorithm)

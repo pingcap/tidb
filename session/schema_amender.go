@@ -145,9 +145,9 @@ func needCollectModifyColOps(actionType uint64) bool {
 func fieldTypeDeepEquals(ft1 *types.FieldTypeBuilder, ft2 *types.FieldTypeBuilder) bool {
 	if ft1.Tp == ft2.Tp &&
 		ft1.Flag == ft2.Flag &&
-		ft1.Flen == ft2.Flen &&
+		ft1.GetFlen() == ft2.Flen &&
 		ft1.Decimal == ft2.Decimal &&
-		ft1.Charset == ft2.Charset &&
+		ft1.GetCharset() == ft2.Charset &&
 		ft1.Collate == ft2.Collate &&
 		len(ft1.Elems) == len(ft2.Elems) {
 		for i, elem := range ft1.Elems {

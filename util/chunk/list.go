@@ -22,7 +22,7 @@ import (
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
 type List struct {
-	fieldTypes    []*types.FieldTypeBuilder
+	fieldTypes    []*types.FieldType
 	initChunkSize int
 	maxChunkSize  int
 	length        int
@@ -41,7 +41,7 @@ type RowPtr struct {
 }
 
 // NewList creates a new List with field types, init chunk size and max chunk size.
-func NewList(fieldTypes []*types.FieldTypeBuilder, initChunkSize, maxChunkSize int) *List {
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
 	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
@@ -68,7 +68,7 @@ func (l *List) NumChunks() int {
 }
 
 // FieldTypes returns the fieldTypes of the list
-func (l *List) FieldTypes() []*types.FieldTypeBuilder {
+func (l *List) FieldTypes() []*types.FieldType {
 	return l.fieldTypes
 }
 

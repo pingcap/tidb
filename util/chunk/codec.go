@@ -31,11 +31,11 @@ type Codec struct {
 	// colTypes is used to check whether a Column is fixed sized and what the
 	// fixed size for every element.
 	// NOTE: It's only used for decoding.
-	colTypes []*types.FieldTypeBuilder
+	colTypes []*types.FieldType
 }
 
 // NewCodec creates a new Codec object for encode or decode a Chunk.
-func NewCodec(colTypes []*types.FieldTypeBuilder) *Codec {
+func NewCodec(colTypes []*types.FieldType) *Codec {
 	return &Codec{colTypes}
 }
 
@@ -169,8 +169,8 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 // varElemLen indicates this Column is a variable length Column.
 const varElemLen = -1
 
-func getFixedLen(colType *types.FieldTypeBuilder) int {
-	switch colType.Tp {
+func getFixedLen(colType *types.FieldType) int {
+	switch colType.GetTp() {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
@@ -187,7 +187,7 @@ func getFixedLen(colType *types.FieldTypeBuilder) int {
 
 // GetFixedLen get the memory size of a fixed-length type.
 // if colType is not fixed-length, it returns varElemLen, aka -1.
-func GetFixedLen(colType *types.FieldTypeBuilder) int {
+func GetFixedLen(colType *types.FieldType) int {
 	return getFixedLen(colType)
 }
 
@@ -196,14 +196,14 @@ func GetFixedLen(colType *types.FieldTypeBuilder) int {
 // it's OK (and expected) to guess if we don't know for sure.
 //
 // mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
-func EstimateTypeWidth(colType *types.FieldTypeBuilder) int {
+func EstimateTypeWidth(colType *types.FieldType) int {
 	colLen := getFixedLen(colType)
 	// Easy if it's a fixed-width type
 	if colLen != varElemLen {
 		return colLen
 	}
 
-	colLen = colType.Flen
+	colLen = colType.GetFlen()
 	if colLen > 0 {
 		if colLen <= 32 {
 			return colLen
@@ -248,7 +248,7 @@ type Decoder struct {
 }
 
 // NewDecoder creates a new Decoder object for decode a Chunk.
-func NewDecoder(chk *Chunk, colTypes []*types.FieldTypeBuilder) *Decoder {
+func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 	return &Decoder{intermChk: chk, codec: NewCodec(colTypes), remainedRows: 0}
 }
 

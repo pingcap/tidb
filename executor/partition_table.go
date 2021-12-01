@@ -24,7 +24,7 @@ import (
 
 func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
 	var child *tipb.Executor
-	switch exec.Tp {
+	switch exec.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		exec.TblScan.TableId = partitionID
 		// For test coverage.
@@ -51,7 +51,7 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID
 	case tipb.ExecType_TypeProjection:
 		child = exec.Projection.Child
 	default:
-		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
+		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.GetTp()))
 	}
 	if child != nil && recursive {
 		return updateExecutorTableID(ctx, child, partitionID, recursive)

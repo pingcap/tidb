@@ -112,7 +112,7 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 	key := make([]byte, totalLength)
 
 	// 1 byte Tp
-	key[0] = uint8(copReq.Tp)
+	key[0] = uint8(copReq.GetTp())
 	dest := 1
 
 	// 4 bytes Data len

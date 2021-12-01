@@ -102,7 +102,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			result.AppendNull()
 			continue
 		}
-		if int64(byteLength) > int64(b.tp.Flen)/num {
+		if int64(byteLength) > int64(b.tp.GetFlen())/num {
 			result.AppendNull()
 			continue
 		}
@@ -687,7 +687,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	}
 	decoder := encoding.NewDecoder()
 	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
-	isRetBinary := types.IsBinaryStr(b.tp)
+	isRetBinary := types.IsBinaryStr(b.GetTp())
 	enc := charset.NewEncoding(b.tp.Charset)
 	if isRetBinary {
 		enc = charset.NewEncoding(b.args[0].GetType().Charset)
@@ -2465,7 +2465,7 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("to_base64", b.maxAllowedPacket))
 			result.AppendNull()
 			continue
-		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
+		} else if b.tp.GetFlen() == -1 || b.tp.GetFlen() > mysql.MaxBlobWidth {
 			b.tp.Flen = mysql.MaxBlobWidth
 		}
 

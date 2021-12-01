@@ -32,7 +32,7 @@ func TestNewValuesFunc(t *testing.T) {
 	ctx := createContext(t)
 	res := NewValuesFunc(ctx, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, res.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, res.RetType.GetTp())
 	_, ok := res.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }

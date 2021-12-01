@@ -282,7 +282,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	explicitCollation := false
 	if len(s.Options) != 0 {
 		for _, val := range s.Options {
-			switch val.Tp {
+			switch val.GetTp() {
 			case ast.DatabaseOptionCharset:
 				opt.Chs = val.Value
 				explicitCharset = true
@@ -298,7 +298,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 				if directPlacementOpts == nil {
 					directPlacementOpts = &model.PlacementSettings{}
 				}
-				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
+				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.GetTp()), val.Value, val.UintValue)
 				if err != nil {
 					return err
 				}

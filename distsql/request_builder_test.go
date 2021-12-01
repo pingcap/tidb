@@ -643,7 +643,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 		t.Run(tt.src, func(t *testing.T) {
 			t.Parallel()
 			firstExec := &tipb.Executor{Tp: tt.tp}
-			switch tt.tp {
+			switch tt.GetTp() {
 			case tipb.ExecType_TypeTableScan:
 				firstExec.TblScan = &tipb.TableScan{}
 			case tipb.ExecType_TypeIndexScan:

@@ -81,7 +81,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		lockTables := c.ctx.GetAllTableLocks()
 		for _, lockT := range lockTables {
 			if lockT.TableID == tb.Meta().ID {
-				switch tb.Meta().Lock.Tp {
+				switch tb.Meta().Lock.GetTp() {
 				case model.TableLockWrite:
 					return ErrLockedTableDropped
 				case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
@@ -103,7 +103,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	}
 
 	if privilege == mysql.SelectPriv {
-		switch tb.Meta().Lock.Tp {
+		switch tb.Meta().Lock.GetTp() {
 		case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
 			return nil
 		}

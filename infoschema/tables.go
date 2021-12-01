@@ -325,7 +325,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	}
 	for offset, c := range cs {
 		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
-			switch c.tp {
+			switch c.GetTp() {
 			case mysql.TypeLong, mysql.TypeLonglong,
 				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 				tblInfo.PKIsHandle = true

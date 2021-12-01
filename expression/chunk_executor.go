@@ -126,7 +126,7 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 			i64s := result.Int64s()
 			buf := chunk.NewColumn(ft, input.NumRows())
 			buf.ReserveBytes(input.NumRows())
-			byteSize := (ft.Flen + 7) >> 3
+			byteSize := (ft.GetFlen() + 7) >> 3
 			for i := range i64s {
 				if result.IsNull(i) {
 					buf.AppendNull()
@@ -264,7 +264,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if fieldType.Tp == mysql.TypeBit {
-		byteSize := (fieldType.Flen + 7) >> 3
+		byteSize := (fieldType.GetFlen() + 7) >> 3
 		output.AppendBytes(colID, types.NewBinaryLiteralFromUint(uint64(res), byteSize))
 		return nil
 	}

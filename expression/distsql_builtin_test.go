@@ -863,9 +863,9 @@ func columnExpr(columnID int64) *tipb.Expr {
 // toPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
 func toPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
+		Tp:      int32(ft.GetTp()),
 		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
+		Flen:    int32(ft.GetFlen()),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: collationToProto(ft.Collate),

@@ -128,7 +128,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 
 func (w *worker) typeStr() string {
 	var str string
-	switch w.tp {
+	switch w.GetTp() {
 	case generalWorker:
 		str = "general"
 	case addIdxWorker:
@@ -502,7 +502,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			var err error
-			t := newMetaWithQueueTp(txn, w.tp)
+			t := newMetaWithQueueTp(txn, w.GetTp())
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {

@@ -296,7 +296,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 }
 
 func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) {
-	switch exec.Tp {
+	switch exec.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		ts := exec.TblScan
 		return b.buildMPPTableScan(ts)

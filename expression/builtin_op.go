@@ -910,7 +910,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.Flen = argExprTp.Flen + 1
+	bf.tp.Flen = argExprTp.GetFlen() + 1
 	return sig, err
 }
 

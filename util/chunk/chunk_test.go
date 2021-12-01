@@ -404,7 +404,7 @@ func TestCompare(t *testing.T) {
 		chunk.AppendNull(i)
 	}
 	for i := 0; i < len(allTypes); i++ {
-		switch allTypes[i].Tp {
+		switch allTypes[i].GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
 				chunk.AppendUint64(i, 0)
@@ -433,11 +433,11 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
 		default:
-			require.FailNow(t, "type not handled", allTypes[i].Tp)
+			require.FailNow(t, "type not handled", allTypes[i].GetTp())
 		}
 	}
 	for i := 0; i < len(allTypes); i++ {
-		switch allTypes[i].Tp {
+		switch allTypes[i].GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].Flag) {
 				chunk.AppendUint64(i, math.MaxUint64)
@@ -466,7 +466,7 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
 		default:
-			require.FailNow(t, "type not handled", allTypes[i].Tp)
+			require.FailNow(t, "type not handled", allTypes[i].GetTp())
 		}
 	}
 	rowNull := chunk.GetRow(0)
@@ -493,7 +493,7 @@ func TestCopyTo(t *testing.T) {
 	}
 	for k := 0; k < 100; k++ {
 		for i := 0; i < len(allTypes); i++ {
-			switch allTypes[i].Tp {
+			switch allTypes[i].GetTp() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 				if mysql.HasUnsignedFlag(allTypes[i].Flag) {
 					chunk.AppendUint64(i, uint64(k))
@@ -522,7 +522,7 @@ func TestCopyTo(t *testing.T) {
 			case mysql.TypeJSON:
 				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
 			default:
-				require.FailNow(t, "type not handled", allTypes[i].Tp)
+				require.FailNow(t, "type not handled", allTypes[i].GetTp())
 			}
 		}
 	}

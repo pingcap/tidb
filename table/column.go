@@ -201,7 +201,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		zeroV types.Time
 		zeroT string
 	)
-	switch col.Tp {
+	switch col.GetTp() {
 	case mysql.TypeDate:
 		zeroV, zeroT = types.ZeroDate, types.DateStr
 	case mysql.TypeDatetime:
@@ -630,7 +630,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 // GetZeroValue gets zero value for given column type.
 func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	var d types.Datum
-	switch col.Tp {
+	switch col.GetTp() {
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(col.Flag) {
 			d.SetUint64(0)
@@ -644,12 +644,12 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDouble:
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
-		d.SetLength(col.Flen)
+		d.SetLength(col.GetFlen())
 		d.SetFrac(col.Decimal)
 		d.SetMysqlDecimal(new(types.MyDecimal))
 	case mysql.TypeString:
-		if col.Flen > 0 && col.Charset == charset.CharsetBin {
-			d.SetBytes(make([]byte, col.Flen))
+		if col.GetFlen() > 0 && col.GetCharset() == charset.CharsetBin {
+			d.SetBytes(make([]byte, col.GetFlen()))
 		} else {
 			d.SetString("", col.Collate)
 		}

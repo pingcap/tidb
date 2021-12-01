@@ -35,9 +35,9 @@ import (
 // PbTypeToFieldType converts tipb.FieldType to FieldTypeBuilder
 func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldTypeBuilder {
 	return &types.FieldTypeBuilder{
-		Tp:      byte(tp.Tp),
+		Tp:      byte(tp.GetTp()),
 		Flag:    uint(tp.Flag),
-		Flen:    int(tp.Flen),
+		Flen:    int(tp.GetFlen()),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
 		Collate: protoToCollation(tp.Collate),
@@ -1094,7 +1094,7 @@ func PBToExprs(pbExprs []*tipb.Expr, fieldTps []*types.FieldTypeBuilder, sc *stm
 
 // PBToExpr converts pb structure to expression.
 func PBToExpr(expr *tipb.Expr, tps []*types.FieldTypeBuilder, sc *stmtctx.StatementContext) (Expression, error) {
-	switch expr.Tp {
+	switch expr.GetTp() {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
 		if err != nil {
@@ -1164,7 +1164,7 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 		return nil, err
 	}
 	var t types.Time
-	t.SetType(ft.Tp)
+	t.SetType(ft.GetTp())
 	t.SetFsp(int8(ft.Decimal))
 	err = t.FromPackedUint(v)
 	if err != nil {
@@ -1216,7 +1216,7 @@ func convertUint(val []byte) (*Constant, error) {
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.GetFlen()))
 	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)}, nil
 }
 

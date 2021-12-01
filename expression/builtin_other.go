@@ -99,7 +99,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	for i := 1; i < len(args); i++ {
 		DisableParseJSONFlag4Expr(args[i])
 	}
-	bf.tp.Flen = 1
+	bf.tp = bf.tp.SetFlen(1)
 	switch args[0].GetType().EvalType() {
 	case types.ETInt:
 		inInt := builtinInIntSig{baseInSig: baseInSig{baseBuiltinFunc: bf}}
@@ -878,7 +878,7 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 }
 
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
-func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldTypeBuilder) (Expression, error) {
+func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
 	switch retType.EvalType() {
 	case types.ETInt:
@@ -909,7 +909,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 type getVarFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldTypeBuilder
+	tp *types.FieldType
 }
 
 type getStringVarFunctionClass struct {
@@ -1150,7 +1150,7 @@ type valuesFunctionClass struct {
 	baseFunctionClass
 
 	offset int
-	tp     *types.FieldTypeBuilder
+	tp     *types.FieldType
 }
 
 func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -1162,7 +1162,7 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	bf.tp = c.tp
-	switch c.tp.EvalType() {
+	switch c.GetTp().EvalType() {
 	case types.ETInt:
 		sig = &builtinValuesIntSig{bf, c.offset}
 	case types.ETReal:

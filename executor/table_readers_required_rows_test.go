@@ -79,7 +79,7 @@ func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
 }
 
 func (r *requiredRowsSelectResult) genValue(valType *types.FieldTypeBuilder) interface{} {
-	switch valType.Tp {
+	switch valType.GetTp() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
 	case mysql.TypeDouble:

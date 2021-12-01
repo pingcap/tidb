@@ -118,7 +118,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	bf.tp.Flen = args[0].GetType().Flen // At most.
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
 	mode, exists := aesModes[strings.ToLower(blockMode)]
@@ -252,7 +252,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
 	mode, exists := aesModes[strings.ToLower(blockMode)]
@@ -555,7 +555,7 @@ func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf.tp.Flen = 1024 // Max allowed random bytes
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 	sig := &builtinRandomBytesSig{bf}
 	return sig, nil
 }
@@ -794,7 +794,7 @@ func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		compressBound = mysql.MaxBlobWidth
 	}
 	bf.tp.Flen = compressBound
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 	sig := &builtinCompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Compress)
 	return sig, nil
@@ -860,7 +860,7 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	bf.tp.Flen = mysql.MaxBlobWidth
-	types.SetBinChsClnFlag(bf.tp)
+	types.SetBinChsClnFlag(bf.GetTp())
 	sig := &builtinUncompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil

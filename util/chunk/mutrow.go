@@ -72,7 +72,7 @@ func MutRowFromDatums(datums []types.Datum) MutRow {
 }
 
 // MutRowFromTypes creates a MutRow from a FieldTypeBuilder slice, each Column is initialized to zero value.
-func MutRowFromTypes(types []*types.FieldTypeBuilder) MutRow {
+func MutRowFromTypes(types []*types.FieldType) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(types))}
 	for _, tp := range types {
 		col := makeMutRowColumn(zeroValForType(tp))
@@ -81,14 +81,14 @@ func MutRowFromTypes(types []*types.FieldTypeBuilder) MutRow {
 	return MutRow{c: c, idx: 0}
 }
 
-func zeroValForType(tp *types.FieldTypeBuilder) interface{} {
-	switch tp.Tp {
+func zeroValForType(tp *types.FieldType) interface{} {
+	switch tp.GetTp() {
 	case mysql.TypeFloat:
 		return float32(0)
 	case mysql.TypeDouble:
 		return float64(0)
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			return uint64(0)
 		}
 		return int64(0)

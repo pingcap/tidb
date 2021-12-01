@@ -674,8 +674,8 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
+			if types.IsTypeTime(e.FieldMappings[i].Column.GetTp()) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.GetTp())))
 				continue
 			}
 

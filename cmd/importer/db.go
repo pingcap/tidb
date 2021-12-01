@@ -148,7 +148,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	}
 	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
 
-	switch tp.Tp {
+	switch tp.GetTp() {
 	case mysql.TypeTiny:
 		var data int64
 		if incremental {
@@ -216,9 +216,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
 		if incremental {
-			data = append(data, []byte(column.data.nextString(tp.Flen))...)
+			data = append(data, []byte(column.data.nextString(tp.GetFlen()))...)
 		} else {
-			data = append(data, []byte(randStringValue(column, tp.Flen))...)
+			data = append(data, []byte(randStringValue(column, tp.GetFlen()))...)
 		}
 
 		data = append(data, '\'')
@@ -280,7 +280,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	case mysql.TypeNewDecimal:
-		var limit = int64(math.Pow10(tp.Flen))
+		var limit = int64(math.Pow10(tp.GetFlen()))
 		var intVal int64
 		if limit < 0 {
 			limit = math.MaxInt64

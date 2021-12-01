@@ -478,12 +478,12 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 	if tbInfo.Version >= model.TableInfoVersion2 || !config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 {
 		return
 	}
-	if tbInfo.Charset == charset.CharsetUTF8 {
+	if tbInfo.GetCharset() == charset.CharsetUTF8 {
 		tbInfo.Charset = charset.CharsetUTF8MB4
 		tbInfo.Collate = charset.CollationUTF8MB4
 	}
 	for _, col := range tbInfo.Columns {
-		if col.Version < model.ColumnInfoVersion2 && col.Charset == charset.CharsetUTF8 {
+		if col.Version < model.ColumnInfoVersion2 && col.GetCharset() == charset.CharsetUTF8 {
 			col.Charset = charset.CharsetUTF8MB4
 			col.Collate = charset.CollationUTF8MB4
 		}

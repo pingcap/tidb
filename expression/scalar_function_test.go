@@ -49,7 +49,7 @@ func TestScalarFunction(t *testing.T) {
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, "values", newSf.FuncName.O)
-	require.Equal(t, mysql.TypeLonglong, newSf.RetType.Tp)
+	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetTp())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }

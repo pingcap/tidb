@@ -173,7 +173,7 @@ func TestSimple(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, cs.Cols, 1)
 	require.Len(t, cs.Cols[0].Options, 1)
-	require.Equal(t, ast.ColumnOptionPrimaryKey, cs.Cols[0].Options[0].Tp)
+	require.Equal(t, ast.ColumnOptionPrimaryKey, cs.Cols[0].Options[0].GetTp())
 
 	// for issue #4497
 	src = "create table t1(a NVARCHAR(100));"
@@ -1336,7 +1336,7 @@ func TestFlushTable(t *testing.T) {
 	stmt, _, err := p.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	require.NoError(t, err)
 	flushTable := stmt[0].(*ast.FlushStmt)
-	require.Equal(t, ast.FlushTables, flushTable.Tp)
+	require.Equal(t, ast.FlushTables, flushTable.GetTp())
 	require.Equal(t, "tbl1", flushTable.Tables[0].Name.L)
 	require.Equal(t, "tbl2", flushTable.Tables[1].Name.L)
 	require.True(t, flushTable.NoWriteToBinLog)
@@ -1350,7 +1350,7 @@ func TestFlushPrivileges(t *testing.T) {
 	stmt, _, err := p.Parse("flush privileges", "", "")
 	require.NoError(t, err)
 	flushPrivilege := stmt[0].(*ast.FlushStmt)
-	require.Equal(t, ast.FlushPrivileges, flushPrivilege.Tp)
+	require.Equal(t, ast.FlushPrivileges, flushPrivilege.GetTp())
 }
 
 func TestExpression(t *testing.T) {
@@ -5075,7 +5075,7 @@ func TestDDLStatements(t *testing.T) {
 		require.False(t, mysql.HasBinaryFlag(colDef.Tp.Flag))
 	}
 	for _, tblOpt := range stmt.Options {
-		switch tblOpt.Tp {
+		switch tblOpt.GetTp() {
 		case ast.TableOptionCharset:
 			require.Equal(t, "utf8", tblOpt.StrValue)
 		case ast.TableOptionCollate:
@@ -5948,7 +5948,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
-			switch opt.Tp {
+			switch opt.GetTp() {
 			case ast.TableOptionCharset:
 				opt.StrValue = strings.ToUpper(opt.StrValue)
 			case ast.TableOptionCollate:

@@ -1107,15 +1107,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 
 		// check the decimal precision of "CAST(AS TIME)".
-		er.err = er.checkTimePrecision(v.Tp)
+		er.err = er.checkTimePrecision(v.GetTp())
 		if er.err != nil {
 			return retNode, false
 		}
 
-		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		castFunction := expression.BuildCastFunction(er.sctx, arg, v.GetTp())
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
-			if v.Tp.Charset == charset.CharsetASCII {
+			if v.Tp.GetCharset() == charset.CharsetASCII {
 				castFunction.SetRepertoire(expression.ASCII)
 			} else {
 				castFunction.SetRepertoire(expression.UNICODE)

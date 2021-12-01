@@ -32,7 +32,7 @@ import (
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
 type ListInDisk struct {
-	fieldTypes []*types.FieldTypeBuilder
+	fieldTypes []*types.FieldType
 	// offsets stores the offsets in disk of all RowPtr,
 	// the offset of one RowPtr is offsets[RowPtr.ChkIdx][RowPtr.RowIdx].
 	offsets [][]int64
@@ -55,7 +55,7 @@ type ListInDisk struct {
 var defaultChunkListInDiskPath = "chunk.ListInDisk"
 
 // NewListInDisk creates a new ListInDisk with field types.
-func NewListInDisk(fieldTypes []*types.FieldTypeBuilder) *ListInDisk {
+func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
@@ -342,7 +342,7 @@ func convertFromRow(row Row, reuse *diskFormatRow) (format *diskFormatRow) {
 }
 
 // toMutRow deserializes diskFormatRow to MutRow.
-func (format *diskFormatRow) toMutRow(fields []*types.FieldTypeBuilder) MutRow {
+func (format *diskFormatRow) toMutRow(fields []*types.FieldType) MutRow {
 	chk := &Chunk{columns: make([]*Column, 0, len(format.sizesOfColumns))}
 	var cellOff int
 	for colIdx, size := range format.sizesOfColumns {

@@ -66,14 +66,14 @@ const precIncrement = 4
 
 // numericContextResultType returns types.EvalType for numeric function's parameters.
 // the returned types.EvalType should be one of: types.ETInt, types.ETDecimal, types.ETReal
-func numericContextResultType(ft *types.FieldTypeBuilder) types.EvalType {
-	if types.IsTypeTemporal(ft.Tp) {
-		if ft.Decimal > 0 {
+func numericContextResultType(ft *types.FieldType) types.EvalType {
+	if types.IsTypeTemporal(ft.GetTp()) {
+		if ft.GetDecimal() > 0 {
 			return types.ETDecimal
 		}
 		return types.ETInt
 	}
-	if types.IsBinaryStr(ft) || ft.Tp == mysql.TypeBit {
+	if types.IsBinaryStr(ft) || ft.GetTp() == mysql.TypeBit {
 		return types.ETInt
 	}
 	evalTp4Ft := types.ETReal
@@ -88,71 +88,77 @@ func numericContextResultType(ft *types.FieldTypeBuilder) types.EvalType {
 
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
-func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldTypeBuilder, arg0, arg1 Expression, isReal bool, isMultiply bool) {
+func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) *types.FieldType {
+	builder := retTp.ToBuilder()
 	a, b := arg0.GetType(), arg1.GetType()
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
 		// set length and decimal to unspecified if arguments depend on parameters
-		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		return
+		builder.Flen, builder.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		return builder.Build()
 	}
-	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
-		retTp.Decimal = a.Decimal + b.Decimal
+	if a.GetDecimal() != types.UnspecifiedLength && b.GetDecimal() != types.UnspecifiedLength {
+		builder.Decimal = a.GetDecimal() + b.GetDecimal()
 		if !isMultiply {
-			retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
+			builder.Decimal = mathutil.Max(a.GetDecimal(), b.GetDecimal())
 		}
-		if !isReal && retTp.Decimal > mysql.MaxDecimalScale {
-			retTp.Decimal = mysql.MaxDecimalScale
+		if !isReal && builder.Decimal > mysql.MaxDecimalScale {
+			builder.Decimal = mysql.MaxDecimalScale
 		}
-		if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
-			retTp.Flen = types.UnspecifiedLength
-			return
+		if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
+			builder.Flen = types.UnspecifiedLength
+			return builder.Build()
 		}
-		digitsInt := mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal)
+		digitsInt := mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal())
 		if isMultiply {
-			digitsInt = a.Flen - a.Decimal + b.Flen - b.Decimal
+			digitsInt = a.GetFlen() - a.GetDecimal() + b.GetFlen() - b.GetDecimal()
 		}
-		retTp.Flen = digitsInt + retTp.Decimal + 3
+		builder.Flen = digitsInt + builder.Decimal + 3
 		if isReal {
-			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
-			return
+			builder.Flen = mathutil.Min(builder.Flen, mysql.MaxRealWidth)
+			return builder.Build()
 		}
-		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
-		return
+		builder.Flen = mathutil.Min(builder.Flen, mysql.MaxDecimalWidth)
+		return builder.Build()
 	}
 	if isReal {
-		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		builder.Flen, builder.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 	} else {
-		retTp.Flen, retTp.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
+		builder.Flen, builder.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
 	}
+	return builder.Build()
 }
 
-func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldTypeBuilder) {
-	var deca, decb = a.Decimal, b.Decimal
+func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) *types.FieldType {
+	builder := retTp.ToBuilder()
+	var deca, decb = a.GetDecimal(), b.GetDecimal()
 	if deca == int(types.UnspecifiedFsp) {
 		deca = 0
 	}
 	if decb == int(types.UnspecifiedFsp) {
 		decb = 0
 	}
-	retTp.Decimal = deca + precIncrement
-	if retTp.Decimal > mysql.MaxDecimalScale {
-		retTp.Decimal = mysql.MaxDecimalScale
+	builder.Decimal = deca + precIncrement
+	if builder.Decimal > mysql.MaxDecimalScale {
+		builder.Decimal = mysql.MaxDecimalScale
 	}
-	if a.Flen == types.UnspecifiedLength {
-		retTp.Flen = mysql.MaxDecimalWidth
-		return
+	if a.GetFlen() == types.UnspecifiedLength {
+		builder.Flen = mysql.MaxDecimalWidth
+		return builder.Build()
 	}
-	aPrec := types.DecimalLength2Precision(a.Flen, a.Decimal, mysql.HasUnsignedFlag(a.Flag))
-	retTp.Flen = aPrec + decb + precIncrement
-	retTp.Flen = types.Precision2LengthNoTruncation(retTp.Flen, retTp.Decimal, mysql.HasUnsignedFlag(retTp.Flag))
-	if retTp.Flen > mysql.MaxDecimalWidth {
-		retTp.Flen = mysql.MaxDecimalWidth
+	aPrec := types.DecimalLength2Precision(a.GetFlen(), a.GetDecimal(), mysql.HasUnsignedFlag(a.GetFlag()))
+	builder.Flen = aPrec + decb + precIncrement
+	builder.Flen = types.Precision2LengthNoTruncation(builder.Flen, builder.Decimal, mysql.HasUnsignedFlag(builder.Flag))
+	if builder.Flen > mysql.MaxDecimalWidth {
+		builder.Flen = mysql.MaxDecimalWidth
 	}
+	return builder.Build()
 }
 
-func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldTypeBuilder) {
-	retTp.Decimal = types.UnspecifiedLength
-	retTp.Flen = mysql.MaxRealWidth
+func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) *types.FieldType {
+	builder := retTp.ToBuilder()
+	builder.Decimal = types.UnspecifiedLength
+	builder.Flen = mysql.MaxRealWidth
+	return builder.Build()
 }
 
 type arithmeticPlusFunctionClass struct {
@@ -170,7 +176,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
 		sig := &builtinArithmeticPlusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig, nil
@@ -179,7 +185,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
 		sig := &builtinArithmeticPlusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig, nil
@@ -188,8 +194,8 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		if mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
 		sig := &builtinArithmeticPlusIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
@@ -218,8 +224,8 @@ func (s *builtinArithmeticPlusIntSig) evalInt(row chunk.Row) (val int64, isNull 
 		return 0, isNull, err
 	}
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -322,7 +328,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
 		sig := &builtinArithmeticMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig, nil
@@ -331,7 +337,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
 		sig := &builtinArithmeticMinusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
@@ -341,8 +347,8 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		if (mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag())) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
 		sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusInt)
@@ -426,8 +432,8 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 		return 0, isNull, err
 	}
 	forceToSigned := s.ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().GetFlag())
 
 	errType := "BIGINT UNSIGNED"
 	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
@@ -508,7 +514,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, true)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, true)
 		sig := &builtinArithmeticMultiplyRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
@@ -517,7 +523,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, true)
+		bf.tp = setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, true)
 		sig := &builtinArithmeticMultiplyDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig, nil
@@ -526,8 +532,8 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
 			return sig, nil
@@ -655,7 +661,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 		if err != nil {
 			return nil, err
 		}
-		c.setType4DivReal(bf.tp)
+		bf.tp = c.setType4DivReal(bf.tp)
 		sig := &builtinArithmeticDivideRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_DivideReal)
 		return sig, nil
@@ -664,7 +670,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 	if err != nil {
 		return nil, err
 	}
-	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
+	bf.tp = c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
@@ -725,8 +731,8 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
-		if frac < s.baseBuiltinFunc.tp.Decimal {
-			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+		if frac < s.baseBuiltinFunc.tp.GetDecimal() {
+			err = c.Round(c, s.baseBuiltinFunc.tp.GetDecimal(), types.ModeHalfEven)
 		}
 	} else if err == types.ErrOverflow {
 		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
@@ -750,8 +756,8 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
 		sig := &builtinArithmeticIntDivideIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IntDivideInt)
@@ -761,8 +767,8 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 	if err != nil {
 		return nil, err
 	}
-	if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
-		bf.tp.Flag |= mysql.UnsignedFlag
+	if mysql.HasUnsignedFlag(lhsTp.GetFlag()) || mysql.HasUnsignedFlag(rhsTp.GetFlag()) {
+		bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 	}
 	sig := &builtinArithmeticIntDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IntDivideDecimal)
@@ -807,8 +813,8 @@ func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Contex
 		ret int64
 		val uint64
 	)
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -852,8 +858,8 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 		return 0, true, err
 	}
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().Flag)
-	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
+	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().GetFlag())
 
 	if isLHSUnsigned || isRHSUnsigned {
 		val, err := c.ToUint()
@@ -883,26 +889,28 @@ type arithmeticModFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types.FieldTypeBuilder, isDecimal bool) {
-	if a.Decimal == types.UnspecifiedLength || b.Decimal == types.UnspecifiedLength {
-		retTp.Decimal = types.UnspecifiedLength
+func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types.FieldType, isDecimal bool) *types.FieldType {
+	builder := retTp.ToBuilder()
+	if a.GetDecimal() == types.UnspecifiedLength || b.GetDecimal() == types.UnspecifiedLength {
+		builder.Decimal = types.UnspecifiedLength
 	} else {
-		retTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
-		if isDecimal && retTp.Decimal > mysql.MaxDecimalScale {
-			retTp.Decimal = mysql.MaxDecimalScale
+		builder.Decimal = mathutil.Max(a.GetDecimal(), b.GetDecimal())
+		if isDecimal && builder.Decimal > mysql.MaxDecimalScale {
+			builder.Decimal = mysql.MaxDecimalScale
 		}
 	}
 
-	if a.Flen == types.UnspecifiedLength || b.Flen == types.UnspecifiedLength {
-		retTp.Flen = types.UnspecifiedLength
+	if a.GetFlen() == types.UnspecifiedLength || b.GetFlen() == types.UnspecifiedLength {
+		builder.Flen = types.UnspecifiedLength
 	} else {
-		retTp.Flen = mathutil.Max(a.Flen, b.Flen)
+		builder.Flen = mathutil.Max(a.GetFlen(), b.GetFlen())
 		if isDecimal {
-			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
-			return
+			builder.Flen = mathutil.Min(builder.Flen, mysql.MaxDecimalWidth)
+		} else {
+			builder.Flen = mathutil.Min(builder.Flen, mysql.MaxRealWidth)
 		}
-		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 	}
+	return builder.Build()
 }
 
 func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -916,9 +924,9 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if err != nil {
 			return nil, err
 		}
-		c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, false)
-		if mysql.HasUnsignedFlag(lhsTp.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		bf.tp = c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, false)
+		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
 		sig := &builtinArithmeticModRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModReal)
@@ -928,9 +936,9 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if err != nil {
 			return nil, err
 		}
-		c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, true)
-		if mysql.HasUnsignedFlag(lhsTp.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		bf.tp = c.setType4ModRealOrDecimal(bf.tp, lhsTp, rhsTp, true)
+		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
 		sig := &builtinArithmeticModDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ModDecimal)
@@ -940,11 +948,11 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		if err != nil {
 			return nil, err
 		}
-		if mysql.HasUnsignedFlag(lhsTp.Flag) {
-			bf.tp.Flag |= mysql.UnsignedFlag
+		if mysql.HasUnsignedFlag(lhsTp.GetFlag()) {
+			bf.tp = bf.tp.SetFlag(bf.tp.GetFlag() | mysql.UnsignedFlag)
 		}
-		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().Flag)
-		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().Flag)
+		isLHSUnsigned := mysql.HasUnsignedFlag(args[0].GetType().GetFlag())
+		isRHSUnsigned := mysql.HasUnsignedFlag(args[1].GetType().GetFlag())
 
 		switch {
 		case isLHSUnsigned && isRHSUnsigned:

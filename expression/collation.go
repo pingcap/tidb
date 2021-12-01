@@ -297,7 +297,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
 	for _, arg := range args {
-		if arg.GetType().Charset == ec.Charset {
+		if arg.GetType().GetCharset() == ec.Charset {
 			continue
 		}
 
@@ -388,10 +388,10 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 					continue
 				}
 			case coercibility == arg.Coercibility():
-				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset)) || (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().Charset == charset.CharsetUTF8) {
+				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset)) || (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().GetCharset() == charset.CharsetUTF8) {
 					repertoire |= arg.Repertoire()
 					continue
-				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset)) || (arg.GetType().Charset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
+				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset)) || (arg.GetType().GetCharset() == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
 					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
 					repertoire |= arg.Repertoire()
 					continue

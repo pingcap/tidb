@@ -67,9 +67,9 @@ type ExprNode interface {
 	// Node is embedded in ExprNode.
 	Node
 	// SetType sets evaluation type to the expression.
-	SetType(tp *types.FieldTypeBuilder)
+	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
-	GetType() *types.FieldTypeBuilder
+	GetType() *types.FieldType
 	// SetFlag sets flag to the expression.
 	// Flag indicates whether the expression contains
 	// parameter marker, reference, aggregate function...

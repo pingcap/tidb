@@ -220,7 +220,7 @@ func isSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
 				return false
 			}
 		}
-		if (aItem.Tp != bItem.Tp) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
+		if (aItem.Tp != bItem.GetTp()) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
 			return false
 		}
 	}

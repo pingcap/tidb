@@ -178,7 +178,7 @@ func TestConvertToFloat(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ConvertTo(sc, NewFieldTypeBuilder(testCase.tp))
+		converted, err := testCase.d.ConvertTo(sc, NewFieldTypeBuilder(testCase.GetTp()))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {

@@ -152,9 +152,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldTypeBuilder, d types.Datum) (t
 // ToPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
 func ToPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
+		Tp:      int32(ft.GetTp()),
 		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
+		Flen:    int32(ft.GetFlen()),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: collationToProto(ft.Collate),
@@ -165,9 +165,9 @@ func ToPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
 // FieldTypeFromPB converts *tipb.FieldType to *types.FieldTypeBuilder.
 func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldTypeBuilder {
 	return &types.FieldTypeBuilder{
-		Tp:      byte(ft.Tp),
+		Tp:      byte(ft.GetTp()),
 		Flag:    uint(ft.Flag),
-		Flen:    int(ft.Flen),
+		Flen:    int(ft.GetFlen()),
 		Decimal: int(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: protoToCollation(ft.Collate),
@@ -207,7 +207,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().Tp {
+	switch column.GetType().GetTp() {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	case mysql.TypeEnum:

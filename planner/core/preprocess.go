@@ -589,7 +589,7 @@ func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) boo
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
 			continue
 		}
-		switch c.Tp {
+		switch c.GetTp() {
 		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
 			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 			return true
@@ -614,7 +614,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			if ok {
 				hasAutoIncrement = true
 			}
-			switch op.Tp {
+			switch op.GetTp() {
 			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
 				isKey = true
 			}
@@ -645,7 +645,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 		if autoIncrementMustBeKey && !isKey {
 			p.err = autoid.ErrWrongAutoKey.GenWithStackByArgs()
 		}
-		switch col.Tp.Tp {
+		switch col.Tp.GetTp() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
 		default:
@@ -753,7 +753,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
 		for _, opt := range stmt.Options {
-			switch opt.Tp {
+			switch opt.GetTp() {
 			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 				return
@@ -797,7 +797,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
-		switch tp := constraint.Tp; tp {
+		switch tp := constraint.GetTp(); tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
 			if err != nil {
@@ -976,7 +976,7 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 	isPrimary, isGenerated, isStored := 0, 0, false
 
 	for _, op := range ops {
-		switch op.Tp {
+		switch op.GetTp() {
 		case ast.ColumnOptionPrimaryKey:
 			isPrimary = 1
 		case ast.ColumnOptionGenerated:
@@ -1083,9 +1083,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		if p.err = checkUnsupportedTableOptions(spec.Options); p.err != nil {
 			return
 		}
-		switch spec.Tp {
+		switch spec.GetTp() {
 		case ast.AlterTableAddConstraint:
-			switch spec.Constraint.Tp {
+			switch spec.Constraint.GetTp() {
 			case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqIndex,
 				ast.ConstraintUniqKey, ast.ConstraintPrimaryKey:
 				p.err = checkIndexInfo(spec.Constraint.Name, spec.Constraint.Keys)
@@ -1138,7 +1138,7 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 	var err error = nil
 	for _, option := range options {
-		switch option.Tp {
+		switch option.GetTp() {
 		case ast.TableOptionUnion:
 			err = ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
@@ -1213,13 +1213,13 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	if tp == nil {
 		return nil
 	}
-	if tp.Flen > math.MaxUint32 {
+	if tp.GetFlen() > math.MaxUint32 {
 		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 
-	switch tp.Tp {
+	switch tp.GetTp() {
 	case mysql.TypeString:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+		if tp.Flen != types.UnspecifiedLength && tp.GetFlen() > mysql.MaxFieldCharLength {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
@@ -1237,11 +1237,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
-			switch tp.Tp {
+			switch tp.GetTp() {
 			case mysql.TypeDouble:
 				// For Double type Flen and Decimal check is moved to parser component
 			default:
-				if tp.Flen > mysql.MaxDoublePrecisionLength {
+				if tp.GetFlen() > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 				}
 			}
@@ -1249,10 +1249,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
-			if tp.Flen > mysql.MaxFloatingTypeWidth || tp.Flen == 0 {
+			if tp.GetFlen() > mysql.MaxFloatingTypeWidth || tp.GetFlen() == 0 {
 				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
-			if tp.Flen < tp.Decimal {
+			if tp.GetFlen() < tp.Decimal {
 				return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 			}
 		}
@@ -1263,7 +1263,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
-				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
+				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.GetTp()), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
@@ -1271,23 +1271,23 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
 
-		if tp.Flen > mysql.MaxDecimalWidth {
+		if tp.GetFlen() > mysql.MaxDecimalWidth {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 
-		if tp.Flen < tp.Decimal {
+		if tp.GetFlen() < tp.Decimal {
 			return types.ErrMBiggerThanD.GenWithStackByArgs(colDef.Name.Name.O)
 		}
 		// If decimal and flen all equals 0, just set flen to default value.
-		if tp.Decimal == 0 && tp.Flen == 0 {
+		if tp.Decimal == 0 && tp.GetFlen() == 0 {
 			defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNewDecimal)
 			tp.Flen = defaultFlen
 		}
 	case mysql.TypeBit:
-		if tp.Flen <= 0 {
+		if tp.GetFlen() <= 0 {
 			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
 		}
-		if tp.Flen > mysql.MaxBitDisplayWidth {
+		if tp.GetFlen() > mysql.MaxBitDisplayWidth {
 			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
 		}
 	default:
@@ -1522,7 +1522,7 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	if node.Tp.EvalType() == types.ETDecimal {
-		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+		if node.Tp.GetFlen() >= node.Tp.Decimal && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
 			// valid
 			return
 		}
@@ -1533,11 +1533,11 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			p.err = err
 			return
 		}
-		if node.Tp.Flen < node.Tp.Decimal {
+		if node.Tp.GetFlen() < node.Tp.Decimal {
 			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
 			return
 		}
-		if node.Tp.Flen > mysql.MaxDecimalWidth {
+		if node.Tp.GetFlen() > mysql.MaxDecimalWidth {
 			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
 			return
 		}

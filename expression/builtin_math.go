@@ -282,7 +282,7 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 				decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
 				bf.tp.Flen += mathutil.Max(decimalDelta, 0)
 			} else {
-				bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+				bf.tp.Flen = argFieldTp.GetFlen() + bf.tp.Decimal
 			}
 		}
 	}

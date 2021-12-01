@@ -69,7 +69,7 @@ func getExecutorListFromRootExec(rootExec *tipb.Executor) ([]*tipb.Executor, err
 	currentExec := rootExec
 	for !isScanNode(currentExec) {
 		executors = append(executors, currentExec)
-		switch currentExec.Tp {
+		switch currentExec.GetTp() {
 		case tipb.ExecType_TypeTopN:
 			currentExec = currentExec.TopN.Child
 		case tipb.ExecType_TypeStreamAgg, tipb.ExecType_TypeAggregation:
@@ -138,7 +138,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.selectionCtx.execDetail = new(execDetail)
 		ce.processor = &selectionProcessor{closureExecutor: ce}
 	}
-	switch lastExecutor.Tp {
+	switch lastExecutor.GetTp() {
 	case tipb.ExecType_TypeLimit:
 		ce.limit = int(lastExecutor.Limit.Limit)
 	case tipb.ExecType_TypeTopN:
@@ -196,7 +196,7 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldTypeBui
 }
 
 func isScanNode(executor *tipb.Executor) bool {
-	switch executor.Tp {
+	switch executor.GetTp() {
 	case tipb.ExecType_TypeTableScan,
 		tipb.ExecType_TypeIndexScan:
 		return true
@@ -208,7 +208,7 @@ func isScanNode(executor *tipb.Executor) bool {
 func getScanExecFromRootExec(rootExec *tipb.Executor) (*tipb.Executor, error) {
 	currentExec := rootExec
 	for !isScanNode(currentExec) {
-		switch currentExec.Tp {
+		switch currentExec.GetTp() {
 		case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
 			currentExec = currentExec.Aggregation.Child
 		case tipb.ExecType_TypeLimit:
@@ -243,7 +243,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	seCtx := mockpkg.NewContext()
 	seCtx.GetSessionVars().StmtCtx = e.sc
 	e.seCtx = seCtx
-	switch scanExec.Tp {
+	switch scanExec.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		dagCtx.setColumnInfo(scanExec.TblScan.Columns)
 		dagCtx.primaryCols = scanExec.TblScan.PrimaryColumnIds
@@ -263,7 +263,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 		}
 		e.scanType = IndexScan
 	default:
-		panic(fmt.Sprintf("unknown first executor type %s", scanExec.Tp))
+		panic(fmt.Sprintf("unknown first executor type %s", scanExec.GetTp()))
 	}
 	ranges, err := extractKVRanges(dagCtx.dbReader.StartKey, dagCtx.dbReader.EndKey, dagCtx.keyRanges, e.scanCtx.desc)
 	if err != nil {
@@ -351,7 +351,7 @@ func tryBuildCountProcessor(e *closureExecutor, executors []*tipb.Executor) (boo
 		return false, nil
 	}
 	child := agg.AggFunc[0].Children[0]
-	switch child.Tp {
+	switch child.GetTp() {
 	case tipb.ExprType_ColumnRef:
 		_, idx, err := codec.DecodeInt(child.Val)
 		if err != nil {

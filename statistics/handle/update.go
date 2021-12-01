@@ -801,7 +801,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
+		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.GetTp())
 		if err1 != nil {
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
@@ -1287,14 +1287,14 @@ func (h *Handle) dumpRangeFeedback(sc *stmtctx.StatementContext, ran *ranger.Ran
 		ran.LowVal[0].SetBytes(lower)
 		ran.HighVal[0].SetBytes(upper)
 	} else {
-		if !statistics.SupportColumnType(q.Hist.Tp) {
+		if !statistics.SupportColumnType(q.Hist.GetTp()) {
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = types.GetMinValue(q.Hist.Tp)
+			ran.LowVal[0] = types.GetMinValue(q.Hist.GetTp())
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = types.GetMaxValue(q.Hist.Tp)
+			ran.HighVal[0] = types.GetMaxValue(q.Hist.GetTp())
 		}
 	}
 	ranges, ok := q.Hist.SplitRange(sc, []*ranger.Range{ran}, q.Tp == statistics.IndexType)

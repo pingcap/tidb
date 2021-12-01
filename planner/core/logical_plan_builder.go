@@ -706,7 +706,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	copy(joinPlan.names[leftPlan.Schema().Len():], rightPlan.OutputNames())
 
 	// Set join type.
-	switch joinNode.Tp {
+	switch joinNode.GetTp() {
 	case ast.LeftJoin:
 		// left outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
@@ -1354,7 +1354,7 @@ func unionJoinFieldType(a, b *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	} else if b.Tp == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldTypeBuilder(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp := types.NewFieldTypeBuilder(types.MergeFieldType(a.Tp, b.GetTp()))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.Tp == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
@@ -1368,7 +1368,7 @@ func unionJoinFieldType(a, b *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
-	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
 	expression.SetBinFlagOrBinStr(b, resultTp)
@@ -2701,7 +2701,7 @@ func buildJoinFuncDepend(p LogicalPlan, from ast.ResultSetNode) (map[*types.Fiel
 			if lTbl == nil {
 				lCol, rCol = rCol, lCol
 			}
-			switch x.Tp {
+			switch x.GetTp() {
 			case ast.CrossJoin:
 				colDependMap[lCol] = rCol
 				colDependMap[rCol] = lCol

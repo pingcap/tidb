@@ -34,7 +34,7 @@ func NewOne() *Constant {
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(1),
-		RetType: retT,
+		RetType: retT.Build(),
 	}
 }
 
@@ -44,7 +44,7 @@ func NewZero() *Constant {
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(0),
-		RetType: retT,
+		RetType: retT.Build(),
 	}
 }
 
@@ -52,14 +52,14 @@ func NewZero() *Constant {
 func NewNull() *Constant {
 	return &Constant{
 		Value:   types.NewDatum(nil),
-		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
+		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
 }
 
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
-	RetType *types.FieldTypeBuilder
+	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
 	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
@@ -107,16 +107,21 @@ func (c *Constant) Clone() Expression {
 }
 
 // GetType implements Expression interface.
-func (c *Constant) GetType() *types.FieldTypeBuilder {
+func (c *Constant) GetType() *types.FieldType {
 	if c.ParamMarker != nil {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldTypeBuilder pointer for each call.
 		tp := types.NewFieldTypeBuilder(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
-		return tp
+		return tp.Build()
 	}
 	return c.RetType
+}
+
+// SetType implements Expression interface.
+func (c *Constant) SetType(tp *types.FieldType) {
+	c.RetType = tp
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

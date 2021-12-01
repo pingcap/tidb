@@ -591,7 +591,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 func needConvert(tp *types.FieldTypeBuilder, rtp *types.FieldTypeBuilder) bool {
 	// all the string type are mapped to the same type in TiFlash, so
 	// do not need convert for string types
-	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
+	if types.IsString(tp.GetTp()) && types.IsString(rtp.GetTp()) {
 		return false
 	}
 	if tp.Tp != rtp.Tp {
@@ -604,16 +604,16 @@ func needConvert(tp *types.FieldTypeBuilder, rtp *types.FieldTypeBuilder) bool {
 		return true
 	}
 	// for Decimal type, TiFlash have 4 different impl based on the required precision
-	if tp.Flen >= 0 && tp.Flen <= 9 && rtp.Flen >= 0 && rtp.Flen <= 9 {
+	if tp.GetFlen() >= 0 && tp.GetFlen() <= 9 && rtp.GetFlen() >= 0 && rtp.GetFlen() <= 9 {
 		return false
 	}
-	if tp.Flen > 9 && tp.Flen <= 18 && rtp.Flen > 9 && rtp.Flen <= 18 {
+	if tp.GetFlen() > 9 && tp.GetFlen() <= 18 && rtp.GetFlen() > 9 && rtp.GetFlen() <= 18 {
 		return false
 	}
-	if tp.Flen > 18 && tp.Flen <= 38 && rtp.Flen > 18 && rtp.Flen <= 38 {
+	if tp.GetFlen() > 18 && tp.GetFlen() <= 38 && rtp.GetFlen() > 18 && rtp.GetFlen() <= 38 {
 		return false
 	}
-	if tp.Flen > 38 && tp.Flen <= 65 && rtp.Flen > 38 && rtp.Flen <= 65 {
+	if tp.GetFlen() > 38 && tp.GetFlen() <= 65 && rtp.GetFlen() > 38 && rtp.GetFlen() <= 65 {
 		return false
 	}
 	return true
@@ -637,7 +637,7 @@ func negotiateCommonType(lType, rType *types.FieldTypeBuilder) (*types.FieldType
 		commonType.Decimal = cDec
 		commonType.Flen = cLen
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
-		if mysql.IsIntegerType(commonType.Tp) {
+		if mysql.IsIntegerType(commonType.GetTp()) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
 			// so we need to promote the type to Int64
 			commonType.Tp = mysql.TypeLonglong
@@ -2305,7 +2305,7 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
 	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
 		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.Col.RetType.Tp) {
+			if types.IsString(col.Col.RetType.GetTp()) {
 				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}

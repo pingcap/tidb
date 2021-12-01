@@ -63,8 +63,8 @@ func (t *testPlannerFunctionSuite) TestMPPDecimalConvert(c *C) {
 
 func testJoinKeyTypeConvert(leftType, rightType, retType *types.FieldTypeBuilder, lConvert, rConvert bool, c *C) {
 	cType, lCon, rCon := negotiateCommonType(leftType, rightType)
-	c.Assert(cType.Tp, Equals, retType.Tp)
-	c.Assert(cType.Flen, Equals, retType.Flen)
+	c.Assert(cType.Tp, Equals, retType.GetTp())
+	c.Assert(cType.Flen, Equals, retType.GetFlen())
 	c.Assert(cType.Decimal, Equals, retType.Decimal)
 	c.Assert(cType.Flag, Equals, retType.Flag)
 	c.Assert(lConvert, Equals, lCon)

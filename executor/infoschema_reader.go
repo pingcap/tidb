@@ -700,7 +700,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		}
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.GetTp())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
@@ -732,12 +732,12 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			}
 			charMaxLen = colLen
 			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsString(col.Tp) {
+		} else if types.IsString(col.GetTp()) {
 			charMaxLen = colLen
 			charOctLen = calcCharOctLength(colLen, col.Charset)
-		} else if types.IsTypeFractionable(col.Tp) {
+		} else if types.IsTypeFractionable(col.GetTp()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.Tp) {
+		} else if types.IsTypeNumeric(col.GetTp()) {
 			numericPrecision = colLen
 			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
 				numericScale = decimal

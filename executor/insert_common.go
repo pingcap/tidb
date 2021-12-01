@@ -837,7 +837,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 
 func getAutoRecordID(d types.Datum, target *types.FieldTypeBuilder, isInsert bool) (int64, error) {
 	var recordID int64
-	switch target.Tp {
+	switch target.GetTp() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
 		if isInsert {
@@ -848,7 +848,7 @@ func getAutoRecordID(d types.Datum, target *types.FieldTypeBuilder, isInsert boo
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:
-		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+		return 0, errors.Errorf("unexpected field type [%v]", target.GetTp())
 	}
 
 	return recordID, nil
