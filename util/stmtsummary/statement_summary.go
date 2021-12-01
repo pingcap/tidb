@@ -360,7 +360,7 @@ type BindableStmt struct {
 	Collation string
 }
 
-// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
+// GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
 func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()

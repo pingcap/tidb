@@ -815,7 +815,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)
 	if err != nil {
 		return "", err
@@ -1046,7 +1046,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 		resultChan <- err
 		return
 	}
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	for {
 		err = rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {

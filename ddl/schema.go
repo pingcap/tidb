@@ -16,9 +16,10 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -155,11 +156,8 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 	// Double Check if policy exits while ddl executing
-	if placementPolicyRef != nil {
-		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, placementPolicyRef.ID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, placementPolicyRef); err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.
@@ -207,19 +205,18 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		oldIDs := getIDs(tables)
-		bundles := make([]*placement.Bundle, 0, len(oldIDs)+1)
-		for _, ID := range append(oldIDs, dbInfo.ID) {
-			oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
-			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, placement.NewBundle(ID))
-			}
+		var ruleIDs []string
+		for _, tblInfo := range tables {
+			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			ruleIDs = append(ruleIDs, rules...)
 		}
-		err := infosync.PutRuleBundles(context.TODO(), bundles)
+		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
 		// Update the job state when all affairs done.
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:

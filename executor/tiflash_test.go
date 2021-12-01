@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
@@ -82,6 +83,22 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 func (s *tiflashTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	c.Assert(s.store.Close(), IsNil)
+}
+
+func (s *tiflashTestSuite) TestNonsupportCharsetTable(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
+	err := tk.ExecToErr("alter table t set tiflash replica 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported ALTER table replica for table contain gbk charset")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset utf8)")
+	tk.MustExec("alter table t set tiflash replica 1")
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
