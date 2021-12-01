@@ -16,9 +16,6 @@ package statistics
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-
 	"math"
 	"sort"
 	"strings"
@@ -36,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
