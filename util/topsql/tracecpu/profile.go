@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/metrics"
 	"io"
 	"net/http"
 	"runtime/pprof"
@@ -29,6 +28,7 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"

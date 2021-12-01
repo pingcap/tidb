@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
@@ -100,24 +101,27 @@ func (s *subClient) run(wg *sync.WaitGroup) {
 	}()
 
 	for task := range s.sendTask {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
 		start := time.Now()
 
 		var err error
 		doneCh := make(chan struct{})
-		go func(task struct {
-			data    reportData
-			timeout time.Duration
-		}) {
-			defer func() {
-				doneCh <- struct{}{}
-			}()
-			err = s.doSend(ctx, task.data)
-			if err != nil {
-				reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-			} else {
-				reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
-			}
+		go func(
+			task struct {
+				data    reportData
+				timeout time.Duration
+			}) {
+			util.WithRecovery(func() {
+				defer func() {
+					doneCh <- struct{}{}
+				}()
+				err = s.doSend(ctx, task.data)
+				if err != nil {
+					reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+				} else {
+					reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+				}
+			}, nil)
 		}(task)
 
 		select {

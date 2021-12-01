@@ -16,6 +16,7 @@ package reporter
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
 		}),
 	}
 
-	go client.run()
+	go util.WithRecovery(client.run, nil)
 	return client
 }
 
