@@ -15,10 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
-
 	// import mysql driver
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
@@ -324,7 +322,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		for _, policy := range policyNames {
 			createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
 			task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
@@ -341,12 +339,12 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			// adjust db collation
 			createDatabaseSQL, dbCollation, err = adjustDatabaseCollation(metaConn, parser1, createDatabaseSQL, dbName)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
 			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
@@ -360,13 +358,13 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 				zap.String("table", table.Name))
 			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			// adjust table collation
 			if table.Type == TableTypeBase {
 				newCreateSQL, defaultCollation, err := adjustTableCollation(metaConn, parser1, meta.ShowCreateTable(), dbCollation, dbName, table.Name)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
 				if dbCollation == "" {
 					dbCollation = defaultCollation
@@ -391,7 +389,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if table.Type == TableTypeBase {
 				err = d.dumpTableData(tctx, metaConn, meta, taskChan)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
 			}
 		}
@@ -401,8 +399,8 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 }
 
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
-func adjustDatabaseCollation(db *sql.Conn, parser1 *parser.Parser, originSQL string, dbName string) (string, string, error) {
-	stmt, err := parser1.ParseOneStmt(originSQL, "", "")
+func adjustDatabaseCollation(db *sql.Conn, parser *parser.Parser, originSQL string, dbName string) (string, string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return "", "", err
 	}
@@ -437,8 +435,8 @@ func adjustDatabaseCollation(db *sql.Conn, parser1 *parser.Parser, originSQL str
 }
 
 // adjustTableCollation adjusts table collation and return new create sql and default db collation
-func adjustTableCollation(db *sql.Conn, parser1 *parser.Parser, originSQL string, dbCollation string, dbName string, tableName string) (string, string, error) {
-	stmt, err := parser1.ParseOneStmt(originSQL, "", "")
+func adjustTableCollation(db *sql.Conn, parser *parser.Parser, originSQL string, dbCollation string, dbName string, tableName string) (string, string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return "", "", err
 	}

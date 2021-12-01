@@ -9,7 +9,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"io"
 	"os"
 	"path"
@@ -17,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
@@ -1744,6 +1745,27 @@ func TestPickupPossibleField(t *testing.T) {
 		}
 		require.NoError(t, mock.ExpectationsWereMet())
 	}
+}
+
+func TestGetDBCollation(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'test'").
+		WillReturnRows(sqlmock.NewRows([]string{"DEFAULT_COLLATION_NAME"}).
+			AddRow("utf8mb4_bin"))
+
+	collation, err := GetDBCollation(conn, "test")
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_bin", collation)
 }
 
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
