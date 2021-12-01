@@ -645,5 +645,17 @@
     "cases": [
       "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;"
     ]
+  },
+  {
+    "name": "TestPreferRangeScanOff",
+    "cases": [
+      "select * from test where age=5;"
+    ]
+  },
+  {
+    "name": "TestPreferRangeScanOn",
+    "cases": [
+      "select * from test where age=5;"
+    ]
   }
 ]

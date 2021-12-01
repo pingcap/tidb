@@ -193,5 +193,18 @@
       "EXPLAIN SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
       "EXPLAIN SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'"
     ]
+  },
+  {
+    "name": "TestPreferRangeScanForUnsignedIntHandle",
+    "cases": [
+      "set tidb_opt_prefer_range_scan = 0",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1",
+      "set tidb_opt_prefer_range_scan = 1",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1"
+    ]
   }
 ]

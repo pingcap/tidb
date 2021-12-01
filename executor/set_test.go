@@ -990,6 +990,16 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestSetClusterConfig(c *C) {

@@ -78,7 +78,15 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 }
 
 //IsFullRange check if the range is full scan range
-func (ran *Range) IsFullRange() bool {
+func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
+	if unsignedIntHandle {
+		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
+			return false
+		}
+		lowValRawString := formatDatum(ran.LowVal[0], true)
+		highValRawString := formatDatum(ran.HighVal[0], false)
+		return lowValRawString == "0" && highValRawString == "+inf"
+	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -91,6 +99,16 @@ func (ran *Range) IsFullRange() bool {
 		}
 	}
 	return true
+}
+
+// HasFullRange checks if any range in the slice is a full range.
+func HasFullRange(ranges []*Range, unsignedIntHandle bool) bool {
+	for _, ran := range ranges {
+		if ran.IsFullRange(unsignedIntHandle) {
+			return true
+		}
+	}
+	return false
 }
 
 // String implements the Stringer interface.
