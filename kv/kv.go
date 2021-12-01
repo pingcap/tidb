@@ -338,6 +338,8 @@ type Request struct {
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	// Paging indicates whether the request is a paging request.
+	Paging bool
 }
 
 const (

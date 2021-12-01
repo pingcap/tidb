@@ -284,6 +284,7 @@ func TestString(t *testing.T) {
 		{ActionTruncateTable, "truncate table"},
 		{ActionModifyColumn, "modify column"},
 		{ActionRenameTable, "rename table"},
+		{ActionRenameTables, "rename tables"},
 		{ActionSetDefaultValue, "set default value"},
 		{ActionCreateSchema, "create schema"},
 		{ActionDropSchema, "drop schema"},
@@ -297,6 +298,9 @@ func TestString(t *testing.T) {
 		{ActionDropColumns, "drop multi-columns"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 		{ActionDropIndexes, "drop multi-indexes"},
+		{ActionAlterTablePlacement, "alter table placement"},
+		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
+		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 
 	for _, v := range acts {

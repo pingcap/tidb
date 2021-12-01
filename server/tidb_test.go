@@ -528,6 +528,9 @@ func TestSocketAndIp(t *testing.T) {
 			cli.checkRows(t, rows, "user1@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			rows = dbt.MustQuery("select host from information_schema.processlist where user = 'user1'")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], ":", "Missing :<port> in is.processlist")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
