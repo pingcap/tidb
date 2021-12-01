@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -972,7 +973,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
 	}
-	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, remainedFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
 	}
@@ -980,6 +981,9 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
+	if remainedFilters != nil {
+		cop.rootTaskConds = remainedFilters
+	}
 	task = cop.convertToRootTask(ds.ctx)
 	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
 	return task, nil
@@ -1092,7 +1096,7 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression,
-	totalRowCount float64) (PhysicalPlan, float64, error) {
+	totalRowCount float64) (PhysicalPlan, float64, []expression.Expression, error) {
 	var partialCost float64
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
@@ -1107,7 +1111,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -1123,17 +1127,40 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
+		// Here we want to add a Selection for exprs that cannot be pushed to TiKV, but some of them has already been put
+		// in Selection above DataSource, so we need to filter these exprs.
+		_, filtersInSelection := expression.PushDownExprs(sessVars.StmtCtx, tableFilters, ds.ctx.GetClient(), kv.UnSpecified)
+		pushedFilters, remainedFilters := expression.PushDownExprs(sessVars.StmtCtx, tableFilters, ds.ctx.GetClient(), kv.TiKV)
+		remainedFilters = removeExprsInSelection(sessVars.StmtCtx, remainedFilters, filtersInSelection)
 		partialCost += totalRowCount * sessVars.CopCPUFactor
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
-		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+		if len(pushedFilters) != 0 {
+			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
+			sel.SetChildren(ts)
+			return sel, partialCost, remainedFilters, nil
 		}
-		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
-		sel.SetChildren(ts)
-		return sel, partialCost, nil
+		return ts, partialCost, remainedFilters, nil
 	}
-	return ts, partialCost, nil
+	return ts, partialCost, nil, nil
+}
+
+func removeExprsInSelection(sc *stmtctx.StatementContext, remainedFilters []expression.Expression, filtersInSelection []expression.Expression) (res []expression.Expression) {
+	for _, e1 := range remainedFilters {
+		remove := false
+		for _, e2 := range filtersInSelection {
+			if bytes.Equal(e1.HashCode(sc), e2.HashCode(sc)) {
+				remove = true
+			}
+		}
+		if !remove {
+			res = append(res, e1)
+		}
+	}
+	return res
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {

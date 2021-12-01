@@ -1005,6 +1005,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		p.cost = newTask.cost()
+		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
@@ -1066,6 +1067,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 	}
 
+	t.handleRootTaskConds(ctx, newTask)
+	return newTask
+}
+
+func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask) {
 	if len(t.rootTaskConds) > 0 {
 		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
 		if err != nil {
@@ -1077,8 +1083,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		newTask.p = sel
 		sel.cost = newTask.cost()
 	}
-
-	return newTask
 }
 
 // setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child

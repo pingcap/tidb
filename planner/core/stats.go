@@ -418,7 +418,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		isReadOnlyTxn = false
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
+	isPossibleIdxMerge := len(ds.allConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
@@ -520,7 +520,7 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
 func (ds *DataSource) generateIndexMergeOrPaths() error {
 	usedIndexCount := len(ds.possibleAccessPaths)
-	for i, cond := range ds.pushedDownConds {
+	for i, cond := range ds.allConds {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
@@ -696,12 +696,12 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 // buildIndexMergeOrPath generates one possible IndexMergePath.
 func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, current int) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[:current]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current+1:]...)
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current])
 			break
 		}
 	}
