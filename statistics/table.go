@@ -16,6 +16,9 @@ package statistics
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"math"
 	"sort"
 	"strings"
@@ -34,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 )
 
@@ -331,17 +335,25 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
+	var result float64
 	c, ok := coll.Columns[colID]
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
-			return getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count)), nil
+			result = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count))
 		}
-		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
+		result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
+		if sc.EnableOptimizerCETrace {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
+		}
+		return result, nil
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
 }
 
@@ -349,21 +361,36 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
 	c, ok := coll.Columns[colID]
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
-		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
+		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
+		if err == nil && sc.EnableOptimizerCETrace {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+		}
+		return result, err
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
+	colNames := make([]string, 0, len(idx.Info.Columns))
+	for _, col := range idx.Info.Columns {
+		colNames = append(colNames, idx.Info.Table.O+col.Name.O)
+	}
 	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
+		result, err := getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
+		if err == nil && sc.EnableOptimizerCETrace {
+			CETraceRange(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
+		}
+		return result, err
 	}
 	var result float64
 	var err error
@@ -372,7 +399,40 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	} else {
 		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.Count)
 	}
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
+}
+
+func CETraceRange(sc *stmtctx.StatementContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
+	allPoint := true
+	for _, ran := range ranges {
+		if !ran.IsPointNullable(sc) {
+			allPoint = false
+			break
+		}
+	}
+	if allPoint {
+		tp = tp + "-Point"
+	} else {
+		tp = tp + "-Range"
+	}
+	expr, err := ranger.RangesToString(sc, ranges, colNames)
+	if err != nil {
+		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+	}
+	// We don't need to record meaningless expressions.
+	if expr == "" || expr == "true" || expr == "false" {
+		return
+	}
+	CERecord := tracing.CETraceRecord{
+		TableID:  tableID,
+		Type:     tp,
+		Expr:     expr,
+		RowCount: rowCount,
+	}
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
