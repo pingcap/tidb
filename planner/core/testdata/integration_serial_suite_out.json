@@ -221,6 +221,247 @@
     ]
   },
   {
+    "Name": "TestRegardNULLAsPoint",
+    "Cases": [
+      {
+        "SQL": "select * from tuk where a<=>null and b=1",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.01 root  index:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test.tuk.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b=1",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tik, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.01 root  index:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test.tik.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b>0 and b<2",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.25 root  index:Selection_6",
+          "└─Selection_6 0.25 cop[tikv]  eq(test.tuk.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b>0 and b<2",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tik, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.25 root  index:Selection_6",
+          "└─Selection_6 0.25 cop[tikv]  eq(test.tik.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b>=1 and b<2",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.25 root  index:Selection_6",
+          "└─Selection_6 0.25 cop[tikv]  eq(test.tuk.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b>=1 and b<2",
+        "PlanEnabled": [
+          "IndexReader_6 0.10 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.10 cop[tikv] table:tik, index:a(a, b, c) range:[NULL 1,NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.25 root  index:Selection_6",
+          "└─Selection_6 0.25 cop[tikv]  eq(test.tik.b, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 <nil>",
+          "<nil> 1 <nil>",
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b=1 and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tuk.b, 1), eq(test.tuk.c, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b=1 and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL 1 1,NULL 1 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tik.b, 1), eq(test.tik.c, 1)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> 1 1",
+          "<nil> 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a=1 and b<=>null and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:tuk, index:a(a, b, c) range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tuk.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:tuk, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 <nil> 1",
+          "1 <nil> 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a=1 and b<=>null and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.00 cop[tikv] table:tik, index:a(a, b, c) range:[1 NULL 1,1 NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tik.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:tik, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 <nil> 1",
+          "1 <nil> 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b<=>null and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tuk.c, 1), nulleq(test.tuk.b, NULL)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> 1",
+          "<nil> <nil> 1"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b<=>null and c=1",
+        "PlanEnabled": [
+          "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL NULL 1,NULL NULL 1], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.tik.c, 1), nulleq(test.tik.b, NULL)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> 1",
+          "<nil> <nil> 1"
+        ]
+      },
+      {
+        "SQL": "select * from tuk where a<=>null and b<=>null and c<=>null",
+        "PlanEnabled": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  nulleq(test.tuk.b, NULL), nulleq(test.tuk.c, NULL)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tuk, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> <nil>",
+          "<nil> <nil> <nil>"
+        ]
+      },
+      {
+        "SQL": "select * from tik where a<=>null and b<=>null and c<=>null",
+        "PlanEnabled": [
+          "IndexReader_6 0.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL NULL NULL,NULL NULL NULL], keep order:false, stats:pseudo"
+        ],
+        "PlanDisabled": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  nulleq(test.tik.b, NULL), nulleq(test.tik.c, NULL)",
+          "  └─IndexRangeScan_5 10.00 cop[tikv] table:tik, index:a(a, b, c) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil> <nil> <nil>",
+          "<nil> <nil> <nil>"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPushDownToTiFlashWithKeepOrder",
     "Cases": [
       {
