@@ -33,7 +33,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -48,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	goctx "golang.org/x/net/context"
@@ -91,10 +89,8 @@ type ddlSuite struct {
 }
 
 func createDDLSuite(t *testing.T) (s *ddlSuite) {
+	var err error
 	s = new(ddlSuite)
-
-	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
-	require.NoError(t, err)
 
 	s.quit = make(chan struct{})
 

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
@@ -289,25 +288,18 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
 func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
 	return func(req *tikvrpc.Request) {
 		if req == nil {
 			return
 		}
-		req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-}
-
-// GetResourceGroupTagByLabel gets the resource group of the statement based on the label.
-func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupTagLabel) []byte {
-	if sc == nil {
-		return nil
-	}
-	normalized, sqlDigest := sc.SQLDigest()
-	if len(normalized) == 0 {
-		return nil
-	}
-	return resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

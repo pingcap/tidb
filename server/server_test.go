@@ -1894,7 +1894,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func (cli *testServerClient) waitUntilServerOnline() {
+func (cli *testServerClient) waitUntilServerCanConnect() {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
@@ -1911,8 +1911,14 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
 
-	for retry = 0; retry < retryTime; retry++ {
+func (cli *testServerClient) waitUntilServerOnline() {
+	// connect server
+	cli.waitUntilServerCanConnect()
+
+	retry := 0
+	for ; retry < retryTime; retry++ {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
