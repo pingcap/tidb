@@ -241,34 +241,40 @@ func (*outerJoinEliminator) name() string {
 
 func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan LogicalPlan, parentCols []*expression.Column,
 	innerJoinKeys *expression.Schema, opt *logicalOptimizeOp) {
-	reason := bytes.NewBufferString("The columns[")
-	for i, col := range parentCols {
-		if i > 0 {
-			reason.WriteString(",")
+	reason := func() string {
+		buffer := bytes.NewBufferString("The columns[")
+		for i, col := range parentCols {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(col.String())
 		}
-		reason.WriteString(col.String())
-	}
-	reason.WriteString("] are from outer table, and the inner join keys[")
-	for i, key := range innerJoinKeys.Columns {
-		if i > 0 {
-			reason.WriteString(",")
+		buffer.WriteString("] are from outer table, and the inner join keys[")
+		for i, key := range innerJoinKeys.Columns {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(key.String())
 		}
-		reason.WriteString(key.String())
-	}
-	reason.WriteString("] are unique.")
-	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v].", join.ID(), outerPlan.TP(), outerPlan.ID())
-	opt.appendStepToCurrent(join.ID(), join.TP(), reason.String(), action)
+		buffer.WriteString("] are unique")
+		return buffer.String()
+	}()
+	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v]", join.ID(), outerPlan.TP(), outerPlan.ID())
+	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
 func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan LogicalPlan, aggCols []*expression.Column, opt *logicalOptimizeOp) {
-	reason := bytes.NewBufferString("The columns[")
-	for i, col := range aggCols {
-		if i > 0 {
-			reason.WriteString(",")
+	reason := func() string {
+		buffer := bytes.NewBufferString("The columns[")
+		for i, col := range aggCols {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(col.String())
 		}
-		reason.WriteString(col.String())
-	}
-	reason.WriteString("] in aggregation functions are from outer table, and all the aggregation functions are duplicate agnostic.")
-	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v].", join.ID(), outerPlan.TP(), outerPlan.ID())
-	opt.appendStepToCurrent(join.ID(), join.TP(), reason.String(), action)
+		buffer.WriteString("] in aggregation functions are from outer table, and they are duplicate agnostic")
+		return buffer.String()
+	}()
+	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v]", join.ID(), outerPlan.TP(), outerPlan.ID())
+	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
