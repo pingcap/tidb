@@ -1201,7 +1201,7 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool 
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPoint(sctx)
+		p.Ranges[0].IsPointNonNullable(sctx)
 }
 
 // PhysicalSelection represents a filter.
