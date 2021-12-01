@@ -299,7 +299,7 @@ func (*projectionEliminator) name() string {
 func appendProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(
-			fmt.Sprintf("Proj[%v] is eliminated,Proj[%v]'s expressions changed into[", child.ID(), parent.ID()))
+			fmt.Sprintf("Proj[%v] is eliminated, Proj[%v]'s expressions changed into[", child.ID(), parent.ID()))
 		for i, expr := range parent.Exprs {
 			if i > 0 {
 				buffer.WriteString(",")

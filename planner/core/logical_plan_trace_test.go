@@ -107,7 +107,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "projection_eliminate",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "Proj[2] is eliminated,Proj[3]'s expressions changed into[plus(1, plus(1, test.t.a))]",
+					assertAction: "Proj[2] is eliminated, Proj[3]'s expressions changed into[plus(1, plus(1, test.t.a))]",
 					assertReason: "Proj[3]'s child proj[2] is redundant",
 				},
 			},
