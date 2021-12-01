@@ -342,8 +342,9 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
 			result = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count))
+		} else {
+			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		}
-		result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		if sc.EnableOptimizerCETrace {
 			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
 		}
@@ -378,7 +379,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	idx := coll.Indices[idxID]
 	colNames := make([]string, 0, len(idx.Info.Columns))
 	for _, col := range idx.Info.Columns {
-		colNames = append(colNames, idx.Info.Table.O+col.Name.O)
+		colNames = append(colNames, col.Name.O)
 	}
 	if idx == nil || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
