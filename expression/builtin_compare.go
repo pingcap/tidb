@@ -480,7 +480,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETInt:
 		// adjust unsigned flag
 		greastInitUnsignedFlag := false
-		if isEqualsInitUnsigned(greastInitUnsignedFlag, args) {
+		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
 			bf.tp.Flag &= ^mysql.UnsignedFlag
 		} else {
 			bf.tp.Flag |= mysql.UnsignedFlag
@@ -755,7 +755,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	case types.ETInt:
 		// adjust unsigned flag
 		leastInitUnsignedFlag := true
-		if isEqualsInitUnsigned(leastInitUnsignedFlag, args) {
+		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		} else {
 			bf.tp.Flag &= ^mysql.UnsignedFlag
@@ -2894,10 +2894,10 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }
 
-// isEqualsInitUnsigned can adjust unsigned flag for greatest/least function.
+// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
 // For greatest, returns unsigned result if there is at least one argument is unsigned.
 // For least, returns signed result if there is at least one argument is signed.
-func isEqualsInitUnsigned(initUnsigned bool, args []Expression) bool {
+func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
 	for _, arg := range args {
 		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
 			return false
