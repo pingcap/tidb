@@ -167,7 +167,7 @@ func TestConvertToFloat(t *testing.T) {
 		{NewDatum([]byte("12345.678")), mysql.TypeDouble, "", 12345.678, 12345.678},
 		{NewDatum(int64(12345)), mysql.TypeDouble, "", 12345, 12345},
 		{NewDatum(uint64(123456)), mysql.TypeDouble, "", 123456, 123456},
-		{NewDatum(byte(123)), mysql.TypeDouble, "cannot convert .*", 0, 0},
+		{NewDatum(byte(123)), mysql.TypeDouble, "cannot convert ", 0, 0},
 		{NewDatum(math.NaN()), mysql.TypeDouble, "constant .* overflows double", 0, 0},
 		{NewDatum(math.Inf(-1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(-1), float32(math.Inf(-1))},
 		{NewDatum(math.Inf(1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(1), float32(math.Inf(1))},
@@ -182,7 +182,8 @@ func TestConvertToFloat(t *testing.T) {
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
-			require.Regexp(t, testCase.errMsg, err)
+			require.Error(t, err)
+			require.Regexp(t, testCase.errMsg, err.Error())
 		}
 		require.Equal(t, testCase.r32, converted.GetFloat32())
 		if testCase.tp == mysql.TypeDouble {
