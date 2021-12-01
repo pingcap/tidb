@@ -257,6 +257,12 @@ func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	return builder
 }
 
+// SetPaging sets "Paging" flag for "kv.Request".
+func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
+	builder.Request.Paging = paging
+	return builder
+}
+
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
