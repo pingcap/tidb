@@ -268,8 +268,8 @@ type aggTestCase struct {
 
 func (a aggTestCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 
@@ -533,7 +533,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
 			UniqueID: 10 + (int64)(i),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		})
 	}
 	for _, col := range partitionBy {
@@ -609,10 +609,10 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
-			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-			{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+			{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+			{Index: 2, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)},
+			{Index: 3, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}}
 }
 
@@ -1017,8 +1017,8 @@ func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *
 
 func BenchmarkHashJoinInlineProjection(b *testing.B) {
 	cols := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1050,8 +1050,8 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	defer log.SetLevel(lvl)
 
 	cols := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1073,8 +1073,8 @@ func BenchmarkHashJoinExec(b *testing.B) {
 
 	// Replace the wide string column with double column
 	cols = []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 
 	cas = defaultHashJoinTestCase(cols, 0, false)
@@ -1101,8 +1101,8 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 	defer log.SetLevel(lvl)
 
 	cols := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1124,8 +1124,8 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 
 	// Replace the wide string column with double column
 	cols = []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 
 	cas = defaultHashJoinTestCase(cols, 2, true)
@@ -1212,8 +1212,8 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	defer log.SetLevel(lvl)
 
 	cols := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1251,9 +1251,9 @@ type indexJoinTestCase struct {
 
 func (tc indexJoinTestCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{Index: 2, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)},
 	}
 }
 
@@ -1808,8 +1808,8 @@ type sortCase struct {
 
 func (tc sortCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 
@@ -1912,8 +1912,8 @@ type limitCase struct {
 
 func (tc limitCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 

@@ -775,7 +775,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, results [][]byte, restor
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldType(mysql.TypeLonglong), nil)
+			paddingCountDatum, err := DecodeColumnValue(newResults[i], types.NewFieldTypeBuilder(mysql.TypeLonglong), nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -814,7 +814,7 @@ func buildRestoredColumn(allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
 		}
 		if collate.IsBinCollation(col.Ft.Collate) {
 			// Change the fieldType from string to uint since we store the number of the truncated spaces.
-			copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+			copyColInfo.Ft = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		} else {
 			copyColInfo.Ft = allCols[i].Ft
 		}

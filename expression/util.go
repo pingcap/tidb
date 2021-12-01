@@ -504,7 +504,7 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 		}
 	}
 	if not {
-		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), expr)
 	}
 	return expr, not
 }
@@ -690,7 +690,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 
 // DatumToConstant generates a Constant expression from a Datum.
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
-	t := types.NewFieldType(tp)
+	t := types.NewFieldTypeBuilder(tp)
 	t.Flag |= flag
 	return &Constant{Value: d, RetType: t}
 }
@@ -699,7 +699,7 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
 	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
-	tp := types.NewFieldType(mysql.TypeUnspecified)
+	tp := types.NewFieldTypeBuilder(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
 	if useCache || isPointExec {
@@ -777,8 +777,8 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 
 // BuildNotNullExpr wraps up `not(isnull())` for given expression.
 func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
-	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
-	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
+	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), isNull)
 	return notNull
 }
 

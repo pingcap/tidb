@@ -2367,7 +2367,7 @@ func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.Co
 	if err != nil {
 		return false, err
 	}
-	e, err := expression.NewFunctionBase(ctx, ast.GT, types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	e, err := expression.NewFunctionBase(ctx, ast.GT, types.NewFieldTypeBuilder(mysql.TypeLonglong), lexpr, rexpr)
 	if err != nil {
 		return false, err
 	}

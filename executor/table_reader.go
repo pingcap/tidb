@@ -254,7 +254,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
 	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
+	pidColumn := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), numRows)
 	for i := 0; i < numRows; i++ {
 		pidColumn.AppendInt64(physicalID)
 	}

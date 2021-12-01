@@ -66,7 +66,7 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 				return nil
 			}
 			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), ret, col)
 		}
 	}
 	if corCol, lOk := sf.GetArgs()[0].(*expression.CorrelatedColumn); lOk {
@@ -76,7 +76,7 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 				return nil
 			}
 			// We should make sure that the equal condition's left side is the join's left join key, right is the right key.
-			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ret, col)
+			return expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), ret, col)
 		}
 	}
 	return nil
@@ -112,7 +112,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 		case ast.AggFuncBitOr, ast.AggFuncBitXor, ast.AggFuncCount:
 			defaultValueMap[i] = expression.NewZero()
 		case ast.AggFuncBitAnd:
-			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: types.NewFieldType(mysql.TypeLonglong)}
+			defaultValueMap[i] = &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 		}
 	}
 	return defaultValueMap
@@ -277,7 +277,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {
 								pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i], val)
+								ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldTypeBuilder(mysql.TypeLonglong), agg.schema.Columns[i], val)
 								proj.Exprs[pos] = ifNullFunc
 							}
 							proj.SetChildren(apply)

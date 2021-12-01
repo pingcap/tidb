@@ -167,7 +167,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 		if len(ftypes) != 0 && ftypes[0] != mysql.TypeUnspecified {
 			tp = ftypes[0]
 		}
-		fieldType := types.NewFieldType(tp)
+		fieldType := types.NewFieldTypeBuilder(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
 		col.RetType = fieldType

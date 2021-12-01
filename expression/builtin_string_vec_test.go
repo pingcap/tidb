@@ -81,23 +81,23 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 	ast.Convert: {
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			constants: []*Constant{nil, {Value: types.NewDatum("utf8"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, {Value: types.NewDatum("utf8"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			constants: []*Constant{nil, {Value: types.NewDatum("binary"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, {Value: types.NewDatum("binary"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			constants: []*Constant{nil, {Value: types.NewDatum("utf8mb4"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, {Value: types.NewDatum("utf8mb4"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			constants: []*Constant{nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 		{
 			retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETString},
-			constants: []*Constant{nil, {Value: types.NewDatum("latin1"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants: []*Constant{nil, {Value: types.NewDatum("latin1"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 	},
 	ast.Substring: {
@@ -238,19 +238,19 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
-			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
-			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
-			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}},
 		},
 	},
 	ast.Translate: {
@@ -328,7 +328,7 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETString},
 			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charInt64Gener{}, nil},
-			constants:     []*Constant{nil, nil, nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
+			constants:     []*Constant{nil, nil, nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 		},
 	},
 	ast.FindInSet: {

@@ -29,7 +29,7 @@ import (
 
 // NewOne stands for a number 1.
 func NewOne() *Constant {
-	retT := types.NewFieldType(mysql.TypeTiny)
+	retT := types.NewFieldTypeBuilder(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(1),
@@ -39,7 +39,7 @@ func NewOne() *Constant {
 
 // NewZero stands for a number 0.
 func NewZero() *Constant {
-	retT := types.NewFieldType(mysql.TypeTiny)
+	retT := types.NewFieldTypeBuilder(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(0),
@@ -51,7 +51,7 @@ func NewZero() *Constant {
 func NewNull() *Constant {
 	return &Constant{
 		Value:   types.NewDatum(nil),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}
 }
 
@@ -110,7 +110,7 @@ func (c *Constant) GetType() *types.FieldTypeBuilder {
 	if c.ParamMarker != nil {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldTypeBuilder pointer for each call.
-		tp := types.NewFieldType(mysql.TypeUnspecified)
+		tp := types.NewFieldTypeBuilder(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp

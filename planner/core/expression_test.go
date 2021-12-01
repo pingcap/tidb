@@ -104,7 +104,7 @@ func TestCaseWhen(t *testing.T) {
 
 func TestCast(t *testing.T) {
 	t.Parallel()
-	f := types.NewFieldType(mysql.TypeLonglong)
+	f := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
 		Expr: ast.NewValueExpr(1, "", ""),

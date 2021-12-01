@@ -188,7 +188,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
 	sort1 := &PhysicalSort{ByItems: byItems}
@@ -207,16 +207,16 @@ func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 	byItems2[0].Expr = expr2
 	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder")
 
-	expr2.RetType = types.NewFieldType(mysql.TypeString)
+	expr2.RetType = types.NewFieldTypeBuilder(mysql.TypeString)
 	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder.uint8")
 
-	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
+	expr2.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	c.Assert(checkDeepClone(sort1, sort2), IsNil)
 }
 
 func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	ctx := mock.NewContext()
-	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col, cst := &expression.Column{RetType: types.NewFieldTypeBuilder(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}

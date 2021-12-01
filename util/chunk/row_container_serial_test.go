@@ -37,7 +37,7 @@ func TestSpillActionDeadLock(t *testing.T) {
 		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
 	}()
 	sz := 4
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
@@ -63,7 +63,7 @@ func TestSpillActionDeadLock(t *testing.T) {
 
 func TestActionBlocked(t *testing.T) {
 	sz := 4
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)

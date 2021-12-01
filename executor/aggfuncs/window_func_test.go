@@ -110,7 +110,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 
 func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
 	pt := windowTest{
-		dataType: types.NewFieldType(tp),
+		dataType: types.NewFieldTypeBuilder(tp),
 		numRows:  numRows,
 		funcName: funcName,
 	}
@@ -130,7 +130,7 @@ func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expre
 
 func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...interface{}) windowTest {
 	pt := windowTest{
-		dataType: types.NewFieldType(tp),
+		dataType: types.NewFieldTypeBuilder(tp),
 		numRows:  numRows,
 		funcName: funcName,
 	}

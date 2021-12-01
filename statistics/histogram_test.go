@@ -38,7 +38,7 @@ func TestNewHistogramBySelectivity(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	intCol := &Column{}
-	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
+	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong), chunk.InitialCapacity, 0)
 	intCol.IsHandle = true
 	for i := 0; i < 10; i++ {
 		intCol.Bounds.AppendInt64(0, int64(i*3))
@@ -61,7 +61,7 @@ num: 1 lower_bound: 12 upper_bound: 14 repeats: 0 ndv: 0
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
 
 	stringCol := &Column{}
-	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
+	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldTypeBuilder(mysql.TypeString), chunk.InitialCapacity, 0)
 	stringCol.Bounds.AppendString(0, "a")
 	stringCol.Bounds.AppendString(0, "aaaabbbb")
 	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 60})
@@ -99,7 +99,7 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
 
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	coll.Indices[0] = idx
-	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
 		require.NoError(t, err1)
@@ -126,7 +126,7 @@ num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
 
 func TestTruncateHistogram(t *testing.T) {
 	t.Parallel()
-	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
+	hist := NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong), 1, 0)
 	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
 	hist.AppendBucket(&low, &high, 0, 1)
 	newHist := hist.TruncateHistogram(1)
@@ -161,7 +161,7 @@ type topN4Test struct {
 }
 
 func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
-	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
 		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
 		require.NoError(t, err)

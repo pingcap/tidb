@@ -715,7 +715,7 @@ func (h coprHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldTypeB
 		if agg.AggFunc[i].Tp == tipb.ExprType_Avg {
 			// Avg function requests two columns : Count , Sum
 			// This line addend the Count(TypeLonglong) to the schema.
-			schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			schema = append(schema, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 		}
 		schema = append(schema, expression.PbTypeToFieldType(agg.AggFunc[i].FieldType))
 	}

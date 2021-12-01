@@ -164,7 +164,7 @@ func initEvalBufferType(t *partitionedTable) {
 	}
 
 	if hasExtraHandle {
-		t.evalBufferTypes[len(t.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
+		t.evalBufferTypes[len(t.evalBufferTypes)-1] = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	}
 }
 
@@ -1047,7 +1047,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldTypeBuilder(mysql.TypeLong))
 			if err != nil {
 				return 0, err
 			}

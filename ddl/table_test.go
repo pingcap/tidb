@@ -79,7 +79,7 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 			State:        model.StatePublic,
 		}
 
-		col.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+		col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
 	}

@@ -1346,7 +1346,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 					ID:       model.ExtraHandleID,
 					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 				})
@@ -1355,7 +1355,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		// If index is global, we should add extra column for pid.
 		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 				ID:       model.ExtraPidColID,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})

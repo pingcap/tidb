@@ -1672,7 +1672,7 @@ func BuildFinalModeAggregation(
 					// so we do not process it here.
 					finalAggFunc.Name = ast.AggFuncSum
 				} else {
-					ft := types.NewFieldType(mysql.TypeLonglong)
+					ft := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 					ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 					partial.Schema.Append(&expression.Column{
 						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
@@ -1683,7 +1683,7 @@ func BuildFinalModeAggregation(
 				}
 			}
 			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
-				ft := types.NewFieldType(mysql.TypeString)
+				ft := types.NewFieldTypeBuilder(mysql.TypeString)
 				ft.Charset, ft.Collate = charset.CharsetBin, charset.CollationBin
 				ft.Flag |= mysql.NotNullFlag
 				partial.Schema.Append(&expression.Column{
@@ -1745,7 +1745,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema.Keys = p.schema.Keys
 	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
@@ -1768,7 +1768,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			newSchema.Append(p.schema.Columns[i])
 			avgSumCol := p.schema.Columns[i]
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
-			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType

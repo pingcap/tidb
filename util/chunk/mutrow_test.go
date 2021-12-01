@@ -79,7 +79,7 @@ func TestMutRow(t *testing.T) {
 	require.Equal(t, j, row.GetJSON(0))
 	require.Equal(t, time, row.GetTime(1))
 
-	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDuration)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
 	dur, err := types.ParseDuration(sc, "01:23:45", 0)
 	require.NoError(t, err)
@@ -123,8 +123,8 @@ func BenchmarkMutRowSetValues(b *testing.B) {
 func BenchmarkMutRowFromTypes(b *testing.B) {
 	b.ReportAllocs()
 	tps := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarchar),
 	}
 	for i := 0; i < b.N; i++ {
 		MutRowFromTypes(tps)

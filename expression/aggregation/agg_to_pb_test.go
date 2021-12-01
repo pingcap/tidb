@@ -29,7 +29,7 @@ import (
 
 func genColumn(tp byte, id int64) *expression.Column {
 	return &expression.Column{
-		RetType: types.NewFieldType(tp),
+		RetType: types.NewFieldTypeBuilder(tp),
 		ID:      id,
 		Index:   int(id),
 	}
@@ -42,13 +42,13 @@ func TestAggFunc2Pb(t *testing.T) {
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
 	funcTypes := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeVarchar),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeVarchar),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 
 	jsons := []string{

@@ -57,7 +57,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("a"),
@@ -66,7 +66,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("b"),
@@ -75,7 +75,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
+		RetType:  types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("c"),
@@ -84,7 +84,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("d"),
@@ -93,7 +93,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, charset.CollationASCII, types.UnspecifiedLength),
+		RetType:  types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, charset.CollationASCII, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("c_ascii"),
@@ -106,7 +106,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("e"),
@@ -115,7 +115,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("f"),
@@ -124,7 +124,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
+		RetType:  types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("g"),
@@ -133,7 +133,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("h"),

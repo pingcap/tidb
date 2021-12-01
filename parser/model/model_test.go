@@ -39,7 +39,7 @@ func TestModelBasic(t *testing.T) {
 		Name:             NewCIStr("c"),
 		Offset:           0,
 		DefaultValue:     0,
-		FieldTypeBuilder: *types.NewFieldType(0),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(0),
 		Hidden:           true,
 	}
 	column.Flag |= mysql.PriKeyFlag
@@ -338,13 +338,13 @@ func TestDefaultValue(t *testing.T) {
 
 	oldPlainCol := srcCol.Clone()
 	oldPlainCol.Name = NewCIStr("oldPlainCol")
-	oldPlainCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+	oldPlainCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 	oldPlainCol.DefaultValue = randPlainStr
 	oldPlainCol.OriginDefaultValue = randPlainStr
 
 	newPlainCol := srcCol.Clone()
 	newPlainCol.Name = NewCIStr("newPlainCol")
-	newPlainCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+	newPlainCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 	err := newPlainCol.SetDefaultValue(1)
 	require.NoError(t, err)
 	require.Equal(t, 1, newPlainCol.GetDefaultValue())
@@ -356,13 +356,13 @@ func TestDefaultValue(t *testing.T) {
 
 	oldBitCol := srcCol.Clone()
 	oldBitCol.Name = NewCIStr("oldBitCol")
-	oldBitCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeBit)
+	oldBitCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeBit)
 	oldBitCol.DefaultValue = randBitStr
 	oldBitCol.OriginDefaultValue = randBitStr
 
 	newBitCol := srcCol.Clone()
 	newBitCol.Name = NewCIStr("newBitCol")
-	newBitCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeBit)
+	newBitCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeBit)
 	err = newBitCol.SetDefaultValue(1)
 	// Only string type is allowed in BIT column.
 	require.Error(t, err)
@@ -374,7 +374,7 @@ func TestDefaultValue(t *testing.T) {
 
 	nullBitCol := srcCol.Clone()
 	nullBitCol.Name = NewCIStr("nullBitCol")
-	nullBitCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeBit)
+	nullBitCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeBit)
 	err = nullBitCol.SetOriginDefaultValue(nil)
 	require.NoError(t, err)
 	require.Nil(t, nullBitCol.GetOriginDefaultValue())

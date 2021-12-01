@@ -47,7 +47,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 	}
 
 	for _, cs := range cases {
-		ft := types.NewFieldType(mysql.TypeString)
+		ft := types.NewFieldTypeBuilder(mysql.TypeString)
 		ft.Collate = cs.name
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String
@@ -65,7 +65,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	for _, cs := range cases {
-		ft := types.NewFieldType(mysql.TypeString)
+		ft := types.NewFieldTypeBuilder(mysql.TypeString)
 		ft.Collate = cs.name
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String

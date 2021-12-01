@@ -103,7 +103,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   types.NewFieldTypeBuilder(mysql.TypeUnspecified),
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
@@ -142,9 +142,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsString(ctx, args[i])
 			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
 		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldTypeBuilder(mysql.TypeDatetime))
 		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldTypeBuilder(mysql.TypeTimestamp))
 		case types.ETDuration:
 			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
@@ -249,7 +249,7 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   types.NewFieldTypeBuilder(mysql.TypeUnspecified),
 	}
 	bf.SetCharsetAndCollation(tp.Charset, tp.Collate)
 	bf.setCollator(collate.GetCollator(tp.Collate))

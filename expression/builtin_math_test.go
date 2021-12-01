@@ -88,11 +88,11 @@ func TestCeil(t *testing.T) {
 	expressions := []Expression{
 		&Constant{
 			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 		},
 		&Constant{
 			Value:   types.NewFloat64Datum(float64(12.34)),
-			RetType: types.NewFieldType(mysql.TypeFloat),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeFloat),
 		},
 	}
 
@@ -235,11 +235,11 @@ func TestFloor(t *testing.T) {
 	for _, exp := range []Expression{
 		&Constant{
 			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 		},
 		&Constant{
 			Value:   types.NewFloat64Datum(float64(12.34)),
-			RetType: types.NewFieldType(mysql.TypeFloat),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeFloat),
 		},
 	} {
 		_, err := funcs[ast.Floor].getFunction(ctx, []Expression{exp})
@@ -381,7 +381,7 @@ func TestRand(t *testing.T) {
 	require.GreaterOrEqual(t, v.GetFloat64(), float64(0))
 
 	// issue 3211
-	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
+	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}})
 	require.NoError(t, err)
 	randGen := utilMath.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {

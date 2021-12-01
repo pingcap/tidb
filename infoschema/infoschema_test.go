@@ -63,7 +63,7 @@ func TestBasic(t *testing.T) {
 		ID:               colID,
 		Name:             colName,
 		Offset:           0,
-		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		State:            model.StatePublic,
 	}
 
@@ -225,7 +225,7 @@ func TestMockInfoSchema(t *testing.T) {
 		State:            model.StatePublic,
 		Offset:           0,
 		Name:             model.NewCIStr("h"),
-		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLong),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLong),
 		ID:               1,
 	}
 	tableInfo.Columns = []*model.ColumnInfo{colInfo}
@@ -421,7 +421,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 			ID:               colID,
 			Name:             model.NewCIStr("col1"),
 			Offset:           0,
-			FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+			FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 			State:            model.StatePublic,
 		}
 

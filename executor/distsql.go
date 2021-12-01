@@ -512,10 +512,10 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldTypeBuilder {
 			tps = append(tps, handleCol.RetType)
 		}
 	} else {
-		tps = []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+		tps = []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	}
 	if e.index.Global {
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+		tps = append(tps, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps

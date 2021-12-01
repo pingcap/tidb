@@ -28,17 +28,17 @@ import (
 )
 
 func newLongType() types.FieldTypeBuilder {
-	return *(types.NewFieldType(mysql.TypeLong))
+	return *(types.NewFieldTypeBuilder(mysql.TypeLong))
 }
 
 func newStringType() types.FieldTypeBuilder {
-	ft := types.NewFieldType(mysql.TypeVarchar)
+	ft := types.NewFieldTypeBuilder(mysql.TypeVarchar)
 	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
 	return *ft
 }
 
 func newDateType() types.FieldTypeBuilder {
-	ft := types.NewFieldType(mysql.TypeDate)
+	ft := types.NewFieldTypeBuilder(mysql.TypeDate)
 	return *ft
 }
 

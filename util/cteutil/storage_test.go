@@ -27,7 +27,7 @@ import (
 func TestStorageBasic(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
 	require.NotNil(t, storage)
@@ -61,7 +61,7 @@ func TestStorageBasic(t *testing.T) {
 func TestOpenAndClose(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
 
@@ -84,7 +84,7 @@ func TestOpenAndClose(t *testing.T) {
 func TestAddAndGetChunk(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 10
 
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -114,7 +114,7 @@ func TestAddAndGetChunk(t *testing.T) {
 func TestSpillToDisk(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
 	var tmp interface{} = storage
@@ -171,7 +171,7 @@ func TestSpillToDisk(t *testing.T) {
 func TestReopen(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
 	err := storage.OpenAndRef()
@@ -216,7 +216,7 @@ func TestReopen(t *testing.T) {
 func TestSwapData(t *testing.T) {
 	t.Parallel()
 
-	tp1 := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}
+	tp1 := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}
 	chkSize := 10
 	storage1 := NewStorageRowContainer(tp1, chkSize)
 	err := storage1.OpenAndRef()
@@ -229,7 +229,7 @@ func TestSwapData(t *testing.T) {
 	err = storage1.Add(inChk1)
 	require.NoError(t, err)
 
-	tp2 := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeVarString)}
+	tp2 := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeVarString)}
 	storage2 := NewStorageRowContainer(tp2, chkSize)
 	err = storage2.OpenAndRef()
 	require.NoError(t, err)

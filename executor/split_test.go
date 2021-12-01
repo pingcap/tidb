@@ -103,7 +103,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 				Offset:           1,
 				DefaultValue:     0,
 				State:            model.StatePublic,
-				FieldTypeBuilder: *types.NewFieldType(mysql.TypeLong),
+				FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLong),
 			},
 		},
 	}
@@ -196,7 +196,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	e.upper = []types.Datum{types.NewDatum("z")}
 	e.num = 26
 	// change index column type to varchar
-	tbInfo.Columns[0].FieldTypeBuilder = *types.NewFieldType(mysql.TypeVarchar)
+	tbInfo.Columns[0].FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeVarchar)
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
@@ -248,7 +248,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	e.num = 10
 
 	// change index column type to timestamp
-	tbInfo.Columns[0].FieldTypeBuilder = *types.NewFieldType(mysql.TypeTimestamp)
+	tbInfo.Columns[0].FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeTimestamp)
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
@@ -302,7 +302,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 				Offset:           1,
 				DefaultValue:     0,
 				State:            model.StatePublic,
-				FieldTypeBuilder: *types.NewFieldType(mysql.TypeLong),
+				FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLong),
 			},
 		},
 	}
@@ -326,7 +326,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	e := &SplitTableRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
 		upper:        []types.Datum{types.NewDatum(100)},
 		num:          10,
@@ -390,21 +390,21 @@ func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 				ID:               1,
 				Offset:           0,
 				State:            model.StatePublic,
-				FieldTypeBuilder: *types.NewFieldType(mysql.TypeDouble),
+				FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeDouble),
 			},
 			{
 				Name:             model.NewCIStr("c1"),
 				ID:               2,
 				Offset:           1,
 				State:            model.StatePublic,
-				FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+				FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 			},
 			{
 				Name:             model.NewCIStr("c2"),
 				ID:               3,
 				Offset:           2,
 				State:            model.StatePublic,
-				FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+				FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 			},
 		},
 	}

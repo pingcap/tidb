@@ -175,7 +175,7 @@ func TestToPB(t *testing.T) {
 		Name:             model.NewCIStr("c"),
 		Offset:           0,
 		DefaultValue:     0,
-		FieldTypeBuilder: *types.NewFieldType(0),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(0),
 		Hidden:           true,
 	}
 	column.Collate = "utf8mb4_general_ci"
@@ -185,7 +185,7 @@ func TestToPB(t *testing.T) {
 		Name:             model.NewCIStr("c"),
 		Offset:           0,
 		DefaultValue:     0,
-		FieldTypeBuilder: *types.NewFieldType(0),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(0),
 		Hidden:           true,
 	}
 	column2.Collate = "utf8mb4_bin"

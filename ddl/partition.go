@@ -615,7 +615,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 }
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
 		tp.Flag |= mysql.UnsignedFlag
 	}
@@ -834,7 +834,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	var colTps []*types.FieldTypeBuilder
 	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
 	if len(pi.Columns) == 0 {
-		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
 			tp.Flag |= mysql.UnsignedFlag
 		}

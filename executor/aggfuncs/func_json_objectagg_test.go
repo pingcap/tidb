@@ -44,8 +44,8 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		entries2 := make(map[string]interface{})
 
 		argTypes := argCombines[k]
-		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
-		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
+		fGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[0]))
+		sGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[1]))
 
 		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)
@@ -90,8 +90,8 @@ func TestJsonObjectagg(t *testing.T) {
 		entries := make(map[string]interface{})
 
 		argTypes := argCombines[k]
-		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
-		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
+		fGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[0]))
+		sGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[1]))
 
 		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)
@@ -126,8 +126,8 @@ func TestMemJsonObjectagg(t *testing.T) {
 		entries := make(map[string]interface{})
 
 		argTypes := argCombines[k]
-		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
-		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
+		fGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[0]))
+		sGenFunc := getDataGenFunc(types.NewFieldTypeBuilder(argTypes[1]))
 
 		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)

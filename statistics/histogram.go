@@ -733,7 +733,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // Note that we will set BytesDatum for the lower/upper bound in the bucket, the decode will
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
-	tp := types.NewFieldType(mysql.TypeBlob)
+	tp := types.NewFieldTypeBuilder(mysql.TypeBlob)
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
@@ -1522,7 +1522,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 		err                         error
 	)
 	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch}
-	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
 	var totCnt int64

@@ -1364,7 +1364,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	sc := ctx.GetSessionVars().StmtCtx
 
 	if targetFieldType.Tp == mysql.TypeBit {
-		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
+		targetFieldType = *types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
@@ -1393,12 +1393,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
-		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldTypeBuilder(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
-		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldTypeBuilder(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
@@ -1424,7 +1424,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// 3. Suppose the value of `con` is 2, when `targetFieldType.Tp` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
-			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
+			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}

@@ -1871,7 +1871,7 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
@@ -1884,7 +1884,7 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETReal {
 		return expr
 	}
-	tp := types.NewFieldType(mysql.TypeDouble)
+	tp := types.NewFieldTypeBuilder(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
@@ -1897,7 +1897,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETDecimal {
 		return expr
 	}
-	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tp := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
@@ -1932,7 +1932,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1
 	}
-	tp := types.NewFieldType(mysql.TypeVarString)
+	tp := types.NewFieldTypeBuilder(mysql.TypeVarString)
 	if expr.Coercibility() == CoercibilityExplicit {
 		tp.Charset, tp.Collate = expr.CharsetAndCollation()
 	} else {
@@ -1984,7 +1984,7 @@ func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression 
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return expr
 	}
-	tp := types.NewFieldType(mysql.TypeDuration)
+	tp := types.NewFieldTypeBuilder(mysql.TypeDuration)
 	switch x := expr.GetType(); x.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate:
 		tp.Decimal = x.Decimal

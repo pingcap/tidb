@@ -90,7 +90,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 			tps = append(tps, &colInfo.FieldTypeBuilder)
 		}
 	default: // ExtraHandle Column tp.
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+		tps = append(tps, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)

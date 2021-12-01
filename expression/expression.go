@@ -701,7 +701,7 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 		return conditions[0]
 	}
 	expr := NewFunctionInternal(ctx, funcName,
-		types.NewFieldType(mysql.TypeTiny),
+		types.NewFieldTypeBuilder(mysql.TypeTiny),
 		composeConditionWithBinaryOp(ctx, conditions[:length/2], funcName),
 		composeConditionWithBinaryOp(ctx, conditions[length/2:], funcName))
 	return expr
@@ -811,7 +811,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		if !schema.Contains(x) {
 			return x
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldTypeBuilder(mysql.TypeNull)}
 	case *Constant:
 		if x.DeferredExpr != nil {
 			return FoldConstant(x)

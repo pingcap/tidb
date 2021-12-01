@@ -72,7 +72,7 @@ func buildTableInfoWithPartition(c *C, d *ddl) (*model.TableInfo, []int64) {
 		Name:             model.NewCIStr("c"),
 		Offset:           0,
 		State:            model.StatePublic,
-		FieldTypeBuilder: *types.NewFieldType(mysql.TypeLong),
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLong),
 		ID:               allocateColumnID(tbl),
 	}
 	genIDs, err := d.genGlobalIDs(1)

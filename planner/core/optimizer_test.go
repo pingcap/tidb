@@ -30,11 +30,11 @@ type testPlannerFunctionSuite struct {
 }
 
 func testDecimalConvert(lDec, lLen, rDec, rLen int, lConvert, rConvert bool, cDec, cLen int, c *C) {
-	lType := types.NewFieldType(mysql.TypeNewDecimal)
+	lType := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	lType.Decimal = lDec
 	lType.Flen = lLen
 
-	rType := types.NewFieldType(mysql.TypeNewDecimal)
+	rType := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	rType.Decimal = rDec
 	rType.Flen = rLen
 

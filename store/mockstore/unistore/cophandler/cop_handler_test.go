@@ -97,9 +97,9 @@ func prepareTestTableData(t *testing.T, keyNumber int, tableID int64) *data {
 	stmtCtx := new(stmtctx.StatementContext)
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeString),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	colInfos := make([]*tipb.ColumnInfo, 3)
 	colTypeMap := map[int64]*types.FieldTypeBuilder{}
@@ -377,17 +377,17 @@ func buildEQIntExpr(colID, val int64) *tipb.Expr {
 	return &tipb.Expr{
 		Tp:               tipb.ExprType_ScalarFunc,
 		Sig:              tipb.ScalarFuncSig_EQInt,
-		FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+		FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldTypeBuilder(mysql.TypeLonglong)),
 		Children: []*tipb.Expr{
 			{
 				Tp:               tipb.ExprType_ColumnRef,
 				Val:              codec.EncodeInt(nil, colID),
-				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldTypeBuilder(mysql.TypeLonglong)),
 			},
 			{
 				Tp:               tipb.ExprType_Int64,
 				Val:              codec.EncodeInt(nil, val),
-				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldType(mysql.TypeLonglong)),
+				FieldTypeBuilder: expression.ToPBFieldType(types.NewFieldTypeBuilder(mysql.TypeLonglong)),
 			},
 		},
 	}

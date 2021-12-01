@@ -251,7 +251,7 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 
 // GetFieldsTypes implements the kv.HandleCols interface.
 func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldTypeBuilder {
-	return []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	return []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

@@ -253,17 +253,17 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
-	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
+	corCol1.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
-	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
-	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
+	corCol2.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	cast := BuildCastFunction(ctx, corCol1, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, NewOne())
-	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
-	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	require.NoError(t, err)
 	ans2 := col1
@@ -278,7 +278,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 func TestPushDownNot(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
-	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col := &Column{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, NewOne())
 	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)

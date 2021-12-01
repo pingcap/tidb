@@ -143,7 +143,7 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 }
 
 func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
-	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDouble), types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}

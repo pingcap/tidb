@@ -273,7 +273,7 @@ func (p *LogicalJoin) updateEQCond() {
 			if rProj != nil {
 				rKey = rProj.appendExpr(rKey)
 			}
-			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
 	}

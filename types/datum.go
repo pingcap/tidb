@@ -815,7 +815,7 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), errors.Trace(err)
 	default:
-		dVal, err := d.ConvertTo(sc, NewFieldType(mysql.TypeNewDecimal))
+		dVal, err := d.ConvertTo(sc, NewFieldTypeBuilder(mysql.TypeNewDecimal))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1560,7 +1560,7 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 			return ret, errors.Trace(err)
 		}
 	default:
-		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
+		ret, err = d.convertToInt(sc, NewFieldTypeBuilder(mysql.TypeLonglong))
 		if err != nil {
 			_, err = invalidConv(d, target.Tp)
 			ret.SetInt64(0)

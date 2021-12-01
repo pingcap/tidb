@@ -55,7 +55,7 @@ func getBinaryLiteral(value string) types.BinaryLiteral {
 }
 
 func getUnsignedFieldType() *types.FieldTypeBuilder {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	tp.Flag |= mysql.UnsignedFlag
 	return tp
 }
@@ -75,21 +75,21 @@ func TestCalcFraction(t *testing.T) {
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(1),
 			fraction: 0.25,
-			tp:       types.NewFieldType(mysql.TypeLonglong),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(4),
 			fraction: 1.0,
-			tp:       types.NewFieldType(mysql.TypeLonglong),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(-1),
 			fraction: 0.0,
-			tp:       types.NewFieldType(mysql.TypeLonglong),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewUintDatum(0),
@@ -103,70 +103,70 @@ func TestCalcFraction(t *testing.T) {
 			upper:    types.NewFloat64Datum(4),
 			value:    types.NewFloat64Datum(1),
 			fraction: 0.25,
-			tp:       types.NewFieldType(mysql.TypeDouble),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeDouble),
 		},
 		{
 			lower:    types.NewFloat32Datum(0),
 			upper:    types.NewFloat32Datum(4),
 			value:    types.NewFloat32Datum(1),
 			fraction: 0.25,
-			tp:       types.NewFieldType(mysql.TypeFloat),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeFloat),
 		},
 		{
 			lower:    types.NewDecimalDatum(getDecimal(0)),
 			upper:    types.NewDecimalDatum(getDecimal(4)),
 			value:    types.NewDecimalDatum(getDecimal(1)),
 			fraction: 0.25,
-			tp:       types.NewFieldType(mysql.TypeNewDecimal),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeNewDecimal),
 		},
 		{
 			lower:    types.NewMysqlBitDatum(getBinaryLiteral("0b0")),
 			upper:    types.NewMysqlBitDatum(getBinaryLiteral("0b100")),
 			value:    types.NewMysqlBitDatum(getBinaryLiteral("0b1")),
 			fraction: 0.5,
-			tp:       types.NewFieldType(mysql.TypeBit),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeBit),
 		},
 		{
 			lower:    types.NewDurationDatum(getDuration("0:00:00")),
 			upper:    types.NewDurationDatum(getDuration("4:00:00")),
 			value:    types.NewDurationDatum(getDuration("1:00:00")),
 			fraction: 0.25,
-			tp:       types.NewFieldType(mysql.TypeDuration),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeDuration),
 		},
 		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
 			fraction: 0.34444444444444444,
-			tp:       types.NewFieldType(mysql.TypeTimestamp),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeTimestamp),
 		},
 		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
 			fraction: 0.34444444444444444,
-			tp:       types.NewFieldType(mysql.TypeDatetime),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeDatetime),
 		},
 		{
 			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
 			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDate)),
 			value:    types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDate)),
 			fraction: 0.34444444444444444,
-			tp:       types.NewFieldType(mysql.TypeDate),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeDate),
 		},
 		{
 			lower:    types.NewStringDatum("aasad"),
 			upper:    types.NewStringDatum("addad"),
 			value:    types.NewStringDatum("abfsd"),
 			fraction: 0.32280253984063745,
-			tp:       types.NewFieldType(mysql.TypeString),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeString),
 		},
 		{
 			lower:    types.NewBytesDatum([]byte("aasad")),
 			upper:    types.NewBytesDatum([]byte("asdff")),
 			value:    types.NewBytesDatum([]byte("abfsd")),
 			fraction: 0.0529216802217269,
-			tp:       types.NewFieldType(mysql.TypeBlob),
+			tp:       types.NewFieldTypeBuilder(mysql.TypeBlob),
 		},
 	}
 	for _, test := range tests {

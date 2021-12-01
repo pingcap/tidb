@@ -367,32 +367,32 @@ var vecBuiltin{{ .Category }}GeneratedCases = map[string][]vecExprBenchCase {
 			constants: []*Constant{
 				nil,
 				{{- if eq .Input.ETName "Int" }}
-					{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
-					{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
+					{Value: types.NewDatum(1), RetType: types.NewFieldTypeBuilder(mysql.TypeInt24)},
+					{Value: types.NewDatum(2), RetType: types.NewFieldTypeBuilder(mysql.TypeInt24)},
 				{{- end }}
 				{{- if eq .Input.ETName "String" }}
-					{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
-					{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
+					{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)},
+					{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)},
 				{{- end }}
 				{{- if eq .Input.ETName "Datetime" }}
-					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
-					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldTypeBuilder(mysql.TypeDatetime)},
+					{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldTypeBuilder(mysql.TypeDatetime)},
 				{{- end }}
 				{{- if eq .Input.ETName "Json" }}
-					{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-					{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldTypeBuilder(mysql.TypeJSON)},
+					{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldTypeBuilder(mysql.TypeJSON)},
 				{{- end }}
 				{{- if eq .Input.ETName "Duration" }}
-					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
-					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
+					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldTypeBuilder(mysql.TypeDuration)},
+					{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldTypeBuilder(mysql.TypeDuration)},
 				{{- end }}
 				{{- if eq .Input.ETName "Real" }}
-					{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldType(mysql.TypeFloat)},
-					{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
+					{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldTypeBuilder(mysql.TypeFloat)},
+					{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldTypeBuilder(mysql.TypeFloat)},
 				{{- end }}
 				{{- if eq .Input.ETName "Decimal" }}
-					{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
-					{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
+					{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
+					{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
 				{{- end }}
 			},
 		},

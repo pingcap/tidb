@@ -232,7 +232,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(aggFuncs []*aggregation.Agg
 	if len(agg.GroupByItems) == 0 {
 		agg.GroupByItems = []expression.Expression{&expression.Constant{
 			Value:   types.NewDatum(0),
-			RetType: types.NewFieldType(mysql.TypeLong)}}
+			RetType: types.NewFieldTypeBuilder(mysql.TypeLong)}}
 	}
 	if (childIdx == 0 && join.JoinType == RightOuterJoin) || (childIdx == 1 && join.JoinType == LeftOuterJoin) {
 		var existsDefaultValues bool

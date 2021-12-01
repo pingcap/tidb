@@ -284,7 +284,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 				State:            model.StatePublic,
 				Offset:           12,
 				Name:             model.NewCIStr("b"),
-				FieldTypeBuilder: *(types.NewFieldType(mysql.TypeLong)),
+				FieldTypeBuilder: *(types.NewFieldTypeBuilder(mysql.TypeLong)),
 				ID:               13,
 			}
 			newTblMeta.Columns = append(newTblMeta.Columns, colh)

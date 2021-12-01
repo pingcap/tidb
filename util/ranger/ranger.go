@@ -544,14 +544,14 @@ func newFieldType(tp *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	switch tp.Tp {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		newTp := types.NewFieldType(mysql.TypeLonglong)
+		newTp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		newTp.Flag = tp.Flag
 		newTp.Charset = tp.Charset
 		return newTp
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldTypeWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
+		newTp := types.NewFieldTypeBuilderWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
 		newTp.Charset = tp.Charset
 		return newTp
 	default:

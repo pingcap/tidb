@@ -43,7 +43,7 @@ func (s *testInjectProjSuite) TestWrapCastForAggFuncs(c *C) {
 				for _, retType := range retTypes {
 					sctx := mock.NewContext()
 					aggFunc, err := aggregation.NewAggFuncDesc(sctx, name,
-						[]expression.Expression{&expression.Constant{Value: types.Datum{}, RetType: types.NewFieldType(retType)}},
+						[]expression.Expression{&expression.Constant{Value: types.Datum{}, RetType: types.NewFieldTypeBuilder(retType)}},
 						hasDistinct)
 					c.Assert(err, IsNil)
 					aggFunc.Mode = mode

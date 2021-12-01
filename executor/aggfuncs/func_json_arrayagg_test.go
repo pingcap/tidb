@@ -38,7 +38,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries2 := make([]interface{}, 0)
 		entries3 := make([]interface{}, 0)
 
-		genFunc := getDataGenFunc(types.NewFieldType(argType))
+		genFunc := getDataGenFunc(types.NewFieldTypeBuilder(argType))
 
 		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)
@@ -76,7 +76,7 @@ func TestJsonArrayagg(t *testing.T) {
 	for _, argType := range typeList {
 		entries := make([]interface{}, 0)
 
-		genFunc := getDataGenFunc(types.NewFieldType(argType))
+		genFunc := getDataGenFunc(types.NewFieldTypeBuilder(argType))
 
 		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)

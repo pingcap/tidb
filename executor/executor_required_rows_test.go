@@ -70,7 +70,7 @@ func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows in
 
 func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
 	// the schema of output is fixed now, which is [Double, Long]
-	retTypes := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	retTypes := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDouble), types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
@@ -465,9 +465,9 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 		} else {
 			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
 			f, err := expression.NewFunction(
-				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+				sctx, ast.EQ, types.NewFieldTypeBuilder(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
 					Value:   types.NewDatum(testCase.filtersOfCol1),
-					RetType: types.NewFieldType(mysql.TypeTiny),
+					RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 				})
 			c.Assert(err, IsNil)
 			filters = append(filters, f)
@@ -728,7 +728,7 @@ func genTestChunk4VecGroupChecker(chkRows []int, sameNum int) (expr []expression
 	numRows := 0
 	inputs = make([]*chunk.Chunk, chkNum)
 	fts := make([]*types.FieldTypeBuilder, 1)
-	fts[0] = types.NewFieldType(mysql.TypeLonglong)
+	fts[0] = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	for i := 0; i < chkNum; i++ {
 		inputs[i] = chunk.New(fts, chkRows[i], chkRows[i])
 		numRows += chkRows[i]
@@ -883,7 +883,7 @@ func (s *testExecSuite) TestVecGroupCheckerDATARACE(c *C) {
 		}
 		vgc := newVecGroupChecker(ctx, exprs)
 
-		fts := []*types.FieldTypeBuilder{types.NewFieldType(mType)}
+		fts := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mType)}
 		chk := chunk.New(fts, 1, 1)
 		vgc.allocateBuffer = func(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 			return chk.Column(0), nil

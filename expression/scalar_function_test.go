@@ -33,7 +33,7 @@ func TestScalarFunction(t *testing.T) {
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeDouble),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	sf := newFunction(ast.LT, a, NewOne())
@@ -45,7 +45,7 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, sf.Decorrelate(nil).Equal(ctx, sf))
 	require.EqualValues(t, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}, sf.HashCode(sc))
 
-	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
+	sf = NewValuesFunc(ctx, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, "values", newSf.FuncName.O)
@@ -59,11 +59,11 @@ func TestIssue23309(t *testing.T) {
 
 	a := &Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeDouble),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	a.RetType.Flag |= mysql.NotNullFlag
 	null := NewNull()
-	null.RetType = types.NewFieldType(mysql.TypeNull)
+	null.RetType = types.NewFieldTypeBuilder(mysql.TypeNull)
 	sf, _ := newFunction(ast.NE, a, null).(*ScalarFunction)
 	v, err := sf.GetArgs()[1].Eval(chunk.Row{})
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestScalarFuncs2Exprs(t *testing.T) {
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeDouble),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	sf0, _ := newFunction(ast.LT, a, NewZero()).(*ScalarFunction)
 	sf1, _ := newFunction(ast.LT, a, NewOne()).(*ScalarFunction)

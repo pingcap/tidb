@@ -37,13 +37,13 @@ import (
 
 func TestRowDecoder(t *testing.T) {
 	t.Parallel()
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldTypeBuilder: *types.NewFieldType(mysql.TypeNewDecimal)}
-	c4 := &model.ColumnInfo{ID: 4, Name: model.NewCIStr("c4"), State: model.StatePublic, Offset: 3, FieldTypeBuilder: *types.NewFieldType(mysql.TypeTimestamp)}
-	c5 := &model.ColumnInfo{ID: 5, Name: model.NewCIStr("c5"), State: model.StatePublic, Offset: 4, FieldTypeBuilder: *types.NewFieldType(mysql.TypeDuration), OriginDefaultValue: "02:00:02"}
-	c6 := &model.ColumnInfo{ID: 6, Name: model.NewCIStr("c6"), State: model.StatePublic, Offset: 5, FieldTypeBuilder: *types.NewFieldType(mysql.TypeTimestamp), GeneratedExprString: "c4+c5"}
-	c7 := &model.ColumnInfo{ID: 7, Name: model.NewCIStr("c7"), State: model.StatePublic, Offset: 6, FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong)}
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}
+	c4 := &model.ColumnInfo{ID: 4, Name: model.NewCIStr("c4"), State: model.StatePublic, Offset: 3, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeTimestamp)}
+	c5 := &model.ColumnInfo{ID: 5, Name: model.NewCIStr("c5"), State: model.StatePublic, Offset: 4, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeDuration), OriginDefaultValue: "02:00:02"}
+	c6 := &model.ColumnInfo{ID: 6, Name: model.NewCIStr("c6"), State: model.StatePublic, Offset: 5, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeTimestamp), GeneratedExprString: "c4+c5"}
+	c7 := &model.ColumnInfo{ID: 7, Name: model.NewCIStr("c7"), State: model.StatePublic, Offset: 6, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	c7.Flag |= mysql.PriKeyFlag
 
 	cols := []*model.ColumnInfo{c1, c2, c3, c4, c5, c6, c7}
@@ -153,9 +153,9 @@ func TestRowDecoder(t *testing.T) {
 
 func TestClusterIndexRowDecoder(t *testing.T) {
 	t.Parallel()
-	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldTypeBuilder: *types.NewFieldType(mysql.TypeNewDecimal)}
+	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &model.ColumnInfo{ID: 3, Name: model.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}
 	c1.Flag |= mysql.PriKeyFlag
 	c2.Flag |= mysql.PriKeyFlag
 	pk := &model.IndexInfo{ID: 1, Name: model.NewCIStr("primary"), State: model.StatePublic, Primary: true, Columns: []*model.IndexColumn{

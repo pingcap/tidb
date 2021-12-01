@@ -26,7 +26,7 @@ import (
 func TestNewRowContainer(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
 	require.NotNil(t, rc)
 	require.False(t, rc.AlreadySpilledSafeForTest())
@@ -35,7 +35,7 @@ func TestNewRowContainer(t *testing.T) {
 func TestSel(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
 	require.NotNil(t, rc)
@@ -88,7 +88,7 @@ func TestSpillAction(t *testing.T) {
 	t.Parallel()
 
 	sz := 4
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
@@ -141,7 +141,7 @@ func TestSpillAction(t *testing.T) {
 func TestNewSortedRowContainer(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	rc := NewSortedRowContainer(fields, 1024, nil, nil, nil)
 	require.NotNil(t, rc)
 	require.False(t, rc.AlreadySpilledSafeForTest())
@@ -150,7 +150,7 @@ func TestNewSortedRowContainer(t *testing.T) {
 func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}
 	keyCmpFuncs := []CompareFunc{cmpInt64}
@@ -195,7 +195,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 func TestRowContainerResetAndAction(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	sz := 20
 	rc := NewRowContainer(fields, sz)
 

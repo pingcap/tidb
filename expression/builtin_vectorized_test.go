@@ -42,7 +42,7 @@ func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 		return p.bufAllocator.get()
 	}
 	if p.buf == nil {
-		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
+		p.buf = chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), n)
 	}
 	return p.buf, nil
 }
@@ -80,7 +80,7 @@ func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(input *chunk.Chunk, result *chunk
 }
 
 func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *chunk.Column) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	col1 := newColumn(0)
 	col1.Index, col1.RetType = 0, tp
 	col2 := newColumn(1)
@@ -91,7 +91,7 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 	}
 	plus := &mockVecPlusIntBuiltinFunc{bf, nil, false}
 	input := chunk.New([]*types.FieldTypeBuilder{tp, tp}, 1024, 1024)
-	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	buf := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 1024)
 	for i := 0; i < 1024; i++ {
 		input.AppendInt64(0, int64(i))
 		input.AppendInt64(1, int64(i))
@@ -429,7 +429,7 @@ func convertETType(eType types.EvalType) (mysqlType byte) {
 
 func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk.Chunk, *chunk.Column, error) {
 	mysqlType := convertETType(eType)
-	tp := types.NewFieldType(mysqlType)
+	tp := types.NewFieldTypeBuilder(mysqlType)
 	col1 := newColumn(1)
 	col1.Index = 0
 	col1.RetType = tp
@@ -439,7 +439,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 	}
 	rowDouble := &mockBuiltinDouble{bf, eType, enableVec}
 	input := chunk.New([]*types.FieldTypeBuilder{tp}, 1024, 1024)
-	buf := chunk.NewColumn(types.NewFieldType(convertETType(eType)), 1024)
+	buf := chunk.NewColumn(types.NewFieldTypeBuilder(convertETType(eType)), 1024)
 	for i := 0; i < 1024; i++ {
 		switch eType {
 		case types.ETInt:
@@ -776,7 +776,7 @@ func TestVectorizedCheck(t *testing.T) {
 }
 
 func genFloat32Col() (*Column, *chunk.Chunk, *chunk.Column) {
-	typeFloat := types.NewFieldType(mysql.TypeFloat)
+	typeFloat := types.NewFieldTypeBuilder(mysql.TypeFloat)
 	col := &Column{Index: 0, RetType: typeFloat}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{typeFloat}, 1024)
 	for i := 0; i < 1024; i++ {

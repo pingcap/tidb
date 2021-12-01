@@ -461,7 +461,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		DefaultValue: 0,
 	}
 	col.ID = allocateColumnID(tblInfo)
-	col.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+	col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
 	cols := &[]*model.ColumnInfo{col}
@@ -1265,7 +1265,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	cancelState = model.StateNone
 	newCol := baseTableInfo.Columns[0].Clone()
 	// change type from long to tinyint.
-	newCol.FieldTypeBuilder = *types.NewFieldType(mysql.TypeTiny)
+	newCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeTiny)
 	// change from null to not null
 	newCol.FieldTypeBuilder.Flag |= mysql.NotNullFlag
 	newCol.FieldTypeBuilder.Flen = 2

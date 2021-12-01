@@ -28,7 +28,7 @@ import (
 
 func TestColumnToProto(t *testing.T) {
 	// Make sure the Flag is set in tipb.ColumnInfo
-	tp := types.NewFieldType(mysql.TypeLong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLong)
 	tp.Flag = 10
 	tp.Collate = "utf8_bin"
 	col := &model.ColumnInfo{
@@ -49,7 +49,7 @@ func TestColumnToProto(t *testing.T) {
 	}
 
 	// Make sure the collation ID is successfully set.
-	tp = types.NewFieldType(mysql.TypeVarchar)
+	tp = types.NewFieldTypeBuilder(mysql.TypeVarchar)
 	tp.Flag = 10
 	tp.Collate = "latin1_swedish_ci"
 	col1 := &model.ColumnInfo{
@@ -71,7 +71,7 @@ func TestColumnToProto(t *testing.T) {
 	pc = util.ColumnToProto(col1)
 	require.Equal(t, int32(-8), pc.Collation)
 
-	tp = types.NewFieldType(mysql.TypeEnum)
+	tp = types.NewFieldTypeBuilder(mysql.TypeEnum)
 	tp.Flag = 10
 	tp.Elems = []string{"a", "b"}
 	col2 := &model.ColumnInfo{

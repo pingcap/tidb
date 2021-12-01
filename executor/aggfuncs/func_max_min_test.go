@@ -105,7 +105,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	setC, _ := types.ParseSet(elems, "c", mysql.DefaultCollationName)    // setC.Value == 4
 	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
-	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
@@ -144,7 +144,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 func TestMaxMin(t *testing.T) {
 	t.Parallel()
 
-	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),

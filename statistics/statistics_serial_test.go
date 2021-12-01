@@ -46,7 +46,7 @@ func checkRepeats(t *testing.T, hg *Histogram) {
 }
 
 func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldTypeBuilder(mysql.TypeBlob), Version1)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewChunk(nil)
@@ -92,7 +92,7 @@ func SubTestBuild() func(*testing.T) {
 			Samples:   s.samples,
 			FMSketch:  sketch,
 		}
-		col, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
+		col, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 		require.NoError(t, err)
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
@@ -116,7 +116,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.lessRowCount(types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldTypeBuilder(mysql.TypeLonglong), true)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
@@ -149,13 +149,13 @@ func SubTestBuild() func(*testing.T) {
 			MaxSampleSize:   1000,
 			MaxFMSketchSize: 1000,
 			Collators:       make([]collate.Collator, 1),
-			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}
 		require.NoError(t, s.pk.Close())
 		collectors, _, err := builder.CollectColumnStats()
 		require.NoError(t, err)
 		require.Equal(t, 1, len(collectors))
-		col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldType(mysql.TypeLonglong))
+		col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldTypeBuilder(mysql.TypeLonglong))
 		require.NoError(t, err)
 		checkRepeats(t, col)
 		require.Equal(t, 250, col.Len())
@@ -202,7 +202,7 @@ func SubTestBuild() func(*testing.T) {
 			Samples:   []*SampleItem{item},
 			FMSketch:  sketch,
 		}
-		col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeJSON))
+		col, err = BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldTypeBuilder(mysql.TypeJSON))
 		require.NoError(t, err)
 		require.Equal(t, 1, col.Len())
 		require.Equal(t, col.GetUpper(0), col.GetLower(0))

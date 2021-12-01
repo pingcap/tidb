@@ -43,7 +43,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 	convertTypes := func(mysqlTypes []byte) []*types.FieldTypeBuilder {
 		fieldTypes := make([]*types.FieldTypeBuilder, 0, len(mysqlTypes))
 		for _, t := range mysqlTypes {
-			fieldTypes = append(fieldTypes, types.NewFieldType(t))
+			fieldTypes = append(fieldTypes, types.NewFieldTypeBuilder(t))
 		}
 		return fieldTypes
 	}

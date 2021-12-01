@@ -31,7 +31,7 @@ func TestList(t *testing.T) {
 	t.Parallel()
 
 	fields := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	l := NewList(fields, 2, 2)
 	srcChunk := NewChunkWithCapacity(fields, 32)

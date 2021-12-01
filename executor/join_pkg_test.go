@@ -29,8 +29,8 @@ func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
 	colTypes := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	casTest := defaultHashJoinTestCase(colTypes, 0, false)
 

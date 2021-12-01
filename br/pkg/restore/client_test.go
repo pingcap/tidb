@@ -56,7 +56,7 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 	c.Assert(isExist, IsTrue)
 
 	tables := make([]*metautil.Table, 4)
-	intField := types.NewFieldType(mysql.TypeLong)
+	intField := types.NewFieldTypeBuilder(mysql.TypeLong)
 	intField.Charset = "binary"
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
@@ -126,7 +126,7 @@ func (s *testRestoreClientSuite) TestPreCheckTableClusterIndex(c *C) {
 	c.Assert(isExist, IsTrue)
 
 	tables := make([]*metautil.Table, 4)
-	intField := types.NewFieldType(mysql.TypeLong)
+	intField := types.NewFieldTypeBuilder(mysql.TypeLong)
 	intField.Charset = "binary"
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{

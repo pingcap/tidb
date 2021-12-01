@@ -409,7 +409,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
 		if tps[i] == nil {
-			tps[i] = types.NewFieldType(mysql.TypeNull)
+			tps[i] = types.NewFieldTypeBuilder(mysql.TypeNull)
 		}
 	}
 	if prepared.CachedPlan != nil {

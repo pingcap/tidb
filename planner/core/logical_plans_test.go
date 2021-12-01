@@ -41,7 +41,7 @@ func (s *testUnitTestSuit) SetUpSuite(c *C) {
 }
 
 func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.FieldTypeBuilder {
-	tp := types.NewFieldType(typeByte)
+	tp := types.NewFieldTypeBuilder(typeByte)
 	tp.Flen = flen
 	return tp
 }
@@ -72,11 +72,11 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	totalSchema := expression.NewSchema()
 	totalSchema.Append(&expression.Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
 		UniqueID: 2,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
 		UniqueID: 3,
@@ -88,7 +88,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	})
 	totalSchema.Append(&expression.Column{
 		UniqueID: 5,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	})
 	names := make(types.NameSlice, 0, 5)
 	names = append(names, &types.FieldName{ColName: model.NewCIStr("col1")})

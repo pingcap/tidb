@@ -455,7 +455,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.encodedLookUpKeys = make([]*chunk.Chunk, task.outerResult.NumChunks())
 	for i := range task.encodedLookUpKeys {
-		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
+		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
 	}
 	return task, nil
 }

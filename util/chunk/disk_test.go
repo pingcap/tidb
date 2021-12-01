@@ -38,11 +38,11 @@ import (
 
 func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldTypeBuilder) {
 	fields := []*types.FieldTypeBuilder{
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeJSON),
 	}
 
 	chks := make([]*Chunk, 0, numChk)
@@ -265,7 +265,7 @@ func testReaderWithCache(t *testing.T) {
 	}
 	buf.WriteString("0123")
 
-	field := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}
+	field := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, buf.String())
 	l := NewListInDisk(field)
@@ -341,7 +341,7 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 
 	testData := "0123456789"
 
-	field := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}
+	field := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, testData)
 	l := NewListInDisk(field)

@@ -391,7 +391,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 
 	if !e.isCommonHandle() {
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+		tps = append(tps, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 
 	e.checkIndexValue = &checkIndexValue{idxColTps: tps}
@@ -458,7 +458,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 		Name:   model.ExtraHandleName,
 		Offset: handleOffset,
 	}
-	handleColsInfo.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLonglong)
+	handleColsInfo.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	columns = append(columns, handleColsInfo)
 	return columns
 }
@@ -494,7 +494,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
 			Index:   extraColPos,
-			RetType: types.NewFieldType(mysql.TypeLonglong),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		}
 		return plannercore.NewIntHandleCols(intCol)
 	}
@@ -987,7 +987,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
 					Index:   0,
-					RetType: types.NewFieldType(mysql.TypeTimestamp),
+					RetType: types.NewFieldTypeBuilder(mysql.TypeTimestamp),
 				}},
 			},
 			schema: v.Schema(),
@@ -1893,7 +1893,7 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		return plannercore.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
 	}
 	intCol := &expression.Column{
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	return plannercore.NewIntHandleCols(intCol)
 }

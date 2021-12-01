@@ -320,7 +320,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
 	require.NoError(t, err)
@@ -340,10 +340,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{p.dataType}, 1)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 1)
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeJSON)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeJSON)}, 1)
 	}
 
 	// update partial result.
@@ -356,10 +356,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.NoError(t, err)
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeString))
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeJSON))
 	}
 	result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
@@ -383,10 +383,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.NoError(t, err)
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeString))
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeJSON))
 	}
 	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
@@ -395,10 +395,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.NoError(t, err)
 
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}, 1)
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeJSON)}, 1)
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeJSON)}, 1)
 	}
 	resultChk.Reset()
 	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
@@ -406,10 +406,10 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeLonglong))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 	if p.funcName == ast.AggFuncJsonArrayagg {
-		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldTypeBuilder(mysql.TypeJSON))
 	}
 	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[2], ctor)
 	require.NoError(t, err)
@@ -417,7 +417,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 }
 
 func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
-	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
+	return buildAggTesterWithFieldType(funcName, types.NewFieldTypeBuilder(tp), numRows, results...)
 }
 
 func buildAggTesterWithFieldType(funcName string, ft *types.FieldTypeBuilder, numRows int, results ...interface{}) aggTest {
@@ -511,9 +511,9 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...interface{}) multiArgsAggTest {
 	fts := make([]*types.FieldTypeBuilder, len(tps))
 	for i := 0; i < len(tps); i++ {
-		fts[i] = types.NewFieldType(tps[i])
+		fts[i] = types.NewFieldTypeBuilder(tps[i])
 	}
-	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
+	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldTypeBuilder(rt), numRows, results...)
 }
 
 func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTypeBuilder, rt *types.FieldTypeBuilder, numRows int, results ...interface{}) multiArgsAggTest {
@@ -575,10 +575,10 @@ func testAggFunc(t *testing.T, p aggTest) {
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 	if p.funcName == ast.AggFuncApproxPercentile {
-		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldTypeBuilder(mysql.TypeLong)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
 	require.NoError(t, err)
@@ -664,10 +664,10 @@ func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	ctor := collate.GetCollator(p.dataType.Collate)
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 	if p.funcName == ast.AggFuncApproxPercentile {
-		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldTypeBuilder(mysql.TypeLong)})
 	}
 	ctx := mock.NewContext()
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
@@ -711,7 +711,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
 	if p.aggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.aggTest.funcName, args, p.isDistinct)
 	require.NoError(t, err)
@@ -744,7 +744,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
@@ -835,7 +835,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
 	}
 	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.multiArgsAggTest.funcName, args, p.isDistinct)
@@ -870,7 +870,7 @@ func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
 	if err != nil {
@@ -923,7 +923,7 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgs
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldTypeBuilder(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)

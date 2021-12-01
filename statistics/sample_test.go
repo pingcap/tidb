@@ -70,7 +70,7 @@ func TestWeightedSampling(t *testing.T) {
 		builder := &RowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
-			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 			Collators:       make([]collate.Collator, 1),
 			ColGroups:       nil,
 			MaxSampleSize:   int(sampleNum),
@@ -113,7 +113,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 			builder := &RowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],
-				ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)},
+				ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 				Collators:       make([]collate.Collator, 1),
 				ColGroups:       nil,
 				MaxSampleSize:   int(sampleNum),
@@ -180,7 +180,7 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		FMSketch:  sketch,
 		TotalSize: int64(len(data)) * 8,
 	}
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true)
 	require.Nilf(t, err, "%+v", err)
 	topNStr, err := topN.DecodedString(ctx, []byte{tp.Tp})

@@ -127,7 +127,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		args := make([]expression.Expression, 0, 2)
 		args = append(args, &expression.Column{
 			Index:   ordinal[0],
-			RetType: types.NewFieldType(mysql.TypeLonglong),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		})
 		args = append(args, &expression.Column{
 			Index:   ordinal[1],
@@ -138,7 +138,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
 			Index:   ordinal[0],
-			RetType: types.NewFieldType(mysql.TypeString),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeString),
 		})
 		finalAggDesc.Args = args
 	default:

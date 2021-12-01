@@ -32,7 +32,7 @@ import (
 )
 
 func newColumn(id int) *Column {
-	return newColumnWithType(id, types.NewFieldType(mysql.TypeLonglong))
+	return newColumnWithType(id, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 }
 
 func newColumnWithType(id int, t *types.FieldTypeBuilder) *Column {
@@ -45,19 +45,19 @@ func newColumnWithType(id int, t *types.FieldTypeBuilder) *Column {
 func newLonglong(value int64) *Constant {
 	return &Constant{
 		Value:   types.NewIntDatum(value),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 }
 
 func newString(value string, collation string) *Constant {
 	return &Constant{
 		Value:   types.NewStringDatum(value),
-		RetType: types.NewFieldTypeWithCollation(mysql.TypeVarchar, collation, 255),
+		RetType: types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, collation, 255),
 	}
 }
 
 func newFunction(funcName string, args ...Expression) Expression {
-	return newFunctionWithType(funcName, types.NewFieldType(mysql.TypeLonglong), args...)
+	return newFunctionWithType(funcName, types.NewFieldTypeBuilder(mysql.TypeLonglong), args...)
 }
 
 func newFunctionWithType(funcName string, tp *types.FieldTypeBuilder, args ...Expression) Expression {
@@ -238,26 +238,26 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	}{
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
-				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
+				InternalFuncToBinary, types.NewFieldTypeBuilder(mysql.TypeVarchar),
 				newString("中文", "gbk_bin"))),
 			result: "4",
 		},
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
-				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
+				InternalFuncToBinary, types.NewFieldTypeBuilder(mysql.TypeVarchar),
 				newString("中文", "utf8mb4_bin"))),
 			result: "6",
 		},
 		{
 			condition: newFunction(ast.Concat, newFunctionWithType(
-				InternalFuncFromBinary, types.NewFieldType(mysql.TypeVarchar),
+				InternalFuncFromBinary, types.NewFieldTypeBuilder(mysql.TypeVarchar),
 				newString("中文", "binary"))),
 			result: "中文",
 		},
 		{
 			condition: newFunction(ast.Concat,
 				newFunctionWithType(
-					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					InternalFuncFromBinary, types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
 					newString("\xd2\xbb", "binary")),
 				newString("中文", "gbk_bin"),
 			),
@@ -267,7 +267,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 			condition: newFunction(ast.Concat,
 				newString("中文", "gbk_bin"),
 				newFunctionWithType(
-					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					InternalFuncFromBinary, types.NewFieldTypeBuilderWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
 					newString("\xd2\xbb", "binary")),
 			),
 			result: "中文一",

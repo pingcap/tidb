@@ -1514,7 +1514,7 @@ func tryGetPkExtraColumn(sv *variable.SessionVars, tblInfo *model.TableInfo) (*m
 	}
 	info := model.NewExtraHandleColInfo()
 	expCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		UniqueID: sv.AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 	}
@@ -1688,7 +1688,7 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 			DBName:  tn.Schema,
 		})
 		schema.Append(&expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       -1,
 		})
@@ -2758,7 +2758,7 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	toTypeTimestamp := types.NewFieldTypeBuilder(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
 	toTypeTimestamp.Decimal = 3
 	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
@@ -4376,7 +4376,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		if len(ftypes) != 0 && ftypes[i] != mysql.TypeUnspecified {
 			tp = ftypes[i]
 		}
-		fieldType := types.NewFieldType(tp)
+		fieldType := types.NewFieldTypeBuilder(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
 		col.RetType = fieldType

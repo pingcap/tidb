@@ -192,11 +192,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 }
 
 func BenchmarkScalarFunctionClone(b *testing.B) {
-	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	con1 := NewOne()
 	con2 := NewZero()
-	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
-	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
+	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldTypeBuilder(mysql.TypeLonglong), col, con1)
+	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldTypeBuilder(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sub.Clone()
@@ -1064,19 +1064,19 @@ func randString(r *rand.Rand) string {
 func eType2FieldType(eType types.EvalType) *types.FieldTypeBuilder {
 	switch eType {
 	case types.ETInt:
-		return types.NewFieldType(mysql.TypeLonglong)
+		return types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	case types.ETReal:
-		return types.NewFieldType(mysql.TypeDouble)
+		return types.NewFieldTypeBuilder(mysql.TypeDouble)
 	case types.ETDecimal:
-		return types.NewFieldType(mysql.TypeNewDecimal)
+		return types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	case types.ETDatetime, types.ETTimestamp:
-		return types.NewFieldType(mysql.TypeDatetime)
+		return types.NewFieldTypeBuilder(mysql.TypeDatetime)
 	case types.ETDuration:
-		return types.NewFieldType(mysql.TypeDuration)
+		return types.NewFieldTypeBuilder(mysql.TypeDuration)
 	case types.ETJson:
-		return types.NewFieldType(mysql.TypeJSON)
+		return types.NewFieldTypeBuilder(mysql.TypeJSON)
 	case types.ETString:
-		return types.NewFieldType(mysql.TypeVarString)
+		return types.NewFieldTypeBuilder(mysql.TypeVarString)
 	default:
 		panic(fmt.Sprintf("EvalType=%v is not supported.", eType))
 	}

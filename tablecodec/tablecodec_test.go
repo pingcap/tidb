@@ -69,9 +69,9 @@ type column struct {
 
 func TestRowCodec(t *testing.T) {
 	t.Parallel()
-	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
+	c1 := &column{id: 1, tp: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}
 	c4 := &column{id: 4, tp: &types.FieldTypeBuilder{Tp: mysql.TypeEnum, Elems: []string{"a"}}}
 	c5 := &column{id: 5, tp: &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a"}}}
 	c6 := &column{id: 6, tp: &types.FieldTypeBuilder{Tp: mysql.TypeBit, Flen: 8}}
@@ -114,7 +114,7 @@ func TestRowCodec(t *testing.T) {
 	}
 
 	// colMap may contains more columns than encoded row.
-	// colMap[4] = types.NewFieldType(mysql.TypeFloat)
+	// colMap[4] = types.NewFieldTypeBuilder(mysql.TypeFloat)
 	r, err = DecodeRowToDatumMap(bs, colMap, time.UTC)
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -166,7 +166,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
-	tp := types.NewFieldType(mysql.TypeTimestamp)
+	tp := types.NewFieldTypeBuilder(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
@@ -182,7 +182,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
-	tp = types.NewFieldType(mysql.TypeSet)
+	tp = types.NewFieldTypeBuilder(mysql.TypeSet)
 	tp.Elems = elems
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
-	tp = types.NewFieldType(mysql.TypeBit)
+	tp = types.NewFieldTypeBuilder(mysql.TypeBit)
 	tp.Flen = 24
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
 	require.NoError(t, err)
-	tp = types.NewFieldType(mysql.TypeEnum)
+	tp = types.NewFieldTypeBuilder(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
@@ -224,7 +224,7 @@ func TestUnflattenDatums(t *testing.T) {
 	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
-	tps := []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLonglong)}
+	tps := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
 	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
@@ -232,7 +232,7 @@ func TestUnflattenDatums(t *testing.T) {
 	require.Equal(t, 0, cmp)
 
 	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci")}
-	tps = []*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeBlob)}
+	tps = []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeBlob)}
 	tps[0].Collate = "utf8mb4_unicode_ci"
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
@@ -244,10 +244,10 @@ func TestUnflattenDatums(t *testing.T) {
 
 func TestTimeCodec(t *testing.T) {
 	t.Parallel()
-	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
-	c4 := &column{id: 4, tp: types.NewFieldType(mysql.TypeDuration)}
+	c1 := &column{id: 1, tp: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldTypeBuilder(mysql.TypeTimestamp)}
+	c4 := &column{id: 4, tp: types.NewFieldTypeBuilder(mysql.TypeDuration)}
 	cols := []*column{c1, c2, c3, c4}
 	colLen := len(cols)
 
@@ -295,9 +295,9 @@ func TestTimeCodec(t *testing.T) {
 func TestCutRow(t *testing.T) {
 	t.Parallel()
 	var err error
-	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
+	c1 := &column{id: 1, tp: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}
 	cols := []*column{c1, c2, c3}
 
 	row := make([]types.Datum, 3)

@@ -33,9 +33,9 @@ const ErrorLength = 0
 // FieldTypeBuilder records field type information.
 type FieldTypeBuilder = ast.FieldTypeBuilder
 
-// NewFieldType returns a FieldTypeBuilder,
+// NewFieldTypeBuilder returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldType(tp byte) *FieldTypeBuilder {
+func NewFieldTypeBuilder(tp byte) *FieldTypeBuilder {
 	ft := &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
@@ -45,9 +45,9 @@ func NewFieldType(tp byte) *FieldTypeBuilder {
 	return ft
 }
 
-// NewFieldTypeWithCollation returns a FieldTypeBuilder,
+// NewFieldTypeBuilderWithCollation returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldTypeBuilder {
+func NewFieldTypeBuilderWithCollation(tp byte, collation string, length int) *FieldTypeBuilder {
 	coll, _ := charset.GetCollationByName(collation)
 	return &FieldTypeBuilder{
 		Tp:      tp,

@@ -352,7 +352,7 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResul
 	result := &statistics.AnalyzeResult{
 		Fms: []*statistics.FMSketch{fms},
 		// We use histogram to get the Index's ID.
-		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldType(mysql.TypeBlob), 0, 0)},
+		Hist:    []*statistics.Histogram{statistics.NewHistogram(idxExec.idxInfo.ID, 0, 0, statistics.Version1, types.NewFieldTypeBuilder(mysql.TypeBlob), 0, 0)},
 		IsIndex: 1,
 	}
 	r := &statistics.AnalyzeResults{
@@ -962,7 +962,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		buildTaskChan <- &samplingBuildTask{
 			id:               idx.ID,
 			rootRowCollector: rootRowCollector,
-			tp:               types.NewFieldType(mysql.TypeBlob),
+			tp:               types.NewFieldTypeBuilder(mysql.TypeBlob),
 			isColumn:         false,
 			slicePos:         colLen + i,
 		}
@@ -1973,7 +1973,7 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 		statistics.MergeTopNAndUpdateCMSketch(topN, curTopN, cmSketch, numTop)
 	}
 	// Build Histogram.
-	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), idxInfo.ID, collector, types.NewFieldType(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
+	hist, err := statistics.BuildColumnHist(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), idxInfo.ID, collector, types.NewFieldTypeBuilder(mysql.TypeBlob), rowCount, int64(ndv), collector.NullCount*int64(scaleRatio))
 	return hist, cmSketch, topN, err
 }
 

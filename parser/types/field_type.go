@@ -48,9 +48,9 @@ type FieldTypeBuilder struct {
 	Elems []string
 }
 
-// NewFieldType returns a FieldTypeBuilder,
+// NewFieldTypeBuilder returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldType(tp byte) *FieldTypeBuilder {
+func NewFieldTypeBuilder(tp byte) *FieldTypeBuilder {
 	return &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,

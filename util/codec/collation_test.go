@@ -30,7 +30,7 @@ import (
 )
 
 func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
-	tp := types.NewFieldType(mysql.TypeString)
+	tp := types.NewFieldTypeBuilder(mysql.TypeString)
 	tps := []*types.FieldTypeBuilder{tp}
 	chk1 := chunk.New(tps, 3, 3)
 	chk2 := chunk.New(tps, 3, 3)
@@ -49,7 +49,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	tp := types.NewFieldType(mysql.TypeString)
+	tp := types.NewFieldTypeBuilder(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
 
 	tp.Collate = "utf8_general_ci"
@@ -88,7 +88,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	tp := types.NewFieldType(mysql.TypeString)
+	tp := types.NewFieldTypeBuilder(mysql.TypeString)
 	tps := []*types.FieldTypeBuilder{tp}
 	n, chk1, chk2 := prepareCollationData()
 	cols := []int{0}
@@ -132,7 +132,7 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	tp := types.NewFieldType(mysql.TypeString)
+	tp := types.NewFieldTypeBuilder(mysql.TypeString)
 	n, chk1, chk2 := prepareCollationData()
 	buf := make([]byte, 1)
 	hasNull := []bool{false, false, false}

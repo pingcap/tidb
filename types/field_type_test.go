@@ -25,133 +25,133 @@ import (
 func TestFieldType(t *testing.T) {
 	t.Parallel()
 
-	ft := NewFieldType(mysql.TypeDuration)
+	ft := NewFieldTypeBuilder(mysql.TypeDuration)
 	require.Equal(t, UnspecifiedLength, ft.Flen)
 	require.Equal(t, UnspecifiedLength, ft.Decimal)
 
 	ft.Decimal = 5
 	require.Equal(t, "time(5)", ft.String())
 
-	ft = NewFieldType(mysql.TypeLong)
+	ft = NewFieldTypeBuilder(mysql.TypeLong)
 	ft.Flen = 5
 	ft.Flag = mysql.UnsignedFlag | mysql.ZerofillFlag
 	require.Equal(t, "int(5) UNSIGNED ZEROFILL", ft.String())
 	require.Equal(t, "int(5) unsigned", ft.InfoSchemaStr())
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 12   // Default
 	ft.Decimal = 3 // Not Default
 	require.Equal(t, "float(12,3)", ft.String())
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 12    // Default
 	ft.Decimal = -1 // Default
 	require.Equal(t, "float", ft.String())
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5     // Not Default
 	ft.Decimal = -1 // Default
 	require.Equal(t, "float", ft.String())
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 7    // Not Default
 	ft.Decimal = 3 // Not Default
 	require.Equal(t, "float(7,3)", ft.String())
 
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	ft.Flen = 22   // Default
 	ft.Decimal = 3 // Not Default
 	require.Equal(t, "double(22,3)", ft.String())
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	ft.Flen = 22    // Default
 	ft.Decimal = -1 // Default
 	require.Equal(t, "double", ft.String())
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	ft.Flen = 5     // Not Default
 	ft.Decimal = -1 // Default
 	require.Equal(t, "double", ft.String())
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	ft.Flen = 7    // Not Default
 	ft.Decimal = 3 // Not Default
 	require.Equal(t, "double(7,3)", ft.String())
 
-	ft = NewFieldType(mysql.TypeBlob)
+	ft = NewFieldTypeBuilder(mysql.TypeBlob)
 	ft.Flen = 10
 	ft.Charset = "UTF8"
 	ft.Collate = "UTF8_UNICODE_GI"
 	require.Equal(t, "text CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI", ft.String())
 
-	ft = NewFieldType(mysql.TypeVarchar)
+	ft = NewFieldTypeBuilder(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
 	require.Equal(t, "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", ft.String())
 
-	ft = NewFieldType(mysql.TypeString)
+	ft = NewFieldTypeBuilder(mysql.TypeString)
 	ft.Charset = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
 	require.Equal(t, "binary(1) COLLATE utf8mb4_bin", ft.String())
 
-	ft = NewFieldType(mysql.TypeEnum)
+	ft = NewFieldTypeBuilder(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
 	require.Equal(t, "enum('a','b')", ft.String())
 
-	ft = NewFieldType(mysql.TypeEnum)
+	ft = NewFieldTypeBuilder(mysql.TypeEnum)
 	ft.Elems = []string{"'a'", "'b'"}
 	require.Equal(t, "enum('''a''','''b''')", ft.String())
 
-	ft = NewFieldType(mysql.TypeEnum)
+	ft = NewFieldTypeBuilder(mysql.TypeEnum)
 	ft.Elems = []string{"a\nb", "a\tb", "a\rb"}
 	require.Equal(t, "enum('a\\nb','a\tb','a\\rb')", ft.String())
 
-	ft = NewFieldType(mysql.TypeEnum)
+	ft = NewFieldTypeBuilder(mysql.TypeEnum)
 	ft.Elems = []string{"a\nb", "a'\t\r\nb", "a\rb"}
 	require.Equal(t, "enum('a\\nb','a''	\\r\\nb','a\\rb')", ft.String())
 
-	ft = NewFieldType(mysql.TypeSet)
+	ft = NewFieldTypeBuilder(mysql.TypeSet)
 	ft.Elems = []string{"a", "b"}
 	require.Equal(t, "set('a','b')", ft.String())
 
-	ft = NewFieldType(mysql.TypeSet)
+	ft = NewFieldTypeBuilder(mysql.TypeSet)
 	ft.Elems = []string{"'a'", "'b'"}
 	require.Equal(t, "set('''a''','''b''')", ft.String())
 
-	ft = NewFieldType(mysql.TypeSet)
+	ft = NewFieldTypeBuilder(mysql.TypeSet)
 	ft.Elems = []string{"a\nb", "a'\t\r\nb", "a\rb"}
 	require.Equal(t, "set('a\\nb','a''	\\r\\nb','a\\rb')", ft.String())
 
-	ft = NewFieldType(mysql.TypeSet)
+	ft = NewFieldTypeBuilder(mysql.TypeSet)
 	ft.Elems = []string{"a'\nb", "a'b\tc"}
 	require.Equal(t, "set('a''\\nb','a''b	c')", ft.String())
 
-	ft = NewFieldType(mysql.TypeTimestamp)
+	ft = NewFieldTypeBuilder(mysql.TypeTimestamp)
 	ft.Flen = 8
 	ft.Decimal = 2
 	require.Equal(t, "timestamp(2)", ft.String())
-	ft = NewFieldType(mysql.TypeTimestamp)
+	ft = NewFieldTypeBuilder(mysql.TypeTimestamp)
 	ft.Flen = 8
 	ft.Decimal = 0
 	require.Equal(t, "timestamp", ft.String())
 
-	ft = NewFieldType(mysql.TypeDatetime)
+	ft = NewFieldTypeBuilder(mysql.TypeDatetime)
 	ft.Flen = 8
 	ft.Decimal = 2
 	require.Equal(t, "datetime(2)", ft.String())
-	ft = NewFieldType(mysql.TypeDatetime)
+	ft = NewFieldTypeBuilder(mysql.TypeDatetime)
 	ft.Flen = 8
 	ft.Decimal = 0
 	require.Equal(t, "datetime", ft.String())
 
-	ft = NewFieldType(mysql.TypeDate)
+	ft = NewFieldTypeBuilder(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 2
 	require.Equal(t, "date", ft.String())
-	ft = NewFieldType(mysql.TypeDate)
+	ft = NewFieldTypeBuilder(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 0
 	require.Equal(t, "date", ft.String())
 
-	ft = NewFieldType(mysql.TypeYear)
+	ft = NewFieldTypeBuilder(mysql.TypeYear)
 	ft.Flen = 4
 	ft.Decimal = 0
 	require.Equal(t, "year(4)", ft.String())
-	ft = NewFieldType(mysql.TypeYear)
+	ft = NewFieldTypeBuilder(mysql.TypeYear)
 	ft.Flen = 2
 	ft.Decimal = 2
 	require.Equal(t, "year(2)", ft.String()) // Note: Invalid year.
@@ -213,34 +213,34 @@ func TestAggFieldType(t *testing.T) {
 	t.Parallel()
 
 	fts := []*FieldTypeBuilder{
-		NewFieldType(mysql.TypeUnspecified),
-		NewFieldType(mysql.TypeTiny),
-		NewFieldType(mysql.TypeShort),
-		NewFieldType(mysql.TypeLong),
-		NewFieldType(mysql.TypeFloat),
-		NewFieldType(mysql.TypeDouble),
-		NewFieldType(mysql.TypeNull),
-		NewFieldType(mysql.TypeTimestamp),
-		NewFieldType(mysql.TypeLonglong),
-		NewFieldType(mysql.TypeInt24),
-		NewFieldType(mysql.TypeDate),
-		NewFieldType(mysql.TypeDuration),
-		NewFieldType(mysql.TypeDatetime),
-		NewFieldType(mysql.TypeYear),
-		NewFieldType(mysql.TypeNewDate),
-		NewFieldType(mysql.TypeVarchar),
-		NewFieldType(mysql.TypeBit),
-		NewFieldType(mysql.TypeJSON),
-		NewFieldType(mysql.TypeNewDecimal),
-		NewFieldType(mysql.TypeEnum),
-		NewFieldType(mysql.TypeSet),
-		NewFieldType(mysql.TypeTinyBlob),
-		NewFieldType(mysql.TypeMediumBlob),
-		NewFieldType(mysql.TypeLongBlob),
-		NewFieldType(mysql.TypeBlob),
-		NewFieldType(mysql.TypeVarString),
-		NewFieldType(mysql.TypeString),
-		NewFieldType(mysql.TypeGeometry),
+		NewFieldTypeBuilder(mysql.TypeUnspecified),
+		NewFieldTypeBuilder(mysql.TypeTiny),
+		NewFieldTypeBuilder(mysql.TypeShort),
+		NewFieldTypeBuilder(mysql.TypeLong),
+		NewFieldTypeBuilder(mysql.TypeFloat),
+		NewFieldTypeBuilder(mysql.TypeDouble),
+		NewFieldTypeBuilder(mysql.TypeNull),
+		NewFieldTypeBuilder(mysql.TypeTimestamp),
+		NewFieldTypeBuilder(mysql.TypeLonglong),
+		NewFieldTypeBuilder(mysql.TypeInt24),
+		NewFieldTypeBuilder(mysql.TypeDate),
+		NewFieldTypeBuilder(mysql.TypeDuration),
+		NewFieldTypeBuilder(mysql.TypeDatetime),
+		NewFieldTypeBuilder(mysql.TypeYear),
+		NewFieldTypeBuilder(mysql.TypeNewDate),
+		NewFieldTypeBuilder(mysql.TypeVarchar),
+		NewFieldTypeBuilder(mysql.TypeBit),
+		NewFieldTypeBuilder(mysql.TypeJSON),
+		NewFieldTypeBuilder(mysql.TypeNewDecimal),
+		NewFieldTypeBuilder(mysql.TypeEnum),
+		NewFieldTypeBuilder(mysql.TypeSet),
+		NewFieldTypeBuilder(mysql.TypeTinyBlob),
+		NewFieldTypeBuilder(mysql.TypeMediumBlob),
+		NewFieldTypeBuilder(mysql.TypeLongBlob),
+		NewFieldTypeBuilder(mysql.TypeBlob),
+		NewFieldTypeBuilder(mysql.TypeVarString),
+		NewFieldTypeBuilder(mysql.TypeString),
+		NewFieldTypeBuilder(mysql.TypeGeometry),
 	}
 
 	for i := range fts {
@@ -261,7 +261,7 @@ func TestAggFieldType(t *testing.T) {
 			require.Equal(t, fts[i].Tp, aggTp.Tp)
 		}
 
-		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeLong)})
+		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeLong)})
 		switch fts[i].Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
 			mysql.TypeYear, mysql.TypeInt24, mysql.TypeNull:
@@ -291,7 +291,7 @@ func TestAggFieldType(t *testing.T) {
 			require.Equal(t, mysql.TypeLongBlob, aggTp.Tp)
 		}
 
-		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeJSON)})
+		aggTp = AggFieldType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeJSON)})
 		switch fts[i].Tp {
 		case mysql.TypeJSON, mysql.TypeNull:
 			require.Equal(t, mysql.TypeJSON, aggTp.Tp)
@@ -309,8 +309,8 @@ func TestAggFieldTypeForTypeFlag(t *testing.T) {
 	t.Parallel()
 
 	types := []*FieldTypeBuilder{
-		NewFieldType(mysql.TypeLonglong),
-		NewFieldType(mysql.TypeLonglong),
+		NewFieldTypeBuilder(mysql.TypeLonglong),
+		NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 
 	aggTp := AggFieldType(types)
@@ -338,12 +338,12 @@ func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
 	t.Parallel()
 
 	fts := []*FieldTypeBuilder{
-		NewFieldType(mysql.TypeTiny),
-		NewFieldType(mysql.TypeShort),
-		NewFieldType(mysql.TypeInt24),
-		NewFieldType(mysql.TypeLong),
-		NewFieldType(mysql.TypeLonglong),
-		NewFieldType(mysql.TypeNewDecimal),
+		NewFieldTypeBuilder(mysql.TypeTiny),
+		NewFieldTypeBuilder(mysql.TypeShort),
+		NewFieldTypeBuilder(mysql.TypeInt24),
+		NewFieldTypeBuilder(mysql.TypeLong),
+		NewFieldTypeBuilder(mysql.TypeLonglong),
+		NewFieldTypeBuilder(mysql.TypeNewDecimal),
 	}
 
 	for i := 1; i < len(fts)-1; i++ {
@@ -378,34 +378,34 @@ func TestAggregateEvalType(t *testing.T) {
 	t.Parallel()
 
 	fts := []*FieldTypeBuilder{
-		NewFieldType(mysql.TypeUnspecified),
-		NewFieldType(mysql.TypeTiny),
-		NewFieldType(mysql.TypeShort),
-		NewFieldType(mysql.TypeLong),
-		NewFieldType(mysql.TypeFloat),
-		NewFieldType(mysql.TypeDouble),
-		NewFieldType(mysql.TypeNull),
-		NewFieldType(mysql.TypeTimestamp),
-		NewFieldType(mysql.TypeLonglong),
-		NewFieldType(mysql.TypeInt24),
-		NewFieldType(mysql.TypeDate),
-		NewFieldType(mysql.TypeDuration),
-		NewFieldType(mysql.TypeDatetime),
-		NewFieldType(mysql.TypeYear),
-		NewFieldType(mysql.TypeNewDate),
-		NewFieldType(mysql.TypeVarchar),
-		NewFieldType(mysql.TypeBit),
-		NewFieldType(mysql.TypeJSON),
-		NewFieldType(mysql.TypeNewDecimal),
-		NewFieldType(mysql.TypeEnum),
-		NewFieldType(mysql.TypeSet),
-		NewFieldType(mysql.TypeTinyBlob),
-		NewFieldType(mysql.TypeMediumBlob),
-		NewFieldType(mysql.TypeLongBlob),
-		NewFieldType(mysql.TypeBlob),
-		NewFieldType(mysql.TypeVarString),
-		NewFieldType(mysql.TypeString),
-		NewFieldType(mysql.TypeGeometry),
+		NewFieldTypeBuilder(mysql.TypeUnspecified),
+		NewFieldTypeBuilder(mysql.TypeTiny),
+		NewFieldTypeBuilder(mysql.TypeShort),
+		NewFieldTypeBuilder(mysql.TypeLong),
+		NewFieldTypeBuilder(mysql.TypeFloat),
+		NewFieldTypeBuilder(mysql.TypeDouble),
+		NewFieldTypeBuilder(mysql.TypeNull),
+		NewFieldTypeBuilder(mysql.TypeTimestamp),
+		NewFieldTypeBuilder(mysql.TypeLonglong),
+		NewFieldTypeBuilder(mysql.TypeInt24),
+		NewFieldTypeBuilder(mysql.TypeDate),
+		NewFieldTypeBuilder(mysql.TypeDuration),
+		NewFieldTypeBuilder(mysql.TypeDatetime),
+		NewFieldTypeBuilder(mysql.TypeYear),
+		NewFieldTypeBuilder(mysql.TypeNewDate),
+		NewFieldTypeBuilder(mysql.TypeVarchar),
+		NewFieldTypeBuilder(mysql.TypeBit),
+		NewFieldTypeBuilder(mysql.TypeJSON),
+		NewFieldTypeBuilder(mysql.TypeNewDecimal),
+		NewFieldTypeBuilder(mysql.TypeEnum),
+		NewFieldTypeBuilder(mysql.TypeSet),
+		NewFieldTypeBuilder(mysql.TypeTinyBlob),
+		NewFieldTypeBuilder(mysql.TypeMediumBlob),
+		NewFieldTypeBuilder(mysql.TypeLongBlob),
+		NewFieldTypeBuilder(mysql.TypeBlob),
+		NewFieldTypeBuilder(mysql.TypeVarString),
+		NewFieldTypeBuilder(mysql.TypeString),
+		NewFieldTypeBuilder(mysql.TypeGeometry),
 	}
 
 	for i := range fts {
@@ -453,7 +453,7 @@ func TestAggregateEvalType(t *testing.T) {
 			require.Equal(t, mysql.BinaryFlag, flag)
 		}
 		flag = 0
-		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], NewFieldType(mysql.TypeLong)}, &flag)
+		aggregatedEvalType = AggregateEvalType([]*FieldTypeBuilder{fts[i], NewFieldTypeBuilder(mysql.TypeLong)}, &flag)
 		switch fts[i].Tp {
 		case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration,
 			mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeVarchar, mysql.TypeJSON,

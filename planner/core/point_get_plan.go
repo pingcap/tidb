@@ -1269,7 +1269,7 @@ func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair n
 	if !tblInfo.PKIsHandle {
 		rowIDIdx := findInPairs("_tidb_rowid", pairs)
 		if rowIDIdx != -1 {
-			return pairs[rowIDIdx], types.NewFieldType(mysql.TypeLonglong)
+			return pairs[rowIDIdx], types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		}
 		return handlePair, nil
 	}

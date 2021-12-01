@@ -89,7 +89,7 @@ func TestEval(t *testing.T) {
 	t.Parallel()
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldTypeBuilder, 1)
-	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
+	fieldTps[0] = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -805,7 +805,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
 		expr.Tp = tipb.ExprType_String
-		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeString))
+		expr.FieldType = toPBFieldType(types.NewFieldTypeBuilder(mysql.TypeString))
 		expr.Val = d.GetBytes()
 	case types.KindBytes:
 		expr.Tp = tipb.ExprType_Bytes

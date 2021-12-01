@@ -40,9 +40,9 @@ type pkgTestSerialSuite struct {
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
-	col1 := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLong)}
-	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldType(mysql.TypeLong)}
+	col0 := &expression.Column{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLong)}
+	col1 := &expression.Column{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLong)}
+	con := &expression.Constant{Value: types.NewDatum(6), RetType: types.NewFieldTypeBuilder(mysql.TypeLong)}
 	outerSchema := expression.NewSchema(col0)
 	outerExec := buildMockDataSource(mockDataSourceParameters{
 		schema: outerSchema,
@@ -65,9 +65,9 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	})
 	innerExec.prepareChunks()
 
-	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
+	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldTypeBuilder(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
+	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
 		retTypes(outerExec), retTypes(innerExec), nil)

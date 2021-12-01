@@ -140,9 +140,9 @@ func TestGetVar(t *testing.T) {
 		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
 		var tp *types.FieldTypeBuilder
 		if _, ok := kv.val.(types.Time); ok {
-			tp = types.NewFieldType(mysql.TypeDatetime)
+			tp = types.NewFieldTypeBuilder(mysql.TypeDatetime)
 		} else {
-			tp = types.NewFieldType(mysql.TypeVarString)
+			tp = types.NewFieldTypeBuilder(mysql.TypeVarString)
 		}
 		types.DefaultParamTypeForValue(kv.val, tp)
 		ctx.GetSessionVars().UserVarTypes[kv.key] = tp
@@ -164,7 +164,7 @@ func TestGetVar(t *testing.T) {
 	for _, tc := range testCases {
 		tp, ok := ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
 		if !ok {
-			tp = types.NewFieldType(mysql.TypeVarString)
+			tp = types.NewFieldTypeBuilder(mysql.TypeVarString)
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestGetVar(t *testing.T) {
 func TestValues(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
+	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldTypeBuilder(mysql.TypeVarchar)}
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
 	require.Error(t, err)
 	require.Regexp(t, ".*Incorrect parameter count in the call to native function 'values'", err.Error())

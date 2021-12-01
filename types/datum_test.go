@@ -101,7 +101,7 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, td, 1)
 
-	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestToInt64(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToInt64(t, td, int64(111112))
 
-	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestToInt64(t *testing.T) {
 
 func TestToFloat32(t *testing.T) {
 	t.Parallel()
-	ft := NewFieldType(mysql.TypeFloat)
+	ft := NewFieldTypeBuilder(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
@@ -169,7 +169,7 @@ func TestToFloat32(t *testing.T) {
 	require.Equal(t, KindFloat32, converted.Kind())
 	require.Equal(t, float32(281.37), converted.GetFloat32())
 
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	datum = NewFloat32Datum(281.37)
 	converted, err = datum.ConvertTo(sc, ft)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 
 func TestToJSON(t *testing.T) {
 	t.Parallel()
-	ft := NewFieldType(mysql.TypeJSON)
+	ft := NewFieldTypeBuilder(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
 		datum    Datum
@@ -358,7 +358,7 @@ func TestCloneDatum(t *testing.T) {
 }
 
 func newTypeWithFlag(tp byte, flag uint) *FieldTypeBuilder {
-	t := NewFieldType(tp)
+	t := NewFieldTypeBuilder(tp)
 	t.Flag |= flag
 	return t
 }
@@ -528,7 +528,7 @@ func TestStringToMysqlBit(t *testing.T) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	tp := NewFieldType(mysql.TypeBit)
+	tp := NewFieldTypeBuilder(mysql.TypeBit)
 	tp.Flen = 1
 	for _, tt := range tests {
 		bin, err := tt.a.convertToMysqlBit(nil, tp)

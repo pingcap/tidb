@@ -1003,7 +1003,7 @@ func TestHashGroup(t *testing.T) {
 	t.Parallel()
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tp := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	tps := []*types.FieldTypeBuilder{tp}
 	chk1 := chunk.New(tps, 3, 3)
 	chk1.Reset()
@@ -1026,52 +1026,52 @@ func TestHashGroup(t *testing.T) {
 }
 
 func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTypeBuilder) {
-	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	decType.Decimal = 2
 	table := []struct {
 		value interface{}
 		tp    *types.FieldTypeBuilder
 	}{
-		{nil, types.NewFieldType(mysql.TypeNull)},
-		{nil, types.NewFieldType(mysql.TypeLonglong)},
-		{nil, types.NewFieldType(mysql.TypeFloat)},
-		{nil, types.NewFieldType(mysql.TypeDate)},
-		{nil, types.NewFieldType(mysql.TypeDuration)},
-		{nil, types.NewFieldType(mysql.TypeNewDecimal)},
-		{nil, types.NewFieldType(mysql.TypeEnum)},
-		{nil, types.NewFieldType(mysql.TypeSet)},
-		{nil, types.NewFieldType(mysql.TypeBit)},
-		{nil, types.NewFieldType(mysql.TypeJSON)},
-		{nil, types.NewFieldType(mysql.TypeVarchar)},
-		{nil, types.NewFieldType(mysql.TypeDouble)},
-		{int64(1), types.NewFieldType(mysql.TypeTiny)},
-		{int64(1), types.NewFieldType(mysql.TypeShort)},
-		{int64(1), types.NewFieldType(mysql.TypeInt24)},
-		{int64(1), types.NewFieldType(mysql.TypeLong)},
-		{int64(-1), types.NewFieldType(mysql.TypeLong)},
-		{int64(1), types.NewFieldType(mysql.TypeLonglong)},
-		{uint64(1), types.NewFieldType(mysql.TypeLonglong)},
-		{float32(1), types.NewFieldType(mysql.TypeFloat)},
-		{float64(1), types.NewFieldType(mysql.TypeDouble)},
-		{types.NewDecFromInt(1), types.NewFieldType(mysql.TypeNewDecimal)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeNull)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeFloat)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeDate)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeDuration)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeEnum)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeSet)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeBit)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeJSON)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeVarchar)},
+		{nil, types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeTiny)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeShort)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeInt24)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeLong)},
+		{int64(-1), types.NewFieldTypeBuilder(mysql.TypeLong)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{uint64(1), types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{float32(1), types.NewFieldTypeBuilder(mysql.TypeFloat)},
+		{float64(1), types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{types.NewDecFromInt(1), types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
 		{types.NewDecFromStringForTest("1.123"), decType},
-		{"abc", types.NewFieldType(mysql.TypeString)},
-		{"def", types.NewFieldType(mysql.TypeVarchar)},
-		{"ghi", types.NewFieldType(mysql.TypeVarString)},
-		{[]byte("abc"), types.NewFieldType(mysql.TypeBlob)},
-		{[]byte("abc"), types.NewFieldType(mysql.TypeTinyBlob)},
-		{[]byte("abc"), types.NewFieldType(mysql.TypeMediumBlob)},
-		{[]byte("abc"), types.NewFieldType(mysql.TypeLongBlob)},
-		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
-		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
-		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldType(mysql.TypeTimestamp)},
-		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
+		{"abc", types.NewFieldTypeBuilder(mysql.TypeString)},
+		{"def", types.NewFieldTypeBuilder(mysql.TypeVarchar)},
+		{"ghi", types.NewFieldTypeBuilder(mysql.TypeVarString)},
+		{[]byte("abc"), types.NewFieldTypeBuilder(mysql.TypeBlob)},
+		{[]byte("abc"), types.NewFieldTypeBuilder(mysql.TypeTinyBlob)},
+		{[]byte("abc"), types.NewFieldTypeBuilder(mysql.TypeMediumBlob)},
+		{[]byte("abc"), types.NewFieldTypeBuilder(mysql.TypeLongBlob)},
+		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldTypeBuilder(mysql.TypeDatetime)},
+		{types.CurrentTime(mysql.TypeDate), types.NewFieldTypeBuilder(mysql.TypeDate)},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldTypeBuilder(mysql.TypeTimestamp)},
+		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldTypeBuilder(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 1}, &types.FieldTypeBuilder{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
 		{types.Set{Name: "a", Value: 1}, &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.Set{Name: "f", Value: 32}, &types.FieldTypeBuilder{Tp: mysql.TypeSet, Elems: []string{"a", "b", "c", "d", "e", "f"}}},
 		{types.BinaryLiteral{100}, &types.FieldTypeBuilder{Tp: mysql.TypeBit, Flen: 8}},
-		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
-		{int64(1), types.NewFieldType(mysql.TypeYear)},
+		{json.CreateBinary("abc"), types.NewFieldTypeBuilder(mysql.TypeJSON)},
+		{int64(1), types.NewFieldTypeBuilder(mysql.TypeYear)},
 	}
 
 	datums := make([]types.Datum, 0, len(table)+2)

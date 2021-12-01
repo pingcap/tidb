@@ -76,7 +76,7 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 			ID:               1,
 			Name:             model.NewCIStr("col1"),
 			Offset:           0,
-			FieldTypeBuilder: *types.NewFieldType(mysql.TypeLonglong),
+			FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 			State:            model.StatePublic,
 		}},
 		Indices:       []*model.IndexInfo{},

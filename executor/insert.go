@@ -365,7 +365,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, &col.FieldTypeBuilder)
 	}
 	if e.hasExtraHandle {
-		evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+		evalBufferTypes = append(evalBufferTypes, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 	e.evalBuffer4Dup = chunk.MutRowFromTypes(evalBufferTypes)
 	e.curInsertVals = chunk.MutRowFromTypes(evalBufferTypes[numWritableCols:])

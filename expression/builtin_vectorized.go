@@ -38,7 +38,7 @@ type localColumnPool struct {
 }
 
 func newLocalColumnPool() *localColumnPool {
-	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+	newColumn := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), chunk.InitialCapacity)
 	return &localColumnPool{
 		sync.Pool{
 			New: func() interface{} {

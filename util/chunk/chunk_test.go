@@ -274,7 +274,7 @@ func TestTruncateTo(t *testing.T) {
 
 func TestChunkSizeControl(t *testing.T) {
 	maxChunkSize := 10
-	chk := New([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
+	chk := New([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
 	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	for i := 0; i < maxChunkSize; i++ {
@@ -352,32 +352,32 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 }
 
 var allTypes = []*types.FieldTypeBuilder{
-	types.NewFieldType(mysql.TypeTiny),
-	types.NewFieldType(mysql.TypeShort),
-	types.NewFieldType(mysql.TypeInt24),
-	types.NewFieldType(mysql.TypeLong),
-	types.NewFieldType(mysql.TypeLonglong),
+	types.NewFieldTypeBuilder(mysql.TypeTiny),
+	types.NewFieldTypeBuilder(mysql.TypeShort),
+	types.NewFieldTypeBuilder(mysql.TypeInt24),
+	types.NewFieldTypeBuilder(mysql.TypeLong),
+	types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	{
 		Tp:      mysql.TypeLonglong,
 		Flen:    types.UnspecifiedLength,
 		Decimal: types.UnspecifiedLength,
 		Flag:    mysql.UnsignedFlag,
 	},
-	types.NewFieldType(mysql.TypeYear),
-	types.NewFieldType(mysql.TypeFloat),
-	types.NewFieldType(mysql.TypeDouble),
-	types.NewFieldType(mysql.TypeString),
-	types.NewFieldType(mysql.TypeVarString),
-	types.NewFieldType(mysql.TypeVarchar),
-	types.NewFieldType(mysql.TypeBlob),
-	types.NewFieldType(mysql.TypeTinyBlob),
-	types.NewFieldType(mysql.TypeMediumBlob),
-	types.NewFieldType(mysql.TypeLongBlob),
-	types.NewFieldType(mysql.TypeDate),
-	types.NewFieldType(mysql.TypeDatetime),
-	types.NewFieldType(mysql.TypeTimestamp),
-	types.NewFieldType(mysql.TypeDuration),
-	types.NewFieldType(mysql.TypeNewDecimal),
+	types.NewFieldTypeBuilder(mysql.TypeYear),
+	types.NewFieldTypeBuilder(mysql.TypeFloat),
+	types.NewFieldTypeBuilder(mysql.TypeDouble),
+	types.NewFieldTypeBuilder(mysql.TypeString),
+	types.NewFieldTypeBuilder(mysql.TypeVarString),
+	types.NewFieldTypeBuilder(mysql.TypeVarchar),
+	types.NewFieldTypeBuilder(mysql.TypeBlob),
+	types.NewFieldTypeBuilder(mysql.TypeTinyBlob),
+	types.NewFieldTypeBuilder(mysql.TypeMediumBlob),
+	types.NewFieldTypeBuilder(mysql.TypeLongBlob),
+	types.NewFieldTypeBuilder(mysql.TypeDate),
+	types.NewFieldTypeBuilder(mysql.TypeDatetime),
+	types.NewFieldTypeBuilder(mysql.TypeTimestamp),
+	types.NewFieldTypeBuilder(mysql.TypeDuration),
+	types.NewFieldTypeBuilder(mysql.TypeNewDecimal),
 	{
 		Tp:      mysql.TypeSet,
 		Flen:    types.UnspecifiedLength,
@@ -392,8 +392,8 @@ var allTypes = []*types.FieldTypeBuilder{
 		Flag:    mysql.UnsignedFlag,
 		Elems:   []string{"a", "b"},
 	},
-	types.NewFieldType(mysql.TypeBit),
-	types.NewFieldType(mysql.TypeJSON),
+	types.NewFieldTypeBuilder(mysql.TypeBit),
+	types.NewFieldTypeBuilder(mysql.TypeJSON),
 }
 
 func TestCompare(t *testing.T) {
@@ -544,7 +544,7 @@ func TestGetDecimalDatum(t *testing.T) {
 	t.Parallel()
 
 	datum := types.NewDatum(1.01)
-	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	decType.Flen = 4
 	decType.Decimal = 2
 	sc := new(stmtctx.StatementContext)
@@ -790,7 +790,7 @@ func appendRow(chk *Chunk, row Row) {
 }
 
 func BenchmarkAppendBytes1024(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1024)
@@ -798,7 +798,7 @@ func BenchmarkAppendBytes1024(b *testing.B) {
 }
 
 func BenchmarkAppendBytes512(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 512)
@@ -806,7 +806,7 @@ func BenchmarkAppendBytes512(b *testing.B) {
 }
 
 func BenchmarkAppendBytes256(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 256)
@@ -814,7 +814,7 @@ func BenchmarkAppendBytes256(b *testing.B) {
 }
 
 func BenchmarkAppendBytes128(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 128)
@@ -822,7 +822,7 @@ func BenchmarkAppendBytes128(b *testing.B) {
 }
 
 func BenchmarkAppendBytes64(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 64)
@@ -830,7 +830,7 @@ func BenchmarkAppendBytes64(b *testing.B) {
 }
 
 func BenchmarkAppendBytes32(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 32)
@@ -838,7 +838,7 @@ func BenchmarkAppendBytes32(b *testing.B) {
 }
 
 func BenchmarkAppendBytes16(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 16)
@@ -846,7 +846,7 @@ func BenchmarkAppendBytes16(b *testing.B) {
 }
 
 func BenchmarkAppendBytes8(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 8)
@@ -854,7 +854,7 @@ func BenchmarkAppendBytes8(b *testing.B) {
 }
 
 func BenchmarkAppendBytes4(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 4)
@@ -862,7 +862,7 @@ func BenchmarkAppendBytes4(b *testing.B) {
 }
 
 func BenchmarkAppendBytes2(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 2)
@@ -870,7 +870,7 @@ func BenchmarkAppendBytes2(b *testing.B) {
 }
 
 func BenchmarkAppendBytes1(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1)

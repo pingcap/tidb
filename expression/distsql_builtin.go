@@ -1102,7 +1102,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldTypeBuilder, sc *stmtctx.Statem
 		}
 		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldTypeBuilder(mysql.TypeNull)}, nil
 	case tipb.ExprType_Int64:
 		return convertInt(expr.Val)
 	case tipb.ExprType_Uint64:
@@ -1110,7 +1110,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldTypeBuilder, sc *stmtctx.Statem
 	case tipb.ExprType_String:
 		return convertString(expr.Val, expr.FieldType)
 	case tipb.ExprType_Bytes:
-		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldType(mysql.TypeString)}, nil
+		return &Constant{Value: types.NewBytesDatum(expr.Val), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}, nil
 	case tipb.ExprType_Float32:
 		return convertFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
@@ -1138,7 +1138,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldTypeBuilder, sc *stmtctx.Statem
 				return nil, err
 			}
 			if len(results) == 0 {
-				return &Constant{Value: types.NewDatum(false), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
+				return &Constant{Value: types.NewDatum(false), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}, nil
 			}
 			args = append(args, results...)
 			continue
@@ -1201,7 +1201,7 @@ func convertInt(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid int % x", val)
 	}
 	d.SetInt64(i)
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}, nil
 }
 
 func convertUint(val []byte) (*Constant, error) {
@@ -1217,7 +1217,7 @@ func convertUint(val []byte) (*Constant, error) {
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)}, nil
 }
 
 func convertFloat(val []byte, f32 bool) (*Constant, error) {
@@ -1231,7 +1231,7 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 	} else {
 		d.SetFloat64(f)
 	}
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDouble)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)}, nil
 }
 
 func convertDecimal(val []byte) (*Constant, error) {
@@ -1243,7 +1243,7 @@ func convertDecimal(val []byte) (*Constant, error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid decimal % x", val)
 	}
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeNewDecimal)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}, nil
 }
 
 func convertDuration(val []byte) (*Constant, error) {
@@ -1253,7 +1253,7 @@ func convertDuration(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid duration %d", i)
 	}
 	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDuration)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeDuration)}, nil
 }
 
 func convertJSON(val []byte) (*Constant, error) {
@@ -1265,7 +1265,7 @@ func convertJSON(val []byte) (*Constant, error) {
 	if d.Kind() != types.KindMysqlJSON {
 		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
 	}
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
+	return &Constant{Value: d, RetType: types.NewFieldTypeBuilder(mysql.TypeJSON)}, nil
 }
 
 func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {

@@ -185,7 +185,7 @@ func (e *InsertValues) initEvalBuffer() {
 		e.evalBufferTypes[i] = &col.FieldTypeBuilder
 	}
 	if e.hasExtraHandle {
-		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
+		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	}
 	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
 }
@@ -1006,7 +1006,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
+	layout := autoid.NewShardIDLayout(types.NewFieldTypeBuilder(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
 	newTiDBRowIDBase := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)

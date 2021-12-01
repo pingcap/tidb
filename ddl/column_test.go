@@ -73,7 +73,7 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 		OriginDefaultValue: defaultValue,
 	}
 	col.ID = allocateColumnID(tblInfo)
-	col.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+	col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -108,7 +108,7 @@ func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 			OriginDefaultValue: defaultValue,
 		}
 		col.ID = allocateColumnID(tblInfo)
-		col.FieldTypeBuilder = *types.NewFieldType(mysql.TypeLong)
+		col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 		colInfos[i] = col
 	}
 
