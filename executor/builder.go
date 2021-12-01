@@ -385,13 +385,13 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	e.ranges = ranger.FullRange()
 
-	tps := make([]*types.FieldType, 0, fullColLen)
+	tps := make([]*types.FieldTypeBuilder, 0, fullColLen)
 	for _, col := range is.Columns {
-		tps = append(tps, &col.FieldType)
+		tps = append(tps, &col.FieldTypeBuilder)
 	}
 
 	if !e.isCommonHandle() {
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+		tps = append(tps, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	}
 
 	e.checkIndexValue = &checkIndexValue{idxColTps: tps}
@@ -458,7 +458,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 		Name:   model.ExtraHandleName,
 		Offset: handleOffset,
 	}
-	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	handleColsInfo.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	columns = append(columns, handleColsInfo)
 	return columns
 }
@@ -494,7 +494,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		extraColPos := len(allColInfo) - 1
 		intCol := &expression.Column{
 			Index:   extraColPos,
-			RetType: types.NewFieldType(mysql.TypeLonglong),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		}
 		return plannercore.NewIntHandleCols(intCol)
 	}
@@ -502,7 +502,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 	for i := 0; i < len(tblInfo.Columns); i++ {
 		c := tblInfo.Columns[i]
 		tblCols[i] = &expression.Column{
-			RetType: &c.FieldType,
+			RetType: &c.FieldTypeBuilder,
 			ID:      c.ID,
 		}
 	}
@@ -987,7 +987,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
 					Index:   0,
-					RetType: types.NewFieldType(mysql.TypeTimestamp),
+					RetType: types.NewFieldTypeBuilder(mysql.TypeTimestamp),
 				}},
 			},
 			schema: v.Schema(),
@@ -1258,7 +1258,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
 	// and use ETString to hash the second column, although they may be the same column.
 	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
-	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
+	leftTypes, rightTypes := make([]*types.FieldTypeBuilder, 0, len(v.LeftJoinKeys)), make([]*types.FieldTypeBuilder, 0, len(v.RightJoinKeys))
 	for i, col := range v.LeftJoinKeys {
 		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
 		leftTypes[i].Flag = col.RetType.Flag
@@ -1884,7 +1884,7 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		for i, col := range tbInfo.Columns {
 			tableCols[i] = &expression.Column{
 				ID:      col.ID,
-				RetType: &col.FieldType,
+				RetType: &col.FieldTypeBuilder,
 			}
 		}
 		for i, pkCol := range primaryIdx.Columns {
@@ -1893,7 +1893,7 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		return plannercore.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
 	}
 	intCol := &expression.Column{
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	return plannercore.NewIntHandleCols(intCol)
 }
@@ -2698,7 +2698,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	outerTypes := retTypes(outerExec)
 	innerPlan := v.Children()[v.InnerChildIdx]
-	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	innerTypes := make([]*types.FieldTypeBuilder, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
@@ -2720,8 +2720,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
 	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
 	// and use ETString to hash the second column, although they may be the same column.
-	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
-	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
+	innerHashTypes := make([]*types.FieldTypeBuilder, len(v.InnerHashKeys))
+	outerHashTypes := make([]*types.FieldTypeBuilder, len(v.OuterHashKeys))
 	for i, col := range v.InnerHashKeys {
 		innerHashTypes[i] = innerTypes[col.Index].Clone()
 		innerHashTypes[i].Flag = col.RetType.Flag
@@ -2733,7 +2733,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 
 	var (
 		outerFilter           []expression.Expression
-		leftTypes, rightTypes []*types.FieldType
+		leftTypes, rightTypes []*types.FieldTypeBuilder
 	)
 
 	if v.InnerChildIdx == 0 {
@@ -2821,7 +2821,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 	outerTypes := retTypes(outerExec)
 	innerPlan := v.Children()[v.InnerChildIdx]
-	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	innerTypes := make([]*types.FieldTypeBuilder, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
 		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
@@ -2833,7 +2833,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 	var (
 		outerFilter           []expression.Expression
-		leftTypes, rightTypes []*types.FieldType
+		leftTypes, rightTypes []*types.FieldTypeBuilder
 	)
 	if v.InnerChildIdx == 0 {
 		leftTypes, rightTypes = innerTypes, outerTypes

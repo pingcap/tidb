@@ -270,7 +270,7 @@ func (er *expressionRewriter) ctxStackAppend(col expression.Expression, name *ty
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return er.newFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
+		return er.newFunction(op, types.NewFieldTypeBuilder(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
@@ -291,9 +291,9 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3, expr4, expr5 expression.Expression
-		expr1 = expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr2 = expression.NewFunctionInternal(er.sctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		expr3 = expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr1)
+		expr1 = expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldTypeBuilder(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.sctx, op, types.NewFieldTypeBuilder(mysql.TypeTiny), larg0, rarg0)
+		expr3 = expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), expr1)
 		var err error
 		l, err = expression.PopRowFirstArg(er.sctx, l)
 		if err != nil {
@@ -307,11 +307,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, err
 		}
-		expr5, err = er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.NewNull(), expr4)
+		expr5, err = er.newFunction(ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), expr3, expression.NewNull(), expr4)
 		if err != nil {
 			return nil, err
 		}
-		return er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
+		return er.newFunction(ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), expr1, expr2, expr5)
 	}
 }
 
@@ -624,14 +624,14 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
-	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
+	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldTypeBuilder(mysql.TypeTiny), lexpr, colMaxOrMin)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, all)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
 func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all bool) {
-	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
-	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
+	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), rexpr)
+	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), lexpr)
 
 	funcSum, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
 	if err != nil {
@@ -644,7 +644,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
 	plan4Agg.schema.Append(colSum)
-	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
+	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldTypeBuilder(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
 	funcCount, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
@@ -662,22 +662,22 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	if all {
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
 		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) != 0, null, true).
-		innerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.NewNull(), expression.NewOne())
+		innerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), innerHasNull, expression.NewNull(), expression.NewOne())
 		cond = expression.ComposeCNFCondition(er.sctx, cond, innerNullChecker)
 		// If the subquery is empty, it should always return true.
-		emptyChecker := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), colCount, expression.NewZero())
+		emptyChecker := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), colCount, expression.NewZero())
 		// If outer key is null, and subquery is not empty, it should always return null, even when it is `null = all (1, 2)`.
-		outerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldType(mysql.TypeTiny), outerIsNull, expression.NewNull(), expression.NewZero())
+		outerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), outerIsNull, expression.NewNull(), expression.NewZero())
 		cond = expression.ComposeDNFCondition(er.sctx, cond, emptyChecker, outerNullChecker)
 	} else {
 		// For "any" expression, if the subquery has null and the cond returns false, the result should be NULL.
 		// Specifically, `t.id < any (select s.id from s)` would be rewrote to `t.id < max(s.id) or if(sum(s.id is null) != 0, null, false)`
-		innerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.NewNull(), expression.NewZero())
+		innerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), innerHasNull, expression.NewNull(), expression.NewZero())
 		cond = expression.ComposeDNFCondition(er.sctx, cond, innerNullChecker)
 		// If the subquery is empty, it should always return false.
-		emptyChecker := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colCount, expression.NewZero())
+		emptyChecker := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldTypeBuilder(mysql.TypeTiny), colCount, expression.NewZero())
 		// If outer key is null, and subquery is not empty, it should return null.
-		outerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldType(mysql.TypeTiny), outerIsNull, expression.NewNull(), expression.NewOne())
+		outerNullChecker := expression.NewFunctionInternal(er.sctx, ast.If, types.NewFieldTypeBuilder(mysql.TypeTiny), outerIsNull, expression.NewNull(), expression.NewOne())
 		cond = expression.ComposeCNFCondition(er.sctx, cond, emptyChecker, outerNullChecker)
 	}
 
@@ -741,8 +741,8 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	}
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
 	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
-	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
+	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldTypeBuilder(mysql.TypeTiny), count, expression.NewOne())
+	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldTypeBuilder(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
@@ -778,8 +778,8 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
-	leFunc := expression.NewFunctionInternal(er.sctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	leFunc := expression.NewFunctionInternal(er.sctx, ast.LE, types.NewFieldTypeBuilder(mysql.TypeTiny), count, expression.NewOne())
+	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), lexpr, firstRowResultCol)
 	cond := expression.ComposeCNFCondition(er.sctx, leFunc, eqCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true)
 }
@@ -1149,17 +1149,17 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.TrimDirectionExpr:
 		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewIntDatum(int64(v.Direction)),
-			RetType: types.NewFieldType(mysql.TypeTiny),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 		}, types.EmptyName)
 	case *ast.TimeUnitExpr:
 		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewStringDatum(v.Unit.String()),
-			RetType: types.NewFieldType(mysql.TypeVarchar),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeVarchar),
 		}, types.EmptyName)
 	case *ast.GetFormatSelectorExpr:
 		er.ctxStackAppend(&expression.Constant{
 			Value:   types.NewStringDatum(v.Selector.String()),
-			RetType: types.NewFieldType(mysql.TypeVarchar),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeVarchar),
 		}, types.EmptyName)
 	case *ast.SetCollationExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
@@ -1177,7 +1177,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
-			// Wrap a cast here to avoid changing the original FieldType of the column expression.
+			// Wrap a cast here to avoid changing the original FieldTypeBuilder of the column expression.
 			exprType := arg.GetType().Clone()
 			exprType.Collate = v.Collate
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
@@ -1201,7 +1201,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 }
 
 // newFunction chooses which expression.NewFunctionImpl() will be used.
-func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldTypeBuilder, args ...expression.Expression) (ret expression.Expression, err error) {
 	if er.disableFoldCounter > 0 {
 		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
 	} else if er.tryFoldCounter > 0 {
@@ -1218,7 +1218,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 	return
 }
 
-func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+func (er *expressionRewriter) checkTimePrecision(ft *types.FieldTypeBuilder) error {
 	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
@@ -1252,7 +1252,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		tp, ok := sessionVars.UserVarTypes[name]
 		sessionVars.UsersLock.RUnlock()
 		if !ok {
-			tp = types.NewFieldType(mysql.TypeVarString)
+			tp = types.NewFieldTypeBuilder(mysql.TypeVarString)
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
@@ -1348,7 +1348,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 			er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 			return
 		}
-		function, er.err = er.newFunction(v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
+		function, er.err = er.newFunction(v.Op.String(), types.NewFieldTypeBuilder(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		return
@@ -1357,7 +1357,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
+func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldTypeBuilder,
 	args ...expression.Expression) expression.Expression {
 	opFunc, err := er.newFunction(op, tp, args...)
 	if err != nil {
@@ -1429,7 +1429,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 // inToExpression converts in expression to a scalar function. The argument lLen means the length of in list.
 // The argument not means if the expression is not in. The tp stands for the expression type, which is always bool.
 // a in (b, c, d) will be rewritten as `(a = b) or (a = c) or (a = d)`.
-func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
+func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldTypeBuilder) {
 	stkLen := len(er.ctxStack)
 	l := expression.GetRowLen(er.ctxStack[stkLen-lLen-1])
 	for i := 0; i < lLen; i++ {
@@ -1527,7 +1527,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := er.newFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			arg, err := er.newFunction(ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), value, er.ctxStack[i])
 			if err != nil {
 				er.err = err
 				return
@@ -1564,7 +1564,7 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 
 	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
 	var function expression.Expression
-	fieldType := &types.FieldType{}
+	fieldType := &types.FieldTypeBuilder{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
@@ -1645,14 +1645,14 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 			return expression.WrapWithCastAsString(ctx, e)
 		}
 	case types.ETDuration:
-		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDuration))
-		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDuration))
-		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDuration))
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldTypeBuilder(mysql.TypeDuration))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldTypeBuilder(mysql.TypeDuration))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldTypeBuilder(mysql.TypeDuration))
 		return
 	case types.ETDatetime:
-		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
-		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
-		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldTypeBuilder(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldTypeBuilder(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldTypeBuilder(mysql.TypeDatetime))
 		return
 	default:
 		return
@@ -1752,7 +1752,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			return true
 		}
 		// NULL
-		nullTp := types.NewFieldType(mysql.TypeNull)
+		nullTp := types.NewFieldTypeBuilder(mysql.TypeNull)
 		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
 		paramNull := &expression.Constant{
 			Value:   types.NewDatum(nil),
@@ -1812,7 +1812,7 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 	}
 	val := &expression.Constant{
 		Value:   types.NewDatum(fullName),
-		RetType: types.NewFieldType(mysql.TypeString),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeString),
 	}
 	er.ctxStackAppend(val, types.EmptyName)
 }
@@ -1952,7 +1952,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
 		val = &expression.Constant{
 			Value:   types.NewDatum(zero),
-			RetType: types.NewFieldType(mysql.TypeTimestamp),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeTimestamp),
 		}
 	default:
 		// for other columns, just use what it is
@@ -2043,9 +2043,9 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		if idxInfo == nil {
 			return "", errors.Trace(errors.Errorf("primary key not found when decoding record key: %X", key))
 		}
-		cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+		cols := make(map[int64]*types.FieldTypeBuilder, len(tblInfo.Columns))
 		for _, col := range tblInfo.Columns {
-			cols[col.ID] = &col.FieldType
+			cols[col.ID] = &col.FieldTypeBuilder
 		}
 		handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 		for _, col := range idxInfo.Columns {

@@ -66,7 +66,7 @@ const precIncrement = 4
 
 // numericContextResultType returns types.EvalType for numeric function's parameters.
 // the returned types.EvalType should be one of: types.ETInt, types.ETDecimal, types.ETReal
-func numericContextResultType(ft *types.FieldType) types.EvalType {
+func numericContextResultType(ft *types.FieldTypeBuilder) types.EvalType {
 	if types.IsTypeTemporal(ft.Tp) {
 		if ft.Decimal > 0 {
 			return types.ETDecimal
@@ -88,7 +88,7 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
-func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
+func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldTypeBuilder, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
 		// set length and decimal to unspecified if arguments depend on parameters
@@ -126,7 +126,7 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 	}
 }
 
-func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
+func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldTypeBuilder) {
 	var deca, decb = a.Decimal, b.Decimal
 	if deca == int(types.UnspecifiedFsp) {
 		deca = 0
@@ -150,7 +150,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	}
 }
 
-func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldType) {
+func (c *arithmeticDivideFunctionClass) setType4DivReal(retTp *types.FieldTypeBuilder) {
 	retTp.Decimal = types.UnspecifiedLength
 	retTp.Flen = mysql.MaxRealWidth
 }
@@ -883,7 +883,7 @@ type arithmeticModFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types.FieldType, isDecimal bool) {
+func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types.FieldTypeBuilder, isDecimal bool) {
 	if a.Decimal == types.UnspecifiedLength || b.Decimal == types.UnspecifiedLength {
 		retTp.Decimal = types.UnspecifiedLength
 	} else {

@@ -115,7 +115,7 @@ func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 // GetDatumRow converts chunk.Row to types.DatumRow.
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
-func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
+func (r Row) GetDatumRow(fields []*types.FieldTypeBuilder) []types.Datum {
 	datumRow := make([]types.Datum, 0, r.c.NumCols())
 	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
 		datum := r.GetDatum(colIdx, fields[colIdx])
@@ -125,7 +125,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 }
 
 // GetDatum implements the chunk.Row interface.
-func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
+func (r Row) GetDatum(colIdx int, tp *types.FieldTypeBuilder) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
@@ -214,7 +214,7 @@ func (r Row) CopyConstruct() Row {
 }
 
 // ToString returns all the values in a row.
-func (r Row) ToString(ft []*types.FieldType) string {
+func (r Row) ToString(ft []*types.FieldTypeBuilder) string {
 	var buf []byte
 	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
 		if r.IsNull(colIdx) {

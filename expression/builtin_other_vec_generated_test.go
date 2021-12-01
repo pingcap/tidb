@@ -197,8 +197,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewDatum(1), RetType: types.NewFieldType(mysql.TypeInt24)},
-				{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeInt24)},
+				{Value: types.NewDatum(1), RetType: types.NewFieldTypeBuilder(mysql.TypeInt24)},
+				{Value: types.NewDatum(2), RetType: types.NewFieldTypeBuilder(mysql.TypeInt24)},
 			},
 		},
 		// builtinInStringSig with const arguments
@@ -210,8 +210,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldType(mysql.TypeString)},
-				{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldType(mysql.TypeString)},
+				{Value: types.NewStringDatum("aaaa"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)},
+				{Value: types.NewStringDatum("bbbb"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)},
 			},
 		},
 		// builtinInDecimalSig with const arguments
@@ -223,8 +223,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
-				{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldType(mysql.TypeNewDecimal)},
+				{Value: types.NewDecimalDatum(types.NewDecFromInt(10)), RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
+				{Value: types.NewDecimalDatum(types.NewDecFromInt(20)), RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)},
 			},
 		},
 		// builtinInRealSig with const arguments
@@ -236,8 +236,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldType(mysql.TypeFloat)},
-				{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldType(mysql.TypeFloat)},
+				{Value: types.NewFloat64Datum(0.1), RetType: types.NewFieldTypeBuilder(mysql.TypeFloat)},
+				{Value: types.NewFloat64Datum(0.2), RetType: types.NewFieldTypeBuilder(mysql.TypeFloat)},
 			},
 		},
 		// builtinInTimeSig with const arguments
@@ -249,8 +249,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
-				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldType(mysql.TypeDatetime)},
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldTypeBuilder(mysql.TypeDatetime)},
+				{Value: types.NewTimeDatum(dateTimeFromString("2019-01-01")), RetType: types.NewFieldTypeBuilder(mysql.TypeDatetime)},
 			},
 		},
 		// builtinInDurationSig with const arguments
@@ -262,8 +262,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
-				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldType(mysql.TypeDuration)},
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(1000)}), RetType: types.NewFieldTypeBuilder(mysql.TypeDuration)},
+				{Value: types.NewDurationDatum(types.Duration{Duration: time.Duration(2000)}), RetType: types.NewFieldTypeBuilder(mysql.TypeDuration)},
 			},
 		},
 		// builtinInJSONSig with const arguments
@@ -275,8 +275,8 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 			},
 			constants: []*Constant{
 				nil,
-				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldType(mysql.TypeJSON)},
-				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldType(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(json.CreateBinary("aaaa")), RetType: types.NewFieldTypeBuilder(mysql.TypeJSON)},
+				{Value: types.NewJSONDatum(json.CreateBinary("bbbb")), RetType: types.NewFieldTypeBuilder(mysql.TypeJSON)},
 			},
 		},
 	},

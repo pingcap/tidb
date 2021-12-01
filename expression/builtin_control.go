@@ -64,9 +64,9 @@ func maxlen(lhsFlen, rhsFlen int) int {
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldTypeBuilder, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
-	resultFieldType := &types.FieldType{}
+	resultFieldType := &types.FieldTypeBuilder{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
 		// If any of arg is NULL, result type need unset NotNullFlag.
@@ -81,8 +81,8 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		*resultFieldType = *lhs
 		types.SetTypeFlag(&resultFieldType.Flag, mysql.NotNullFlag, false)
 	} else {
-		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
-		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &resultFieldType.Flag)
+		resultFieldType = types.AggFieldType([]*types.FieldTypeBuilder{lhs, rhs})
+		evalType := types.AggregateEvalType([]*types.FieldTypeBuilder{lhs, rhs}, &resultFieldType.Flag)
 		if evalType == types.ETInt {
 			resultFieldType.Decimal = 0
 		} else {
@@ -169,7 +169,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
-	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
+	fieldTps := make([]*types.FieldTypeBuilder, 0, (l+1)/2)
 	decimal, flen, isBinaryStr, isBinaryFlag := args[1].GetType().Decimal, 0, false, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())

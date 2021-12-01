@@ -73,7 +73,7 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 		OriginDefaultValue: defaultValue,
 	}
 	col.ID = allocateColumnID(tblInfo)
-	col.FieldType = *types.NewFieldType(mysql.TypeLong)
+	col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -108,7 +108,7 @@ func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNa
 			OriginDefaultValue: defaultValue,
 		}
 		col.ID = allocateColumnID(tblInfo)
-		col.FieldType = *types.NewFieldType(mysql.TypeLong)
+		col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 		colInfos[i] = col
 	}
 
@@ -371,8 +371,8 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	colMap := make(map[int64]*types.FieldType)
-	colMap[col.ID] = &col.FieldType
+	colMap := make(map[int64]*types.FieldTypeBuilder)
+	colMap[col.ID] = &col.FieldTypeBuilder
 	rowMap, err := tablecodec.DecodeRowToDatumMap(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
 		return errors.Trace(err)
@@ -1204,7 +1204,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	}
 }
 
-func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldType {
+func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTypeBuilder {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
@@ -1212,7 +1212,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
 	c.Assert(err, IsNil)
-	return &col.FieldType
+	return &col.FieldTypeBuilder
 }
 
 func (s *testColumnSuite) TestFieldCase(c *C) {

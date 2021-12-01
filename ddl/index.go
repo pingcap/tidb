@@ -122,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 }
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
-	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
+	if col.Flen == 0 && (types.IsTypeChar(col.FieldTypeBuilder.Tp) || types.IsTypeVarchar(col.FieldTypeBuilder.Tp)) {
 		if col.Hidden {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
@@ -130,7 +130,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// JSON column cannot index.
-	if col.FieldType.Tp == mysql.TypeJSON {
+	if col.FieldTypeBuilder.Tp == mysql.TypeJSON {
 		if col.Hidden {
 			return errFunctionalIndexOnJSONOrGeometryFunction
 		}
@@ -138,7 +138,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
-	if types.IsTypeBlob(col.FieldType.Tp) {
+	if types.IsTypeBlob(col.FieldTypeBuilder.Tp) {
 		if indexColumnLen == types.UnspecifiedLength {
 			if col.Hidden {
 				return errFunctionalIndexOnBlob
@@ -151,13 +151,13 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	// Length can only be specified for specifiable types.
-	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
+	if indexColumnLen != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldTypeBuilder.Tp) {
 		return errors.Trace(errIncorrectPrefixKey)
 	}
 
 	// Key length must be shorter or equal to the column length.
 	if indexColumnLen != types.UnspecifiedLength &&
-		types.IsTypeChar(col.FieldType.Tp) {
+		types.IsTypeChar(col.FieldTypeBuilder.Tp) {
 		if col.Flen < indexColumnLen {
 			return errors.Trace(errIncorrectPrefixKey)
 		}
@@ -167,7 +167,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
-	if types.IsString(col.FieldType.Tp) {
+	if types.IsString(col.FieldTypeBuilder.Tp) {
 		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return err

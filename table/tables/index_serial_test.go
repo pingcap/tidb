@@ -51,8 +51,8 @@ func TestIndex(t *testing.T) {
 			},
 		},
 		Columns: []*model.ColumnInfo{
-			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
+			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeVarchar)},
+			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeString)},
 		},
 	}
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
@@ -142,8 +142,8 @@ func TestIndex(t *testing.T) {
 			},
 		},
 		Columns: []*model.ColumnInfo{
-			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeString)},
+			{ID: 1, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeVarchar)},
+			{ID: 2, Name: model.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeString)},
 		},
 	}
 	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])

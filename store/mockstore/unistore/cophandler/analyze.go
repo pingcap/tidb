@@ -92,7 +92,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	processor := &analyzeIndexProcessor{
 		sctx:         sctx,
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsBuilder: statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), int(statsVer)),
 		statsVer:     statsVer,
 	}
 	if analyzeReq.IdxReq.TopNSize != nil {
@@ -149,7 +149,7 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 	}
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), statsVer),
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -300,7 +300,7 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		rf.Column.FieldTypeBuilder = types.FieldTypeBuilder{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
 		e.fields[i] = rf
 	}
 
@@ -312,7 +312,7 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 		numCols--
 	}
 	collators := make([]collate.Collator, numCols)
-	fts := make([]*types.FieldType, numCols)
+	fts := make([]*types.FieldTypeBuilder, numCols)
 	for i, col := range columns {
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
@@ -335,7 +335,7 @@ func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange
 		statsVer = int(*analyzeReq.ColReq.Version)
 	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statsVer)
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldTypeBuilder(mysql.TypeBlob), statsVer)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth
@@ -401,13 +401,13 @@ func handleAnalyzeFullSamplingReq(
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		rf.Column.FieldTypeBuilder = types.FieldTypeBuilder{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
 		e.fields[i] = rf
 	}
 
 	numCols := len(columns)
 	collators := make([]collate.Collator, numCols)
-	fts := make([]*types.FieldType, numCols)
+	fts := make([]*types.FieldTypeBuilder, numCols)
 	for i, col := range columns {
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
@@ -503,9 +503,9 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 }
 
 func (e *analyzeColumnsExec) NewChunk(_ chunk.Allocator) *chunk.Chunk {
-	fields := make([]*types.FieldType, 0, len(e.fields))
+	fields := make([]*types.FieldTypeBuilder, 0, len(e.fields))
 	for _, field := range e.fields {
-		fields = append(fields, &field.Column.FieldType)
+		fields = append(fields, &field.Column.FieldTypeBuilder)
 	}
 	return chunk.NewChunkWithCapacity(fields, 1024)
 }
@@ -529,7 +529,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		sctx:               sctx,
 		analyzeColumnsExec: *colExec,
 		colLen:             int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder:       statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), int(statsVer)),
+		statsBuilder:       statistics.NewSortedBuilder(sctx, analyzeReq.IdxReq.BucketSize, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), int(statsVer)),
 		statsVer:           statsVer,
 	}
 	builder.RecordSet = e

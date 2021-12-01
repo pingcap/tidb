@@ -1187,7 +1187,7 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		if d.IsNull() {
 			return nil, false
 		}
-		// Views' columns have no FieldType.
+		// Views' columns have no FieldTypeBuilder.
 		if tbl.IsView() {
 			return nil, false
 		}
@@ -1202,7 +1202,7 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
 		}
-		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+		dVal, err := d.ConvertTo(stmtCtx, &col.FieldTypeBuilder)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), true
@@ -1230,7 +1230,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 	if !checkCanConvertInPointGet(col, *d) {
 		return nil
 	}
-	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+	dVal, err := d.ConvertTo(stmtCtx, &col.FieldTypeBuilder)
 	if err != nil {
 		return nil
 	}
@@ -1245,7 +1245,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 
 func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 	kind := d.Kind()
-	switch col.FieldType.EvalType() {
+	switch col.FieldTypeBuilder.EvalType() {
 	case ptypes.ETString:
 		switch kind {
 		case types.KindInt64, types.KindUint64,
@@ -1254,7 +1254,7 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 			return false
 		}
 	}
-	switch col.FieldType.Tp {
+	switch col.FieldTypeBuilder.Tp {
 	case mysql.TypeBit:
 		switch kind {
 		case types.KindString:
@@ -1265,11 +1265,11 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 	return true
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldTypeBuilder) {
 	if !tblInfo.PKIsHandle {
 		rowIDIdx := findInPairs("_tidb_rowid", pairs)
 		if rowIDIdx != -1 {
-			return pairs[rowIDIdx], types.NewFieldType(mysql.TypeLonglong)
+			return pairs[rowIDIdx], types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		}
 		return handlePair, nil
 	}
@@ -1279,7 +1279,7 @@ func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair n
 			if i == -1 {
 				return handlePair, nil
 			}
-			return pairs[i], &col.FieldType
+			return pairs[i], &col.FieldTypeBuilder
 		}
 	}
 	return handlePair, nil
@@ -1499,7 +1499,7 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		RetType:  col.FieldType.Clone(),
+		RetType:  col.FieldTypeBuilder.Clone(),
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,

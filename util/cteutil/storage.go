@@ -96,7 +96,7 @@ type Storage interface {
 type StorageRC struct {
 	mu      sync.Mutex
 	refCnt  int
-	tp      []*types.FieldType
+	tp      []*types.FieldTypeBuilder
 	chkSize int
 
 	begCh chan struct{}
@@ -107,7 +107,7 @@ type StorageRC struct {
 }
 
 // NewStorageRowContainer create a new StorageRC.
-func NewStorageRowContainer(tp []*types.FieldType, chkSize int) *StorageRC {
+func NewStorageRowContainer(tp []*types.FieldTypeBuilder, chkSize int) *StorageRC {
 	return &StorageRC{tp: tp, chkSize: chkSize}
 }
 

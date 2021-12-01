@@ -947,12 +947,12 @@ func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 }
 
 // ConvertDatumsType converts the datums type to `ft`.
-func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Location) error {
+func ConvertDatumsType(vals []types.Datum, ft *types.FieldTypeBuilder, loc *time.Location) error {
 	for i, val := range vals {
 		if val.Kind() == types.KindMinNotNull || val.Kind() == types.KindMaxValue {
 			continue
 		}
-		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldType{ft}, loc)
+		newVal, err := tablecodec.UnflattenDatums([]types.Datum{val}, []*types.FieldTypeBuilder{ft}, loc)
 		if err != nil {
 			return err
 		}
@@ -961,7 +961,7 @@ func ConvertDatumsType(vals []types.Datum, ft *types.FieldType, loc *time.Locati
 	return nil
 }
 
-func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error) {
+func decodeColumnBounds(data []byte, ft *types.FieldTypeBuilder) ([]types.Datum, error) {
 	vals, _, err := codec.DecodeRange(data, 1, nil, nil)
 	if err != nil {
 		return nil, err
@@ -970,7 +970,7 @@ func decodeColumnBounds(data []byte, ft *types.FieldType) ([]types.Datum, error)
 	return vals, err
 }
 
-func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldType) error {
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.FieldTypeBuilder) error {
 	q.Tp = ColType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
 		low, err := decodeColumnBounds(pb.ColumnRanges[i], ft)
@@ -987,7 +987,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.Fiel
 }
 
 // DecodeFeedback decodes a byte slice to feedback.
-func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *types.FieldType) error {
+func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *types.FieldTypeBuilder) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -1060,7 +1060,7 @@ func setNextValue(d *types.Datum) {
 }
 
 // SupportColumnType checks if the type of the column can be updated by feedback.
-func SupportColumnType(ft *types.FieldType) bool {
+func SupportColumnType(ft *types.FieldTypeBuilder) bool {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
 		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,

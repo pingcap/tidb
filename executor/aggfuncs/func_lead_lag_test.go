@@ -31,17 +31,17 @@ func TestLeadLag(t *testing.T) {
 	one := expression.NewOne()
 	two := &expression.Constant{
 		Value:   types.NewDatum(2),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}
 	three := &expression.Constant{
 		Value:   types.NewDatum(3),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}
 	million := &expression.Constant{
 		Value:   types.NewDatum(1000000),
-		RetType: types.NewFieldType(mysql.TypeLong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLong),
 	}
-	defaultArg := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
+	defaultArg := &expression.Column{RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong), Index: 0}
 
 	numRows := 3
 	tests := []windowTest{
@@ -126,15 +126,15 @@ func TestMemLeadLag(t *testing.T) {
 	one := expression.NewOne()
 	two := &expression.Constant{
 		Value:   types.NewDatum(2),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}
 	three := &expression.Constant{
 		Value:   types.NewDatum(3),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}
 	million := &expression.Constant{
 		Value:   types.NewDatum(1000000),
-		RetType: types.NewFieldType(mysql.TypeLong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLong),
 	}
 
 	numRows := 3

@@ -75,7 +75,7 @@ type IndexLookUpMergeJoin struct {
 }
 
 type outerMergeCtx struct {
-	rowTypes      []*types.FieldType
+	rowTypes      []*types.FieldTypeBuilder
 	joinKeys      []*expression.Column
 	keyCols       []int
 	filter        expression.CNFExprs
@@ -85,7 +85,7 @@ type outerMergeCtx struct {
 
 type innerMergeCtx struct {
 	readerBuilder           *dataReaderBuilder
-	rowTypes                []*types.FieldType
+	rowTypes                []*types.FieldTypeBuilder
 	joinKeys                []*expression.Column
 	keyCols                 []int
 	compareFuncs            []expression.CompareFunc
@@ -139,7 +139,7 @@ type innerMergeWorker struct {
 	ctx               sessionctx.Context
 	innerExec         Executor
 	joiner            joiner
-	retFieldTypes     []*types.FieldType
+	retFieldTypes     []*types.FieldTypeBuilder
 
 	maxChunkSize          int
 	indexRanges           []*ranger.Range

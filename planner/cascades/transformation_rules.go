@@ -1604,8 +1604,8 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
 			sel := plannercore.LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			selExpr := memo.NewGroupExpr(sel)
 			selExpr.SetChildren(childGroup)
@@ -2090,7 +2090,7 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	var outputIdx int
 	if nullFlip || zeroFlip {
 		outputIdx = 2
-		newConditions = []expression.Expression{expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), conditionFromCase)}
+		newConditions = []expression.Expression{expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), conditionFromCase)}
 	} else {
 		outputIdx = 1
 		newConditions = expression.SplitCNFItems(conditionFromCase)

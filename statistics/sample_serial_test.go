@@ -70,14 +70,14 @@ func SubTestCollectColumnStats(s *testSampleSuite) func(*testing.T) {
 			Sc:              sc,
 			RecordSet:       s.rs,
 			ColLen:          1,
-			PkBuilder:       NewSortedBuilder(sc, 256, 1, types.NewFieldType(mysql.TypeLonglong), Version2),
+			PkBuilder:       NewSortedBuilder(sc, 256, 1, types.NewFieldTypeBuilder(mysql.TypeLonglong), Version2),
 			MaxSampleSize:   10000,
 			MaxBucketSize:   256,
 			MaxFMSketchSize: 1000,
 			CMSketchWidth:   2048,
 			CMSketchDepth:   8,
 			Collators:       make([]collate.Collator, 1),
-			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}
 		require.Nil(t, s.rs.Close())
 		collectors, pkBuilder, err := builder.CollectColumnStats()
@@ -103,7 +103,7 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 			CMSketchWidth:   2048,
 			CMSketchDepth:   8,
 			Collators:       make([]collate.Collator, 2),
-			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong), types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}
 		require.Nil(t, s.rs.Close())
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -133,7 +133,7 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 			CMSketchWidth:   2048,
 			CMSketchDepth:   8,
 			Collators:       make([]collate.Collator, 2),
-			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)},
+			ColsFieldType:   []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong), types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}
 		require.Nil(t, s.rs.Close())
 		collectors, pkBuilder, err := builder.CollectColumnStats()

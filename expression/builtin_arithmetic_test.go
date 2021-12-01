@@ -32,12 +32,12 @@ import (
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	t.Parallel()
 
-	ret := &types.FieldType{}
-	a := &types.FieldType{
+	ret := &types.FieldTypeBuilder{}
+	a := &types.FieldTypeBuilder{
 		Decimal: 1,
 		Flen:    3,
 	}
-	b := &types.FieldType{
+	b := &types.FieldTypeBuilder{
 		Decimal: 0,
 		Flen:    2,
 	}
@@ -63,12 +63,12 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
 	require.Equal(t, types.UnspecifiedLength, ret.Flen)
 
-	ret = &types.FieldType{}
-	a = &types.FieldType{
+	ret = &types.FieldTypeBuilder{}
+	a = &types.FieldTypeBuilder{
 		Decimal: 1,
 		Flen:    3,
 	}
-	b = &types.FieldType{
+	b = &types.FieldTypeBuilder{
 		Decimal: 0,
 		Flen:    2,
 	}

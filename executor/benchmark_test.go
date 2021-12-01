@@ -58,7 +58,7 @@ var (
 
 type mockDataSourceParameters struct {
 	schema      *expression.Schema
-	genDataFunc func(row int, typ *types.FieldType) interface{}
+	genDataFunc func(row int, typ *types.FieldTypeBuilder) interface{}
 	ndvs        []int  // number of distinct values on columns[i] and zero represents no limit
 	orders      []bool // columns[i] should be ordered if orders[i] is true
 	rows        int    // number of rows the DataSource should output
@@ -170,7 +170,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 	return
 }
 
-func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
+func (mds *mockDataSource) randDatum(typ *types.FieldTypeBuilder) interface{} {
 	switch typ.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -268,8 +268,8 @@ type aggTestCase struct {
 
 func (a aggTestCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 
@@ -533,7 +533,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
 			UniqueID: 10 + (int64)(i),
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		})
 	}
 	for _, col := range partitionBy {
@@ -609,10 +609,10 @@ func defaultWindowTestCase() *windowTestCase {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	return &windowTestCase{ast.WindowFuncRowNumber, 1, nil, 1000, 10000000, 1, 0, true, ctx, strings.Repeat("x", 16),
 		[]*expression.Column{
-			{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-			{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-			{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
-			{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
+			{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+			{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+			{Index: 2, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)},
+			{Index: 3, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 		}}
 }
 
@@ -842,7 +842,7 @@ func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
 
 type hashJoinTestCase struct {
 	rows               int
-	cols               []*types.FieldType
+	cols               []*types.FieldTypeBuilder
 	concurrency        int
 	ctx                sessionctx.Context
 	keyIdx             []int
@@ -867,7 +867,7 @@ func (tc hashJoinTestCase) String() string {
 		tc.rows, tc.cols, tc.concurrency, tc.keyIdx, tc.disk)
 }
 
-func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, useOuterToBuild bool) *hashJoinTestCase {
+func defaultHashJoinTestCase(cols []*types.FieldTypeBuilder, joinType core.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -950,7 +950,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt1 := mockDataSourceParameters{
 		rows: casTest.rows,
 		ctx:  casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1016,9 +1016,9 @@ func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *
 }
 
 func BenchmarkHashJoinInlineProjection(b *testing.B) {
-	cols := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+	cols := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1049,9 +1049,9 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(lvl)
 
-	cols := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+	cols := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1072,9 +1072,9 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	})
 
 	// Replace the wide string column with double column
-	cols = []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+	cols = []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 
 	cas = defaultHashJoinTestCase(cols, 0, false)
@@ -1100,9 +1100,9 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(lvl)
 
-	cols := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+	cols := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1123,9 +1123,9 @@ func BenchmarkOuterHashJoinExec(b *testing.B) {
 	})
 
 	// Replace the wide string column with double column
-	cols = []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeDouble),
+	cols = []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 
 	cas = defaultHashJoinTestCase(cols, 2, true)
@@ -1151,7 +1151,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		schema: expression.NewSchema(casTest.columns()...),
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1211,9 +1211,9 @@ func BenchmarkBuildHashTableForList(b *testing.B) {
 	log.SetLevel(zapcore.ErrorLevel)
 	defer log.SetLevel(lvl)
 
-	cols := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
+	cols := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeVarString),
 	}
 
 	b.ReportAllocs()
@@ -1251,9 +1251,9 @@ type indexJoinTestCase struct {
 
 func (tc indexJoinTestCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 2, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeDouble)},
+		{Index: 2, RetType: types.NewFieldTypeBuilder(mysql.TypeVarString)},
 	}
 }
 
@@ -1288,7 +1288,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   rows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1679,7 +1679,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numOuterRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1697,7 +1697,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		schema: expression.NewSchema(tc.columns()...),
 		rows:   numInnerRows,
 		ctx:    tc.ctx,
-		genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		genDataFunc: func(row int, typ *types.FieldTypeBuilder) interface{} {
 			row = row / numInnerDup
 			switch typ.Tp {
 			case mysql.TypeLong, mysql.TypeLonglong:
@@ -1808,8 +1808,8 @@ type sortCase struct {
 
 func (tc sortCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 
@@ -1912,8 +1912,8 @@ type limitCase struct {
 
 func (tc limitCase) columns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 0, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 

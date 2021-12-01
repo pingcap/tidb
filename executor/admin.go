@@ -107,9 +107,9 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 
 	colTypeForHandle := e.schema.Columns[len(e.cols)].RetType
 	e.cols = append(e.cols, &model.ColumnInfo{
-		ID:        model.ExtraHandleID,
-		Name:      model.ExtraHandleName,
-		FieldType: *colTypeForHandle,
+		ID:               model.ExtraHandleID,
+		Name:             model.ExtraHandleName,
+		FieldTypeBuilder: *colTypeForHandle,
 	})
 
 	e.srcChunk = newFirstChunk(e)
@@ -188,7 +188,7 @@ type RecoverIndexExec struct {
 	batchSize  int
 
 	columns       []*model.ColumnInfo
-	colFieldTypes []*types.FieldType
+	colFieldTypes []*types.FieldTypeBuilder
 	srcChunk      *chunk.Chunk
 	handleCols    plannercore.HandleCols
 
@@ -199,14 +199,14 @@ type RecoverIndexExec struct {
 	batchKeys   []kv.Key
 }
 
-func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
+func (e *RecoverIndexExec) columnsTypes() []*types.FieldTypeBuilder {
 	if e.colFieldTypes != nil {
 		return e.colFieldTypes
 	}
 
-	e.colFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	e.colFieldTypes = make([]*types.FieldTypeBuilder, 0, len(e.columns))
 	for _, col := range e.columns {
-		e.colFieldTypes = append(e.colFieldTypes, &col.FieldType)
+		e.colFieldTypes = append(e.colFieldTypes, &col.FieldTypeBuilder)
 	}
 	return e.colFieldTypes
 }
@@ -532,7 +532,7 @@ type CleanupIndexExec struct {
 	physicalID int64
 
 	columns          []*model.ColumnInfo
-	idxColFieldTypes []*types.FieldType
+	idxColFieldTypes []*types.FieldTypeBuilder
 	idxChunk         *chunk.Chunk
 	handleCols       plannercore.HandleCols
 
@@ -544,13 +544,13 @@ type CleanupIndexExec struct {
 	scanRowCnt  uint64
 }
 
-func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
+func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldTypeBuilder {
 	if e.idxColFieldTypes != nil {
 		return e.idxColFieldTypes
 	}
-	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	e.idxColFieldTypes = make([]*types.FieldTypeBuilder, 0, len(e.columns))
 	for _, col := range e.columns {
-		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
+		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldTypeBuilder)
 	}
 	return e.idxColFieldTypes
 }
@@ -594,7 +594,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 }
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
-	fieldTypes []*types.FieldType, idxValLen int) []types.Datum {
+	fieldTypes []*types.FieldTypeBuilder, idxValLen int) []types.Datum {
 	if cap(idxVals) < idxValLen {
 		idxVals = make([]types.Datum, idxValLen)
 	} else {

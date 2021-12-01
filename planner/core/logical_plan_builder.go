@@ -466,7 +466,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 						}
 					}
 					if binop.FuncName.L == ast.EQ {
-						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
 					}
@@ -958,7 +958,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	conds := make([]expression.Expression, 0, commonLen)
 	for i := 0; i < commonLen; i++ {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
-		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
+		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldTypeBuilder(mysql.TypeTiny), lc, rc)
 		if err != nil {
 			return err
 		}
@@ -1020,7 +1020,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	// check expr field types.
 	for i, expr := range cnfExpres {
 		if expr.GetType().EvalType() == types.ETString {
-			tp := &types.FieldType{
+			tp := &types.FieldTypeBuilder{
 				Tp:      mysql.TypeDouble,
 				Flag:    expr.GetType().Flag,
 				Flen:    mysql.MaxRealWidth,
@@ -1347,14 +1347,14 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
-func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
+func unionJoinFieldType(a, b *types.FieldTypeBuilder) *types.FieldTypeBuilder {
 	// We ignore the pure NULL type.
 	if a.Tp == mysql.TypeNull {
 		return b
 	} else if b.Tp == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	resultTp := types.NewFieldTypeBuilder(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.Tp == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
@@ -1528,7 +1528,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	copy(joinPlan.names, leftPlan.OutputNames())
 	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldTypeBuilder(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
 			return nil, err
 		}
@@ -3771,7 +3771,7 @@ func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	tp.Flag = mysql.NotNullFlag | mysql.PriKeyFlag
 	return &expression.Column{
 		RetType:  tp,
@@ -3786,7 +3786,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // to construct the lock key, so this column is added to the chunk row.
 func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 	pidCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPidColID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
@@ -4130,7 +4130,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldTypeBuilder.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
@@ -4291,7 +4291,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  &col.FieldTypeBuilder,
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			handleCols = &IntHandleCols{col: newCol}
@@ -4526,7 +4526,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
 		newSchema.Append(&expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeTiny),
+			RetType:  types.NewFieldTypeBuilder(mysql.TypeTiny),
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 		joinPlan.names = append(joinPlan.names, types.EmptyName)
@@ -5439,7 +5439,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *a
 		unitVal := boundClause.Unit.String()
 		unit := expression.Constant{
 			Value:   types.NewStringDatum(unitVal),
-			RetType: types.NewFieldType(mysql.TypeVarchar),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeVarchar),
 		}
 
 		// When the order is asc:

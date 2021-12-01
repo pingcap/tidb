@@ -676,7 +676,7 @@ func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 }
 
 func newTestFb() *statistics.QueryFeedback {
-	hist := statistics.NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
+	hist := statistics.NewHistogram(1, 30, 30, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong), chunk.InitialCapacity, 0)
 	for i := 0; i < 10; i++ {
 		hist.Bounds.AppendInt64(0, int64(i))
 		hist.Bounds.AppendInt64(0, int64(i+2))

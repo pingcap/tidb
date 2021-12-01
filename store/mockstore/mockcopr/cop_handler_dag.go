@@ -452,7 +452,7 @@ func (h coprHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
-	fieldTps    []*types.FieldType
+	fieldTps    []*types.FieldTypeBuilder
 	sc          *stmtctx.StatementContext
 }
 
@@ -461,7 +461,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 	copy(e.columnInfos, cols)
 
 	e.colIDs = make(map[int64]int, len(e.columnInfos))
-	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
+	e.fieldTps = make([]*types.FieldTypeBuilder, 0, len(e.columnInfos))
 	for i, col := range e.columnInfos {
 		ft := fieldTypeFromPBColumn(col)
 		e.fieldTps = append(e.fieldTps, ft)
@@ -698,7 +698,7 @@ func (h coprHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	return nil
 }
 
-func (h coprHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
+func (h coprHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldTypeBuilder {
 	var root *tipb.Executor
 	if len(dagCtx.dagReq.Executors) == 0 {
 		root = dagCtx.dagReq.RootExecutor
@@ -710,12 +710,12 @@ func (h coprHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType 
 		return dagCtx.evalCtx.fieldTps
 	}
 
-	schema := make([]*types.FieldType, 0, len(agg.AggFunc)+len(agg.GroupBy))
+	schema := make([]*types.FieldTypeBuilder, 0, len(agg.AggFunc)+len(agg.GroupBy))
 	for i := range agg.AggFunc {
 		if agg.AggFunc[i].Tp == tipb.ExprType_Avg {
 			// Avg function requests two columns : Count , Sum
 			// This line addend the Count(TypeLonglong) to the schema.
-			schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			schema = append(schema, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 		}
 		schema = append(schema, expression.PbTypeToFieldType(agg.AggFunc[i].FieldType))
 	}
@@ -738,9 +738,9 @@ func (h coprHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte
 	selResp.EncodeType = tipb.EncodeType_TypeDefault
 }
 
-func (h coprHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
+func (h coprHandler) encodeChunk(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldTypeBuilder, colOrdinal []uint32, loc *time.Location) error {
 	var chunks []tipb.Chunk
-	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
+	respColTypes := make([]*types.FieldTypeBuilder, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
@@ -925,10 +925,10 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 	return collector, nil
 }
 
-// fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
-func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
+// fieldTypeFromPBColumn creates a types.FieldTypeBuilder from tipb.ColumnInfo.
+func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldTypeBuilder {
 	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
-	return &types.FieldType{
+	return &types.FieldTypeBuilder{
 		Tp:      byte(col.GetTp()),
 		Flag:    uint(col.Flag),
 		Flen:    int(col.GetColumnLen()),

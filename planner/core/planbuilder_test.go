@@ -188,7 +188,7 @@ func (s *testPlanBuilderSuite) TestDisableFold(c *C) {
 }
 
 func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
-	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
 	sort1 := &PhysicalSort{ByItems: byItems}
@@ -205,18 +205,18 @@ func (s *testPlanBuilderSuite) TestDeepClone(c *C) {
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType")
+	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "same pointer, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder")
 
-	expr2.RetType = types.NewFieldType(mysql.TypeString)
-	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8")
+	expr2.RetType = types.NewFieldTypeBuilder(mysql.TypeString)
+	c.Assert(checkDeepClone(sort1, sort2), ErrorMatches, "different values, path PhysicalSort.ByItems.*Expression.FieldTypeBuilder.uint8")
 
-	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
+	expr2.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	c.Assert(checkDeepClone(sort1, sort2), IsNil)
 }
 
 func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	ctx := mock.NewContext()
-	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col, cst := &expression.Column{RetType: types.NewFieldTypeBuilder(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	stats := &property.StatsInfo{RowCount: 1000}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
@@ -357,7 +357,7 @@ func checkPhysicalPlanClone(p PhysicalPlan) error {
 	if err != nil {
 		return err
 	}
-	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
+	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldTypeBuilder"}
 	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
 }
 

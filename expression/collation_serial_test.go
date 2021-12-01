@@ -49,7 +49,7 @@ func TestCompareString(t *testing.T) {
 	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
 
 	ctx := mock.NewContext()
-	ft := types.NewFieldType(mysql.TypeVarString)
+	ft := types.NewFieldTypeBuilder(mysql.TypeVarString)
 	col1 := &Column{
 		RetType: ft,
 		Index:   0,
@@ -58,7 +58,7 @@ func TestCompareString(t *testing.T) {
 		RetType: ft,
 		Index:   1,
 	}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 4)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{ft, ft}, 4)
 	chk.Column(0).AppendString("a")
 	chk.Column(1).AppendString("A")
 	chk.Column(0).AppendString("À")

@@ -57,14 +57,14 @@ const (
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
-func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
+func NewChunkWithCapacity(fields []*types.FieldTypeBuilder, cap int) *Chunk {
 	return New(fields, cap, cap)
 }
 
 // New creates a new chunk.
 //  cap: the limit for the max number of rows.
 //  maxChunkSize: the max limit for the number of rows.
-func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+func New(fields []*types.FieldTypeBuilder, cap, maxChunkSize int) *Chunk {
 	chk := &Chunk{
 		columns:  make([]*Column, 0, len(fields)),
 		capacity: mathutil.Min(cap, maxChunkSize),
@@ -619,7 +619,7 @@ func (c *Chunk) Reconstruct() {
 }
 
 // ToString returns all the values in a chunk.
-func (c *Chunk) ToString(ft []*types.FieldType) string {
+func (c *Chunk) ToString(ft []*types.FieldTypeBuilder) string {
 	var buf []byte
 	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
 		row := c.GetRow(rowIdx)

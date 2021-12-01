@@ -52,7 +52,7 @@ type Histogram struct {
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
-	Tp *types.FieldType
+	Tp *types.FieldTypeBuilder
 
 	// Histogram elements.
 	//
@@ -93,7 +93,7 @@ type scalar struct {
 }
 
 // NewHistogram creates a new histogram.
-func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldTypeBuilder, bucketSize int, totColSize int64) *Histogram {
 	if tp.EvalType() == types.ETString {
 		// The histogram will store the string value's 'sort key' representation of its collation.
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
@@ -107,7 +107,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -236,9 +236,9 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 }
 
 // DecodeTo decodes the histogram bucket values into `Tp`.
-func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
+func (hg *Histogram) DecodeTo(tp *types.FieldTypeBuilder, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
-	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
+	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{tp}, oldIter.Len())
 	hg.Tp = tp
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
@@ -251,7 +251,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 }
 
 // ConvertTo converts the histogram bucket values into `Tp`.
-func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
+func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
@@ -532,7 +532,7 @@ func (hg *Histogram) notNullCount() float64 {
 // mergeBuckets is used to Merge every two neighbor buckets.
 func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, bucketIdx)
+	c := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{hg.Tp}, bucketIdx)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
 		hg.Buckets[curBuck].NDV = hg.Buckets[i+1].NDV + hg.Buckets[i].NDV
 		hg.Buckets[curBuck].Count = hg.Buckets[i+1].Count
@@ -733,7 +733,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 // Note that we will set BytesDatum for the lower/upper bound in the bucket, the decode will
 // be after all histograms merged.
 func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
-	tp := types.NewFieldType(mysql.TypeBlob)
+	tp := types.NewFieldTypeBuilder(mysql.TypeBlob)
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
@@ -748,7 +748,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp, hg.Tp}, hg.Bounds.NumRows()-2)
+	c := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{hg.Tp, hg.Tp}, hg.Bounds.NumRows()-2)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
 }
@@ -1522,7 +1522,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 		err                         error
 	)
 	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch}
-	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
 	var totCnt int64

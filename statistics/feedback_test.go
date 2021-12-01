@@ -45,7 +45,7 @@ func appendBucket(h *Histogram, l, r int64) {
 }
 
 func genHistogram() *Histogram {
-	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 3)
 	appendBucket(h, 5, 7)
@@ -136,7 +136,7 @@ func TestSplitBuckets(t *testing.T) {
 	require.Equal(t, int64(100001), totalCount)
 
 	// test do not split if the result bucket count is too small
-	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	h := NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLong), 5, 0)
 	appendBucket(h, 0, 1000000)
 	h.Buckets[0].Count = 1000000
 	h.Buckets[0].NDV = 1000000
@@ -155,7 +155,7 @@ func TestSplitBuckets(t *testing.T) {
 	require.Equal(t, int64(1000000), totalCount)
 
 	// test split even if the feedback range is too small
-	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	h = NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLong), 5, 0)
 	appendBucket(h, 0, 1000000)
 	feedbacks = feedbacks[:0]
 	for i := 0; i < 100; i++ {
@@ -173,7 +173,7 @@ func TestSplitBuckets(t *testing.T) {
 	require.Equal(t, int64(1), totalCount)
 
 	// test merge the non-overlapped feedbacks.
-	h = NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
+	h = NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLong), 5, 0)
 	appendBucket(h, 0, 10000)
 	feedbacks = feedbacks[:0]
 	feedbacks = append(feedbacks, newFeedback(0, 4000, 4000, 4000))
@@ -240,7 +240,7 @@ func TestMergeBuckets(t *testing.T) {
 			totalCount += tt.counts[i]
 		}
 		bkts = mergeBuckets(bkts, tt.isNewBuckets, tt.bucketCount, float64(totalCount))
-		result := buildNewHistogram(&Histogram{Tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
+		result := buildNewHistogram(&Histogram{Tp: types.NewFieldTypeBuilder(mysql.TypeLong)}, bkts).ToString(0)
 		require.Equal(t, tt.result, result)
 	}
 }
@@ -253,7 +253,7 @@ func encodeInt(v int64) *types.Datum {
 
 func TestFeedbackEncoding(t *testing.T) {
 	t.Parallel()
-	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
+	hist := NewHistogram(0, 0, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLong), 0, 0)
 	q := &QueryFeedback{Hist: hist, Tp: PkType}
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(3), 1, 0, 1})
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(5), 1, 0, 1})
@@ -267,7 +267,7 @@ func TestFeedbackEncoding(t *testing.T) {
 	}
 	require.True(t, q.Equal(rq))
 
-	hist.Tp = types.NewFieldType(mysql.TypeBlob)
+	hist.Tp = types.NewFieldTypeBuilder(mysql.TypeBlob)
 	q = &QueryFeedback{Hist: hist}
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(3), 1, 0, 1})
 	q.Feedback = append(q.Feedback, Feedback{encodeInt(0), encodeInt(1), 1, 0, 1})

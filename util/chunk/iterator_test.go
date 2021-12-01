@@ -25,7 +25,7 @@ import (
 func TestIteratorOnSel(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	sel := make([]int, 0, 1024)
 	for i := 0; i < 1024; i++ {
@@ -60,7 +60,7 @@ func TestMultiIterator(t *testing.T) {
 	it = NewMultiIterator(NewIterator4Chunk(new(Chunk)), NewIterator4List(new(List)))
 	require.Equal(t, it.End(), it.Begin())
 
-	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10
 	var expected []int64
@@ -99,7 +99,7 @@ func TestMultiIterator(t *testing.T) {
 func TestIterator(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10
 	var expected []int64

@@ -609,7 +609,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldTypeBuilder, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -714,7 +714,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 	idx := table.Indices[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+	lastAnalyzePos := row.GetDatum(10, types.NewFieldTypeBuilder(mysql.TypeBlob))
 	if statistics.IsAnalyzed(flag) && !reader.isHistory() {
 		h.mu.rateMap.clear(table.PhysicalID, histID, true)
 	} else if idx != nil {
@@ -725,7 +725,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			continue
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer {
-			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
+			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldTypeBuilder(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -758,7 +758,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	totColSize := row.GetInt64(6)
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
-	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+	lastAnalyzePos := row.GetDatum(10, types.NewFieldTypeBuilder(mysql.TypeBlob))
 	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
 	if err != nil {
 		return errors.Trace(err)
@@ -792,7 +792,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			}
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldTypeBuilder, 0, totColSize),
 				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
@@ -806,7 +806,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
+			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldTypeBuilder, distinct, 0, histVer, nullCount, totColSize, correlation)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1089,7 +1089,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					count -= hg.Buckets[j-1].Count
 				}
 				var upperBound types.Datum
-				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeBlob))
 				if err != nil {
 					return err
 				}
@@ -1097,7 +1097,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					lastAnalyzePos = upperBound.GetBytes()
 				}
 				var lowerBound types.Datum
-				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeBlob))
 				if err != nil {
 					return err
 				}
@@ -1218,7 +1218,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			count -= hg.Buckets[i-1].Count
 		}
 		var upperBound types.Datum
-		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeBlob))
 		if err != nil {
 			return
 		}
@@ -1226,7 +1226,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			lastAnalyzePos = upperBound.GetBytes()
 		}
 		var lowerBound types.Datum
-		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeBlob))
 		if err != nil {
 			return
 		}
@@ -1269,7 +1269,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	return err
 }
 
-func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
+func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID int64, tp *types.FieldTypeBuilder, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
 	rows, fields, err := reader.read("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1283,22 +1283,22 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum
 		if isIndex == 1 {
-			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldTypeBuilder)
+			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldTypeBuilder)
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			d := rows[i].GetDatum(2, &fields[2].Column.FieldTypeBuilder)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.Flen of this column.
+			// longer than the FieldTypeBuilder.Flen of this column.
 			// We change it to TypeBlob to bypass the length check here.
 			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
-				tp = types.NewFieldType(mysql.TypeBlob)
+				tp = types.NewFieldTypeBuilder(mysql.TypeBlob)
 			}
 			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
+			d = rows[i].GetDatum(3, &fields[3].Column.FieldTypeBuilder)
 			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)

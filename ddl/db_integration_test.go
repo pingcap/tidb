@@ -710,7 +710,7 @@ func (s *testIntegrationSuite2) TestUpdateMultipleTable(c *C) {
 		Offset:             2,
 		DefaultValue:       9,
 		OriginDefaultValue: 9,
-		FieldType:          *types.NewFieldType(mysql.TypeLonglong),
+		FieldTypeBuilder:   *types.NewFieldTypeBuilder(mysql.TypeLonglong),
 		State:              model.StateWriteOnly,
 	}
 	t1Info.Columns = append(t1Info.Columns, newColumn)

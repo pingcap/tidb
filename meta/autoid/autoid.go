@@ -1061,8 +1061,8 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 //  | [sign_bit] (1 bit) | [shard_bits] (5 bits) | [incremental_bits] (64-1-5=58 bits) |
 // Please always use NewShardIDLayout() to instantiate.
 type ShardIDLayout struct {
-	FieldType *types.FieldType
-	ShardBits uint64
+	FieldTypeBuilder *types.FieldTypeBuilder
+	ShardBits        uint64
 	// Derived fields.
 	TypeBitsLength  uint64
 	IncrementalBits uint64
@@ -1070,7 +1070,7 @@ type ShardIDLayout struct {
 }
 
 // NewShardIDLayout create an instance of ShardIDLayout.
-func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
+func NewShardIDLayout(fieldType *types.FieldTypeBuilder, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
@@ -1078,11 +1078,11 @@ func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayo
 		incrementalBits -= 1
 	}
 	return &ShardIDLayout{
-		FieldType:       fieldType,
-		ShardBits:       shardBits,
-		TypeBitsLength:  typeBitsLength,
-		IncrementalBits: incrementalBits,
-		HasSignBit:      hasSignBit,
+		FieldTypeBuilder: fieldType,
+		ShardBits:        shardBits,
+		TypeBitsLength:   typeBitsLength,
+		IncrementalBits:  incrementalBits,
+		HasSignBit:       hasSignBit,
 	}
 }
 

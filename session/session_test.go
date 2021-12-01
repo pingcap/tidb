@@ -1586,7 +1586,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
-	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
+	c.Assert(rs.Fields()[0].Column.FieldTypeBuilder.Tp, Equals, mysql.TypeVarString)
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {

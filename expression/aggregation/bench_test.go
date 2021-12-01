@@ -27,7 +27,7 @@ import (
 func BenchmarkCreateContext(b *testing.B) {
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
@@ -45,7 +45,7 @@ func BenchmarkCreateContext(b *testing.B) {
 func BenchmarkResetContext(b *testing.B) {
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
@@ -64,7 +64,7 @@ func BenchmarkResetContext(b *testing.B) {
 func BenchmarkCreateDistinctContext(b *testing.B) {
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
@@ -82,7 +82,7 @@ func BenchmarkCreateDistinctContext(b *testing.B) {
 func BenchmarkResetDistinctContext(b *testing.B) {
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)

@@ -461,7 +461,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		DefaultValue: 0,
 	}
 	col.ID = allocateColumnID(tblInfo)
-	col.FieldType = *types.NewFieldType(mysql.TypeLong)
+	col.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
 	cols := &[]*model.ColumnInfo{col}
@@ -874,7 +874,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	addingColName := "colA"
 	newColumnDef := &ast.ColumnDef{
 		Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
-		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
+		Tp:      &types.FieldTypeBuilder{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
 	chs, coll := charset.GetDefaultCharsetAndCollate()
@@ -966,8 +966,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	c.Assert(changedCol.DefaultValue, IsNil)
 
 	// modify delete-only-state column,
-	col.FieldType.Tp = mysql.TypeTiny
-	col.FieldType.Flen--
+	col.FieldTypeBuilder.Tp = mysql.TypeTiny
+	col.FieldTypeBuilder.Flen--
 	updateTest(&tests[16])
 	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	cancelState = model.StateNone
@@ -975,9 +975,9 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	changedCol = model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
-	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen+1)
-	col.FieldType.Flen++
+	c.Assert(changedCol.FieldTypeBuilder.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(changedCol.FieldTypeBuilder.Flen, Equals, col.FieldTypeBuilder.Flen+1)
+	col.FieldTypeBuilder.Flen++
 
 	// Test add foreign key failed cause by canceled.
 	updateTest(&tests[17])
@@ -1123,7 +1123,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	for i, addingColName := range addingColNames {
 		newColumnDef := &ast.ColumnDef{
 			Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
-			Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
+			Tp:      &types.FieldTypeBuilder{Tp: mysql.TypeLonglong},
 			Options: []*ast.ColumnOption{},
 		}
 		col, _, err := buildColumnAndConstraint(ctx, 0, newColumnDef, nil, mysql.DefaultCharset, "")
@@ -1265,10 +1265,10 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	cancelState = model.StateNone
 	newCol := baseTableInfo.Columns[0].Clone()
 	// change type from long to tinyint.
-	newCol.FieldType = *types.NewFieldType(mysql.TypeTiny)
+	newCol.FieldTypeBuilder = *types.NewFieldTypeBuilder(mysql.TypeTiny)
 	// change from null to not null
-	newCol.FieldType.Flag |= mysql.NotNullFlag
-	newCol.FieldType.Flen = 2
+	newCol.FieldTypeBuilder.Flag |= mysql.NotNullFlag
+	newCol.FieldTypeBuilder.Flen = 2
 
 	originColName := baseTableInfo.Columns[0].Name
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
@@ -1278,36 +1278,36 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
-	c.Assert(mysql.HasNotNullFlag(baseTable.Meta().Columns[0].FieldType.Flag), Equals, false)
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Tp, Equals, mysql.TypeLong)
+	c.Assert(mysql.HasNotNullFlag(baseTable.Meta().Columns[0].FieldTypeBuilder.Flag), Equals, false)
 
 	updateTest(&tests[50])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Flag&mysql.NotNullFlag, Equals, uint(0))
 
 	updateTest(&tests[51])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Flag&mysql.NotNullFlag, Equals, uint(0))
 
 	updateTest(&tests[52])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Flag&mysql.NotNullFlag, Equals, uint(0))
 
 	updateTest(&tests[53])
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeTiny)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(1))
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Tp, Equals, mysql.TypeTiny)
+	c.Assert(baseTable.Meta().Columns[0].FieldTypeBuilder.Flag&mysql.NotNullFlag, Equals, uint(1))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/skipMockContextDoExec"), IsNil)
 
 	// for drop indexes

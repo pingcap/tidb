@@ -38,7 +38,7 @@ type streamResult struct {
 
 	resp       kv.Response
 	rowLen     int
-	fieldTypes []*types.FieldType
+	fieldTypes []*types.FieldTypeBuilder
 	ctx        sessionctx.Context
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.

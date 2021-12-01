@@ -878,7 +878,7 @@ func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error)
 }
 
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
-func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
+func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldTypeBuilder) (Expression, error) {
 	var fc functionClass
 	switch retType.EvalType() {
 	case types.ETInt:
@@ -909,7 +909,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 type getVarFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 type getStringVarFunctionClass struct {
@@ -1150,7 +1150,7 @@ type valuesFunctionClass struct {
 	baseFunctionClass
 
 	offset int
-	tp     *types.FieldType
+	tp     *types.FieldTypeBuilder
 }
 
 func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {

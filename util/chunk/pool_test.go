@@ -40,7 +40,7 @@ func TestPoolGetChunk(t *testing.T) {
 	initCap := 1024
 	pool := NewPool(initCap)
 
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},
@@ -77,7 +77,7 @@ func TestPoolPutChunk(t *testing.T) {
 	initCap := 1024
 	pool := NewPool(initCap)
 
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},
@@ -96,7 +96,7 @@ func TestPoolPutChunk(t *testing.T) {
 func BenchmarkPoolChunkOperation(b *testing.B) {
 	pool := NewPool(1024)
 
-	fieldTypes := []*types.FieldType{
+	fieldTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeJSON},
 		{Tp: mysql.TypeFloat},

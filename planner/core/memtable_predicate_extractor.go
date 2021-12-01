@@ -425,7 +425,7 @@ func (helper extractHelper) extractTimeRange(
 		}
 
 		if colName == extractColName {
-			timeType := types.NewFieldType(mysql.TypeDatetime)
+			timeType := types.NewFieldTypeBuilder(mysql.TypeDatetime)
 			timeType.Decimal = 6
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
@@ -1222,9 +1222,9 @@ func (e *SlowQueryExtractor) decodeBytesToTime(bs []byte) (int64, error) {
 }
 
 func (e *SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
-	tp := types.NewFieldType(mysql.TypeDatetime)
+	tp := types.NewFieldTypeBuilder(mysql.TypeDatetime)
 	col := rowcodec.ColInfo{ID: 0, Ft: tp}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
+	chk := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{tp}, 1)
 	coder := codec.NewDecoder(chk, nil)
 	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
 	if err != nil {

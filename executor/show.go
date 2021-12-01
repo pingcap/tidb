@@ -908,7 +908,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
-				buf.WriteString(table.OptionalFsp(&col.FieldType))
+				buf.WriteString(table.OptionalFsp(&col.FieldTypeBuilder))
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
@@ -1848,7 +1848,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 			for _, col := range tbl.Columns {
 				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 				if idx >= 0 {
-					col.FieldType = *viewSchema.Columns[idx].GetType()
+					col.FieldTypeBuilder = *viewSchema.Columns[idx].GetType()
 				}
 				if col.Tp == mysql.TypeVarString {
 					col.Tp = mysql.TypeVarchar

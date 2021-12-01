@@ -42,7 +42,7 @@ import (
 type mppExec interface {
 	open() error
 	next() (*chunk.Chunk, error)
-	getFieldTypes() []*types.FieldType
+	getFieldTypes() []*types.FieldTypeBuilder
 }
 
 type baseMPPExec struct {
@@ -52,10 +52,10 @@ type baseMPPExec struct {
 
 	children []mppExec
 
-	fieldTypes []*types.FieldType
+	fieldTypes []*types.FieldTypeBuilder
 }
 
-func (b *baseMPPExec) getFieldTypes() []*types.FieldType {
+func (b *baseMPPExec) getFieldTypes() []*types.FieldTypeBuilder {
 	return b.fieldTypes
 }
 
@@ -345,7 +345,7 @@ type joinExec struct {
 	defaultInner chunk.Row
 	inited       bool
 	// align the types of join keys and build keys
-	comKeyTp *types.FieldType
+	comKeyTp *types.FieldTypeBuilder
 }
 
 func (e *joinExec) getHashKey(keyCol types.Datum) (str string, err error) {
@@ -477,7 +477,7 @@ type aggExec struct {
 	aggCtxsMap   map[string][]*aggregation.AggEvaluateContext
 
 	groupByRows  []chunk.Row
-	groupByTypes []*types.FieldType
+	groupByTypes []*types.FieldTypeBuilder
 
 	processed bool
 }

@@ -29,15 +29,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
+func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldTypeBuilder) {
 	numCols := 6
-	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes := make([]*types.FieldTypeBuilder, 0, numCols)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeNewDecimal})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeJSON})
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -52,12 +52,12 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	return oldChk, colTypes
 }
 
-func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
+func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldTypeBuilder) {
 	numCols := 3
-	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes := make([]*types.FieldTypeBuilder, 0, numCols)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {

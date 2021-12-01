@@ -63,7 +63,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 }
 
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldTypeBuilder) *statistics.Histogram {
 	ndv := len(values)
 	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
 	for i := 0; i < ndv; i++ {
@@ -107,7 +107,7 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		return nil, err
 	}
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldTypeBuilder(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
 
 	// Set the value of two indices' histograms.
@@ -115,7 +115,7 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 	if err != nil {
 		return nil, err
 	}
-	tp := types.NewFieldType(mysql.TypeBlob)
+	tp := types.NewFieldTypeBuilder(mysql.TypeBlob)
 	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
 	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
 	return statsTbl, nil

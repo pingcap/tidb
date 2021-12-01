@@ -57,8 +57,8 @@ type HashJoinExec struct {
 	probeKeys         []*expression.Column
 	buildKeys         []*expression.Column
 	isNullEQ          []bool
-	probeTypes        []*types.FieldType
-	buildTypes        []*types.FieldType
+	probeTypes        []*types.FieldTypeBuilder
+	buildTypes        []*types.FieldTypeBuilder
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint

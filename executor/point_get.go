@@ -98,7 +98,7 @@ type PointGetExecutor struct {
 	virtualColumnIndex []int
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
-	virtualColumnRetFieldTypes []*types.FieldType
+	virtualColumnRetFieldTypes []*types.FieldTypeBuilder
 
 	stats      *runtimeStatsWithSnapshot
 	cacheTable kv.MemBuffer
@@ -131,7 +131,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 func (e *PointGetExecutor) buildVirtualColumnInfo() {
 	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		e.virtualColumnRetFieldTypes = make([]*types.FieldTypeBuilder, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {
 			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
 		}
@@ -480,7 +480,7 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, colInfo.FieldType.Collate)
+			idxVals[i].SetString(str, colInfo.FieldTypeBuilder.Collate)
 		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
@@ -488,11 +488,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			e, err = types.ParseEnumName(colInfo.FieldTypeBuilder.Elems, str, colInfo.FieldTypeBuilder.Collate)
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldTypeBuilder.Collate)
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.

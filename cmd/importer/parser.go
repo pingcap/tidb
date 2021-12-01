@@ -35,7 +35,7 @@ type column struct {
 	idx         int
 	name        string
 	data        *datum
-	tp          *types.FieldType
+	tp          *types.FieldTypeBuilder
 	comment     string
 	min         string
 	max         string

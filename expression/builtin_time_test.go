@@ -1198,7 +1198,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 		fsp = types.MaxFsp
 	}
 
-	f := types.NewFieldType(tp)
+	f := types.NewFieldTypeBuilder(tp)
 	f.Decimal = int(fsp)
 
 	d, err = arg.ConvertTo(sc, f)
@@ -2314,14 +2314,14 @@ func TestMakeTime(t *testing.T) {
 	}
 
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
-	tp1 := &types.FieldType{
+	tp1 := &types.FieldTypeBuilder{
 		Tp:      mysql.TypeLonglong,
 		Flag:    mysql.UnsignedFlag,
 		Charset: charset.CharsetBin,
 		Collate: charset.CollationBin,
 		Flen:    mysql.MaxIntWidth,
 	}
-	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}, tp1)
 	res, err := f.Eval(chunk.Row{})
 	require.NoError(t, err)
 	f1, err := maketime.getFunction(ctx, datumsToConstants([]types.Datum{res, makeDatums(0)[0], makeDatums(0)[0]}))

@@ -30,8 +30,8 @@ import (
 func TestList(t *testing.T) {
 	t.Parallel()
 
-	fields := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
+	fields := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	l := NewList(fields, 2, 2)
 	srcChunk := NewChunkWithCapacity(fields, 32)
@@ -87,12 +87,12 @@ func TestList(t *testing.T) {
 func TestListMemoryUsage(t *testing.T) {
 	t.Parallel()
 
-	fieldTypes := make([]*types.FieldType, 0, 5)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes := make([]*types.FieldTypeBuilder, 0, 5)
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeJSON})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeDuration})
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	require.NoError(t, err)
@@ -122,11 +122,11 @@ func TestListMemoryUsage(t *testing.T) {
 }
 
 func BenchmarkListMemoryUsage(b *testing.B) {
-	fieldTypes := make([]*types.FieldType, 0, 4)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
+	fieldTypes := make([]*types.FieldTypeBuilder, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeDatetime})
+	fieldTypes = append(fieldTypes, &types.FieldTypeBuilder{Tp: mysql.TypeDuration})
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)

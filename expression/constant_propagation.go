@@ -281,7 +281,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 func (s *propConstSolver) setConds2ConstFalse() {
 	s.conditions = []Expression{&Constant{
 		Value:   types.NewDatum(false),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}}
 }
 
@@ -375,12 +375,12 @@ type propOuterJoinConstSolver struct {
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = []Expression{&Constant{
 		Value:   types.NewDatum(false),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 	}}
 	if filterConds {
 		s.filterConds = []Expression{&Constant{
 			Value:   types.NewDatum(false),
-			RetType: types.NewFieldType(mysql.TypeTiny),
+			RetType: types.NewFieldTypeBuilder(mysql.TypeTiny),
 		}}
 	}
 }

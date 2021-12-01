@@ -69,9 +69,9 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		return genKeyExistsError(name, handle.String(), errors.New("cannot find index info"))
 	}
 
-	cols := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	cols := make(map[int64]*types.FieldTypeBuilder, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
-		cols[col.ID] = &col.FieldType
+		cols[col.ID] = &col.FieldTypeBuilder
 	}
 	handleColIDs := make([]int64, 0, len(idxInfo.Columns))
 	for _, col := range idxInfo.Columns {

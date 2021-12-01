@@ -29,7 +29,7 @@ func TestClone(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &expression.Column{
 		UniqueID: 0,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	desc, err := newBaseFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{col})
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestClone(t *testing.T) {
 
 	col1 := &expression.Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeVarchar),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeVarchar),
 	}
 	cloned.Args[0] = col1
 

@@ -961,7 +961,7 @@ func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFu
 func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
-	colTps := make(map[int64]*types.FieldType, len(cols))
+	colTps := make(map[int64]*types.FieldTypeBuilder, len(cols))
 	prefixCols := make(map[int64]struct{})
 	for i, col := range cols {
 		if col == nil {
@@ -975,14 +975,14 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType) {
+		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldTypeBuilder) {
 			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
 				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
 				if err != nil {
 					return nil, nil, err
 				}
-				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+				dt, err = tablecodec.Unflatten(dt, &col.FieldTypeBuilder, ctx.GetSessionVars().Location())
 				if err != nil {
 					return nil, nil, err
 				}
@@ -991,7 +991,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			prefixCols[col.ID] = struct{}{}
 		}
-		colTps[col.ID] = &col.FieldType
+		colTps[col.ID] = &col.FieldTypeBuilder
 	}
 	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
@@ -1002,7 +1002,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType)) {
+		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldTypeBuilder)) {
 			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
 				continue
 			}
@@ -1288,9 +1288,9 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 
 	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
-	colMap := make(map[int64]*types.FieldType, len(cols))
+	colMap := make(map[int64]*types.FieldTypeBuilder, len(cols))
 	for _, col := range cols {
-		colMap[col.ID] = &col.FieldType
+		colMap[col.ID] = &col.FieldTypeBuilder
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for it.Valid() && it.Key().HasPrefix(prefix) {
@@ -1355,7 +1355,7 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		if d, err = tablecodec.Unflatten(d, &col.FieldType, decodeLoc); err != nil {
+		if d, err = tablecodec.Unflatten(d, &col.FieldTypeBuilder, decodeLoc); err != nil {
 			return types.Datum{}, err
 		}
 		return d, nil
@@ -1512,7 +1512,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
+			canSkip = canSkip && !types.NeedRestoredData(&col.FieldTypeBuilder)
 			return canSkip
 		}
 	}
@@ -1775,7 +1775,7 @@ func TryGetHandleRestoredDataWrapper(t table.Table, row []types.Datum, rowMap ma
 	pkIdx := FindPrimaryIndex(t.Meta())
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := t.Meta().Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
+		if !types.NeedRestoredData(&pkCol.FieldTypeBuilder) {
 			continue
 		}
 		var datum types.Datum

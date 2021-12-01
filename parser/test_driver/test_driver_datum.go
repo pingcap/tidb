@@ -417,8 +417,8 @@ func (b HexLiteral) ToString() string {
 	return BinaryLiteral(b).ToString()
 }
 
-// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.
-func SetBinChsClnFlag(ft *types.FieldType) {
+// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldTypeBuilder.
+func SetBinChsClnFlag(ft *types.FieldTypeBuilder) {
 	ft.Charset = charset.CharsetBin
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
@@ -428,8 +428,8 @@ func SetBinChsClnFlag(ft *types.FieldType) {
 // MySQL use 0 as the default Fsp.
 const DefaultFsp = int8(0)
 
-// DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *types.FieldType, charset string, collate string) {
+// DefaultTypeForValue returns the default FieldTypeBuilder for the value.
+func DefaultTypeForValue(value interface{}, tp *types.FieldTypeBuilder, charset string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull

@@ -89,19 +89,19 @@ type IndexLookUpJoin struct {
 }
 
 type outerCtx struct {
-	rowTypes  []*types.FieldType
+	rowTypes  []*types.FieldTypeBuilder
 	keyCols   []int
-	hashTypes []*types.FieldType
+	hashTypes []*types.FieldTypeBuilder
 	hashCols  []int
 	filter    expression.CNFExprs
 }
 
 type innerCtx struct {
 	readerBuilder *dataReaderBuilder
-	rowTypes      []*types.FieldType
+	rowTypes      []*types.FieldTypeBuilder
 	keyCols       []int
 	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
-	hashTypes     []*types.FieldType
+	hashTypes     []*types.FieldTypeBuilder
 	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool
@@ -458,7 +458,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.encodedLookUpKeys = make([]*chunk.Chunk, task.outerResult.NumChunks())
 	for i := range task.encodedLookUpKeys {
-		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
+		task.encodedLookUpKeys[i] = chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows())
 	}
 	return task, nil
 }

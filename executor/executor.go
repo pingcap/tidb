@@ -109,7 +109,7 @@ type baseExecutor struct {
 	initCap       int
 	maxChunkSize  int
 	children      []Executor
-	retFieldTypes []*types.FieldType
+	retFieldTypes []*types.FieldTypeBuilder
 	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
@@ -206,7 +206,7 @@ func newList(e Executor) *chunk.List {
 }
 
 // retTypes returns all output column types.
-func retTypes(e Executor) []*types.FieldType {
+func retTypes(e Executor) []*types.FieldTypeBuilder {
 	base := e.base()
 	return base.retFieldTypes
 }
@@ -238,7 +238,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 	}
 	if schema != nil {
 		cols := schema.Columns
-		e.retFieldTypes = make([]*types.FieldType, len(cols))
+		e.retFieldTypes = make([]*types.FieldTypeBuilder, len(cols))
 		for i := range cols {
 			e.retFieldTypes[i] = cols[i].RetType
 		}
@@ -707,7 +707,7 @@ func (e *CheckTableExec) checkTableIndexHandle(ctx context.Context, idxInfo *mod
 
 func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
-	retFieldTypes := make([]*types.FieldType, len(cols))
+	retFieldTypes := make([]*types.FieldTypeBuilder, len(cols))
 	for i := range cols {
 		retFieldTypes[i] = cols[i].RetType
 	}
@@ -1877,7 +1877,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
 // expression using rows from a chunk, and then fill this value into the chunk
-func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
+func FillVirtualColumnValue(virtualRetTypes []*types.FieldTypeBuilder, virtualColumnIndex []int,
 	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)

@@ -130,7 +130,7 @@ func JoinerType(j joiner) plannercore.JoinType {
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]bool) joiner {
+	lhsColTypes, rhsColTypes []*types.FieldTypeBuilder, childrenUsed [][]bool) joiner {
 	base := baseJoiner{
 		ctx:          ctx,
 		conditions:   filter,
@@ -166,7 +166,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	// shallowRowType may be different with the output columns because output columns may
 	// be pruned inline, while shallow row should not be because each column may need
 	// be used in filter.
-	shallowRowType := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
+	shallowRowType := make([]*types.FieldTypeBuilder, 0, len(lhsColTypes)+len(rhsColTypes))
 	shallowRowType = append(shallowRowType, lhsColTypes...)
 	shallowRowType = append(shallowRowType, rhsColTypes...)
 	switch joinType {
@@ -224,7 +224,7 @@ type baseJoiner struct {
 	lUsed, rUsed []int
 }
 
-func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
+func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldTypeBuilder, defaultInner []types.Datum) {
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
 	mutableRow.SetDatums(defaultInner[:len(innerTypes)]...)
 	j.defaultInner = mutableRow.ToRow()

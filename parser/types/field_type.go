@@ -36,8 +36,8 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
-// FieldType records field type information.
-type FieldType struct {
+// FieldTypeBuilder records field type information.
+type FieldTypeBuilder struct {
 	Tp      byte
 	Flag    uint
 	Flen    int
@@ -48,10 +48,10 @@ type FieldType struct {
 	Elems []string
 }
 
-// NewFieldType returns a FieldType,
+// NewFieldTypeBuilder returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldType(tp byte) *FieldType {
-	return &FieldType{
+func NewFieldTypeBuilder(tp byte) *FieldTypeBuilder {
+	return &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
@@ -59,13 +59,13 @@ func NewFieldType(tp byte) *FieldType {
 }
 
 // Clone returns a copy of itself.
-func (ft *FieldType) Clone() *FieldType {
+func (ft *FieldTypeBuilder) Clone() *FieldTypeBuilder {
 	ret := *ft
 	return &ret
 }
 
-// Equal checks whether two FieldType objects are equal.
-func (ft *FieldType) Equal(other *FieldType) bool {
+// Equal checks whether two FieldTypeBuilder objects are equal.
+func (ft *FieldTypeBuilder) Equal(other *FieldTypeBuilder) bool {
 	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
 	// but need compare unsigned_flag of ft.Flag.
 	// When Tp is float or double with Decimal unspecified, do not check whether Flen is equal,
@@ -92,7 +92,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 }
 
 // EvalType gets the type in evaluation.
-func (ft *FieldType) EvalType() EvalType {
+func (ft *FieldTypeBuilder) EvalType() EvalType {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeBit, mysql.TypeYear:
@@ -118,12 +118,12 @@ func (ft *FieldType) EvalType() EvalType {
 }
 
 // Hybrid checks whether a type is a hybrid type, which can represent different types of value in specific context.
-func (ft *FieldType) Hybrid() bool {
+func (ft *FieldTypeBuilder) Hybrid() bool {
 	return ft.Tp == mysql.TypeEnum || ft.Tp == mysql.TypeBit || ft.Tp == mysql.TypeSet
 }
 
-// Init initializes the FieldType data.
-func (ft *FieldType) Init(tp byte) {
+// Init initializes the FieldTypeBuilder data.
+func (ft *FieldTypeBuilder) Init(tp byte) {
 	ft.Tp = tp
 	ft.Flen = UnspecifiedLength
 	ft.Decimal = UnspecifiedLength
@@ -131,7 +131,7 @@ func (ft *FieldType) Init(tp byte) {
 
 // CompactStr only considers Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
-func (ft *FieldType) CompactStr() string {
+func (ft *FieldTypeBuilder) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
 
@@ -186,7 +186,7 @@ func (ft *FieldType) CompactStr() string {
 
 // InfoSchemaStr joins the CompactStr with unsigned flag and
 // returns a string.
-func (ft *FieldType) InfoSchemaStr() string {
+func (ft *FieldTypeBuilder) InfoSchemaStr() string {
 	suffix := ""
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		suffix = " unsigned"
@@ -194,9 +194,9 @@ func (ft *FieldType) InfoSchemaStr() string {
 	return ft.CompactStr() + suffix
 }
 
-// String joins the information of FieldType and returns a string.
+// String joins the information of FieldTypeBuilder and returns a string.
 // Note: when flen or decimal is unspecified, this function will use the default value instead of -1.
-func (ft *FieldType) String() string {
+func (ft *FieldTypeBuilder) String() string {
 	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		strs = append(strs, "UNSIGNED")
@@ -221,7 +221,7 @@ func (ft *FieldType) String() string {
 }
 
 // Restore implements Node interface.
-func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
+func (ft *FieldTypeBuilder) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(TypeToStr(ft.Tp, ft.Charset))
 
 	precision := UnspecifiedLength
@@ -278,7 +278,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 }
 
 // RestoreAsCastType is used for write AST back to string.
-func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset bool) {
+func (ft *FieldTypeBuilder) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset bool) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
 		skipWriteBinary := false
@@ -338,7 +338,7 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 }
 
 // FormatAsCastType is used for write AST back to string.
-func (ft *FieldType) FormatAsCastType(w io.Writer, explicitCharset bool) {
+func (ft *FieldTypeBuilder) FormatAsCastType(w io.Writer, explicitCharset bool) {
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	ft.RestoreAsCastType(restoreCtx, explicitCharset)
@@ -349,7 +349,7 @@ func (ft *FieldType) FormatAsCastType(w io.Writer, explicitCharset bool) {
 const VarStorageLen = -1
 
 // StorageLength is the length of stored value for the type.
-func (ft *FieldType) StorageLength() int {
+func (ft *FieldTypeBuilder) StorageLength() int {
 	switch ft.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
 		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeYear, mysql.TypeDuration,
@@ -367,7 +367,7 @@ func (ft *FieldType) StorageLength() int {
 
 // HasCharset indicates if a COLUMN has an associated charset. Returning false here prevents some information
 // statements(like `SHOW CREATE TABLE`) from attaching a CHARACTER SET clause to the column.
-func HasCharset(ft *FieldType) bool {
+func HasCharset(ft *FieldTypeBuilder) bool {
 	switch ft.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:

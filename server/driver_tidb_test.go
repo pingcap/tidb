@@ -50,7 +50,7 @@ func TestConvertColumnInfo(t *testing.T) {
 			Name:   model.NewCIStr("a"),
 			ID:     0,
 			Offset: 0,
-			FieldType: types.FieldType{
+			FieldTypeBuilder: types.FieldTypeBuilder{
 				Tp:      mysql.TypeBit,
 				Flag:    mysql.UnsignedFlag,
 				Flen:    1,
@@ -73,7 +73,7 @@ func TestConvertColumnInfo(t *testing.T) {
 			Name:   model.NewCIStr("a"),
 			ID:     0,
 			Offset: 0,
-			FieldType: types.FieldType{
+			FieldTypeBuilder: types.FieldTypeBuilder{
 				Tp:      mysql.TypeTiny,
 				Flag:    mysql.UnsignedFlag,
 				Flen:    1,
@@ -95,7 +95,7 @@ func TestConvertColumnInfo(t *testing.T) {
 			Name:   model.NewCIStr("a"),
 			ID:     0,
 			Offset: 0,
-			FieldType: types.FieldType{
+			FieldTypeBuilder: types.FieldTypeBuilder{
 				Tp:      mysql.TypeYear,
 				Flag:    mysql.ZerofillFlag,
 				Flen:    4,

@@ -684,13 +684,13 @@ func TestDecodeColumnValue(t *testing.T) {
 	// column is a structure used for test
 	type column struct {
 		id int64
-		tp *types.FieldType
+		tp *types.FieldTypeBuilder
 	}
 	// Backfill columns.
-	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
-	c4 := &column{id: 4, tp: types.NewFieldType(mysql.TypeTimestamp)}
+	c1 := &column{id: 1, tp: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+	c2 := &column{id: 2, tp: types.NewFieldTypeBuilder(mysql.TypeVarchar)}
+	c3 := &column{id: 3, tp: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}
+	c4 := &column{id: 4, tp: types.NewFieldTypeBuilder(mysql.TypeTimestamp)}
 	cols := []*column{c1, c2, c3, c4}
 	row := make([]types.Datum, len(cols))
 	row[0] = types.NewIntDatum(100)

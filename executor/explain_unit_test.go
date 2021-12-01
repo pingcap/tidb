@@ -56,7 +56,7 @@ func (e *mockErrorOperator) Close() error {
 
 func getColumns() []*expression.Column {
 	return []*expression.Column{
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)},
 	}
 }
 

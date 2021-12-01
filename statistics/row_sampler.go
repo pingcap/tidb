@@ -101,7 +101,7 @@ func (h *WeightedRowSampleHeap) Pop() interface{} {
 type RowSampleBuilder struct {
 	Sc              *stmtctx.StatementContext
 	RecordSet       sqlexec.RecordSet
-	ColsFieldType   []*types.FieldType
+	ColsFieldType   []*types.FieldTypeBuilder
 	Collators       []collate.Collator
 	ColGroups       [][]int64
 	MaxSampleSize   int

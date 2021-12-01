@@ -880,7 +880,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 				log.L().Debug("column ignored by user requirements",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
-					zap.Stringer("colType", &colInfo.FieldType),
+					zap.Stringer("colType", &colInfo.FieldTypeBuilder),
 				)
 				colPerm = append(colPerm, -1)
 			}
@@ -889,7 +889,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 				log.L().Warn("column missing from data file, going to fill with default value",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
-					zap.Stringer("colType", &colInfo.FieldType),
+					zap.Stringer("colType", &colInfo.FieldTypeBuilder),
 				)
 			}
 			colPerm = append(colPerm, -1)

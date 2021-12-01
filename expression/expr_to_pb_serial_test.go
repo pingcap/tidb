@@ -38,12 +38,12 @@ func TestPushCollationDown(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldType(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
+	fc, err := NewFunction(mock.NewContext(), ast.EQ, types.NewFieldTypeBuilder(mysql.TypeUnspecified), genColumn(mysql.TypeVarchar, 0), genColumn(mysql.TypeVarchar, 1))
 	require.NoError(t, err)
 	client := new(mock.Client)
 	sc := new(stmtctx.StatementContext)
 
-	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
+	tps := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeVarchar), types.NewFieldTypeBuilder(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
 		fc.SetCharsetAndCollation("binary", coll) // only collation matters
 		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
@@ -117,7 +117,7 @@ func TestMetadata(t *testing.T) {
 	metadata := new(tipb.InUnionMetadata)
 	var err error
 	// InUnion flag is false in `BuildCastFunction` when `ScalarFuncSig_CastStringAsInt`
-	cast := BuildCastFunction(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	cast := BuildCastFunction(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	require.Equal(t, &tipb.InUnionMetadata{InUnion: false}, cast.(*ScalarFunction).Function.metadata())
 	expr := pc.ExprToPB(cast)
 	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
@@ -127,14 +127,14 @@ func TestMetadata(t *testing.T) {
 	require.Equal(t, false, metadata.InUnion)
 
 	// InUnion flag is nil in `BuildCastFunction4Union` when `ScalarFuncSig_CastIntAsString`
-	castInUnion := BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeLonglong, 1), types.NewFieldType(mysql.TypeString))
+	castInUnion := BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeLonglong, 1), types.NewFieldTypeBuilder(mysql.TypeString))
 	require.Nil(t, castInUnion.(*ScalarFunction).Function.metadata())
 	expr = pc.ExprToPB(castInUnion)
 	require.Equal(t, tipb.ScalarFuncSig_CastIntAsString, expr.Sig)
 	require.Equal(t, 0, len(expr.Val))
 
 	// InUnion flag is true in `BuildCastFunction4Union` when `ScalarFuncSig_CastStringAsInt`
-	castInUnion = BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldType(mysql.TypeLonglong))
+	castInUnion = BuildCastFunction4Union(mock.NewContext(), genColumn(mysql.TypeString, 1), types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	require.Equal(t, &tipb.InUnionMetadata{InUnion: true}, castInUnion.(*ScalarFunction).Function.metadata())
 	expr = pc.ExprToPB(castInUnion)
 	require.Equal(t, tipb.ScalarFuncSig_CastStringAsInt, expr.Sig)
@@ -167,7 +167,7 @@ func TestPushDownSwitcher(t *testing.T) {
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,
-			types.NewFieldType(mysql.TypeUnspecified),
+			types.NewFieldTypeBuilder(mysql.TypeUnspecified),
 			args...,
 		)
 		require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	fc, err := NewFunction(
 		mock.NewContext(),
 		ast.And,
-		types.NewFieldType(mysql.TypeUnspecified),
+		types.NewFieldTypeBuilder(mysql.TypeUnspecified),
 		args...,
 	)
 	require.NoError(t, err)

@@ -708,7 +708,7 @@ func (g gener) gen() interface{} {
 						newDefaultGener(0.2, types.ET{{$sig.TypeB.ETName}}),
 					{{- end }}
 				},
-				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldType(mysql.TypeString)}},
+				constants: []*Constant{nil, nil, {Value: types.NewStringDatum("{{$unit}}"), RetType: types.NewFieldTypeBuilder(mysql.TypeString)}},
 				chunkSize: 128,
 			},
 		{{- end }}
@@ -726,7 +726,7 @@ func (g gener) gen() interface{} {
 				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}},
 				{{- end }}
 				{{- if ne .FieldTypeA "" }}
-				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
+				childrenFieldTypes: []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.Type{{.FieldTypeA}}), types.NewFieldTypeBuilder(mysql.Type{{.FieldTypeB}})},
 				{{- end }}
 				geners: []dataGenerator{
 					{{- if eq .TestTypeA "" }}

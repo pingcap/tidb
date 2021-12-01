@@ -39,7 +39,7 @@ type indexIter struct {
 	idx      *index
 	prefix   kv.Key
 	colInfos []rowcodec.ColInfo
-	tps      []*types.FieldType
+	tps      []*types.FieldTypeBuilder
 }
 
 // Close does the clean up works when KV store index iterator is closed.
@@ -98,7 +98,7 @@ type index struct {
 func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if types.NeedRestoredData(&col.FieldType) {
+		if types.NeedRestoredData(&col.FieldTypeBuilder) {
 			return true
 		}
 	}
@@ -380,8 +380,8 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 }
 
 // BuildFieldTypesForIndexColumns builds the index columns field types.
-func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
-	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
+func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldTypeBuilder {
+	tps := make([]*types.FieldTypeBuilder, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]
 		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))

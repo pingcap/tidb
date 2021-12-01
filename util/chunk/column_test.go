@@ -46,7 +46,7 @@ func TestColumnCopy(t *testing.T) {
 func TestColumnCopyReconstructFixedLen(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
@@ -104,7 +104,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 func TestColumnCopyReconstructVarLen(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
@@ -173,7 +173,7 @@ func TestLargeStringColumnOffset(t *testing.T) {
 func TestI64Column(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendInt64(int64(i))
@@ -197,7 +197,7 @@ func TestI64Column(t *testing.T) {
 func TestF64Column(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDouble)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendFloat64(float64(i))
@@ -221,7 +221,7 @@ func TestF64Column(t *testing.T) {
 func TestF32Column(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendFloat32(float32(i))
@@ -245,7 +245,7 @@ func TestF32Column(t *testing.T) {
 func TestDurationSliceColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendDuration(types.Duration{Duration: time.Duration(i)})
@@ -271,7 +271,7 @@ func TestDurationSliceColumn(t *testing.T) {
 func TestMyDecimal(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
@@ -314,7 +314,7 @@ func TestMyDecimal(t *testing.T) {
 func TestStringColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeVarString)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendString(fmt.Sprintf("%v", i*i))
@@ -332,7 +332,7 @@ func TestStringColumn(t *testing.T) {
 func TestSetColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeSet)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeSet)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendSet(types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
@@ -354,7 +354,7 @@ func TestSetColumn(t *testing.T) {
 func TestJSONColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		j := new(json.BinaryJSON)
@@ -376,7 +376,7 @@ func TestJSONColumn(t *testing.T) {
 func TestTimeColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDatetime)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendTime(types.CurrentTime(mysql.TypeDatetime))
@@ -399,7 +399,7 @@ func TestTimeColumn(t *testing.T) {
 func TestDurationColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
@@ -418,7 +418,7 @@ func TestDurationColumn(t *testing.T) {
 func TestEnumColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeEnum)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeEnum)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendEnum(types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
@@ -440,7 +440,7 @@ func TestEnumColumn(t *testing.T) {
 func TestNullsColumn(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		if i%2 == 0 {
@@ -466,7 +466,7 @@ func TestNullsColumn(t *testing.T) {
 func TestReconstructFixedLen(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
@@ -524,7 +524,7 @@ func TestReconstructFixedLen(t *testing.T) {
 func TestReconstructVarLen(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	sel := make([]int, 0, 1024)
@@ -582,7 +582,7 @@ func TestReconstructVarLen(t *testing.T) {
 func TestPreAllocInt64(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 128)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 128)
 	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
 	require.Equal(t, 256, len(i64s))
@@ -598,7 +598,7 @@ func TestPreAllocInt64(t *testing.T) {
 func TestPreAllocUint64(t *testing.T) {
 	t.Parallel()
 
-	tll := types.NewFieldType(mysql.TypeLonglong)
+	tll := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	tll.Flag |= mysql.UnsignedFlag
 	col := NewColumn(tll, 128)
 	col.ResizeUint64(256, true)
@@ -767,7 +767,7 @@ func TestResizeReserve(t *testing.T) {
 func TestGetRaw(t *testing.T) {
 	t.Parallel()
 
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendFloat32(float32(i))
@@ -782,7 +782,7 @@ func TestGetRaw(t *testing.T) {
 		i++
 	}
 
-	chk = NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
+	chk = NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeVarString)}, 1024)
 	col = chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col.AppendString(fmt.Sprint(i))
@@ -799,7 +799,7 @@ func TestGetRaw(t *testing.T) {
 func TestResize(t *testing.T) {
 	t.Parallel()
 
-	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendInt64(int64(i))
 	}
@@ -808,7 +808,7 @@ func TestResize(t *testing.T) {
 		require.Equal(t, int64(0), col.Int64s()[i])
 	}
 
-	col = NewColumn(types.NewFieldType(mysql.TypeFloat), 1024)
+	col = NewColumn(types.NewFieldTypeBuilder(mysql.TypeFloat), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendFloat32(float32(i))
 	}
@@ -817,7 +817,7 @@ func TestResize(t *testing.T) {
 		require.Equal(t, float32(0), col.Float32s()[i])
 	}
 
-	col = NewColumn(types.NewFieldType(mysql.TypeDouble), 1024)
+	col = NewColumn(types.NewFieldTypeBuilder(mysql.TypeDouble), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendFloat64(float64(i))
 	}
@@ -826,7 +826,7 @@ func TestResize(t *testing.T) {
 		require.Equal(t, float64(0), col.Float64s()[i])
 	}
 
-	col = NewColumn(types.NewFieldType(mysql.TypeNewDecimal), 1024)
+	col = NewColumn(types.NewFieldTypeBuilder(mysql.TypeNewDecimal), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendMyDecimal(new(types.MyDecimal).FromInt(int64(i)))
 	}
@@ -836,7 +836,7 @@ func TestResize(t *testing.T) {
 		require.Equal(t, d, col.Decimals()[i])
 	}
 
-	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
+	col = NewColumn(types.NewFieldTypeBuilder(mysql.TypeDuration), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: int8(i)})
 	}
@@ -845,7 +845,7 @@ func TestResize(t *testing.T) {
 		require.Equal(t, time.Duration(0), col.GoDurations()[i])
 	}
 
-	col = NewColumn(types.NewFieldType(mysql.TypeDatetime), 1024)
+	col = NewColumn(types.NewFieldTypeBuilder(mysql.TypeDatetime), 1024)
 	for i := 0; i < 1024; i++ {
 		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
 		t := types.NewTime(gt, 0, 0)
@@ -859,7 +859,7 @@ func TestResize(t *testing.T) {
 }
 
 func BenchmarkDurationRow(b *testing.B) {
-	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	chk1 := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDuration)}, 1024)
 	col1 := chk1.Column(0)
 	for i := 0; i < 1024; i++ {
 		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
@@ -885,7 +885,7 @@ func BenchmarkDurationRow(b *testing.B) {
 }
 
 func BenchmarkDurationVec(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDuration)}, 1024)
 	col1 := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col1.AppendDuration(types.Duration{Duration: time.Second * time.Duration(i)})
@@ -913,7 +913,7 @@ func BenchmarkDurationVec(b *testing.B) {
 }
 
 func BenchmarkTimeRow(b *testing.B) {
-	chk1 := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
+	chk1 := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate)}, 1024)
 	col1 := chk1.Column(0)
 	for i := 0; i < 1024; i++ {
 		col1.AppendTime(types.ZeroDate)
@@ -939,7 +939,7 @@ func BenchmarkTimeRow(b *testing.B) {
 }
 
 func BenchmarkTimeVec(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDate)}, 1024)
+	chk := NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDate)}, 1024)
 	col1 := chk.Column(0)
 	for i := 0; i < 1024; i++ {
 		col1.AppendTime(types.ZeroDate)
@@ -967,7 +967,7 @@ func BenchmarkTimeVec(b *testing.B) {
 func genNullCols(n int) []*Column {
 	cols := make([]*Column, n)
 	for i := range cols {
-		cols[i] = NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+		cols[i] = NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 1024)
 		cols[i].ResizeInt64(1024, false)
 		for j := 0; j < 1024; j++ {
 			if rand.Intn(10) < 5 {
@@ -1001,15 +1001,15 @@ func TestVectorizedNulls(t *testing.T) {
 func TestResetColumn(t *testing.T) {
 	t.Parallel()
 
-	col0 := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
-	col1 := NewColumn(types.NewFieldType(mysql.TypeLonglong), 0)
+	col0 := NewColumn(types.NewFieldTypeBuilder(mysql.TypeVarString), 0)
+	col1 := NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), 0)
 
 	// using col0.reset() here will cause panic since it doesn't reset the elemBuf field which
 	// is used by MergeNulls.
 	col0.Reset(types.ETInt)
 	col0.MergeNulls(col1)
 
-	col := NewColumn(types.NewFieldType(mysql.TypeDatetime), 0)
+	col := NewColumn(types.NewFieldTypeBuilder(mysql.TypeDatetime), 0)
 	col.Reset(types.ETDuration)
 	col.AppendDuration(types.Duration{})
 	// using col.reset() above will let this assertion fail since the length of initialized elemBuf

@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, isMax bool) (memDeltas []int64, err error) {
+func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder, isMax bool) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, srcChk.NumRows())
 	var (
 		preStringVal string
@@ -86,11 +86,11 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 	return memDeltas, nil
 }
 
-func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	return maxMinUpdateMemDeltaGens(srcChk, dataType, true)
 }
 
-func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTypeBuilder) (memDeltas []int64, err error) {
 	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
 }
 
@@ -105,7 +105,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	setC, _ := types.ParseSet(elems, "c", mysql.DefaultCollationName)    // setC.Value == 4
 	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
-	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
@@ -144,7 +144,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 func TestMaxMin(t *testing.T) {
 	t.Parallel()
 
-	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),

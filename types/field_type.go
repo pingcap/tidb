@@ -30,13 +30,13 @@ const UnspecifiedLength = -1
 // ErrorLength is error length for blob or text.
 const ErrorLength = 0
 
-// FieldType records field type information.
-type FieldType = ast.FieldType
+// FieldTypeBuilder records field type information.
+type FieldTypeBuilder = ast.FieldTypeBuilder
 
-// NewFieldType returns a FieldType,
+// NewFieldTypeBuilder returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldType(tp byte) *FieldType {
-	ft := &FieldType{
+func NewFieldTypeBuilder(tp byte) *FieldTypeBuilder {
+	ft := &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
@@ -45,11 +45,11 @@ func NewFieldType(tp byte) *FieldType {
 	return ft
 }
 
-// NewFieldTypeWithCollation returns a FieldType,
+// NewFieldTypeBuilderWithCollation returns a FieldTypeBuilder,
 // with a type and other information about field type.
-func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+func NewFieldTypeBuilderWithCollation(tp byte, collation string, length int) *FieldTypeBuilder {
 	coll, _ := charset.GetCollationByName(collation)
-	return &FieldType{
+	return &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    length,
 		Decimal: UnspecifiedLength,
@@ -61,8 +61,8 @@ func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
-func AggFieldType(tps []*FieldType) *FieldType {
-	var currType FieldType
+func AggFieldType(tps []*FieldTypeBuilder) *FieldTypeBuilder {
+	var currType FieldTypeBuilder
 	isMixedSign := false
 	for i, t := range tps {
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
@@ -104,7 +104,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 }
 
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
-func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
+func AggregateEvalType(fts []*FieldTypeBuilder, flag *uint) EvalType {
 	var (
 		aggregatedEvalType = ETString
 		unsigned           bool
@@ -136,7 +136,7 @@ func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	return aggregatedEvalType
 }
 
-func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldType, isLHSUnsigned, isRHSUnsigned bool) EvalType {
+func mergeEvalType(lhs, rhs EvalType, lft, rft *FieldTypeBuilder, isLHSUnsigned, isRHSUnsigned bool) EvalType {
 	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
 		if lft.Tp == rft.Tp {
 			return ETString
@@ -166,8 +166,8 @@ func SetTypeFlag(flag *uint, flagItem uint, on bool) {
 	}
 }
 
-// DefaultParamTypeForValue returns the default FieldType for the parameterized value.
-func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
+// DefaultParamTypeForValue returns the default FieldTypeBuilder for the parameterized value.
+func DefaultParamTypeForValue(value interface{}, tp *FieldTypeBuilder) {
 	switch value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeVarString
@@ -184,7 +184,7 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	}
 }
 
-func hasVariantFieldLength(tp *FieldType) bool {
+func hasVariantFieldLength(tp *FieldTypeBuilder) bool {
 	switch tp.Tp {
 	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
 		mysql.TypeBit, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
@@ -193,8 +193,8 @@ func hasVariantFieldLength(tp *FieldType) bool {
 	return false
 }
 
-// DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+// DefaultTypeForValue returns the default FieldTypeBuilder for the value.
+func DefaultTypeForValue(value interface{}, tp *FieldTypeBuilder, char string, collate string) {
 	if value != nil {
 		tp.Flag |= mysql.NotNullFlag
 	}
@@ -1291,8 +1291,8 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 	},
 }
 
-// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.
-func SetBinChsClnFlag(ft *FieldType) {
+// SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldTypeBuilder.
+func SetBinChsClnFlag(ft *FieldTypeBuilder) {
 	ft.Charset = charset.CharsetBin
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag

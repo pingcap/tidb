@@ -296,7 +296,7 @@ func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]by
 	return encode(sc, b, v, false)
 }
 
-func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
+func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldTypeBuilder, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
 		flag = NilFlag
 		return
@@ -390,13 +390,13 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 }
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
-func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
+func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldTypeBuilder, colIdx int, buf []byte, isNull []bool) (err error) {
 	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil, false)
 }
 
 // HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
 // sel indicates which rows are selected. If it is nil, all rows are selected.
-func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
+func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldTypeBuilder, colIdx int, buf []byte,
 	isNull, sel []bool, ignoreNull bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
@@ -666,7 +666,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
-func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
+func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldTypeBuilder, colIdx []int, buf []byte) (err error) {
 	var b []byte
 	for i, idx := range colIdx {
 		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[i], idx)
@@ -688,8 +688,8 @@ func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allT
 // EqualChunkRow returns a boolean reporting whether row1 and row2
 // with their types and column index are logically equal.
 func EqualChunkRow(sc *stmtctx.StatementContext,
-	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
-	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
+	row1 chunk.Row, allTypes1 []*types.FieldTypeBuilder, colIdx1 []int,
+	row2 chunk.Row, allTypes2 []*types.FieldTypeBuilder, colIdx2 []int,
 ) (bool, error) {
 	if len(colIdx1) != len(colIdx2) {
 		return false, errors.Errorf("Internal error: Hash columns count mismatch, col1: %d, col2: %d", len(colIdx1), len(colIdx2))
@@ -1042,7 +1042,7 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 }
 
 // DecodeOne decodes one value to chunk and returns the remained bytes.
-func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
+func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldTypeBuilder) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
@@ -1141,7 +1141,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 	return b, nil
 }
 
-func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
 		v := types.Duration{Duration: time.Duration(val), Fsp: int8(ft.Decimal)}
@@ -1151,7 +1151,7 @@ func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldTy
 	}
 }
 
-func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldType, loc *time.Location) error {
+func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder, loc *time.Location) error {
 	switch ft.Tp {
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
@@ -1189,7 +1189,7 @@ func appendUintToChunk(val uint64, chk *chunk.Chunk, colIdx int, ft *types.Field
 	return nil
 }
 
-func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
+func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.FieldTypeBuilder) {
 	if ft.Tp == mysql.TypeFloat {
 		chk.AppendFloat32(colIdx, float32(val))
 	} else {
@@ -1199,7 +1199,7 @@ func appendFloatToChunk(val float64, chk *chunk.Chunk, colIdx int, ft *types.Fie
 
 // HashGroupKey encodes each row of this column and append encoded data into buf.
 // Only use in the aggregate executor.
-func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldType) ([][]byte, error) {
+func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf [][]byte, ft *types.FieldTypeBuilder) ([][]byte, error) {
 	var err error
 	switch ft.EvalType() {
 	case types.ETInt:
@@ -1286,13 +1286,13 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 }
 
 // ConvertByCollation converts these bytes according to its collation.
-func ConvertByCollation(raw []byte, tp *types.FieldType) []byte {
+func ConvertByCollation(raw []byte, tp *types.FieldTypeBuilder) []byte {
 	collator := collate.GetCollator(tp.Collate)
 	return collator.Key(string(hack.String(raw)))
 }
 
 // ConvertByCollationStr converts this string according to its collation.
-func ConvertByCollationStr(str string, tp *types.FieldType) string {
+func ConvertByCollationStr(str string, tp *types.FieldTypeBuilder) string {
 	collator := collate.GetCollator(tp.Collate)
 	return string(hack.String(collator.Key(str)))
 }

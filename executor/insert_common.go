@@ -69,7 +69,7 @@ type InsertValues struct {
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
-	evalBufferTypes []*types.FieldType
+	evalBufferTypes []*types.FieldTypeBuilder
 
 	allAssignmentsAreConstant bool
 
@@ -180,12 +180,12 @@ func (e *InsertValues) initEvalBuffer() {
 	if e.hasExtraHandle {
 		numCols++
 	}
-	e.evalBufferTypes = make([]*types.FieldType, numCols)
+	e.evalBufferTypes = make([]*types.FieldTypeBuilder, numCols)
 	for i, col := range e.Table.Cols() {
-		e.evalBufferTypes[i] = &col.FieldType
+		e.evalBufferTypes[i] = &col.FieldTypeBuilder
 	}
 	if e.hasExtraHandle {
-		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
+		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	}
 	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
 }
@@ -652,7 +652,7 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 	var err error
 	var recordID int64
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &col.FieldType, true)
+		recordID, err = getAutoRecordID(d, &col.FieldTypeBuilder, true)
 		if err != nil {
 			return false
 		}
@@ -704,7 +704,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		var err error
 		var recordID int64
 		if !autoDatum.IsNull() {
-			recordID, err = getAutoRecordID(autoDatum, &col.FieldType, true)
+			recordID, err = getAutoRecordID(autoDatum, &col.FieldTypeBuilder, true)
 			if err != nil {
 				return nil, err
 			}
@@ -797,7 +797,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(d, &c.FieldTypeBuilder, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -835,7 +835,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	return d, nil
 }
 
-func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
+func getAutoRecordID(d types.Datum, target *types.FieldTypeBuilder, isInsert bool) (int64, error) {
 	var recordID int64
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -873,7 +873,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(d, &c.FieldTypeBuilder, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -883,7 +883,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
 			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
 		}
-		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldType)
+		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldTypeBuilder)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -899,7 +899,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		recordID, err = e.allocAutoRandomID(ctx, &c.FieldType)
+		recordID, err = e.allocAutoRandomID(ctx, &c.FieldTypeBuilder)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -919,7 +919,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
-func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
+func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldTypeBuilder) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
@@ -945,7 +945,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	return autoRandomID, nil
 }
 
-func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, fieldType *types.FieldType) error {
+func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, fieldType *types.FieldTypeBuilder) error {
 	if recordID < 0 {
 		return nil
 	}
@@ -1006,7 +1006,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
-	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
+	layout := autoid.NewShardIDLayout(types.NewFieldTypeBuilder(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
 	newTiDBRowIDBase := layout.IncrementalMask() & recordID
 
 	return alloc.Rebase(ctx, newTiDBRowIDBase, true)

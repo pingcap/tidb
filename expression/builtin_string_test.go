@@ -175,12 +175,12 @@ func TestConcat(t *testing.T) {
 		isNil   bool
 		getErr  bool
 		res     string
-		retType *types.FieldType
+		retType *types.FieldTypeBuilder
 	}{
 		{
 			[]interface{}{nil},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b",
@@ -193,17 +193,17 @@ func TestConcat(t *testing.T) {
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			&types.FieldTypeBuilder{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
 		},
 	}
 	fcName := ast.Concat
@@ -227,11 +227,11 @@ func TestConcat(t *testing.T) {
 func TestConcatSig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeVarchar},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 1000}
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -346,12 +346,12 @@ func TestConcatWS(t *testing.T) {
 func TestConcatWSSig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeVarchar},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 1000}
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -551,11 +551,11 @@ func TestRepeat(t *testing.T) {
 func TestRepeatSig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeLonglong},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 1000}
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -1038,10 +1038,10 @@ func TestSpace(t *testing.T) {
 func TestSpaceSig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeLonglong},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 1000}
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 	}
@@ -1664,12 +1664,12 @@ func TestRpad(t *testing.T) {
 func TestRpadSig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeLonglong},
 		{Tp: mysql.TypeVarchar},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 1000}
 
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
@@ -1707,13 +1707,13 @@ func TestRpadSig(t *testing.T) {
 func TestInsertBinarySig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeLonglong},
 		{Tp: mysql.TypeLonglong},
 		{Tp: mysql.TypeVarchar},
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 3}
+	resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: 3}
 
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
@@ -2131,7 +2131,7 @@ func TestFromBase64(t *testing.T) {
 func TestFromBase64Sig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 	}
 
@@ -2162,7 +2162,7 @@ func TestFromBase64Sig(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: mysql.MaxBlobWidth}
+		resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: mysql.MaxBlobWidth}
 		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
 		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
 
@@ -2493,7 +2493,7 @@ func TestToBase64(t *testing.T) {
 func TestToBase64Sig(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	colTypes := []*types.FieldType{
+	colTypes := []*types.FieldTypeBuilder{
 		{Tp: mysql.TypeVarchar},
 	}
 
@@ -2536,7 +2536,7 @@ func TestToBase64Sig(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
+		resultType := &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
 		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
 		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
 

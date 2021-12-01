@@ -296,7 +296,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
-	fieldType := types.FieldType{
+	fieldType := types.FieldTypeBuilder{
 		Charset: mCharset,
 		Collate: mCollation,
 		Tp:      col.tp,
@@ -306,11 +306,11 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 		Elems:   col.enumElems,
 	}
 	return &model.ColumnInfo{
-		Name:         model.NewCIStr(col.name),
-		FieldType:    fieldType,
-		State:        model.StatePublic,
-		DefaultValue: col.deflt,
-		Comment:      col.comment,
+		Name:             model.NewCIStr(col.name),
+		FieldTypeBuilder: fieldType,
+		State:            model.StatePublic,
+		DefaultValue:     col.deflt,
+		Comment:          col.comment,
 	}
 }
 

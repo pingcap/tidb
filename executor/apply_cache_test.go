@@ -32,7 +32,7 @@ func TestApplyCache(t *testing.T) {
 	applyCache, err := newApplyCache(ctx)
 	require.NoError(t, err)
 
-	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	fields := []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	value := make([]*chunk.List, 3)
 	key := make([][]byte, 3)
 	for i := 0; i < 3; i++ {

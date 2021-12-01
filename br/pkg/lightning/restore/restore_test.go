@@ -2241,7 +2241,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 									{
 										// colB doesn't have the default value
 										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
+										FieldTypeBuilder: types.FieldTypeBuilder{
 											// not null flag
 											Flag: 1,
 										},
@@ -2396,7 +2396,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 									{
 										// colC doesn't have the default value
 										Name: model.NewCIStr("colC"),
-										FieldType: types.FieldType{
+										FieldTypeBuilder: types.FieldTypeBuilder{
 											Flag: 1,
 										},
 									},
@@ -2449,7 +2449,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 									{
 										// colB doesn't have the default value
 										Name: model.NewCIStr("colB"),
-										FieldType: types.FieldType{
+										FieldTypeBuilder: types.FieldTypeBuilder{
 											Flag: 1,
 										},
 									},
@@ -2653,13 +2653,13 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
 							Columns: []*model.ColumnInfo{
 								{
 									Name: model.NewCIStr("colA"),
-									FieldType: types.FieldType{
+									FieldTypeBuilder: types.FieldTypeBuilder{
 										Flag: 1,
 									},
 								},
 								{
 									Name: model.NewCIStr("colB"),
-									FieldType: types.FieldType{
+									FieldTypeBuilder: types.FieldTypeBuilder{
 										Flag: 1,
 									},
 								},

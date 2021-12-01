@@ -209,7 +209,7 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
+func buildValueEvaluator(tp *types.FieldTypeBuilder) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
 	if tp.Tp == mysql.TypeBit {
 		evalType = types.ETString
@@ -241,7 +241,7 @@ func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64
 type firstValue struct {
 	baseAggFunc
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 type partialResult4FirstValue struct {
@@ -288,7 +288,7 @@ func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 type lastValue struct {
 	baseAggFunc
 
-	tp *types.FieldType
+	tp *types.FieldTypeBuilder
 }
 
 type partialResult4LastValue struct {
@@ -332,7 +332,7 @@ func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialR
 type nthValue struct {
 	baseAggFunc
 
-	tp  *types.FieldType
+	tp  *types.FieldTypeBuilder
 	nth uint64
 }
 

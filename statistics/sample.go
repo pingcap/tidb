@@ -218,7 +218,7 @@ type SampleBuilder struct {
 	CMSketchDepth   int32
 	CMSketchWidth   int32
 	Collators       []collate.Collator
-	ColsFieldType   []*types.FieldType
+	ColsFieldType   []*types.FieldTypeBuilder
 }
 
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
@@ -288,13 +288,13 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
-		datums[i] = row.GetDatum(i, &f.Column.FieldType)
+		datums[i] = row.GetDatum(i, &f.Column.FieldTypeBuilder)
 	}
 	return datums
 }
 
 // ExtractTopN extracts the topn from the CM Sketch.
-func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldType, timeZone *time.Location) error {
+func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldTypeBuilder, timeZone *time.Location) error {
 	if numTop == 0 {
 		return nil
 	}

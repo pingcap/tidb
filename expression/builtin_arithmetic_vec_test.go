@@ -43,16 +43,16 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, newRangeDecimalGener(0, 0, 0.2)}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}, nil},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}, nil},
 			geners:             []dataGenerator{newRangeDecimalGener(0, 10000, 0.2), newRangeDecimalGener(0, 10000, 0.2)},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldTypeBuilder{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
 			geners:             []dataGenerator{newRangeDecimalGener(0, 10000, 0.2), newRangeDecimalGener(0, 10000, 0.2)},
 		},
 		// when the final result is at (-1, 0], it should be return 0 instead of the error
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldTypeBuilder{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
 			geners:             []dataGenerator{newRangeDecimalGener(-100, -1, 0.2), newRangeDecimalGener(1000, 2000, 0.2)},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -62,7 +62,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{
+			childrenFieldTypes: []*types.FieldTypeBuilder{
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
@@ -71,7 +71,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{
+			childrenFieldTypes: []*types.FieldTypeBuilder{
 				{Tp: mysql.TypeLonglong},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
@@ -80,7 +80,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{
+			childrenFieldTypes: []*types.FieldTypeBuilder{
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong}},
 			geners: []dataGenerator{
@@ -107,7 +107,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -115,7 +115,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
@@ -123,7 +123,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -136,7 +136,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{newRangeInt64Gener(-10000, 10000), newRangeInt64Gener(-10000, 10000)}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}, {Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}, {Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, 10000),
 				newRangeInt64Gener(0, 10000),
@@ -155,7 +155,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -163,7 +163,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong},
 				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -171,7 +171,7 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
+			childrenFieldTypes: []*types.FieldTypeBuilder{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
 				{Tp: mysql.TypeLonglong}},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -208,7 +208,7 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 	}
 
 	for _, tt := range testCases {
-		fts := []*types.FieldType{eType2FieldType(types.ETDecimal), eType2FieldType(types.ETDecimal)}
+		fts := []*types.FieldTypeBuilder{eType2FieldType(types.ETDecimal), eType2FieldType(types.ETDecimal)}
 		input := chunk.New(fts, 1, 1)
 		dec1, dec2 := new(types.MyDecimal), new(types.MyDecimal)
 		err := dec1.FromFloat64(tt.args[0])

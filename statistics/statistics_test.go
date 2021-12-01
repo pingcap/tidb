@@ -58,7 +58,7 @@ func (r *recordSet) setFields(tps ...uint8) {
 	for i := 0; i < len(tps); i++ {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = *types.NewFieldType(tps[i])
+		rf.Column.FieldTypeBuilder = *types.NewFieldTypeBuilder(tps[i])
 		r.fields[i] = rf
 	}
 }
@@ -88,9 +88,9 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 }
 
 func (r *recordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
-	fields := make([]*types.FieldType, 0, len(r.fields))
+	fields := make([]*types.FieldTypeBuilder, 0, len(r.fields))
 	for _, field := range r.fields {
-		fields = append(fields, &field.Column.FieldType)
+		fields = append(fields, &field.Column.FieldTypeBuilder)
 	}
 	return chunk.NewChunkWithCapacity(fields, 32)
 }
@@ -101,7 +101,7 @@ func (r *recordSet) Close() error {
 }
 
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldTypeBuilder(mysql.TypeLonglong), Version1)
 	ctx := context.Background()
 	for {
 		req := records.NewChunk(nil)
@@ -125,7 +125,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 }
 
 func mockHistogram(lower, num int64) *Histogram {
-	h := NewHistogram(0, num, 0, 0, types.NewFieldType(mysql.TypeLonglong), int(num), 0)
+	h := NewHistogram(0, num, 0, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong), int(num), 0)
 	for i := int64(0); i < num; i++ {
 		lower, upper := types.NewIntDatum(lower+i), types.NewIntDatum(lower+i)
 		h.AppendBucket(&lower, &upper, i+1, 1)
@@ -193,9 +193,9 @@ func TestPseudoTable(t *testing.T) {
 	t.Parallel()
 	ti := &model.TableInfo{}
 	colInfo := &model.ColumnInfo{
-		ID:        1,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
+		ID:               1,
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		State:            model.StatePublic,
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
@@ -210,10 +210,10 @@ func TestPseudoTable(t *testing.T) {
 	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	require.Equal(t, 250, int(count))
 	ti.Columns = append(ti.Columns, &model.ColumnInfo{
-		ID:        2,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		Hidden:    true,
-		State:     model.StatePublic,
+		ID:               2,
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		Hidden:           true,
+		State:            model.StatePublic,
 	})
 	tbl = PseudoTable(ti)
 	// We added a hidden column. The pseudo table still only have one column.
@@ -247,7 +247,7 @@ func SubTestColumnRange() func(*testing.T) {
 			Samples:   s.samples,
 			FMSketch:  sketch,
 		}
-		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
+		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}

@@ -1318,7 +1318,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
 				ID:       is.Table.Columns[is.Index.Columns[i].Offset].ID,
-				RetType:  &is.Table.Columns[is.Index.Columns[i].Offset].FieldType,
+				RetType:  &is.Table.Columns[is.Index.Columns[i].Offset].FieldTypeBuilder,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
@@ -1347,7 +1347,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 					ID:       model.ExtraHandleID,
 					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 				})
@@ -1356,7 +1356,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		// If index is global, we should add extra column for pid.
 		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 				ID:       model.ExtraPidColID,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})

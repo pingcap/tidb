@@ -901,7 +901,7 @@ type ColumnDef struct {
 	node
 
 	Name    *ColumnName
-	Tp      *types.FieldType
+	Tp      *types.FieldTypeBuilder
 	Options []*ColumnOption
 }
 

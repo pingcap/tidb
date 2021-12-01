@@ -92,7 +92,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(ft *types.FieldTypeBuilder, d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -149,8 +149,8 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	return tp, val, true
 }
 
-// ToPBFieldType converts *types.FieldType to *tipb.FieldType.
-func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
+// ToPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
+func ToPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.Tp),
 		Flag:    uint32(ft.Flag),
@@ -162,9 +162,9 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	}
 }
 
-// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
-func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldTypeBuilder.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldTypeBuilder {
+	return &types.FieldTypeBuilder{
 		Tp:      byte(ft.Tp),
 		Flag:    uint(ft.Flag),
 		Flen:    int(ft.Flen),

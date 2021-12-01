@@ -27,18 +27,18 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func newLongType() types.FieldType {
-	return *(types.NewFieldType(mysql.TypeLong))
+func newLongType() types.FieldTypeBuilder {
+	return *(types.NewFieldTypeBuilder(mysql.TypeLong))
 }
 
-func newStringType() types.FieldType {
-	ft := types.NewFieldType(mysql.TypeVarchar)
+func newStringType() types.FieldTypeBuilder {
+	ft := types.NewFieldTypeBuilder(mysql.TypeVarchar)
 	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
 	return *ft
 }
 
-func newDateType() types.FieldType {
-	ft := types.NewFieldType(mysql.TypeDate)
+func newDateType() types.FieldTypeBuilder {
+	ft := types.NewFieldTypeBuilder(mysql.TypeDate)
 	return *ft
 }
 
@@ -166,88 +166,88 @@ func MockSignedTable() *model.TableInfo {
 		},
 	}
 	pkColumn := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    0,
-		Name:      model.NewCIStr("a"),
-		FieldType: newLongType(),
-		ID:        1,
+		State:            model.StatePublic,
+		Offset:           0,
+		Name:             model.NewCIStr("a"),
+		FieldTypeBuilder: newLongType(),
+		ID:               1,
 	}
 	col0 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    1,
-		Name:      model.NewCIStr("b"),
-		FieldType: newLongType(),
-		ID:        2,
+		State:            model.StatePublic,
+		Offset:           1,
+		Name:             model.NewCIStr("b"),
+		FieldTypeBuilder: newLongType(),
+		ID:               2,
 	}
 	col1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    2,
-		Name:      model.NewCIStr("c"),
-		FieldType: newLongType(),
-		ID:        3,
+		State:            model.StatePublic,
+		Offset:           2,
+		Name:             model.NewCIStr("c"),
+		FieldTypeBuilder: newLongType(),
+		ID:               3,
 	}
 	col2 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    3,
-		Name:      model.NewCIStr("d"),
-		FieldType: newLongType(),
-		ID:        4,
+		State:            model.StatePublic,
+		Offset:           3,
+		Name:             model.NewCIStr("d"),
+		FieldTypeBuilder: newLongType(),
+		ID:               4,
 	}
 	col3 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    4,
-		Name:      model.NewCIStr("e"),
-		FieldType: newLongType(),
-		ID:        5,
+		State:            model.StatePublic,
+		Offset:           4,
+		Name:             model.NewCIStr("e"),
+		FieldTypeBuilder: newLongType(),
+		ID:               5,
 	}
 	colStr1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    5,
-		Name:      model.NewCIStr("c_str"),
-		FieldType: newStringType(),
-		ID:        6,
+		State:            model.StatePublic,
+		Offset:           5,
+		Name:             model.NewCIStr("c_str"),
+		FieldTypeBuilder: newStringType(),
+		ID:               6,
 	}
 	colStr2 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    6,
-		Name:      model.NewCIStr("d_str"),
-		FieldType: newStringType(),
-		ID:        7,
+		State:            model.StatePublic,
+		Offset:           6,
+		Name:             model.NewCIStr("d_str"),
+		FieldTypeBuilder: newStringType(),
+		ID:               7,
 	}
 	colStr3 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    7,
-		Name:      model.NewCIStr("e_str"),
-		FieldType: newStringType(),
-		ID:        8,
+		State:            model.StatePublic,
+		Offset:           7,
+		Name:             model.NewCIStr("e_str"),
+		FieldTypeBuilder: newStringType(),
+		ID:               8,
 	}
 	col4 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    8,
-		Name:      model.NewCIStr("f"),
-		FieldType: newLongType(),
-		ID:        9,
+		State:            model.StatePublic,
+		Offset:           8,
+		Name:             model.NewCIStr("f"),
+		FieldTypeBuilder: newLongType(),
+		ID:               9,
 	}
 	col5 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    9,
-		Name:      model.NewCIStr("g"),
-		FieldType: newLongType(),
-		ID:        10,
+		State:            model.StatePublic,
+		Offset:           9,
+		Name:             model.NewCIStr("g"),
+		FieldTypeBuilder: newLongType(),
+		ID:               10,
 	}
 	col6 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
-		FieldType: newLongType(),
-		ID:        11,
+		State:            model.StatePublic,
+		Offset:           10,
+		Name:             model.NewCIStr("h"),
+		FieldTypeBuilder: newLongType(),
+		ID:               11,
 	}
 	col7 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    11,
-		Name:      model.NewCIStr("i_date"),
-		FieldType: newDateType(),
-		ID:        12,
+		State:            model.StatePublic,
+		Offset:           11,
+		Name:             model.NewCIStr("i_date"),
+		FieldTypeBuilder: newDateType(),
+		ID:               12,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
@@ -302,25 +302,25 @@ func MockUnsignedTable() *model.TableInfo {
 		},
 	}
 	pkColumn := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    0,
-		Name:      model.NewCIStr("a"),
-		FieldType: newLongType(),
-		ID:        1,
+		State:            model.StatePublic,
+		Offset:           0,
+		Name:             model.NewCIStr("a"),
+		FieldTypeBuilder: newLongType(),
+		ID:               1,
 	}
 	col0 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    1,
-		Name:      model.NewCIStr("b"),
-		FieldType: newLongType(),
-		ID:        2,
+		State:            model.StatePublic,
+		Offset:           1,
+		Name:             model.NewCIStr("b"),
+		FieldTypeBuilder: newLongType(),
+		ID:               2,
 	}
 	col1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    2,
-		Name:      model.NewCIStr("c"),
-		FieldType: newLongType(),
-		ID:        3,
+		State:            model.StatePublic,
+		Offset:           2,
+		Name:             model.NewCIStr("c"),
+		FieldTypeBuilder: newLongType(),
+		ID:               3,
 	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
@@ -339,18 +339,18 @@ func MockUnsignedTable() *model.TableInfo {
 func MockNoPKTable() *model.TableInfo {
 	// column: a, b
 	col0 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    1,
-		Name:      model.NewCIStr("a"),
-		FieldType: newLongType(),
-		ID:        2,
+		State:            model.StatePublic,
+		Offset:           1,
+		Name:             model.NewCIStr("a"),
+		FieldTypeBuilder: newLongType(),
+		ID:               2,
 	}
 	col1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    2,
-		Name:      model.NewCIStr("b"),
-		FieldType: newLongType(),
-		ID:        3,
+		State:            model.StatePublic,
+		Offset:           2,
+		Name:             model.NewCIStr("b"),
+		FieldTypeBuilder: newLongType(),
+		ID:               3,
 	}
 	// Column 'a', 'b' is not null.
 	col0.Flag = mysql.NotNullFlag
@@ -415,11 +415,11 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	cols = append(cols, tableInfo.Columns...)
 	last := tableInfo.Columns[len(tableInfo.Columns)-1]
 	cols = append(cols, &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    last.Offset + 1,
-		Name:      model.NewCIStr("ptn"),
-		FieldType: newLongType(),
-		ID:        last.ID + 1,
+		State:            model.StatePublic,
+		Offset:           last.Offset + 1,
+		Name:             model.NewCIStr("ptn"),
+		FieldTypeBuilder: newLongType(),
+		ID:               last.ID + 1,
 	})
 	partition := &model.PartitionInfo{
 		Type:        model.PartitionTypeRange,

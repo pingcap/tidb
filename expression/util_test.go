@@ -227,7 +227,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
 	require.Error(t, err)
 
-	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con := &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeNull}}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
 	require.NoError(t, err)
 	require.True(t, isNull)
@@ -236,7 +236,7 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
 	require.Equal(t, "1", ret)
 
-	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
+	con = &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeNull}}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
 	require.True(t, isNull)
 
@@ -253,17 +253,17 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
-	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
+	corCol1.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
-	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
-	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
+	corCol2.RetType = types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	cast := BuildCastFunction(ctx, corCol1, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
 	plus2 := newFunction(ast.Plus, plus, NewOne())
-	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
+	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
-	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	require.NoError(t, err)
 	ans2 := col1
@@ -278,7 +278,7 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 func TestPushDownNot(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
-	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col := &Column{Index: 1, RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
 	eqFunc := newFunction(ast.EQ, col, NewOne())
 	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
@@ -360,7 +360,7 @@ func TestHashGroupKey(t *testing.T) {
 			ft.Flen = 0
 		}
 		colExpr := &Column{Index: 0, RetType: ft}
-		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		input := chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		bufs := make([][]byte, 1024)
@@ -513,7 +513,7 @@ func BenchmarkExprFromSchema(b *testing.B) {
 // MockExpr is mainly for test.
 type MockExpr struct {
 	err error
-	t   *types.FieldType
+	t   *types.FieldTypeBuilder
 	i   interface{}
 }
 
@@ -587,7 +587,7 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
+func (m *MockExpr) GetType() *types.FieldTypeBuilder                              { return m.t }
 func (m *MockExpr) Clone() Expression                                             { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
 func (m *MockExpr) IsCorrelated() bool                                            { return false }

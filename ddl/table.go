@@ -911,7 +911,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	if needsOverwriteCols {
 		// update column charset.
 		for _, col := range tblInfo.Columns {
-			if field_types.HasCharset(&col.FieldType) {
+			if field_types.HasCharset(&col.FieldTypeBuilder) {
 				col.Charset = toCharset
 				col.Collate = toCollate
 			} else {

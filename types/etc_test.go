@@ -213,7 +213,7 @@ func TestIsTypeTemporal(t *testing.T) {
 func TestIsBinaryStr(t *testing.T) {
 	t.Parallel()
 
-	in := FieldType{
+	in := FieldTypeBuilder{
 		Tp:      mysql.TypeBit,
 		Flag:    mysql.UnsignedFlag,
 		Flen:    1,
@@ -237,7 +237,7 @@ func TestIsBinaryStr(t *testing.T) {
 func TestIsNonBinaryStr(t *testing.T) {
 	t.Parallel()
 
-	in := FieldType{
+	in := FieldTypeBuilder{
 		Tp:      mysql.TypeBit,
 		Flag:    mysql.UnsignedFlag,
 		Flen:    1,

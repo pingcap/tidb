@@ -176,7 +176,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 
 	for _, col := range tbl.Columns {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+		hist, err := col.ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -296,7 +296,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
+			hist, err := hist.ConvertTo(sc, &colInfo.FieldTypeBuilder)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

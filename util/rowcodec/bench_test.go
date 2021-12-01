@@ -64,10 +64,10 @@ func BenchmarkDecode(b *testing.B) {
 	b.ReportAllocs()
 	oldRow := types.MakeDatums(1, "abc", 1.1)
 	colIDs := []int64{-1, 2, 3}
-	tps := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeDouble),
+	tps := []*types.FieldTypeBuilder{
+		types.NewFieldTypeBuilder(mysql.TypeLonglong),
+		types.NewFieldTypeBuilder(mysql.TypeString),
+		types.NewFieldTypeBuilder(mysql.TypeDouble),
 	}
 	var xb rowcodec.Encoder
 	xRowData, err := xb.Encode(nil, colIDs, oldRow, nil)

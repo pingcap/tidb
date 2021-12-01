@@ -35,8 +35,8 @@ import (
 func TestString(t *testing.T) {
 	t.Parallel()
 	col := ToColumn(&model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeTiny),
-		State:     model.StatePublic,
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeTiny),
+		State:            model.StatePublic,
 	})
 	col.Flen = 2
 	col.Decimal = 1
@@ -164,70 +164,70 @@ func TestDesc(t *testing.T) {
 
 func TestGetZeroValue(t *testing.T) {
 	tests := []struct {
-		ft    *types.FieldType
+		ft    *types.FieldTypeBuilder
 		value types.Datum
 	}{
 		{
-			types.NewFieldType(mysql.TypeLong),
+			types.NewFieldTypeBuilder(mysql.TypeLong),
 			types.NewIntDatum(0),
 		},
 		{
-			&types.FieldType{
+			&types.FieldTypeBuilder{
 				Tp:   mysql.TypeLonglong,
 				Flag: mysql.UnsignedFlag,
 			},
 			types.NewUintDatum(0),
 		},
 		{
-			types.NewFieldType(mysql.TypeFloat),
+			types.NewFieldTypeBuilder(mysql.TypeFloat),
 			types.NewFloat32Datum(0),
 		},
 		{
-			types.NewFieldType(mysql.TypeDouble),
+			types.NewFieldTypeBuilder(mysql.TypeDouble),
 			types.NewFloat64Datum(0),
 		},
 		{
-			types.NewFieldType(mysql.TypeNewDecimal),
+			types.NewFieldTypeBuilder(mysql.TypeNewDecimal),
 			types.NewDecimalDatum(types.NewDecFromInt(0)),
 		},
 		{
-			types.NewFieldType(mysql.TypeVarchar),
+			types.NewFieldTypeBuilder(mysql.TypeVarchar),
 			types.NewStringDatum(""),
 		},
 		{
-			types.NewFieldType(mysql.TypeBlob),
+			types.NewFieldTypeBuilder(mysql.TypeBlob),
 			types.NewStringDatum(""),
 		},
 		{
-			types.NewFieldType(mysql.TypeDuration),
+			types.NewFieldTypeBuilder(mysql.TypeDuration),
 			types.NewDurationDatum(types.ZeroDuration),
 		},
 		{
-			types.NewFieldType(mysql.TypeDatetime),
+			types.NewFieldTypeBuilder(mysql.TypeDatetime),
 			types.NewDatum(types.ZeroDatetime),
 		},
 		{
-			types.NewFieldType(mysql.TypeTimestamp),
+			types.NewFieldTypeBuilder(mysql.TypeTimestamp),
 			types.NewDatum(types.ZeroTimestamp),
 		},
 		{
-			types.NewFieldType(mysql.TypeDate),
+			types.NewFieldTypeBuilder(mysql.TypeDate),
 			types.NewDatum(types.ZeroDate),
 		},
 		{
-			types.NewFieldType(mysql.TypeBit),
+			types.NewFieldTypeBuilder(mysql.TypeBit),
 			types.NewMysqlBitDatum(types.ZeroBinaryLiteral),
 		},
 		{
-			types.NewFieldType(mysql.TypeSet),
+			types.NewFieldTypeBuilder(mysql.TypeSet),
 			types.NewDatum(types.Set{}),
 		},
 		{
-			types.NewFieldType(mysql.TypeEnum),
+			types.NewFieldTypeBuilder(mysql.TypeEnum),
 			types.NewDatum(types.Enum{}),
 		},
 		{
-			&types.FieldType{
+			&types.FieldTypeBuilder{
 				Tp:      mysql.TypeString,
 				Flen:    2,
 				Charset: charset.CharsetBin,
@@ -236,7 +236,7 @@ func TestGetZeroValue(t *testing.T) {
 			types.NewDatum(make([]byte, 2)),
 		},
 		{
-			&types.FieldType{
+			&types.FieldTypeBuilder{
 				Tp:      mysql.TypeString,
 				Flen:    2,
 				Charset: charset.CharsetUTF8MB4,
@@ -245,7 +245,7 @@ func TestGetZeroValue(t *testing.T) {
 			types.NewDatum(""),
 		},
 		{
-			types.NewFieldType(mysql.TypeJSON),
+			types.NewFieldTypeBuilder(mysql.TypeJSON),
 			types.NewDatum(json.CreateBinary(nil)),
 		},
 	}
@@ -253,7 +253,7 @@ func TestGetZeroValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
 			t.Parallel()
-			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
+			colInfo := &model.ColumnInfo{FieldTypeBuilder: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
 			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.Collate))
@@ -267,8 +267,8 @@ func TestCastValue(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeLong),
-		State:     model.StatePublic,
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeLong),
+		State:            model.StatePublic,
 	}
 	colInfo.Charset = mysql.UTF8Charset
 	val, err := CastValue(ctx, types.Datum{}, &colInfo, false, false)
@@ -280,8 +280,8 @@ func TestCastValue(t *testing.T) {
 	require.Equal(t, int64(0), val.GetInt64())
 
 	colInfoS := model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeString),
-		State:     model.StatePublic,
+		FieldTypeBuilder: *types.NewFieldTypeBuilder(mysql.TypeString),
+		State:            model.StatePublic,
 	}
 	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS, false, false)
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestGetDefaultValue(t *testing.T) {
 	}{
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag,
 				},
@@ -340,7 +340,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag,
 				},
@@ -351,7 +351,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp: mysql.TypeLonglong,
 				},
 			},
@@ -361,7 +361,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:      mysql.TypeEnum,
 					Flag:    mysql.NotNullFlag,
 					Elems:   []string{"abc", "def"},
@@ -374,7 +374,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeTimestamp,
 					Flag: mysql.TimestampFlag,
 				},
@@ -387,7 +387,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeTimestamp,
 					Flag: mysql.TimestampFlag,
 				},
@@ -400,7 +400,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeTimestamp,
 					Flag: mysql.TimestampFlag,
 				},
@@ -413,7 +413,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag,
 				},
@@ -424,7 +424,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag | mysql.AutoIncrementFlag,
 				},
@@ -435,7 +435,7 @@ func TestGetDefaultValue(t *testing.T) {
 		},
 		{
 			&model.ColumnInfo{
-				FieldType: types.FieldType{
+				FieldTypeBuilder: types.FieldTypeBuilder{
 					Tp:   mysql.TypeLonglong,
 					Flag: mysql.NotNullFlag,
 				},

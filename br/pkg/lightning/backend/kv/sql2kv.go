@@ -153,7 +153,7 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 			ColName:     col.Name,
 		})
 		exprColumns = append(exprColumns, &expression.Column{
-			RetType:  col.FieldType.Clone(),
+			RetType:  col.FieldTypeBuilder.Clone(),
 			ID:       col.ID,
 			UniqueID: int64(i),
 			Index:    col.Offset,
@@ -257,16 +257,16 @@ func logKVConvertFailed(logger log.Logger, row []types.Datum, j int, colInfo *mo
 		zap.Array("original", RowArrayMarshaler(row)),
 		zap.Int("originalCol", j),
 		zap.String("colName", colInfo.Name.O),
-		zap.Stringer("colType", &colInfo.FieldType),
+		zap.Stringer("colType", &colInfo.FieldTypeBuilder),
 		log.ShortError(err),
 	)
 
 	log.L().Error("failed to covert kv value", logutil.RedactAny("origVal", original.GetValue()),
-		zap.Stringer("fieldType", &colInfo.FieldType), zap.String("column", colInfo.Name.O),
+		zap.Stringer("fieldType", &colInfo.FieldTypeBuilder), zap.String("column", colInfo.Name.O),
 		zap.Int("columnID", j+1))
 	return errors.Annotatef(
 		err,
-		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldType, colInfo.Name.O, j+1,
+		"failed to cast value as %s for column `%s` (#%d)", &colInfo.FieldTypeBuilder, colInfo.Name.O, j+1,
 	)
 }
 
@@ -382,7 +382,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		case col.IsGenerated():
 			// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 			// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
-			value = types.GetMinValue(&col.FieldType)
+			value = types.GetMinValue(&col.FieldTypeBuilder)
 		default:
 			value, err = table.GetColDefaultValue(kvcodec.se, col.ToInfo())
 		}
@@ -401,7 +401,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 		if isAutoIncCol {
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
-			if err := alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false); err != nil {
+			if err := alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldTypeBuilder), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -454,7 +454,7 @@ func (kvcodec *tableKVEncoder) Encode(
 // get record value for auto-increment field
 //
 // See: https://github.com/pingcap/tidb/blob/47f0f15b14ed54fc2222f3e304e29df7b05e6805/executor/insert_common.go#L781-L852
-func getAutoRecordID(d types.Datum, target *types.FieldType) int64 {
+func getAutoRecordID(d types.Datum, target *types.FieldTypeBuilder) int64 {
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return int64(math.Round(d.GetFloat64()))

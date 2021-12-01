@@ -2783,7 +2783,7 @@ ColumnDefList:
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
-		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
+		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldTypeBuilder), Options: $3.([]*ast.ColumnOption)}
 		if !colDef.Validate() {
 			yylex.AppendError(yylex.Errorf("Invalid column definition"))
 			return 1
@@ -2793,7 +2793,7 @@ ColumnDef:
 |	ColumnName "SERIAL" ColumnOptionListOpt
 	{
 		// TODO: check flen 0
-		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
 		options = append(options, $3.([]*ast.ColumnOption)...)
 		tp.Flag |= mysql.UnsignedFlag
@@ -6787,7 +6787,7 @@ SimpleExpr:
 |	"BINARY" SimpleExpr %prec neg
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		x.Flag |= mysql.BinaryFlag
@@ -6800,7 +6800,7 @@ SimpleExpr:
 |	builtinCast '(' Expression "AS" CastType ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
-		tp := $5.(*types.FieldType)
+		tp := $5.(*types.FieldTypeBuilder)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
 		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
@@ -6831,7 +6831,7 @@ SimpleExpr:
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		tp := $5.(*types.FieldType)
+		tp := $5.(*types.FieldTypeBuilder)
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.Tp)
 		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = defaultFlen
@@ -7673,7 +7673,7 @@ ElseOpt:
 CastType:
 	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeVarString)
+		x := types.NewFieldTypeBuilder(mysql.TypeVarString)
 		x.Flen = $2.(int) // TODO: Flen should be the flen of expression
 		if x.Flen != types.UnspecifiedLength {
 			x.Tp = mysql.TypeString
@@ -7685,7 +7685,7 @@ CastType:
 	}
 |	Char OptFieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarString)
+		x := types.NewFieldTypeBuilder(mysql.TypeVarString)
 		x.Flen = $2.(int) // TODO: Flen should be the flen of expression
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
@@ -7708,7 +7708,7 @@ CastType:
 	}
 |	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
+		x := types.NewFieldTypeBuilder(mysql.TypeDate)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -7716,7 +7716,7 @@ CastType:
 	}
 |	"YEAR"
 	{
-		x := types.NewFieldType(mysql.TypeYear)
+		x := types.NewFieldTypeBuilder(mysql.TypeYear)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -7724,7 +7724,7 @@ CastType:
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
+		x := types.NewFieldTypeBuilder(mysql.TypeDatetime)
 		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDatetime)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
@@ -7738,7 +7738,7 @@ CastType:
 |	"DECIMAL" FloatOpt
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType(mysql.TypeNewDecimal)
+		x := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		x.Charset = charset.CharsetBin
@@ -7748,7 +7748,7 @@ CastType:
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
+		x := types.NewFieldTypeBuilder(mysql.TypeDuration)
 		x.Flen, _ = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDuration)
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
@@ -7761,7 +7761,7 @@ CastType:
 	}
 |	"SIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
+		x := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
 		x.Flag |= mysql.BinaryFlag
@@ -7769,7 +7769,7 @@ CastType:
 	}
 |	"UNSIGNED" OptInteger
 	{
-		x := types.NewFieldType(mysql.TypeLonglong)
+		x := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		x.Flag |= mysql.UnsignedFlag | mysql.BinaryFlag
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
@@ -7777,7 +7777,7 @@ CastType:
 	}
 |	"JSON"
 	{
-		x := types.NewFieldType(mysql.TypeJSON)
+		x := types.NewFieldTypeBuilder(mysql.TypeJSON)
 		x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
 		x.Charset = mysql.DefaultCharset
 		x.Collate = mysql.DefaultCollationName
@@ -7785,7 +7785,7 @@ CastType:
 	}
 |	"DOUBLE"
 	{
-		x := types.NewFieldType(mysql.TypeDouble)
+		x := types.NewFieldTypeBuilder(mysql.TypeDouble)
 		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(mysql.TypeDouble)
 		x.Flag |= mysql.BinaryFlag
 		x.Charset = charset.CharsetBin
@@ -7794,12 +7794,12 @@ CastType:
 	}
 |	"FLOAT" FloatOpt
 	{
-		x := types.NewFieldType(mysql.TypeFloat)
+		x := types.NewFieldTypeBuilder(mysql.TypeFloat)
 		fopt := $2.(*ast.FloatOpt)
 		if fopt.Flen >= 54 {
 			yylex.AppendError(ErrTooBigPrecision.GenWithStackByArgs(fopt.Flen, "CAST", 53))
 		} else if fopt.Flen >= 25 {
-			x = types.NewFieldType(mysql.TypeDouble)
+			x = types.NewFieldTypeBuilder(mysql.TypeDouble)
 		}
 		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(x.Tp)
 		x.Flag |= mysql.BinaryFlag
@@ -7809,11 +7809,11 @@ CastType:
 	}
 |	"REAL"
 	{
-		var x *types.FieldType
+		var x *types.FieldTypeBuilder
 		if parser.lexer.GetSQLMode().HasRealAsFloatMode() {
-			x = types.NewFieldType(mysql.TypeFloat)
+			x = types.NewFieldTypeBuilder(mysql.TypeFloat)
 		} else {
-			x = types.NewFieldType(mysql.TypeDouble)
+			x = types.NewFieldTypeBuilder(mysql.TypeDouble)
 		}
 		x.Flen, x.Decimal = mysql.GetDefaultFieldLengthAndDecimalForCast(x.Tp)
 		x.Flag |= mysql.BinaryFlag
@@ -11373,7 +11373,7 @@ NumericType:
 	IntegerType OptFieldLen FieldOpts
 	{
 		// TODO: check flen 0
-		x := types.NewFieldType($1.(byte))
+		x := types.NewFieldTypeBuilder($1.(byte))
 		x.Flen = $2.(int)
 		if $2.(int) != types.UnspecifiedLength && types.TiDBStrictIntegerDisplayWidth {
 			yylex.AppendError(ErrWarnDeprecatedIntegerDisplayWidth)
@@ -11392,7 +11392,7 @@ NumericType:
 |	BooleanType FieldOpts
 	{
 		// TODO: check flen 0
-		x := types.NewFieldType($1.(byte))
+		x := types.NewFieldTypeBuilder($1.(byte))
 		x.Flen = 1
 		for _, o := range $2.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
@@ -11407,7 +11407,7 @@ NumericType:
 |	FixedPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
+		x := types.NewFieldTypeBuilder($1.(byte))
 		x.Flen = fopt.Flen
 		x.Decimal = fopt.Decimal
 		for _, o := range $3.([]*ast.TypeOpt) {
@@ -11423,7 +11423,7 @@ NumericType:
 |	FloatingPointType FloatOpt FieldOpts
 	{
 		fopt := $2.(*ast.FloatOpt)
-		x := types.NewFieldType($1.(byte))
+		x := types.NewFieldTypeBuilder($1.(byte))
 		// check for a double(10) for syntax error
 		if x.Tp == mysql.TypeDouble && parser.strictDoubleFieldType {
 			if fopt.Flen != types.UnspecifiedLength && fopt.Decimal == types.UnspecifiedLength {
@@ -11451,7 +11451,7 @@ NumericType:
 	}
 |	BitValueType OptFieldLen
 	{
-		x := types.NewFieldType($1.(byte))
+		x := types.NewFieldTypeBuilder($1.(byte))
 		x.Flen = $2.(int)
 		if x.Flen == types.UnspecifiedLength {
 			x.Flen = 1
@@ -11565,7 +11565,7 @@ BitValueType:
 StringType:
 	Char FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
@@ -11575,7 +11575,7 @@ StringType:
 	}
 |	Char OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Charset = $2.(*ast.OptBinary).Charset
 		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11584,7 +11584,7 @@ StringType:
 	}
 |	NChar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
@@ -11594,7 +11594,7 @@ StringType:
 	}
 |	NChar OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Charset = $2.(*ast.OptBinary).Charset
 		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11603,7 +11603,7 @@ StringType:
 	}
 |	Varchar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
+		x := types.NewFieldTypeBuilder(mysql.TypeVarchar)
 		x.Flen = $2.(int)
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
@@ -11613,7 +11613,7 @@ StringType:
 	}
 |	NVarchar FieldLen OptBinary
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
+		x := types.NewFieldTypeBuilder(mysql.TypeVarchar)
 		x.Flen = $2.(int)
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
@@ -11623,7 +11623,7 @@ StringType:
 	}
 |	"BINARY" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeString)
+		x := types.NewFieldTypeBuilder(mysql.TypeString)
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
@@ -11632,7 +11632,7 @@ StringType:
 	}
 |	"VARBINARY" FieldLen
 	{
-		x := types.NewFieldType(mysql.TypeVarchar)
+		x := types.NewFieldTypeBuilder(mysql.TypeVarchar)
 		x.Flen = $2.(int)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
@@ -11641,7 +11641,7 @@ StringType:
 	}
 |	BlobType
 	{
-		x := $1.(*types.FieldType)
+		x := $1.(*types.FieldTypeBuilder)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		x.Flag |= mysql.BinaryFlag
@@ -11649,7 +11649,7 @@ StringType:
 	}
 |	TextType OptCharsetWithOptBinary
 	{
-		x := $1.(*types.FieldType)
+		x := $1.(*types.FieldTypeBuilder)
 		x.Charset = $2.(*ast.OptBinary).Charset
 		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11658,7 +11658,7 @@ StringType:
 	}
 |	"ENUM" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeEnum)
+		x := types.NewFieldTypeBuilder(mysql.TypeEnum)
 		x.Elems = $3.([]string)
 		fieldLen := -1 // enum_flen = max(ele_flen)
 		for i := range x.Elems {
@@ -11677,7 +11677,7 @@ StringType:
 	}
 |	"SET" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeSet)
+		x := types.NewFieldTypeBuilder(mysql.TypeSet)
 		x.Elems = $3.([]string)
 		fieldLen := len(x.Elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
 		for i := range x.Elems {
@@ -11694,7 +11694,7 @@ StringType:
 	}
 |	"JSON"
 	{
-		x := types.NewFieldType(mysql.TypeJSON)
+		x := types.NewFieldTypeBuilder(mysql.TypeJSON)
 		x.Decimal = 0
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CollationBin
@@ -11702,7 +11702,7 @@ StringType:
 	}
 |	"LONG" Varchar OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeMediumBlob)
 		x.Charset = $3.(*ast.OptBinary).Charset
 		if $3.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11711,7 +11711,7 @@ StringType:
 	}
 |	"LONG" OptCharsetWithOptBinary
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeMediumBlob)
 		x.Charset = $2.(*ast.OptBinary).Charset
 		if $2.(*ast.OptBinary).IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11751,51 +11751,51 @@ Year:
 BlobType:
 	"TINYBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeTinyBlob)
 		$$ = x
 	}
 |	"BLOB" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeBlob)
 		x.Flen = $2.(int)
 		$$ = x
 	}
 |	"MEDIUMBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeMediumBlob)
 		$$ = x
 	}
 |	"LONGBLOB"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeLongBlob)
 		$$ = x
 	}
 |	"LONG" "VARBINARY"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeMediumBlob)
 		$$ = x
 	}
 
 TextType:
 	"TINYTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeTinyBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeTinyBlob)
 		$$ = x
 	}
 |	"TEXT" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeBlob)
 		x.Flen = $2.(int)
 		$$ = x
 	}
 |	"MEDIUMTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeMediumBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeMediumBlob)
 		$$ = x
 	}
 |	"LONGTEXT"
 	{
-		x := types.NewFieldType(mysql.TypeLongBlob)
+		x := types.NewFieldTypeBuilder(mysql.TypeLongBlob)
 		$$ = x
 	}
 
@@ -11831,12 +11831,12 @@ OptCharsetWithOptBinary:
 DateAndTimeType:
 	"DATE"
 	{
-		x := types.NewFieldType(mysql.TypeDate)
+		x := types.NewFieldTypeBuilder(mysql.TypeDate)
 		$$ = x
 	}
 |	"DATETIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDatetime)
+		x := types.NewFieldTypeBuilder(mysql.TypeDatetime)
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
@@ -11846,7 +11846,7 @@ DateAndTimeType:
 	}
 |	"TIMESTAMP" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeTimestamp)
+		x := types.NewFieldTypeBuilder(mysql.TypeTimestamp)
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
@@ -11856,7 +11856,7 @@ DateAndTimeType:
 	}
 |	"TIME" OptFieldLen
 	{
-		x := types.NewFieldType(mysql.TypeDuration)
+		x := types.NewFieldTypeBuilder(mysql.TypeDuration)
 		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
 		if x.Decimal > 0 {
@@ -11866,7 +11866,7 @@ DateAndTimeType:
 	}
 |	Year OptFieldLen FieldOpts
 	{
-		x := types.NewFieldType(mysql.TypeYear)
+		x := types.NewFieldTypeBuilder(mysql.TypeYear)
 		x.Flen = $2.(int)
 		if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
 			yylex.AppendError(ErrInvalidYearColumnLength.GenWithStackByArgs())

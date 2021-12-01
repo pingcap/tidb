@@ -95,7 +95,7 @@ func prepareTestData(
 	basicRowValue := make([]types.Datum, len(oldTblInfo.Meta().Columns))
 	for i, col := range oldTblInfo.Meta().Columns {
 		colIds[i] = oldTblInfo.Meta().Columns[col.Offset].ID
-		if col.FieldType.Tp == mysql.TypeLong {
+		if col.FieldTypeBuilder.Tp == mysql.TypeLong {
 			basicRowValue[i] = types.NewIntDatum(int64(col.Offset))
 		} else {
 			basicRowValue[i] = types.NewStringDatum(strconv.Itoa(col.Offset))
@@ -281,11 +281,11 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 			initTblColIdxID(newTblMeta)
 			// colh is newly added.
 			colh := &model.ColumnInfo{
-				State:     model.StatePublic,
-				Offset:    12,
-				Name:      model.NewCIStr("b"),
-				FieldType: *(types.NewFieldType(mysql.TypeLong)),
-				ID:        13,
+				State:            model.StatePublic,
+				Offset:           12,
+				Name:             model.NewCIStr("b"),
+				FieldTypeBuilder: *(types.NewFieldTypeBuilder(mysql.TypeLong)),
+				ID:               13,
 			}
 			newTblMeta.Columns = append(newTblMeta.Columns, colh)
 			// The last index "c_d_e_str_prefix is dropped.

@@ -38,7 +38,7 @@ func boolToInt64(v bool) int64 {
 
 // IsValidCurrentTimestampExpr returns true if exprNode is a valid CurrentTimestamp expression.
 // Here `valid` means it is consistent with the given fieldType's Decimal.
-func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldType) bool {
+func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTypeBuilder) bool {
 	fn, isFuncCall := exprNode.(*ast.FuncCallExpr)
 	if !isFuncCall || fn.FnName.L != ast.CurrentTimestamp {
 		return false
@@ -114,7 +114,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 		if err != nil {
 			return d, err
 		}
-		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft := types.NewFieldTypeBuilder(mysql.TypeLonglong)
 		xval, err := v.ConvertTo(ctx.GetSessionVars().StmtCtx, ft)
 		if err != nil {
 			return d, err

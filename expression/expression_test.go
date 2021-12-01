@@ -30,7 +30,7 @@ import (
 func TestNewValuesFunc(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
+	res := NewValuesFunc(ctx, 0, types.NewFieldTypeBuilder(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, res.RetType.Tp)
 	_, ok := res.Function.(*builtinValuesIntSig)
@@ -98,7 +98,7 @@ func TestConstant(t *testing.T) {
 
 func TestIsBinaryLiteral(t *testing.T) {
 	t.Parallel()
-	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
+	col := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeEnum)}
 	require.False(t, IsBinaryLiteral(col))
 	col.RetType.Tp = mysql.TypeSet
 	require.False(t, IsBinaryLiteral(col))
@@ -107,7 +107,7 @@ func TestIsBinaryLiteral(t *testing.T) {
 	col.RetType.Tp = mysql.TypeDuration
 	require.False(t, IsBinaryLiteral(col))
 
-	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
+	con := &Constant{RetType: types.NewFieldTypeBuilder(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
 	require.True(t, IsBinaryLiteral(con))
 	con.Value = types.NewIntDatum(1)
 	require.False(t, IsBinaryLiteral(col))
@@ -132,7 +132,7 @@ func TestVectorizable(t *testing.T) {
 	sf := newFunction(ast.Rand)
 	column := &Column{
 		UniqueID: 0,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	exprs = append(exprs, sf)
 	exprs = append(exprs, NewOne())
@@ -142,15 +142,15 @@ func TestVectorizable(t *testing.T) {
 
 	column0 := &Column{
 		UniqueID: 1,
-		RetType:  types.NewFieldType(mysql.TypeString),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeString),
 	}
 	column1 := &Column{
 		UniqueID: 2,
-		RetType:  types.NewFieldType(mysql.TypeString),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeString),
 	}
 	column2 := &Column{
 		UniqueID: 3,
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		RetType:  types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	exprs = exprs[:0]
 	sf = newFunction(ast.SetVar, column0, column1)
@@ -198,16 +198,16 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 	}
 	for i, colName := range builder.columnNames {
 		tp := builder.tps[i]
-		fieldType := types.NewFieldType(tp)
+		fieldType := types.NewFieldTypeBuilder(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
 		fieldType.Flag = builder.flags[i]
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
-			ID:        int64(i + 1),
-			Name:      model.NewCIStr(colName),
-			Offset:    i,
-			FieldType: *fieldType,
-			State:     model.StatePublic,
+			ID:               int64(i + 1),
+			Name:             model.NewCIStr(colName),
+			Offset:           i,
+			FieldTypeBuilder: *fieldType,
+			State:            model.StatePublic,
 		})
 	}
 	return ti
@@ -220,7 +220,7 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 		schema.Append(&Column{
 			UniqueID: int64(i),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  &col.FieldTypeBuilder,
 		})
 	}
 	return schema
@@ -234,7 +234,7 @@ func TestEvalExpr(t *testing.T) {
 	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		colExpr := &Column{Index: 0, RetType: ft}
-		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		input := chunk.New([]*types.FieldTypeBuilder{ft}, 1024, 1024)
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		colBuf2 := chunk.NewColumn(ft, 1024)

@@ -86,7 +86,7 @@ type tableRegionSampler struct {
 	schema     *expression.Schema
 	fullSchema *expression.Schema
 	isDesc     bool
-	retTypes   []*types.FieldType
+	retTypes   []*types.FieldTypeBuilder
 
 	rowMap       map[int64]types.Datum
 	restKVRanges []kv.KeyRange
@@ -94,7 +94,7 @@ type tableRegionSampler struct {
 }
 
 func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
-	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
+	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldTypeBuilder, desc bool) *tableRegionSampler {
 	return &tableRegionSampler{
 		ctx:        ctx,
 		table:      t,

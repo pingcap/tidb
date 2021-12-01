@@ -54,7 +54,7 @@ func TestAvg(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
@@ -104,11 +104,11 @@ func TestAvgFinalMode(t *testing.T) {
 	ctx := mock.NewContext()
 	cntCol := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	sumCol := &expression.Column{
 		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeNewDecimal),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal),
 	}
 	aggFunc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestSum(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
@@ -173,7 +173,7 @@ func TestBitAnd(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false)
@@ -216,7 +216,7 @@ func TestBitAnd(t *testing.T) {
 	require.Equal(t, uint64(0), partialResult[0].GetUint64())
 
 	// test bit_and( decimal )
-	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	col.RetType = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	bitAndFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitAndFunc.GetResult(evalCtx)
@@ -253,7 +253,7 @@ func TestBitOr(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false)
@@ -296,7 +296,7 @@ func TestBitOr(t *testing.T) {
 	require.Equal(t, uint64(3), partialResult[0].GetUint64())
 
 	// test bit_or( decimal )
-	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	col.RetType = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	bitOrFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitOrFunc.GetResult(evalCtx)
@@ -341,7 +341,7 @@ func TestBitXor(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false)
@@ -384,7 +384,7 @@ func TestBitXor(t *testing.T) {
 	require.Equal(t, uint64(1), partialResult[0].GetUint64())
 
 	// test bit_xor( decimal )
-	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	col.RetType = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	bitXorFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitXorFunc.GetResult(evalCtx)
@@ -421,7 +421,7 @@ func TestCount(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false)
@@ -463,11 +463,11 @@ func TestConcat(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 	sep := &expression.Column{
 		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeVarchar),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeVarchar),
 	}
 	ctx := mock.NewContext()
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
@@ -521,7 +521,7 @@ func TestFirstRow(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 
 	ctx := mock.NewContext()
@@ -550,7 +550,7 @@ func TestMaxMin(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		RetType: types.NewFieldTypeBuilder(mysql.TypeLonglong),
 	}
 
 	ctx := mock.NewContext()

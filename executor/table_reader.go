@@ -43,11 +43,11 @@ var _ Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldTypeBuilder, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldTypeBuilder, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs, rootPlanID)
 	}
@@ -105,7 +105,7 @@ type TableReaderExecutor struct {
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
-	virtualColumnRetFieldTypes []*types.FieldType
+	virtualColumnRetFieldTypes []*types.FieldTypeBuilder
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 
@@ -254,7 +254,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
 	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
+	pidColumn := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeLonglong), numRows)
 	for i := 0; i < numRows; i++ {
 		pidColumn.AppendInt64(physicalID)
 	}
@@ -388,7 +388,7 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 func (e *TableReaderExecutor) buildVirtualColumnInfo() {
 	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
-		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
+		e.virtualColumnRetFieldTypes = make([]*types.FieldTypeBuilder, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {
 			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
 		}

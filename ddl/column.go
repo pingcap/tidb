@@ -711,7 +711,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return toUnsigned != originUnsigned
 		case mysql.TypeString:
 			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
-			if types.IsBinaryStr(&oldCol.FieldType) {
+			if types.IsBinaryStr(&oldCol.FieldTypeBuilder) {
 				return newCol.Flen != oldCol.Flen
 			}
 		}
@@ -1608,7 +1608,7 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo, newAutoRandBits uint64, tblInfoVer uint16) error {
-	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldTypeBuilder, newAutoRandBits)
 
 	idAcc := idAccessors.RandomID()
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
@@ -1840,7 +1840,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		switch col.Tp {
 		// Just use enum field's first element for OriginDefaultValue.
 		case mysql.TypeEnum:
-			defEnum, verr := types.ParseEnumValue(col.FieldType.Elems, 1)
+			defEnum, verr := types.ParseEnumValue(col.FieldTypeBuilder.Elems, 1)
 			if verr != nil {
 				return nil, errors.Trace(verr)
 			}

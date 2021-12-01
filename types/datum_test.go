@@ -101,7 +101,7 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, td, 1)
 
-	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestToInt64(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToInt64(t, td, int64(111112))
 
-	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestConvertToFloat(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
+		converted, err := testCase.d.ConvertTo(sc, NewFieldTypeBuilder(testCase.tp))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
@@ -206,7 +206,7 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 
 func TestToJSON(t *testing.T) {
 	t.Parallel()
-	ft := NewFieldType(mysql.TypeJSON)
+	ft := NewFieldTypeBuilder(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
 		datum    Datum
@@ -343,8 +343,8 @@ func TestCloneDatum(t *testing.T) {
 	}
 }
 
-func newTypeWithFlag(tp byte, flag uint) *FieldType {
-	t := NewFieldType(tp)
+func newTypeWithFlag(tp byte, flag uint) *FieldTypeBuilder {
+	t := NewFieldTypeBuilder(tp)
 	t.Flag |= flag
 	return t
 }
@@ -356,8 +356,8 @@ func newMyDecimal(val string, t *testing.T) *MyDecimal {
 	return &d
 }
 
-func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
-	return &FieldType{
+func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldTypeBuilder {
+	return &FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    flen,
 		Decimal: decimal,
@@ -393,7 +393,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	testData := []struct {
 		a         Datum
 		res       Datum
-		retType   *FieldType
+		retType   *FieldTypeBuilder
 		roundType RoundingType
 	}{
 		// int64 reserve to uint64
@@ -514,7 +514,7 @@ func TestStringToMysqlBit(t *testing.T) {
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	tp := NewFieldType(mysql.TypeBit)
+	tp := NewFieldTypeBuilder(mysql.TypeBit)
 	tp.Flen = 1
 	for _, tt := range tests {
 		bin, err := tt.a.convertToMysqlBit(nil, tp)

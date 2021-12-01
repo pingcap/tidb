@@ -549,7 +549,7 @@ type FuncCastExpr struct {
 	// Expr is the expression to be converted.
 	Expr ExprNode
 	// Tp is the conversion type.
-	Tp *types.FieldType
+	Tp *types.FieldTypeBuilder
 	// FunctionType is either Cast, Convert or Binary.
 	FunctionType CastFunctionType
 	// ExplicitCharSet is true when charset is explicit indicated.

@@ -82,7 +82,7 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		execDetail:     new(execDetail),
 		hdStatus:       tablecodec.HandleNotNeeded,
 	}
-	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
+	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldTypeBuilder(mysql.TypeBlob), statistics.Version1)
 	var cms *statistics.CMSketch
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -181,7 +181,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	for i := range e.fields {
 		rf := new(ast.ResultField)
 		rf.Column = new(model.ColumnInfo)
-		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: mysql.DefaultCharset, Collate: mysql.DefaultCollationName}
+		rf.Column.FieldTypeBuilder = types.FieldTypeBuilder{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: mysql.DefaultCharset, Collate: mysql.DefaultCollationName}
 		e.fields[i] = rf
 	}
 
@@ -193,7 +193,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		numCols--
 	}
 	collators := make([]collate.Collator, numCols)
-	fts := make([]*types.FieldType, numCols)
+	fts := make([]*types.FieldTypeBuilder, numCols)
 	for i, col := range columns {
 		ft := fieldTypeFromPBColumn(col)
 		fts[i] = ft
@@ -213,7 +213,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 		ColsFieldType:   fts,
 	}
 	if pkID != -1 {
-		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldTypeBuilder(mysql.TypeBlob), statistics.Version1)
 	}
 	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
 		builder.CMSketchWidth = *colReq.CmsketchWidth
@@ -274,9 +274,9 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *analyzeColumnsExec) NewChunk(_ chunk.Allocator) *chunk.Chunk {
-	fields := make([]*types.FieldType, 0, len(e.fields))
+	fields := make([]*types.FieldTypeBuilder, 0, len(e.fields))
 	for _, field := range e.fields {
-		fields = append(fields, &field.Column.FieldType)
+		fields = append(fields, &field.Column.FieldTypeBuilder)
 	}
 	return chunk.NewChunkWithCapacity(fields, 1)
 }

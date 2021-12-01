@@ -39,7 +39,7 @@ type SortedBuilder struct {
 }
 
 // NewSortedBuilder creates a new SortedBuilder.
-func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldType, statsVer int) *SortedBuilder {
+func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *types.FieldTypeBuilder, statsVer int) *SortedBuilder {
 	return &SortedBuilder{
 		sc:              sc,
 		numBuckets:      numBuckets,
@@ -111,11 +111,11 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 // numBuckets: number of buckets for the histogram.
 // id: the id of the table.
 // collector: the collector of samples.
-// tp: the FieldType for the column.
+// tp: the FieldTypeBuilder for the column.
 // count: represents the row count for the column.
 // ndv: represents the number of distinct values for the column.
 // nullCount: represents the number of null values for the column.
-func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
+func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldTypeBuilder, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
@@ -209,7 +209,7 @@ func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldTypeBuilder) (*Histogram, error) {
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
@@ -219,7 +219,7 @@ func BuildHistAndTopN(
 	numBuckets, numTopN int,
 	id int64,
 	collector *SampleCollector,
-	tp *types.FieldType,
+	tp *types.FieldTypeBuilder,
 	isColumn bool,
 ) (*Histogram, *TopN, error) {
 	var getComparedBytes func(datum types.Datum) ([]byte, error)

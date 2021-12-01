@@ -30,13 +30,13 @@ func TestCodec(t *testing.T) {
 	numCols := 6
 	numRows := 10
 
-	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes := make([]*types.FieldTypeBuilder, 0, numCols)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeNewDecimal})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeJSON})
 
 	oldChk := NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -79,21 +79,21 @@ func TestCodec(t *testing.T) {
 func TestEstimateTypeWidth(t *testing.T) {
 	t.Parallel()
 
-	var colType *types.FieldType
+	var colType *types.FieldTypeBuilder
 
-	colType = &types.FieldType{Tp: mysql.TypeLonglong}
+	colType = &types.FieldTypeBuilder{Tp: mysql.TypeLonglong}
 	require.Equal(t, 8, EstimateTypeWidth(colType)) // fixed-witch type
 
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 31}
+	colType = &types.FieldTypeBuilder{Tp: mysql.TypeString, Flen: 31}
 	require.Equal(t, 31, EstimateTypeWidth(colType)) // colLen <= 32
 
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 999}
+	colType = &types.FieldTypeBuilder{Tp: mysql.TypeString, Flen: 999}
 	require.Equal(t, 515, EstimateTypeWidth(colType)) // colLen < 1000
 
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 2000}
+	colType = &types.FieldTypeBuilder{Tp: mysql.TypeString, Flen: 2000}
 	require.Equal(t, 516, EstimateTypeWidth(colType)) // colLen < 1000
 
-	colType = &types.FieldType{Tp: mysql.TypeString}
+	colType = &types.FieldTypeBuilder{Tp: mysql.TypeString}
 	require.Equal(t, 32, EstimateTypeWidth(colType)) // value after guessing
 }
 
@@ -101,9 +101,9 @@ func BenchmarkEncodeChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
 
-	colTypes := make([]*types.FieldType, numCols)
+	colTypes := make([]*types.FieldTypeBuilder, numCols)
 	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{
+		colTypes[i] = &types.FieldTypeBuilder{
 			Tp: mysql.TypeLonglong,
 		}
 	}
@@ -121,9 +121,9 @@ func BenchmarkDecode(b *testing.B) {
 	numCols := 4
 	numRows := 1024
 
-	colTypes := make([]*types.FieldType, numCols)
+	colTypes := make([]*types.FieldTypeBuilder, numCols)
 	for i := 0; i < numCols; i++ {
-		colTypes[i] = &types.FieldType{
+		colTypes[i] = &types.FieldTypeBuilder{
 			Tp: mysql.TypeLonglong,
 		}
 	}
@@ -141,7 +141,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
 
-	colTypes := make([]*types.FieldType, numCols)
+	colTypes := make([]*types.FieldTypeBuilder, numCols)
 	chk := &Chunk{
 		columns: make([]*Column, numCols),
 	}
@@ -152,7 +152,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 			data:       make([]byte, numRows*8),
 			elemBuf:    make([]byte, 8),
 		}
-		colTypes[i] = &types.FieldType{
+		colTypes[i] = &types.FieldTypeBuilder{
 			Tp: mysql.TypeLonglong,
 		}
 	}
@@ -169,13 +169,13 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 	numCols := 6
 	numRows := 1024
 
-	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes := make([]*types.FieldTypeBuilder, 0, numCols)
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeNewDecimal})
+	colTypes = append(colTypes, &types.FieldTypeBuilder{Tp: mysql.TypeJSON})
 
 	chk := NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {

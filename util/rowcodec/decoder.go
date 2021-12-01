@@ -50,7 +50,7 @@ type ColInfo struct {
 	ID            int64
 	IsPKHandle    bool
 	VirtualGenCol bool
-	Ft            *types.FieldType
+	Ft            *types.FieldTypeBuilder
 }
 
 // DatumMapDecoder decodes the row to datum map.

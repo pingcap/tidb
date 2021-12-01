@@ -35,7 +35,7 @@ import (
 // hashContext keeps the needed hash context of a db table in hash join.
 type hashContext struct {
 	// allTypes one-to-one correspondence with keyColIdx
-	allTypes  []*types.FieldType
+	allTypes  []*types.FieldTypeBuilder
 	keyColIdx []int
 	buf       []byte
 	hashVals  []hash.Hash64
@@ -85,7 +85,7 @@ type hashRowContainer struct {
 	rowContainer *chunk.RowContainer
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldTypeBuilder) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
 	c := &hashRowContainer{

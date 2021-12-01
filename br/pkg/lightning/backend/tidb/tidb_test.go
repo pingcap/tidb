@@ -57,7 +57,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	}
 	cols := make([]*model.ColumnInfo, 0, len(tys))
 	for i, ty := range tys {
-		col := &model.ColumnInfo{ID: int64(i + 1), Name: model.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
+		col := &model.ColumnInfo{ID: int64(i + 1), Name: model.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldTypeBuilder: *types.NewFieldTypeBuilder(ty)}
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
@@ -221,12 +221,12 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 func testStrictMode(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
-	ft := *types.NewFieldType(mysql.TypeVarchar)
+	ft := *types.NewFieldTypeBuilder(mysql.TypeVarchar)
 	ft.Charset = charset.CharsetUTF8MB4
-	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
-	ft = *types.NewFieldType(mysql.TypeString)
+	col0 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldTypeBuilder: ft}
+	ft = *types.NewFieldTypeBuilder(mysql.TypeString)
 	ft.Charset = charset.CharsetASCII
-	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
+	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldTypeBuilder: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 					Name:   model.NewCIStr("id"),
 					Offset: 0,
 					State:  model.StatePublic,
-					FieldType: types.FieldType{
+					FieldTypeBuilder: types.FieldTypeBuilder{
 						Flag: mysql.AutoIncrementFlag,
 					},
 				},
@@ -322,7 +322,7 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 					Name:   model.NewCIStr("id"),
 					Offset: 0,
 					State:  model.StatePublic,
-					FieldType: types.FieldType{
+					FieldTypeBuilder: types.FieldTypeBuilder{
 						Flag: mysql.AutoIncrementFlag | mysql.UnsignedFlag,
 					},
 				},
@@ -360,7 +360,7 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 					Name:   model.NewCIStr("id"),
 					Offset: 0,
 					State:  model.StatePublic,
-					FieldType: types.FieldType{
+					FieldTypeBuilder: types.FieldTypeBuilder{
 						Flag: mysql.AutoIncrementFlag,
 					},
 				},
@@ -399,7 +399,7 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 					Name:   model.NewCIStr("id"),
 					Offset: 0,
 					State:  model.StatePublic,
-					FieldType: types.FieldType{
+					FieldTypeBuilder: types.FieldTypeBuilder{
 						Flag: mysql.PriKeyFlag,
 					},
 					GeneratedExprString: "1 + 2",

@@ -278,7 +278,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	casted, err = val.ConvertTo(sc, &col.FieldType)
+	casted, err = val.ConvertTo(sc, &col.FieldTypeBuilder)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err
@@ -288,7 +288,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
-		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
+		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldTypeBuilder.CompactStr(), str)
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
@@ -310,7 +310,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		return casted, err
 	}
 
-	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldTypeBuilder) {
 		truncateTrailingSpaces(&casted)
 	}
 
@@ -411,7 +411,7 @@ func NewColDesc(col *Column) *ColDesc {
 	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
 		// in order to match the rules of mysql 8.0.16 version
 		// see https://github.com/pingcap/tidb/issues/10337
-		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldType)
+		extra = "DEFAULT_GENERATED on update CURRENT_TIMESTAMP" + OptionalFsp(&col.FieldTypeBuilder)
 	} else if col.IsGenerated() {
 		if col.GeneratedStored {
 			extra = "STORED GENERATED"
@@ -432,7 +432,7 @@ func NewColDesc(col *Column) *ColDesc {
 		Privileges:   defaultPrivileges,
 		Comment:      col.Comment,
 	}
-	if !field_types.HasCharset(&col.ColumnInfo.FieldType) {
+	if !field_types.HasCharset(&col.ColumnInfo.FieldTypeBuilder) {
 		desc.Charset = nil
 		desc.Collation = nil
 	}
@@ -604,7 +604,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		defEnum, err := types.ParseEnumValue(col.FieldType.Elems, 1)
+		defEnum, err := types.ParseEnumValue(col.FieldTypeBuilder.Elems, 1)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -675,8 +675,8 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	return d
 }
 
-// OptionalFsp convert a FieldType.Decimal to string.
-func OptionalFsp(fieldType *types.FieldType) string {
+// OptionalFsp convert a FieldTypeBuilder.Decimal to string.
+func OptionalFsp(fieldType *types.FieldTypeBuilder) string {
 	fsp := fieldType.Decimal
 	if fsp == 0 {
 		return ""

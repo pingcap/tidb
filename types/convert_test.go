@@ -34,7 +34,7 @@ type invalidMockType struct {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val interface{}, target *FieldTypeBuilder) (v interface{}, err error) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
@@ -47,62 +47,62 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 
 func TestConvertType(t *testing.T) {
 	t.Parallel()
-	ft := NewFieldType(mysql.TypeBlob)
+	ft := NewFieldTypeBuilder(mysql.TypeBlob)
 	ft.Flen = 4
 	ft.Charset = "utf8"
 	v, err := Convert("123456", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, "1234", v)
-	ft = NewFieldType(mysql.TypeString)
+	ft = NewFieldTypeBuilder(mysql.TypeString)
 	ft.Flen = 4
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, []byte("1234"), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(111.114, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(111.11), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.999, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(999.99), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(-999.999, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(-999.99), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(1111.11, ft)
 	require.Error(t, err)
 	require.Equal(t, float32(999.99), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.916, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(999.92), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.914, ft)
 	require.NoError(t, err)
 	require.Equal(t, float32(999.91), v)
 
-	ft = NewFieldType(mysql.TypeFloat)
+	ft = NewFieldTypeBuilder(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
@@ -110,18 +110,18 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, float32(999.92), v)
 
 	// For TypeBlob
-	ft = NewFieldType(mysql.TypeBlob)
+	ft = NewFieldTypeBuilder(mysql.TypeBlob)
 	_, err = Convert(&invalidMockType{}, ft)
 	require.Error(t, err)
 
 	// Nil
-	ft = NewFieldType(mysql.TypeBlob)
+	ft = NewFieldTypeBuilder(mysql.TypeBlob)
 	v, err = Convert(nil, ft)
 	require.NoError(t, err)
 	require.Nil(t, v)
 
 	// TypeDouble
-	ft = NewFieldType(mysql.TypeDouble)
+	ft = NewFieldTypeBuilder(mysql.TypeDouble)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
@@ -129,12 +129,12 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, float64(999.92), v)
 
 	// For TypeString
-	ft = NewFieldType(mysql.TypeString)
+	ft = NewFieldTypeBuilder(mysql.TypeString)
 	ft.Flen = 3
 	v, err = Convert("12345", ft)
 	require.True(t, ErrDataTooLong.Equal(err))
 	require.Equal(t, "123", v)
-	ft = NewFieldType(mysql.TypeString)
+	ft = NewFieldTypeBuilder(mysql.TypeString)
 	ft.Flen = 3
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
@@ -142,7 +142,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, []byte("123"), v)
 
 	// For TypeDuration
-	ft = NewFieldType(mysql.TypeDuration)
+	ft = NewFieldTypeBuilder(mysql.TypeDuration)
 	ft.Decimal = 3
 	v, err = Convert("10:11:12.123456", ft)
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
-	ft = NewFieldType(mysql.TypeTimestamp)
+	ft = NewFieldTypeBuilder(mysql.TypeTimestamp)
 	ft.Decimal = 3
 	v, err = Convert("2010-10-10 10:11:11.12345", ft)
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, "2010-10-10 10:11:11.1", vv.(Time).String())
 
 	// For TypeLonglong
-	ft = NewFieldType(mysql.TypeLonglong)
+	ft = NewFieldTypeBuilder(mysql.TypeLonglong)
 	v, err = Convert("100", ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), v)
@@ -186,13 +186,13 @@ func TestConvertType(t *testing.T) {
 	v, err = Convert(math.Pow(2, 63)-1, ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(math.MaxInt64), v)
-	ft = NewFieldType(mysql.TypeLonglong)
+	ft = NewFieldTypeBuilder(mysql.TypeLonglong)
 	ft.Flag |= mysql.UnsignedFlag
 	v, err = Convert("100", ft)
 	require.NoError(t, err)
 	require.Equal(t, uint64(100), v)
 	// issue 3470
-	ft = NewFieldType(mysql.TypeLonglong)
+	ft = NewFieldTypeBuilder(mysql.TypeLonglong)
 	v, err = Convert(Duration{Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond, Fsp: 3}, ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(130000), v)
@@ -201,7 +201,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(20170101130000), v)
 
 	// For TypeBit
-	ft = NewFieldType(mysql.TypeBit)
+	ft = NewFieldTypeBuilder(mysql.TypeBit)
 	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 
 	// For TypeNewDecimal
-	ft = NewFieldType(mysql.TypeNewDecimal)
+	ft = NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Flen = 8
 	ft.Decimal = 4
 	v, err = Convert(3.1416, ft)
@@ -260,7 +260,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, "0", v.(*MyDecimal).String())
 
 	// For TypeYear
-	ft = NewFieldType(mysql.TypeYear)
+	ft = NewFieldTypeBuilder(mysql.TypeYear)
 	v, err = Convert("2015", ft)
 	require.NoError(t, err)
 	require.Equal(t, int64(2015), v)
@@ -296,7 +296,7 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 
 	// For enum
-	ft = NewFieldType(mysql.TypeEnum)
+	ft = NewFieldTypeBuilder(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
 	require.NoError(t, err)
@@ -310,7 +310,7 @@ func TestConvertType(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
 	require.Equal(t, Enum{}, v)
 
-	ft = NewFieldType(mysql.TypeSet)
+	ft = NewFieldTypeBuilder(mysql.TypeSet)
 	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
 	require.NoError(t, err)
@@ -358,7 +358,7 @@ func TestConvertToString(t *testing.T) {
 	require.NoError(t, err)
 	testToString(t, td, "11:11:11.999999")
 
-	ft := NewFieldType(mysql.TypeNewDecimal)
+	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
@@ -384,7 +384,7 @@ func TestConvertToString(t *testing.T) {
 		{0, "binary", "你好，世界", ""},
 	}
 	for _, tt := range tests {
-		ft = NewFieldType(mysql.TypeVarchar)
+		ft = NewFieldTypeBuilder(mysql.TypeVarchar)
 		ft.Flen = tt.flen
 		ft.Charset = tt.charset
 		inputDatum := NewStringDatum(tt.input)
@@ -525,7 +525,7 @@ func TestFieldTypeToStr(t *testing.T) {
 }
 
 func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
-	ft := NewFieldType(tp)
+	ft := NewFieldTypeBuilder(tp)
 	if unsigned {
 		ft.Flag |= mysql.UnsignedFlag
 	}
@@ -553,7 +553,7 @@ func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
 }
 
 func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
-	ft := NewFieldType(tp)
+	ft := NewFieldTypeBuilder(tp)
 	if unsigned {
 		ft.Flag |= mysql.UnsignedFlag
 	}
@@ -952,27 +952,27 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
-		target *FieldType
+		target *FieldTypeBuilder
 		expect Time
 	}{
 		{
 			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
-			target: NewFieldType(mysql.TypeTimestamp),
+			target: NewFieldTypeBuilder(mysql.TypeTimestamp),
 			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
 			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
-			target: NewFieldType(mysql.TypeTimestamp),
+			target: NewFieldTypeBuilder(mysql.TypeTimestamp),
 			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
 			input:  NewTime(raw, mysql.TypeDatetime, DefaultFsp),
-			target: NewFieldType(mysql.TypeTimestamp),
+			target: NewFieldTypeBuilder(mysql.TypeTimestamp),
 			expect: NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
 		},
 		{
 			input:  NewTime(raw, mysql.TypeTimestamp, DefaultFsp),
-			target: NewFieldType(mysql.TypeDatetime),
+			target: NewFieldTypeBuilder(mysql.TypeDatetime),
 			expect: NewTime(raw, mysql.TypeDatetime, DefaultFsp),
 		},
 	}

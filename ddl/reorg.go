@@ -428,10 +428,10 @@ func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, hand
 	return dagReq, nil
 }
 
-func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
-	colTypes := make([]*types.FieldType, 0, len(columns))
+func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldTypeBuilder {
+	colTypes := make([]*types.FieldTypeBuilder, 0, len(columns))
 	for _, col := range columns {
-		colTypes = append(colTypes, &col.FieldType)
+		colTypes = append(colTypes, &col.FieldTypeBuilder)
 	}
 	return colTypes
 }
@@ -525,9 +525,9 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 
 func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
-	fieldTypes := make([]*types.FieldType, 0, len(cols))
+	fieldTypes := make([]*types.FieldTypeBuilder, 0, len(cols))
 	for _, col := range cols {
-		fieldTypes = append(fieldTypes, &col.FieldType)
+		fieldTypes = append(fieldTypes, &col.FieldTypeBuilder)
 	}
 	datumRow := row.GetDatumRow(fieldTypes)
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)

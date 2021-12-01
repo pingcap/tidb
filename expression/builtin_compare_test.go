@@ -153,7 +153,7 @@ func TestCompare(t *testing.T) {
 	}
 
 	// test <non-const decimal expression> <cmp> <const string expression>
-	decimalCol, stringCon := &Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldType(mysql.TypeVarchar)}
+	decimalCol, stringCon := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeNewDecimal)}, &Constant{RetType: types.NewFieldTypeBuilder(mysql.TypeVarchar)}
 	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
@@ -161,7 +161,7 @@ func TestCompare(t *testing.T) {
 	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().Tp)
 
 	// test <time column> <cmp> <non-time const>
-	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
+	timeCol := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeDatetime)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()

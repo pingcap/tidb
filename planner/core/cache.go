@@ -146,17 +146,17 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	return key
 }
 
-// FieldSlice is the slice of the types.FieldType
-type FieldSlice []types.FieldType
+// FieldSlice is the slice of the types.FieldTypeBuilder
+type FieldSlice []types.FieldTypeBuilder
 
-// Equal compares FieldSlice with []*types.FieldType
+// Equal compares FieldSlice with []*types.FieldTypeBuilder
 // Currently this is only used in plan cache to invalidate cache when types of variables are different.
-func (s FieldSlice) Equal(tps []*types.FieldType) bool {
+func (s FieldSlice) Equal(tps []*types.FieldTypeBuilder) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
-		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
+		// We only use part of logic of `func (ft *FieldTypeBuilder) Equal(other *FieldTypeBuilder)` here because (1) only numeric and
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].Tp == tps[i].Tp) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
@@ -180,12 +180,12 @@ type PSTMTPlanCacheValue struct {
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldTypeBuilder) *PSTMTPlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldType, len(userVarTps))
+	userVarTypes := make([]types.FieldTypeBuilder, len(userVarTps))
 	for i, tp := range userVarTps {
 		userVarTypes[i] = *tp
 	}
