@@ -94,7 +94,7 @@ type executorBuilder struct {
 	readReplicaScope string
 	inUpdateStmt     bool
 	inDeleteStmt     bool
-	inInsertStmt bool
+	inInsertStmt     bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1424,7 +1424,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	}
 
 	// Use un-parallel projection for write query to avoid concurrent on memdb.
-	// See also https://github.com/pingcap/tidb/issues/26832 
+	// See also https://github.com/pingcap/tidb/issues/26832
 	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt {
 		e.numWorkers = 0
 	}
