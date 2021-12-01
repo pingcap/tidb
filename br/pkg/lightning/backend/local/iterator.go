@@ -166,7 +166,7 @@ func (d *dupDetectIter) OpType() sst.Pair_OP {
 var _ kv.Iter = &dupDetectIter{}
 
 func newDupDetectIter(ctx context.Context, db *pebble.DB, keyAdapter KeyAdapter,
-	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger) kv.Iter {
+	opts *pebble.IterOptions, dupDB *pebble.DB, logger log.Logger) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
@@ -252,7 +252,7 @@ func (d *dupDBIter) OpType() sst.Pair_OP {
 
 var _ kv.Iter = &dupDBIter{}
 
-func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) kv.Iter {
+func newDupDBIter(dupDB *pebble.DB, keyAdapter KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, math.MinInt64)
