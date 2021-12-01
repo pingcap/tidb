@@ -352,7 +352,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), cHandle)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	require.Error(t, err)
+	require.NoError(t, err)
 	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
 	tk.MustGetErrCode("admin check index t idx", mysql.ErrAdminCheckTable)
 
@@ -1035,9 +1035,9 @@ func (l *logEntry) checkMsg(t *testing.T, msg string) {
 func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 	for _, rf := range requireFields {
 		var f *zapcore.Field
-		for _, field := range l.fields {
+		for i, field := range l.fields {
 			if field.Equals(rf) {
-				f = &field
+				f = &l.fields[i]
 				break
 			}
 		}
@@ -1048,9 +1048,9 @@ func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 
 func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {
 	var f *zapcore.Field
-	for _, field := range l.fields {
+	for i, field := range l.fields {
 		if field.Key == fieldName {
-			f = &field
+			f = &l.fields[i]
 			break
 		}
 	}

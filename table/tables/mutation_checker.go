@@ -304,7 +304,7 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
-			&decodedMutationDatum, indexInfo.Columns[i],
+			&indexData[i], indexInfo.Columns[i],
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
