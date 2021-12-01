@@ -345,8 +345,8 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
+		metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 		if err == nil {
-			metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
