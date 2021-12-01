@@ -118,8 +118,8 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "aggregation_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "aggFuncs[count(Column#38)] pushed into join[5] right path",
-					assertReason: "agg[6] push down into join[5]",
+					assertAction: "agg[6] pushed down across join[5], and join right path becomes agg[8]",
+					assertReason: "agg[%v]'s functions[count(Column#38)] are decomposable with join",
 				},
 			},
 		},
@@ -129,16 +129,16 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "aggregation_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "union's children changed into[[id:11,tp:Aggregation],[id:12,tp:Aggregation]]",
-					assertReason: "agg[8] push down across union[5]",
+					assertAction: "agg[8] pushed down, and union[5]'s children changed into[[id:11,tp:Aggregation],[id:12,tp:Aggregation]]",
+					assertReason: "agg[8] functions[sum(Column#28)] are decomposable with union",
 				},
 				{
-					assertAction: "agg's functions changed into[sum(test.t.c),firstrow(test.t.d)]",
-					assertReason: "agg[11] push down across projection[6]",
+					assertAction: "proj[6] is eliminated, and agg[11]'s functions changed into[sum(test.t.c),firstrow(test.t.d)]",
+					assertReason: "projection can be eliminated",
 				},
 				{
-					assertAction: "agg's functions changed into[sum(test.t.a),firstrow(test.t.b)]",
-					assertReason: "agg[12] push down across projection[7]",
+					assertAction: "proj[7] is eliminated, and agg[12]'s functions changed into[sum(test.t.a),firstrow(test.t.b)]",
+					assertReason: "projection can be eliminated",
 				},
 			},
 		},
