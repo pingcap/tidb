@@ -331,12 +331,13 @@ func getDupDetectClient(
 }
 
 func NewRemoteDupKVStream(
+	ctx context.Context,
 	region *restore.RegionInfo,
 	keyRange tidbkv.KeyRange,
 	importClientFactory ImportClientFactory,
 ) (*RemoteDupKVStream, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cli, err := getDupDetectClient(ctx, region, keyRange, importClientFactory)
+	subCtx, cancel := context.WithCancel(ctx)
+	cli, err := getDupDetectClient(subCtx, region, keyRange, importClientFactory)
 	if err != nil {
 		cancel()
 		return nil, errors.Trace(err)
@@ -741,7 +742,7 @@ func (m *DuplicateManager) processRemoteDupTask(
 					logutil.Key("dupDetectEndKey", kr.EndKey),
 				)
 				err := common.Retry("collect remote duplicate by region", logger, func() error {
-					stream, err := NewRemoteDupKVStream(region, kr, importClientFactory)
+					stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory)
 					if err != nil {
 						return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 					}
