@@ -4835,6 +4835,56 @@ func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestRegardNULLAsPoint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tpk")
+	tk.MustExec(`create table tuk (a int, b int, c int, unique key (a, b, c))`)
+	tk.MustExec(`create table tik (a int, b int, c int, key (a, b, c))`)
+	for _, va := range []string{"NULL", "1"} {
+		for _, vb := range []string{"NULL", "1"} {
+			for _, vc := range []string{"NULL", "1"} {
+				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
+				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
+				if va == "1" && vb == "1" && vc == "1" {
+					continue
+				}
+				// duplicated NULL rows
+				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
+				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL          string
+		PlanEnabled  []string
+		PlanDisabled []string
+		Result       []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustExec(`set @@session.tidb_regard_null_as_point=true`)
+			output[i].PlanEnabled = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+
+			tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+			output[i].PlanDisabled = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustExec(`set @@session.tidb_regard_null_as_point=true`)
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].PlanEnabled...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+
+		tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].PlanDisabled...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIssues29711(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
