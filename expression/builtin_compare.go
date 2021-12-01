@@ -18,7 +18,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -479,13 +478,14 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	switch tp {
 	case types.ETInt:
-		if signed, err := isResIntSigned(c.funcName, args); err == nil {
-			if signed {
-				bf.tp.Flag &= ^mysql.UnsignedFlag
-			} else {
-				bf.tp.Flag |= mysql.UnsignedFlag
-			}
+		// adjust unsigned flag
+		greastInitUnsignedFlag := false
+		if isEqualsInitUnsigned(greastInitUnsignedFlag, args) {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag |= mysql.UnsignedFlag
 		}
+
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -753,13 +753,14 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	switch tp {
 	case types.ETInt:
-		if signed, err := isResIntSigned(c.funcName, args); err == nil {
-			if signed {
-				bf.tp.Flag &= ^mysql.UnsignedFlag
-			} else {
-				bf.tp.Flag |= mysql.UnsignedFlag
-			}
+		// adjust unsigned flag
+		leastInitUnsignedFlag := true
+		if isEqualsInitUnsigned(leastInitUnsignedFlag, args) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
 		}
+
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -2893,25 +2894,14 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }
 
-// isResIntSigned return true if result should be unsigned, false if result should be signed, error to keep original
-func isResIntSigned(funcName string, args []Expression) (bool, error) {
-	switch funcName {
-	case ast.Greatest:
-		//if one field is unsigned return unsigned result, otherwise signed
-		for _, arg := range args {
-			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
-				return false, nil
-			}
+// isEqualsInitUnsigned can adjust unsigned flag for greatest/least function.
+// For greatest, returns unsigned result if there is at least one argument is unsigned.
+// For least, returns signed result if there is at least one argument is signed.
+func isEqualsInitUnsigned(initUnsigned bool, args []Expression) bool {
+	for _, arg := range args {
+		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
+			return false
 		}
-		return true, nil
-	case ast.Least:
-		// if one field is signed return signed result, otherwise unsigned
-		for _, arg := range args {
-			if !mysql.HasUnsignedFlag(arg.GetType().Flag) {
-				return true, nil
-			}
-		}
-		return false, nil
 	}
-	return true, errors.New("can not check if signed, keep original")
+	return true
 }
