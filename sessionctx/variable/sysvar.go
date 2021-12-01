@@ -1857,6 +1857,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRegardNULLAsPoint, Value: BoolToOnOff(DefTiDBRegardNULLAsPoint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.RegardNULLAsPoint = TiDBOptOn(val)
+		return nil
+	}},
 
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
@@ -1872,6 +1876,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePaging = TiDBOptOn(val)
+		return nil
 	}},
 }
 
