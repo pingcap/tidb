@@ -716,7 +716,8 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil
 	}
-	cmp, err := lhs.value.CompareDatum(sc, rhs.value)
+	// binary collator may not the best choice, but it can make sure the result is correct.
+	cmp, err := lhs.value.Compare(sc, rhs.value, collate.GetBinaryCollator())
 	if err != nil {
 		return false, err
 	}

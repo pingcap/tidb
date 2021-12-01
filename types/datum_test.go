@@ -489,7 +489,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
 		require.NoError(t, err)
 		var cmp int
-		cmp, err = reverseRes.CompareDatum(sc, &test.res)
+		cmp, err = reverseRes.Compare(sc, &test.res, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}
