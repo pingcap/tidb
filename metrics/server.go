@@ -16,7 +16,7 @@ package metrics
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

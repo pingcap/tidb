@@ -56,20 +56,21 @@ const (
 	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// ReadReplicaScope
+	ReadReplicaScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTag indicates the resource group of the kv request.
+	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
-	// SortedCustomRetrievers is used for setting the ranges for custom data fetch.
-	// The option value must be a slice with type `[]*RangedKVRetriever` and
-	// 		1. Each retriever in this slice must have a valid range (That means EndKey is AFTER StartKey).
-	//		2. Ranges of Retrievers do not intersect each other.
-	//		3. Retrievers are sorted by range.
-	SortedCustomRetrievers
+
+	// SnapInterceptor is used for setting the interceptor for snapshot
+	SnapInterceptor
 	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
 	// Save them here to reduce redundant computations.
 	TableToColumnMaps
@@ -83,11 +84,18 @@ const (
 	ReplicaReadLeader ReplicaReadType = iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	// ReplicaReadMixed stands for 'read from leader and follower'.
 	ReplicaReadMixed
+	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
+	ReplicaReadClosest
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
 	return r != ReplicaReadLeader
+}
+
+// IsClosestRead checks whether is going to request closet store to read
+func (r ReplicaReadType) IsClosestRead() bool {
+	return r == ReplicaReadClosest
 }

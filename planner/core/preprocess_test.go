@@ -19,16 +19,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -297,10 +297,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 
-		// https://github.com/pingcap/parser/issues/609
-		{"CREATE TEMPORARY TABLE t (a INT);", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")},
-		{"DROP TEMPORARY TABLE t;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")},
-
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
@@ -345,8 +341,6 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	ctx := context.Background()
 	execSQLList := []string{
 		"use test",
-		"set tidb_enable_global_temporary_table=true",
-		"set tidb_enable_noop_functions=true",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
 		"create global temporary table temp1(id int) on commit delete rows;",
