@@ -86,43 +86,43 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleName  string
 		assertRuleSteps []assertTraceStep
 	}{
-		//{
-		//	sql:            "select min(distinct a) from t group by a",
-		//	flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
-		//	assertRuleName: "aggregation_eliminate",
-		//	assertRuleSteps: []assertTraceStep{
-		//		{
-		//			assertReason: "[test.t.a] is a unique key",
-		//			assertAction: "min(distinct ...) is simplified to min(...)",
-		//		},
-		//		{
-		//			assertReason: "[test.t.a] is a unique key",
-		//			assertAction: "aggregation is simplified to a projection",
-		//		},
-		//	},
-		//},
-		//{
-		//	sql:            "select 1+num from (select 1+a as num from t) t1;",
-		//	flags:          []uint64{flagEliminateProjection},
-		//	assertRuleName: "projection_eliminate",
-		//	assertRuleSteps: []assertTraceStep{
-		//		{
-		//			assertAction: "Proj[2] is eliminated, Proj[3]'s expressions changed into[plus(1, plus(1, test.t.a))]",
-		//			assertReason: "Proj[3]'s child proj[2] is redundant",
-		//		},
-		//	},
-		//},
-		//{
-		//	sql:            "select t1.b,t1.c from t as t1 left join t as t2 on t1.a = t2.a;",
-		//	flags:          []uint64{flagBuildKeyInfo, flagEliminateOuterJoin},
-		//	assertRuleName: "outer_join_eliminate",
-		//	assertRuleSteps: []assertTraceStep{
-		//		{
-		//			assertAction: "Outer join[3] is eliminated and become DataSource[1]",
-		//			assertReason: "The columns[test.t.b,test.t.c] are from outer table, and the inner join keys[test.t.a] are unique",
-		//		},
-		//	},
-		//},
+		{
+			sql:            "select min(distinct a) from t group by a",
+			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
+			assertRuleName: "aggregation_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "[test.t.a] is a unique key",
+					assertAction: "min(distinct ...) is simplified to min(...)",
+				},
+				{
+					assertReason: "[test.t.a] is a unique key",
+					assertAction: "aggregation is simplified to a projection",
+				},
+			},
+		},
+		{
+			sql:            "select 1+num from (select 1+a as num from t) t1;",
+			flags:          []uint64{flagEliminateProjection},
+			assertRuleName: "projection_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Proj[2] is eliminated, Proj[3]'s expressions changed into[plus(1, plus(1, test.t.a))]",
+					assertReason: "Proj[3]'s child proj[2] is redundant",
+				},
+			},
+		},
+		{
+			sql:            "select t1.b,t1.c from t as t1 left join t as t2 on t1.a = t2.a;",
+			flags:          []uint64{flagBuildKeyInfo, flagEliminateOuterJoin},
+			assertRuleName: "outer_join_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
+					assertReason: "The columns[test.t.b,test.t.c] are from outer table, and the inner join keys[test.t.a] are unique",
+				},
+			},
+		},
 		{
 			sql:            "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
 			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagEliminateOuterJoin},
