@@ -345,8 +345,8 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		} else {
 			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		}
-		if sc.EnableOptimizerCETrace {
-			CETraceRange(sc, coll.PhysicalID, []string{coll.Columns[colID].Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
+		if sc.EnableOptimizerCETrace && ok {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
 		}
 		return result, nil
 	}
@@ -362,8 +362,8 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	c, ok := coll.Columns[colID]
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
-		if err == nil && sc.EnableOptimizerCETrace {
-			CETraceRange(sc, coll.PhysicalID, []string{coll.Columns[colID].Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+		if err == nil && sc.EnableOptimizerCETrace && ok {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
@@ -376,19 +376,20 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
-	idx := coll.Indices[idxID]
-	idxInfo := coll.Indices[idxID].Info
-	colNames := make([]string, 0, len(idxInfo.Columns))
-	for _, col := range idxInfo.Columns {
-		colNames = append(colNames, col.Name.O)
+	idx, ok := coll.Indices[idxID]
+	colNames := make([]string, 0, 8)
+	if ok {
+		for _, col := range idx.Info.Columns {
+			colNames = append(colNames, col.Name.O)
+		}
 	}
-	if idx == nil || idx.IsInvalid(coll.Pseudo) {
+	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
 		result, err := getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
-		if err == nil && sc.EnableOptimizerCETrace {
+		if err == nil && sc.EnableOptimizerCETrace && ok {
 			CETraceRange(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
 		}
 		return result, err
