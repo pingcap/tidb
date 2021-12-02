@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -59,19 +60,19 @@ type PollTiFlashReplicaStatusContext struct {
 
 // PollTiFlashReplicaStatusBackoff records backoff for each TiFlash Table
 type PollTiFlashReplicaStatusBackoff struct {
-	Counter      int
-	Threshold    int
+	Counter   int
+	Threshold int
 }
 
 var (
-	PollTiFlashReplicaStatusBackoffMaxTick = 60
-	PollTiFlashReplicaStatusBackoffMinTick = 1
+	PollTiFlashReplicaStatusBackoffMaxTick  = 60
+	PollTiFlashReplicaStatusBackoffMinTick  = 1
 	PollTiFlashReplicaStatusBackoffCapacity = 500
 )
 
 func NewPollTiFlashReplicaStatusBackoff() PollTiFlashReplicaStatusBackoff {
-	return PollTiFlashReplicaStatusBackoff {
-		Counter: 0,
+	return PollTiFlashReplicaStatusBackoff{
+		Counter:   0,
 		Threshold: PollTiFlashReplicaStatusBackoffMinTick,
 	}
 }
@@ -88,7 +89,7 @@ func (b *PollTiFlashReplicaStatusBackoff) Tick() bool {
 		b.Counter += 1
 		b.Counter %= b.Threshold
 	}()
-	if b.Counter % b.Threshold == 0 {
+	if b.Counter%b.Threshold == 0 {
 		return true
 	}
 	return false
@@ -99,7 +100,7 @@ func (b *PollTiFlashReplicaStatusBackoff) Backoff() {
 	if b.Threshold < PollTiFlashReplicaStatusBackoffMinTick {
 		b.Threshold = PollTiFlashReplicaStatusBackoffMinTick
 	}
-	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick / 2 {
+	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick/2 {
 		b.Threshold = PollTiFlashReplicaStatusBackoffMaxTick
 		return
 	}
@@ -381,7 +382,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 					bo.Backoff()
 				}
 				log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
-			} else{
+			} else {
 				log.Info("tiflash table is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
 			}
 
