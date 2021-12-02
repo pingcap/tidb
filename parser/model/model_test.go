@@ -366,7 +366,7 @@ func TestDefaultValue(t *testing.T) {
 	err = newBitCol.SetDefaultValue(1)
 	// Only string type is allowed in BIT column.
 	require.Error(t, err)
-	require.Regexp(t, ".*Invalid default value.*", err.Error())
+	require.Contains(t, err.Error(), "Invalid default value")
 	require.Equal(t, 1, newBitCol.GetDefaultValue())
 	err = newBitCol.SetDefaultValue(randBitStr)
 	require.NoError(t, err)
