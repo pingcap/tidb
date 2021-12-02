@@ -326,7 +326,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 	switch str {
 	case "", "null":
 		*b = AtomicBool{*atomicutil.NewBool(false)}
-		return nil
 	case "true":
 		*b = AtomicBool{*atomicutil.NewBool(true)}
 	case "false":

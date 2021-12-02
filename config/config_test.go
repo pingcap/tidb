@@ -47,12 +47,6 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 	require.Equal(t, "ab = \"true\"\n", firstBuffer.String())
 	firstBuffer.Reset()
 
-	d = data{}
-	_, err = toml.Decode("", &d)
-	require.NoError(t, err)
-	require.False(t, d.Ab.Load())
-
-	d = data{}
 	_, err = toml.Decode("ab=false", &d)
 	require.NoError(t, err)
 	require.False(t, d.Ab.Load())
