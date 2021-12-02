@@ -374,6 +374,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		return b.buildSelect(ctx, x)
 	case *ast.SetOprStmt:
 		return b.buildSetOpr(ctx, x)
+	case *ast.SubqueryExpr:
+		return b.buildResultSetNode(ctx, x.Query)
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
 	}
