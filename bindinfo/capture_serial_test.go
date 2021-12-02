@@ -757,6 +757,8 @@ func TestSpmUnion(t *testing.T) {
 		"REPLACE INTO `test`.`t` (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ `a`,`b` FROM `test`.`t1` LIMIT 1) UNION (SELECT /*+ use_index(@`sel_2` `test`.`t2` `idx_a`)*/ `a`,`b` FROM `test`.`t2` LIMIT 1)"
 	spmMap["replace into `test` . `t` select `a` , `b` from `test` . `t1` limit ?"] =
 		"REPLACE INTO `test`.`t` SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ `a`,`b` FROM `test`.`t1` LIMIT 1"
+	spmMap["select * from ( select * from `test` . `t1` where `a` = ? and `b` = ? union select * from `test` . `t2` where `a` = ? and `b` = ? ) as `tt` left join `test` . `t` on `tt` . `a` = `t` . `a` where `t` . `a` = ? and `t` . `b` = ?"] =
+		"SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`), hash_agg(@`sel_1`), hash_join(@`sel_1` `test`.`t`)*/ * FROM (SELECT /*+ use_index(@`sel_2` `test`.`t1` `idx_a`)*/ * FROM `test`.`t1` WHERE `a` = 1 AND `b` = 1 UNION SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`)*/ * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) AS `tt` LEFT JOIN `test`.`t` ON `tt`.`a` = `t`.`a` WHERE `t`.`a` = 1 AND `t`.`b` = 1"
 
 	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
 	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
@@ -805,10 +807,14 @@ func TestSpmUnion(t *testing.T) {
 	tk.MustExec("delete from t where a in ((select /*+use_index(t1,idx_b)*/a from t1 where a = 1 and b = 1) union (select /*+use_index(t1,idx_a)*/a from t1 where a = 1 and b = 1));")
 	tk.MustExec("delete from t where a in ((select /*+use_index(t1,idx_b)*/a from t1 where a = 1 and b = 1) union (select /*+use_index(t1,idx_a)*/a from t1 where a = 1 and b = 1));")
 	tk.MustExec("delete from t where a in ((select /*+use_index(t1,idx_b)*/a from t1 where a = 1 and b = 1) union (select /*+use_index(t1,idx_a)*/a from t1 where a = 1 and b = 1));")
+
+	tk.MustExec("select /*+use_index(@sel_1 t idx_b)*/ * from (select /*+use_index(t1 idx_a)*/ * from t1 where a = 1 and b = 1 union select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) tt left join t on tt.a=t.a where t.a = 1 and t.b=1;")
+	tk.MustExec("select /*+use_index(@sel_1 t idx_b)*/ * from (select /*+use_index(t1 idx_a)*/ * from t1 where a = 1 and b = 1 union select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) tt left join t on tt.a=t.a where t.a = 1 and t.b=1;")
+	tk.MustExec("select /*+use_index(@sel_1 t idx_b)*/ * from (select /*+use_index(t1 idx_a)*/ * from t1 where a = 1 and b = 1 union select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) tt left join t on tt.a=t.a where t.a = 1 and t.b=1;")
 
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 12)
+	require.Len(t, rows, 13)
 	for _, row := range rows {
 		str := fmt.Sprintf("%s", row[0])
 		require.Equal(t, spmMap[str], row[1])
