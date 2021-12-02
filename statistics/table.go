@@ -346,7 +346,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		}
 		if sc.EnableOptimizerCETrace {
-			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
+			CETraceRange(sc, coll.PhysicalID, []string{coll.Columns[colID].Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
 		}
 		return result, nil
 	}
@@ -363,7 +363,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace {
-			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+			CETraceRange(sc, coll.PhysicalID, []string{coll.Columns[colID].Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, err
 	}
@@ -377,8 +377,9 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	colNames := make([]string, 0, len(idx.Info.Columns))
-	for _, col := range idx.Info.Columns {
+	idxInfo := coll.Indices[idxID].Info
+	colNames := make([]string, 0, len(idxInfo.Columns))
+	for _, col := range idxInfo.Columns {
 		colNames = append(colNames, col.Name.O)
 	}
 	if idx == nil || idx.IsInvalid(coll.Pseudo) {
