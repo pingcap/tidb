@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,8 +27,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -104,8 +107,14 @@ const (
 	selectConflictKeys = `
 		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + conflictErrorTableName + `
-		WHERE table_name = ? AND _tidb_rowid > ?
+		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
+	`
+	selectConflictErrorRowIDSample = `
+		SELECT _tidb_rowid
+		FROM %s.` + conflictErrorTableName + `
+		TABLESAMPLE REGIONS()
+		ORDER BY _tidb_rowid;
 	`
 )
 
@@ -299,30 +308,81 @@ func (em *ErrorManager) RecordIndexConflictError(
 	})
 }
 
-// GetConflictKeys obtains all (distinct) conflicting rows (handle and their
-// values) from the current error report.
-func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, prevRowID int64, limit int) (handleRows [][2][]byte, lastRowID int64, err error) {
-	if em.db == nil {
-		return nil, 0, nil
-	}
-	rows, err := em.db.QueryContext(
-		ctx,
-		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
-		tableName,
-		prevRowID,
-		limit,
-	)
+func (em *ErrorManager) selectConflictErrorRowIDSample(ctx context.Context) ([]int64, error) {
+	rows, err := em.db.QueryContext(ctx, fmt.Sprintf(selectConflictErrorRowIDSample, em.schemaEscaped))
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	defer rows.Close()
-
+	rowIDs := []int64{0}
 	for rows.Next() {
-		var handleRow [2][]byte
-		if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
-			return nil, 0, errors.Trace(err)
+		var rowID int64
+		if err := rows.Scan(&rowID); err != nil {
+			return nil, errors.Trace(err)
 		}
-		handleRows = append(handleRows, handleRow)
+		rowIDs = append(rowIDs, rowID)
 	}
-	return handleRows, lastRowID, errors.Trace(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	rowIDs = append(rowIDs, math.MaxInt64)
+	return rowIDs, nil
+}
+
+// ResolveAllConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently.
+func (em *ErrorManager) ResolveAllConflictKeys(
+	ctx context.Context,
+	tableName string,
+	pool *utils.WorkerPool,
+	fn func(ctx context.Context, handleRows [][2][]byte) error,
+) error {
+	if em.db == nil {
+		return nil
+	}
+	rowIDs, err := em.selectConflictErrorRowIDSample(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	g, gCtx := errgroup.WithContext(ctx)
+	for i := 1; i < len(rowIDs); i++ {
+		start := rowIDs[i-1]
+		end := rowIDs[i]
+		pool.ApplyOnErrorGroup(g, func() error {
+			var handleRows [][2][]byte
+			for start < end {
+				rows, err := em.db.QueryContext(
+					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+					tableName, start, end, 1000)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				var lastRowID int64
+				for rows.Next() {
+					var handleRow [2][]byte
+					if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+						return errors.Trace(err)
+					}
+					handleRows = append(handleRows, handleRow)
+				}
+				if err := rows.Err(); err != nil {
+					return errors.Trace(err)
+				}
+				if err := rows.Close(); err != nil {
+					return errors.Trace(err)
+				}
+				if len(handleRows) == 0 {
+					break
+				}
+				if err := fn(gCtx, handleRows); err != nil {
+					return errors.Trace(err)
+				}
+				start = lastRowID + 1
+				handleRows = handleRows[:0]
+			}
+			return nil
+		})
+	}
+	return errors.Trace(g.Wait())
 }
