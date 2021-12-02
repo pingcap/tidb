@@ -1,10 +1,26 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package errormanager
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -52,13 +68,13 @@ const (
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL,  -- decoded from raw_key, human readable only, not for machine use
-			row_data    text NOT NULL,  -- decoded from raw_row, human readable only, not for machine use
-			raw_key     mediumblob NOT NULL,  -- the conflicted key
-			raw_value   mediumblob NOT NULL,  -- the value of the conflicted key
-			raw_handle  mediumblob NOT NULL,  -- the data handle derived from the conflicted key or value
-			raw_row     mediumblob NOT NULL,  -- the data retrieved from the handle
-			KEY (raw_key(64), task_id)
+			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
+			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
+			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
+			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
+			KEY (task_id, table_name)
 		);
 	`
 
@@ -79,6 +95,13 @@ const (
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
+
+	selectConflictKeys = `
+		SELECT _tidb_rowid, raw_handle, raw_row
+		FROM %s.` + conflictErrorTableName + `
+		WHERE table_name = ? AND _tidb_rowid > ?
+		ORDER BY _tidb_rowid LIMIT ?;
+	`
 )
 
 type ErrorManager struct {
@@ -86,6 +109,11 @@ type ErrorManager struct {
 	taskID         int64
 	schemaEscaped  string
 	remainingError config.MaxError
+	dupResolution  config.DuplicateResolutionAlgorithm
+}
+
+func (em *ErrorManager) TypeErrorsRemain() int64 {
+	return em.remainingError.Type.Load()
 }
 
 // New creates a new error manager.
@@ -93,6 +121,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		remainingError: cfg.App.MaxError,
+		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -103,7 +132,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil {
+	if em.db == nil || (em.remainingError.Type.Load() == 0 && em.dupResolution == config.DupeResAlgNone) {
 		return nil
 	}
 
@@ -112,15 +141,21 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		Logger: log.L(),
 	}
 
-	sqls := [][2]string{
-		{"create task info schema", createSchema},
-		{"create syntax error table", createSyntaxErrorTable},
-		{"create type error table", createTypeErrorTable},
-		{"create conflict error table", createConflictErrorTable},
+	sqls := make([][2]string, 0)
+	sqls = append(sqls, [2]string{"create task info schema", createSchema})
+	if em.remainingError.Syntax.Load() > 0 {
+		sqls = append(sqls, [2]string{"create syntax error table", createSyntaxErrorTable})
+	}
+	if em.remainingError.Type.Load() > 0 {
+		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
+	}
+	if em.dupResolution != config.DupeResAlgNone && em.remainingError.Conflict.Load() > 0 {
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 
 	for _, sql := range sqls {
-		err := exec.Exec(ctx, sql[0], fmt.Sprintf(sql[1], em.schemaEscaped))
+		// trim spaces for unit test pattern matching
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
 		if err != nil {
 			return err
 		}
@@ -140,6 +175,11 @@ func (em *ErrorManager) RecordTypeError(
 	rowText string,
 	encodeErr error,
 ) error {
+	// elide the encode error if needed.
+	if em.remainingError.Type.Dec() < 0 {
+		return encodeErr
+	}
+
 	if em.db != nil {
 		errMsg := encodeErr.Error()
 		logger = logger.With(
@@ -164,11 +204,6 @@ func (em *ErrorManager) RecordTypeError(
 		); err != nil {
 			return multierr.Append(encodeErr, err)
 		}
-	}
-
-	// elide the encode error if needed.
-	if em.remainingError.Type.Dec() < 0 {
-		return encodeErr
 	}
 	return nil
 }
@@ -259,4 +294,32 @@ func (em *ErrorManager) RecordIndexConflictError(
 		}
 		return nil
 	})
+}
+
+// GetConflictKeys obtains all (distinct) conflicting rows (handle and their
+// values) from the current error report.
+func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, prevRowID int64, limit int) (handleRows [][2][]byte, lastRowID int64, err error) {
+	if em.db == nil {
+		return nil, 0, nil
+	}
+	rows, err := em.db.QueryContext(
+		ctx,
+		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+		tableName,
+		prevRowID,
+		limit,
+	)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var handleRow [2][]byte
+		if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		handleRows = append(handleRows, handleRow)
+	}
+	return handleRows, lastRowID, errors.Trace(rows.Err())
 }

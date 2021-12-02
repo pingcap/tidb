@@ -35,8 +35,12 @@ set -e
 ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data loss, this run will stop now." "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 TABLE_SUGGEST=$(grep "checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 
-[ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 1 ]
+# we got same errors in three place:
+# 1. run failed in step 2
+# 2. the whole procedure failed
+# 3. main
+[ $ILLEGAL_CP_COUNT -eq 3 ]
+[ $TABLE_SUGGEST -eq 3 ]
 
 # Try again with the file checkpoints
 
@@ -60,5 +64,9 @@ set -e
 ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data loss, this run will stop now." "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 TABLE_SUGGEST=$(grep "checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 
-[ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 1 ]
+# we got same errors in three place:
+# 1. run failed in step 2
+# 2. the whole procedure failed
+# 3. main
+[ $ILLEGAL_CP_COUNT -eq 3 ]
+[ $TABLE_SUGGEST -eq 3 ]
