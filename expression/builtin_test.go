@@ -59,7 +59,7 @@ func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = f.evalInt(row)
-		if mysql.HasUnsignedFlag(f.getRetTp().Flag) {
+		if mysql.HasUnsignedFlag(f.getRetTp().GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
@@ -187,7 +187,7 @@ func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Express
 
 var (
 	// MySQL int8.
-	int8Con = &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLonglong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	int8Con = &Constant{RetType: types.FieldTypeBuilder{Tp: mysql.TypeLonglong, Charset: charset.CharsetBin, Collate: charset.CollationBin}.Build()}
 	// MySQL varchar.
-	varcharCon = &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
+	varcharCon = &Constant{RetType: types.FieldTypeBuilder{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}.Build()}
 )
