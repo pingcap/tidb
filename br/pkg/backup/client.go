@@ -180,14 +180,9 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
-	exist, err = bc.storage.FileExists(ctx, metautil.LockFile)
+	err = CheckBackupStorageIsLocked(ctx, bc.storage)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
-	}
-	if exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file exists in %v, "+
-			"there may be some backup files in the path already, "+
-			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.LockFile)
+		return err
 	}
 	bc.backend = backend
 	return nil
@@ -196,6 +191,29 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
+}
+
+// CheckBackupStorageIsLocked checks whether backups is locked.
+// which means we found other backup progress already write
+// some data files into the same backup directory or cloud prefix.
+func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
+	exist, err := s.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
+	}
+	if exist {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			// should return error to break the walkDir when found lock file and other .sst files.
+			if strings.HasSuffix(path, ".sst") {
+				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
+					"there are some backup files in the path already, "+
+					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
+			}
+			return nil
+		})
+		return err
+	}
+	return nil
 }
 
 // BuildTableRanges returns the key ranges encompassing the entire table,
