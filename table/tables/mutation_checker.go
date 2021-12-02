@@ -296,7 +296,8 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 ) error {
-	for i, decodedMutationDatum := range indexData {
+	for i := range indexData {
+		decodedMutationDatum := indexData[i]
 		expectedDatum := input[indexInfo.Columns[i].Offset]
 
 		tablecodec.TruncateIndexValue(
@@ -304,7 +305,7 @@ func compareIndexData(
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
-			&indexData[i], indexInfo.Columns[i],
+			&decodedMutationDatum, indexInfo.Columns[i],
 			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
