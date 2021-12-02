@@ -15,6 +15,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/user"
@@ -30,6 +31,38 @@ import (
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
+
+func TestAtomicBoolUnmarshal(t *testing.T) {
+	t.Parallel()
+	type data struct {
+		Ab AtomicBool `toml:"ab"`
+	}
+	var d data
+	var firstBuffer bytes.Buffer
+	_, err := toml.Decode("ab=true", &d)
+	require.NoError(t, err)
+	require.True(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"true\"\n", firstBuffer.String())
+	firstBuffer.Reset()
+
+	d = data{}
+	_, err = toml.Decode("", &d)
+	require.NoError(t, err)
+	require.False(t, d.Ab.Load())
+
+	d = data{}
+	_, err = toml.Decode("ab=false", &d)
+	require.NoError(t, err)
+	require.False(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
+
+	_, err = toml.Decode("ab = 1", &d)
+	require.EqualError(t, err, "Invalid value for bool type: 1")
+}
 
 func TestNullableBoolUnmarshal(t *testing.T) {
 	t.Parallel()
