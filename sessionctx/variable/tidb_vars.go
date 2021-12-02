@@ -598,6 +598,9 @@ const (
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
+	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
+	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
+
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 )
@@ -771,6 +774,7 @@ const (
 	DefTiDBEnableTSOFollowerProxy         = false
 	DefTiDBEnableOrderedResultMode        = false
 	DefTiDBEnablePseudoForOutdatedStats   = true
+	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 )

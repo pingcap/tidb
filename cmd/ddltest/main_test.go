@@ -12,15 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gluetikv
+package ddltest
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestGetVersion(t *testing.T) {
-	g := Glue{}
-	require.Regexp(t, "^BR(.|\n)*Release Version(.|\n)*Git Commit Hash(.|\n)*$", g.GetVersion())
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	if err != nil {
+		fmt.Fprint(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	goleak.VerifyTestMain(m)
 }
