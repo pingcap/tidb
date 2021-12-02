@@ -1907,6 +1907,10 @@ func (cli *testServerClient) waitUntilServerCanConnect() {
 			}
 			break
 		}
+		err = db.Ping()
+		if err != nil {
+			log.Fatal("ping failed", zap.Uint("port", cli.port))
+		}
 	}
 	if retry == retryTime {
 		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
