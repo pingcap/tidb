@@ -1897,19 +1897,18 @@ const retryTime = 100
 func (cli *testServerClient) waitUntilServerCanConnect() {
 	// connect server
 	retry := 0
+	dsn := cli.getDSN()
 	for ; retry < retryTime; retry++ {
 		time.Sleep(time.Millisecond * 10)
-		db, err := sql.Open("mysql", cli.getDSN())
+		db, err := sql.Open("mysql", dsn)
 		if err == nil {
-			err = db.Close()
-			if err != nil {
+			succeed := db.Ping() == nil
+			if err = db.Close(); err != nil {
 				panic(err)
 			}
-			break
-		}
-		err = db.Ping()
-		if err != nil {
-			log.Fatal("ping failed", zap.Uint("port", cli.port))
+			if succeed {
+				break
+			}
 		}
 	}
 	if retry == retryTime {

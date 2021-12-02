@@ -243,10 +243,10 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
 			return nil, errors.Trace(err)
 		}
+		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 		if runInGoTest && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
-		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr), zap.Uint("real_addr", s.cfg.Port))
 	}
 
 	if s.cfg.Socket != "" {
@@ -473,7 +473,6 @@ func (s *Server) Close() {
 	defer s.rwlock.Unlock()
 
 	if s.listener != nil {
-		logutil.BgLogger().Info("closing server", zap.Uint("port", uint(s.listener.Addr().(*net.TCPAddr).Port)))
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
