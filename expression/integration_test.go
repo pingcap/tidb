@@ -9878,3 +9878,232 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestIssue27233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values(122,100),(124,-22),(124,34),(127,103);")
+	tk.MustQuery("SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;").
+		Check(testkit.Rows("100"))
+}
+
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
+}
+
+func (s *testIntegrationSuite) TestIssue26977(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
+	result.Check(testkit.Rows("18446744073709551601"))
+}
+
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestLastInsertId(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists lastinsertid;`)
+	tk.MustExec(`create table lastinsertid (id int not null primary key auto_increment);`)
+	tk.MustQuery("SELECT @@last_insert_id;").Check(testkit.Rows("0"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
+
+func (s *testIntegrationSuite) TestTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec("SET time_zone = '+00:00';")
+	defer tk.MustExec("SET time_zone = DEFAULT;")
+	timestampStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr1 = timestampStr1[1:]
+	timestampStr1 = timestampStr1[:len(timestampStr1)-1]
+	timestamp1, err := strconv.ParseFloat(timestampStr1, 64)
+	c.Assert(err, IsNil)
+	nowStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now1, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr1)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = default;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr2 = timestampStr2[1:]
+	timestampStr2 = timestampStr2[:len(timestampStr2)-1]
+	timestamp2, err := strconv.ParseFloat(timestampStr2, 64)
+	c.Assert(err, IsNil)
+	nowStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now2, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr2)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp1, Less, timestamp2)
+	c.Assert(now1.UnixNano(), Less, now2.UnixNano())
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = 0;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr3 = timestampStr3[1:]
+	timestampStr3 = timestampStr3[:len(timestampStr3)-1]
+	timestamp3, err := strconv.ParseFloat(timestampStr3, 64)
+	c.Assert(err, IsNil)
+	nowStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now3, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr3)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp2, Less, timestamp3)
+	c.Assert(now2.UnixNano(), Less, now3.UnixNano())
+}
+
+func (s *testIntegrationSuite) TestIdentity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists identity;`)
+	tk.MustExec(`create table identity (id int not null primary key auto_increment);`)
+	tk.MustQuery("SELECT @@identity;").Check(testkit.Rows("0"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
+
+func (s *testIntegrationSuite) TestIssue28804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists perf_offline_day;")
+	tk.MustExec(`CREATE TABLE perf_offline_day (
+uuid varchar(50),
+ts timestamp NOT NULL,
+user_id varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+platform varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+host_id bigint(20) DEFAULT NULL,
+PRIMARY KEY (uuid,ts) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY RANGE ( UNIX_TIMESTAMP(ts) ) (
+PARTITION p20210906 VALUES LESS THAN (1630944000),
+PARTITION p20210907 VALUES LESS THAN (1631030400),
+PARTITION p20210908 VALUES LESS THAN (1631116800),
+PARTITION p20210909 VALUES LESS THAN (1631203200)
+);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("INSERT INTO `perf_offline_day` VALUES ('dd082c8a-3bab-4431-943a-348fe0592abd','2021-09-08 13:00:07','Xg9C8zq81jGNbugM', 'pc', 12345);")
+	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
+}
+
+func (s *testIntegrationSuite) TestIssue28643(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
+	tk.MustExec("insert into t values(\"838:59:59.000000\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+}
+
+func (s *testIntegrationSuite) TestIssue27831(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a enum(\"a\", \"b\"), b enum(\"a\", \"b\"), c bool)")
+	tk.MustExec("insert into t values(\"a\", \"a\", 1);")
+	tk.MustQuery("select * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c;").Check(testkit.Rows("a a 1 a a 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a enum(\"a\", \"b\"), b enum(\"a\", \"b\"), c bool, d int, index idx(d))")
+	tk.MustExec("insert into t values(\"a\", \"a\", 1, 1);")
+	tk.MustQuery("select /*+ inl_hash_join(t1) */  * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c and t1.d=t2.d;").Check(testkit.Rows("a a 1 1 a a 1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue29434(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 datetime);")
+	tk.MustExec("insert into t1 values('2021-12-12 10:10:10.000');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
+}
+
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+}
+
+func (s *testIntegrationSuite) TestIssue29244(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-700:10:10.123456111\");")
+	tk.MustExec("insert into t values(\"700:10:10.123456111\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+}
+
+func (s *testIntegrationSuite) TestIssue29513(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
+}
+
+func (s *testIntegrationSuite) TestIssue30101(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
+	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
+	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
+}
+>>>>>>> 4947cf1f5... expression: fix wrong result of greatest/least(mixed unsigned/signed int) (#30121)
