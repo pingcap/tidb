@@ -543,7 +543,7 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		names    types.NameSlice
 	)
 	switch p.(type) {
-	case *PointGetPlan, *BatchPointGetPlan:
+	case *PointGetPlan:
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
@@ -1519,15 +1519,6 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// and the data and index would be inconsistent!
 		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
 		// because math.MaxUint64 always make cacheData invalid.
-		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-		if !noSecondRead {
-			return false, nil
-		}
-		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
-			return false, nil
-		}
-		return true, nil
-	case *BatchPointGetPlan:
 		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
 		if !noSecondRead {
 			return false, nil
