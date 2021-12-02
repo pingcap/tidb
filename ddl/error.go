@@ -310,4 +310,7 @@ var (
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+
+	// ErrAutoConvert is returned when auto convert happens
+	ErrAutoConvert = dbterror.ClassDDL.NewStd(mysql.ErrAutoConvert)
 )

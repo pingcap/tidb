@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -782,8 +783,20 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = err
-			return
+			if !p.ctx.GetSessionVars().SQLMode.HasStrictMode() &&
+				colDef.Tp.Tp == mysql.TypeVarchar && colDef.Tp.Charset != "" &&
+				terror.ErrorEqual(err, types.ErrTooBigFieldLength) {
+				// Convert to BLOB or TEXT, see also issue 30328
+				colDef.Tp.Tp = mysql.TypeBlob
+				if colDef.Tp.Charset == charset.CharsetBin {
+					p.ctx.GetSessionVars().StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+				} else {
+					p.ctx.GetSessionVars().StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+				}
+			} else {
+				p.err = err
+				return
+			}
 		}
 		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {

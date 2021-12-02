@@ -1193,8 +1193,8 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"decimal(2,1)", "bigint", nil},
 	}
 	for _, tt := range tests {
-		ftA := s.colDefStrToFieldType(c, tt.origin)
-		ftB := s.colDefStrToFieldType(c, tt.to)
+		ftA := s.colDefStrToFieldType(c, tt.origin, ctx)
+		ftB := s.colDefStrToFieldType(c, tt.to, ctx)
 		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
 			c.Assert(tt.err, IsNil, Commentf("origin:%v, to:%v", tt.origin, tt.to))
@@ -1204,13 +1204,13 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	}
 }
 
-func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldType {
+func (s *testColumnSuite) colDefStrToFieldType(c *C, str string, ctx sessionctx.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	chs, coll := charset.GetDefaultCharsetAndCollate()
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }

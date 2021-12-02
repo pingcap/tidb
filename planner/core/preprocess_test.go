@@ -364,3 +364,18 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
 }
+
+// For issue 30328
+func (s *testValidatorSuite) TestLargeVarcharAutoConv(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	_, err = s.se.Execute(context.Background(), "SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	c.Assert(err, IsNil)
+	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	_, err = s.se.Execute(context.Background(), "SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
+	c.Assert(err, IsNil)
+}
