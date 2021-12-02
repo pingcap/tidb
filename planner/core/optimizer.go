@@ -308,6 +308,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 
 // SyncLoadNeededColumns sends column-hist request and sync-wait until timeout
 func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, error) {
+	if sctx.GetSessionVars().InRestrictedSQL {
+		return true, nil
+	}
 	syncWait := sctx.GetSessionVars().GetStatsSyncWait()
 	if syncWait <= 0 {
 		return true, nil
