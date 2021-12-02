@@ -174,10 +174,10 @@ func reverseRunes(origin []rune) []rune {
 
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
-func SetBinFlagOrBinStr(argTp *types.FieldTypeBuilder, resTp *types.FieldTypeBuilder) {
+func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldTypeBuilder) {
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
+	} else if mysql.HasBinaryFlag(argTp.GetFlag()) || !types.IsNonBinaryStr(argTp) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }

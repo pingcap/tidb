@@ -237,14 +237,14 @@ func newConstString(s string, coercibility Coercibility, chs, coll string) *Cons
 			repe = UNICODE
 		}
 	}
-	constant := &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}, Value: types.NewDatum(s)}
+	constant := &Constant{RetType: (&types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}).Build(), Value: types.NewDatum(s)}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repe)
 	return constant
 }
 
 func newColString(chs, coll string) *Column {
-	column := &Column{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}}
+	column := &Column{RetType: (&types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}).Build()}
 	column.SetCoercibility(CoercibilityImplicit)
 	column.SetRepertoire(UNICODE)
 	if chs == charset.CharsetASCII {
@@ -254,14 +254,14 @@ func newColString(chs, coll string) *Column {
 }
 
 func newConstInt(coercibility Coercibility) *Constant {
-	constant := &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}, Value: types.NewDatum(1)}
+	constant := &Constant{RetType: (&types.FieldTypeBuilder{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}).Build(), Value: types.NewDatum(1)}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(ASCII)
 	return constant
 }
 
 func newColInt(coercibility Coercibility) *Column {
-	column := &Column{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}}
+	column := &Column{RetType: (&types.FieldTypeBuilder{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}).Build()}
 	column.SetCoercibility(coercibility)
 	column.SetRepertoire(ASCII)
 	return column
