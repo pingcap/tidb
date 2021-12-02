@@ -983,7 +983,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		}
 		if mutation := req.Mutations[0]; mutation != nil {
 			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
-			return seVars.StmtCtx.GetResourceGroupTagByLabel(label)
+			normalized, digest := seVars.StmtCtx.SQLDigest()
+			if len(normalized) == 0 {
+				return nil
+			}
+			_, planDigest := seVars.StmtCtx.GetPlanDigest()
+			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
 		}
 		return nil
 	}
@@ -1689,7 +1694,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
+	sc.EnableOptimizeTrace = false
 	sc.LogicalOptimizeTrace = nil
+	sc.OptimizerCETrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
