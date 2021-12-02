@@ -359,6 +359,8 @@ var schemataCols = []columnInfo{
 	{name: "DEFAULT_CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "DEFAULT_COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SQL_PATH", tp: mysql.TypeVarchar, size: 512},
+	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tablesCols = []columnInfo{
@@ -867,6 +869,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogIsExplicitTxn, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogIsWriteCacheTable, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
