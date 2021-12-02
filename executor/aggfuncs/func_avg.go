@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -76,7 +77,11 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -267,7 +272,11 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	err = finalResult.Round(finalResult, e.retTp.Decimal, types.ModeHalfEven)
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

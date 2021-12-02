@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -173,7 +174,11 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	if e.retTp == nil {
 		return errors.New("e.retTp of sum should not be nil")
 	}
-	err := p.val.Round(&p.val, e.retTp.Decimal, types.ModeHalfEven)
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

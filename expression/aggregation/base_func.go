@@ -286,11 +286,11 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	// valid the precision and scale of decimal type
 	if a.RetTp.Tp == mysql.TypeNewDecimal {
 		a.RetTp = a.RetTp.Clone()
-		if a.RetTp.Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
-		}
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
+		}
+		if a.RetTp.Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
+			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	}
 }
