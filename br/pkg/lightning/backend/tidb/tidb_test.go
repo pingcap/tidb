@@ -245,7 +245,7 @@ func testStrictMode(t *testing.T) {
 		types.NewStringDatum("\xff\xff\xff\xff"),
 	}, 1, []int{0, -1, -1}, "5.csv", 0)
 	require.Error(t, err)
-	require.Regexp(t, `.*incorrect utf8 value .* for column s0`, err.Error())
+	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
 	encoder, err = bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
@@ -255,7 +255,7 @@ func testStrictMode(t *testing.T) {
 		types.NewStringDatum("非 ASCII 字符串"),
 	}, 1, []int{0, 1, -1}, "6.csv", 0)
 	require.Error(t, err)
-	require.Regexp(t, ".*incorrect ascii value .* for column s1", err.Error())
+	require.Regexp(t, "incorrect ascii value .* for column s1$", err.Error())
 }
 
 func TestFetchRemoteTableModels_3_x(t *testing.T) {
