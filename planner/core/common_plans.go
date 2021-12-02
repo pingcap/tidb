@@ -401,8 +401,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	stmtCtx.UseCache = prepared.UseCache
 
+	var bindSQL string
 	if prepared.UseCache {
-		bindSQL := GetBindSQL4PlanCache(sctx, prepared.Stmt)
+		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion, bindSQL)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
@@ -469,9 +470,13 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					if err != nil {
 						return err
 					}
-					err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
-					if err != nil {
-						return err
+					if len(bindSQL) > 0 {
+						// When the `len(bindSQL) > 0`, it means we use the binding.
+						// So we need to record this.
+						err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
+						if err != nil {
+							return err
+						}
 					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -507,8 +512,10 @@ REBUILD:
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		} else {
+			// We need to reconstruct the plan cache key based on the bindSQL.
+			cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
 		}
-		cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
