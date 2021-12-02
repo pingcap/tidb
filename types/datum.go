@@ -2180,7 +2180,8 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].CompareDatum(ds.sc, &ds.datums[j])
+	// TODO: set collation explicitly when rewrites feedback.
+	cmp, err := ds.datums[i].Compare(ds.sc, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
 	if err != nil {
 		ds.err = errors.Trace(err)
 		return true
@@ -2362,7 +2363,7 @@ func ChangeReverseResultByUpperLowerBound(
 		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
 	}
 	bound := getDatumBound(&resRetType, rType)
-	cmp, err := d.CompareDatum(sc, &bound)
+	cmp, err := d.Compare(sc, &bound, collate.GetCollator(resRetType.Collate))
 	if err != nil {
 		return d, err
 	}
