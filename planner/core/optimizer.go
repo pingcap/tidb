@@ -422,8 +422,19 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPl
 		ExpectedCnt: math.MaxFloat64,
 	}
 
+	opt := defaultPhysicalOptimizeOption()
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		traceInfo := logic.buildPhysicalOptimizeTraceInfo(logic, prop)
+		tracer := &tracing.PhysicalOptimizeTracer{Root: traceInfo, Current: traceInfo}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			stmtCtx.PhysicalOptimizeTrace = tracer
+		}()
+	}
+
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter)
+	t, _, err := logic.findBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}

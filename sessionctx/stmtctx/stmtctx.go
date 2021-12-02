@@ -197,6 +197,8 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// PhysicalOptimizeTrace indicates the trace for optimize
+	PhysicalOptimizeTrace *tracing.PhysicalOptimizeTracer
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.

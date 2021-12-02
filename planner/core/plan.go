@@ -250,7 +250,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *physicalOptimizeOp) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -309,6 +309,9 @@ type LogicalPlan interface {
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
 	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
+
+	// buildPhysicalOptimizeTraceInfo initialize the Physical Optimize trace information.
+	buildPhysicalOptimizeTraceInfo(p Plan, prop *property.PhysicalProperty) *tracing.PhysicalOptimizeTraceInfo
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -388,6 +391,12 @@ func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanT
 		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
 	}
 	return planTrace
+}
+
+// buildPhysicalOptimizeTraceInfo implements LogicalPlan
+func (p *baseLogicalPlan) buildPhysicalOptimizeTraceInfo(plan Plan, prop *property.PhysicalProperty) *tracing.PhysicalOptimizeTraceInfo {
+	traceInfo := &tracing.PhysicalOptimizeTraceInfo{ID: p.ID(), TP: p.TP(), Property: prop, ExplainInfo: plan.ExplainInfo()}
+	return traceInfo
 }
 
 type basePhysicalPlan struct {
