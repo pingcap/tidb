@@ -1423,9 +1423,9 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 		e.numWorkers = 0
 	}
 
-	// Use un-parallel projection for write query to avoid concurrent on memdb.
+	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
