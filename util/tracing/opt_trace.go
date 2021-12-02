@@ -14,8 +14,6 @@
 
 package tracing
 
-import "github.com/pingcap/tidb/planner/property"
-
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
 	ID       int                 `json:"id"`
@@ -101,7 +99,7 @@ type PhysicalOptimizeTraceInfo struct {
 	ID       int                          `json:"id"`
 	TP       string                       `json:"type"`
 	Children []*PhysicalOptimizeTraceInfo `json:"children"`
-	Property *property.PhysicalProperty   `json:"property"`
+	Property string                       `json:"property"`
 
 	// ExplainInfo should be implemented by each implemented LogicalPlan
 	ExplainInfo string `json:"info"`
