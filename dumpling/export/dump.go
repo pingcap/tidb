@@ -51,9 +51,10 @@ type Dumper struct {
 	extStore storage.ExternalStorage
 	dbHandle *sql.DB
 
-	tidbPDClientForGC         pd.Client
-	selectTiDBTableRegionFunc func(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
-	totalTables               int64
+	tidbPDClientForGC             pd.Client
+	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
+	totalTables                   int64
+	charsetAndDefaultCollationMap map[string]string
 }
 
 // NewDumper returns a new Dumper
@@ -151,6 +152,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
 		tctx.L().Info("get global metadata failed", zap.Error(err))
+	}
+
+	//init charset and default collation map
+	d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
+	if err != nil {
+		return err
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
@@ -335,14 +342,13 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 
 	parser1 := parser.New()
 	for dbName, tables := range allTables {
-		var dbCollation string
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			// adjust db collation
-			createDatabaseSQL, dbCollation, err = adjustDatabaseCollation(metaConn, parser1, createDatabaseSQL, dbName)
+			createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -362,12 +368,9 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			}
 			// adjust table collation
 			if table.Type == TableTypeBase {
-				newCreateSQL, defaultCollation, err := adjustTableCollation(metaConn, parser1, meta.ShowCreateTable(), dbCollation, dbName, table.Name)
+				newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
 				if err != nil {
 					return errors.Trace(err)
-				}
-				if dbCollation == "" {
-					dbCollation = defaultCollation
 				}
 				meta.(*tableMeta).showCreateTable = newCreateSQL
 			}
@@ -399,25 +402,31 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 }
 
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
-func adjustDatabaseCollation(db *sql.Conn, parser *parser.Parser, originSQL string, dbName string) (string, string, error) {
+func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
-		return "", "", err
+		tctx.L().Warn("parse create database error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, nil
 	}
 	createStmt, ok := stmt.(*ast.CreateDatabaseStmt)
 	if !ok {
-		return originSQL, "", nil
+		return originSQL, nil
 	}
+	var charset string
 	for _, createOption := range createStmt.Options {
 		// already have 'Collation'
 		if createOption.Tp == ast.DatabaseOptionCollate {
-			return originSQL, createOption.Value, nil
+			return originSQL, nil
+		}
+		if createOption.Tp == ast.DatabaseOptionCharset {
+			charset = createOption.Value
 		}
 	}
 	// get db collation
-	collation, err := GetDBCollation(db, dbName)
-	if err != nil {
-		return "", "", err
+	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+	if !ok {
+		tctx.L().Error("not found database charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		return originSQL, nil
 	}
 	// add collation
 	createStmt.Options = append(createStmt.Options, &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: collation})
@@ -425,39 +434,42 @@ func adjustDatabaseCollation(db *sql.Conn, parser *parser.Parser, originSQL stri
 	var b []byte
 	bf := bytes.NewBuffer(b)
 	err = createStmt.Restore(&format.RestoreCtx{
-		Flags: format.DefaultRestoreFlags,
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
 		In:    bf,
 	})
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	return bf.String(), collation, nil
+	return bf.String(), nil
 }
 
-// adjustTableCollation adjusts table collation and return new create sql and default db collation
-func adjustTableCollation(db *sql.Conn, parser *parser.Parser, originSQL string, dbCollation string, dbName string, tableName string) (string, string, error) {
+// adjustTableCollation adjusts table collation
+func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
-		return "", "", err
+		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, err
 	}
 	createStmt, ok := stmt.(*ast.CreateTableStmt)
 	if !ok {
-		return originSQL, "", nil
+		return originSQL, nil
 	}
+	var charset string
 	for _, createOption := range createStmt.Options {
 		// already have 'Collation'
 		if createOption.Tp == ast.TableOptionCollate {
-			return originSQL, dbCollation, nil
+			return originSQL, nil
+		}
+		if createOption.Tp == ast.TableOptionCharset {
+			charset = createOption.StrValue
 		}
 	}
 
-	collation := dbCollation
-	if collation == "" {
-		// get db collation
-		collation, err = GetDBCollation(db, dbName)
-		if err != nil {
-			return "", "", err
-		}
+	// get db collation
+	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+	if !ok {
+		tctx.L().Error("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		return originSQL, nil
 	}
 
 	// add collation
@@ -466,13 +478,13 @@ func adjustTableCollation(db *sql.Conn, parser *parser.Parser, originSQL string,
 	var b []byte
 	bf := bytes.NewBuffer(b)
 	err = createStmt.Restore(&format.RestoreCtx{
-		Flags: format.DefaultRestoreFlags,
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
 		In:    bf,
 	})
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	return bf.String(), collation, nil
+	return bf.String(), nil
 }
 
 func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
