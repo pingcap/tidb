@@ -469,6 +469,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					if err != nil {
 						return err
 					}
+					err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
+					if err != nil {
+						return err
+					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 					} else {
@@ -501,10 +505,10 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			sessionVars := sctx.GetSessionVars()
-			cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion, sessionVars.StmtCtx.BindSQL)
+			cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessionVars.StmtCtx.BindSQL)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
+		cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessionVars.StmtCtx.BindSQL)
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)

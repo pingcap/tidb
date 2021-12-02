@@ -1124,16 +1124,20 @@ func (s *testPrepareSerialSuite) TestSPM4PlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// The bindSQL has changed, the previous cache is invalid.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	// The binding does not take effect for caches that have been cached.
-	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[1][0], Matches, ".*TableFullScan.*")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	// We can use the new binding.
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexFullScan.*")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	tk.MustExec("delete from mysql.bind_info where default_db='test';")
 	tk.MustExec("admin reload bindings;")
