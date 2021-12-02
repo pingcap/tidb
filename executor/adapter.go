@@ -1104,7 +1104,7 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan, hintStr string) {
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan string, tableHints []*ast.TableOptimizerHint) {
 	var hintSet bool
 	var hints []*ast.TableOptimizerHint
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
@@ -1173,7 +1173,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() (string, string) {
+	planGenerator := func() (string, []*ast.TableOptimizerHint) {
 		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
