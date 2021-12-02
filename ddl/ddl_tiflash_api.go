@@ -65,11 +65,14 @@ type PollTiFlashReplicaStatusBackoff struct {
 }
 
 var (
-	PollTiFlashReplicaStatusBackoffMaxTick  = 60
+	// PollTiFlashReplicaStatusBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
+	PollTiFlashReplicaStatusBackoffMaxTick = 60
+	// PollTiFlashReplicaStatusBackoffMinTick is the max tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashReplicaStatusBackoffMinTick  = 1
-	PollTiFlashReplicaStatusBackoffCapacity = 500
+	pollTiFlashReplicaStatusBackoffCapacity = 1000
 )
 
+// NewPollTiFlashReplicaStatusBackoff create an instance with the smallest interval.
 func NewPollTiFlashReplicaStatusBackoff() PollTiFlashReplicaStatusBackoff {
 	return PollTiFlashReplicaStatusBackoff{
 		Counter:   0,
@@ -311,7 +314,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		if !available {
 			bo, ok := (*backoffs)[tb.ID]
 			if !ok {
-				if len(*backoffs) < PollTiFlashReplicaStatusBackoffCapacity {
+				if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
 					newBackoff := NewPollTiFlashReplicaStatusBackoff()
 					(*backoffs)[tb.ID] = &newBackoff
 				}
