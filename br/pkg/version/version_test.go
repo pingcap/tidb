@@ -52,7 +52,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, `incompatible.*version v4.0.0-rc.1, try update it to 4.0.0.*`, err.Error())
+		require.Regexp(t, `^incompatible.*version v4.0.0-rc.1, try update it to 4.0.0`, err.Error())
 	}
 
 	{
@@ -62,7 +62,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, `incompatible.*version v3.1.0-beta.1, try update it to 3.1.0.*`, err.Error())
+		require.Regexp(t, `^incompatible.*version v3.1.0-beta.1, try update it to 3.1.0`, err.Error())
 	}
 
 	{
@@ -72,7 +72,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, `incompatible.*version v3.0.15, try update it to 3.1.0.*`, err.Error())
+		require.Regexp(t, `^incompatible.*version v3.0.15, try update it to 3.1.0`, err.Error())
 	}
 
 	{
@@ -92,7 +92,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, ".*TiKV .* don't support BR, please upgrade cluster .*", err.Error())
+		require.Regexp(t, "TiKV .* don't support BR, please upgrade cluster ", err.Error())
 	}
 
 	{
@@ -103,7 +103,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, "TiKV .* mismatch, please .*", err.Error())
+		require.Regexp(t, "^TiKV .* mismatch, please ", err.Error())
 	}
 
 	{
@@ -114,7 +114,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, "TiKV .* major version mismatch, please .*", err.Error())
+		require.Regexp(t, "^TiKV .* major version mismatch, please ", err.Error())
 	}
 
 	{
@@ -125,7 +125,7 @@ func TestCheckClusterVersion(t *testing.T) {
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
 		require.Error(t, err)
-		require.Regexp(t, "TiKV .* mismatch, please .*", err.Error())
+		require.Regexp(t, "^TiKV .* mismatch, please ", err.Error())
 	}
 
 	{
@@ -246,11 +246,11 @@ func TestExtractTiDBVersion(t *testing.T) {
 
 	_, err = ExtractTiDBVersion("")
 	require.Error(t, err)
-	require.Regexp(t, "not a valid TiDB version.*", err.Error())
+	require.Regexp(t, "^not a valid TiDB version", err.Error())
 
 	_, err = ExtractTiDBVersion("8.0.12")
 	require.Error(t, err)
-	require.Regexp(t, "not a valid TiDB version.*", err.Error())
+	require.Regexp(t, "^not a valid TiDB version", err.Error())
 
 	_, err = ExtractTiDBVersion("not-a-valid-version")
 	require.Error(t, err)
@@ -264,15 +264,15 @@ func TestCheckVersion(t *testing.T) {
 
 	err = CheckVersion("TiNB", *semver.New("2.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiNB version too old.*", err.Error())
+	require.Regexp(t, "^TiNB version too old", err.Error())
 
 	err = CheckVersion("TiNB", *semver.New("3.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiNB version too new.*", err.Error())
+	require.Regexp(t, "^TiNB version too new", err.Error())
 
 	err = CheckVersion("TiNB", *semver.New("3.0.0-beta"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiNB version too new.*", err.Error())
+	require.Regexp(t, "^TiNB version too new", err.Error())
 }
 
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
@@ -398,6 +398,6 @@ Check Table Before Drop: false`
 
 	_, err = FetchVersion(ctx, db)
 	require.Error(t, err)
-	require.Regexp(t, ".*mock failure", err.Error())
+	require.Regexp(t, "mock failure$", err.Error())
 
 }
