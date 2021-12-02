@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/tracing"
 	"math"
 	"strings"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 
