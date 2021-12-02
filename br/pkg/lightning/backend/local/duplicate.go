@@ -562,48 +562,24 @@ func (m *DuplicateManager) buildDupTasks() ([]dupTask, error) {
 	return tasks, nil
 }
 
-// TODO: Use sizeProperties to split tasks.
 func (m *DuplicateManager) splitLocalDupTaskByKeys(
 	task dupTask,
 	dupDB *pebble.DB,
 	keyAdapter KeyAdapter,
-	keyThreshold int,
+	sizeLimit int64,
+	keysLimit int64,
 ) ([]dupTask, error) {
-	opts := &pebble.IterOptions{
-		LowerBound: task.StartKey,
-		UpperBound: task.EndKey,
+	sizeProps, err := getSizeProperties(m.logger, dupDB, keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	ranges := splitRangeBySizeProps(Range{start: task.StartKey, end: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	var newDupTasks []dupTask
-	keys := 0
-	startKey := task.StartKey
-	iter := newDupDBIter(dupDB, keyAdapter, opts)
-	for iter.First(); iter.Valid(); iter.Next() {
-		keys++
-		if keys > keyThreshold {
-			endKey := append([]byte{}, iter.Key()...)
-			newDupTasks = append(newDupTasks, dupTask{
-				KeyRange: tidbkv.KeyRange{
-					StartKey: startKey,
-					EndKey:   endKey,
-				},
-				tableID:   task.tableID,
-				indexInfo: task.indexInfo,
-			})
-			startKey = append([]byte{}, iter.Key()...)
-			keys = 1
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := iter.Close(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if keys > 0 {
+	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
 			KeyRange: tidbkv.KeyRange{
-				StartKey: startKey,
-				EndKey:   task.EndKey,
+				StartKey: r.start,
+				EndKey:   r.end,
 			},
 			tableID:   task.tableID,
 			indexInfo: task.indexInfo,
@@ -619,7 +595,8 @@ func (m *DuplicateManager) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter KeyAd
 	}
 	var newTasks []dupTask
 	for _, task := range tasks {
-		subTasks, err := m.splitLocalDupTaskByKeys(task, dupDB, keyAdapter, 1<<20)
+		// FIXME: Do not hardcode sizeLimit and keysLimit.
+		subTasks, err := m.splitLocalDupTaskByKeys(task, dupDB, keyAdapter, 32<<20, 1<<20)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -636,7 +613,7 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 	logger := m.logger
 	logger.Info("[detect-dupe] collect duplicate rows from local duplicate db", zap.Int("tasks", len(tasks)))
 
-	pool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate from duplicate db")
+	pool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task

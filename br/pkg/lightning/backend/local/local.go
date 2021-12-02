@@ -221,6 +221,7 @@ type local struct {
 	checkTiKVAvaliable  bool
 	duplicateDetection  bool
 	duplicateDB         *pebble.DB
+	keyAdapter          KeyAdapter
 	errorMgr            *errormanager.ErrorManager
 	importClientFactory ImportClientFactory
 }
@@ -294,7 +295,11 @@ func NewLocalBackend(
 		return backend.MakeBackend(nil), err
 	}
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, rangeConcurrency)
-
+	duplicateDetection := cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone
+	keyAdapter := KeyAdapter(noopKeyAdapter{})
+	if duplicateDetection {
+		keyAdapter = dupDetectKeyAdapter{}
+	}
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -314,9 +319,10 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		duplicateDetection:      duplicateDetection,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
+		keyAdapter:              keyAdapter,
 		errorMgr:                errorMgr,
 		importClientFactory:     importClientFactory,
 	}
@@ -587,10 +593,6 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 	}
 	engineCtx, cancel := context.WithCancel(ctx)
 
-	keyAdapter := KeyAdapter(noopKeyAdapter{})
-	if local.duplicateDetection {
-		keyAdapter = dupDetectKeyAdapter{}
-	}
 	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
 		sstDir:             sstDir,
@@ -602,7 +604,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		duplicateDetection: local.duplicateDetection,
 		duplicateDB:        local.duplicateDB,
 		errorMgr:           local.errorMgr,
-		keyAdapter:         keyAdapter,
+		keyAdapter:         local.keyAdapter,
 	})
 	engine := e.(*Engine)
 	engine.db = db
@@ -647,16 +649,12 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			db:                 db,
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
+			keyAdapter:         local.keyAdapter,
 			duplicateDetection: local.duplicateDetection,
 			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engine.sstIngester = dbSSTIngester{e: engine}
-		keyAdapter := KeyAdapter(noopKeyAdapter{})
-		if local.duplicateDetection {
-			keyAdapter = dupDetectKeyAdapter{}
-		}
-		engine.keyAdapter = keyAdapter
 		if err = engine.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -939,30 +937,32 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	curSize := uint64(0)
 	curKeys := uint64(0)
 	curKey := fullRange.start
+
 	sizeProps.iter(func(p *rangeProperty) bool {
-		if bytes.Equal(p.Key, engineMetaKey) {
+		if bytes.Compare(p.Key, fullRange.start) <= 0 {
 			return true
+		}
+		if bytes.Compare(p.Key, fullRange.end) > 0 {
+			return false
 		}
 		curSize += p.Size
 		curKeys += p.Keys
-		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
-			// in case the sizeLimit or keysLimit is too small
-			endKey := p.Key
-			if bytes.Equal(curKey, endKey) {
-				endKey = nextKey(endKey)
-			}
-			ranges = append(ranges, Range{start: curKey, end: endKey})
-			curKey = endKey
+		if bytes.Compare(p.Key, curKey) > 0 && (int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit) {
+			ranges = append(ranges, Range{start: curKey, end: p.Key})
+			curKey = p.Key
 			curSize = 0
 			curKeys = 0
 		}
 		return true
 	})
 
-	if curKeys > 0 {
-		ranges = append(ranges, Range{start: curKey, end: fullRange.end})
-	} else {
-		ranges[len(ranges)-1].end = fullRange.end
+	if bytes.Compare(curKey, fullRange.end) < 0 {
+		// If the remaining range is too small, append it to last range.
+		if len(ranges) > 0 && curKeys == 0 {
+			ranges[len(ranges)-1].end = fullRange.end
+		} else {
+			ranges = append(ranges, Range{start: curKey, end: fullRange.end})
+		}
 	}
 	return ranges
 }
@@ -1001,7 +1001,8 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 		return ranges, nil
 	}
 
-	sizeProps, err := engine.getSizeProperties()
+	logger := log.With(zap.Stringer("engine", engine.UUID))
+	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1009,7 +1010,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
 		regionSplitSize, regionSplitKeys)
 
-	log.L().Info("split engine key ranges", zap.Stringer("engine", engine.UUID),
+	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
 		logutil.Key("firstKey", firstKey), logutil.Key("lastKey", lastKey),
 		zap.Int("ranges", len(ranges)))
@@ -1375,7 +1376,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, dupDetectKeyAdapter{}); err != nil {
+	if err := duplicateManager.CollectDuplicateRowsFromDupDB(ctx, local.duplicateDB, local.keyAdapter); err != nil {
 		return false, errors.Trace(err)
 	}
 	return atomicHasDupe.Load(), nil

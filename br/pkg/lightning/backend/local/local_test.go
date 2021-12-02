@@ -167,14 +167,14 @@ func (s *localSuite) TestRangeProperties(c *C) {
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
 		for i := 0; i < p.count; i++ {
-			_ = collector.Add(pebble.InternalKey{UserKey: p.key}, v)
+			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: pebble.InternalKeyKindSet}, v)
 		}
 	}
 
 	userProperties := make(map[string]string, 1)
 	_ = collector.Finish(userProperties)
 
-	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]))
+	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]), noopKeyAdapter{})
 	c.Assert(err, IsNil)
 
 	// Smallest key in props.
@@ -301,7 +301,7 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
 			err = wb.Set(key, value[:valueLen], writeOpt)
 			c.Assert(err, IsNil)
-			err = collector.Add(pebble.InternalKey{UserKey: key}, value[:valueLen])
+			err = collector.Add(pebble.InternalKey{UserKey: key, Trailer: pebble.InternalKeyKindSet}, value[:valueLen])
 			c.Assert(err, IsNil)
 		}
 		c.Assert(wb.Commit(writeOpt), IsNil)

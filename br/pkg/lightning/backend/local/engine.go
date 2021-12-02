@@ -253,28 +253,6 @@ var _ btree.Item = &rangeProperty{}
 
 type rangeProperties []rangeProperty
 
-func decodeRangeProperties(data []byte) (rangeProperties, error) {
-	r := make(rangeProperties, 0, 16)
-	for len(data) > 0 {
-		if len(data) < 4 {
-			return nil, io.ErrUnexpectedEOF
-		}
-		keyLen := int(binary.BigEndian.Uint32(data[:4]))
-		data = data[4:]
-		if len(data) < keyLen+8*2 {
-			return nil, io.ErrUnexpectedEOF
-		}
-		key := data[:keyLen]
-		data = data[keyLen:]
-		size := binary.BigEndian.Uint64(data[:8])
-		keys := binary.BigEndian.Uint64(data[8:])
-		data = data[16:]
-		r = append(r, rangeProperty{Key: key, rangeOffsets: rangeOffsets{Size: size, Keys: keys}})
-	}
-
-	return r, nil
-}
-
 func (r rangeProperties) Encode() []byte {
 	b := make([]byte, 0, 1024)
 	idx := 0
@@ -336,6 +314,9 @@ func (c *RangePropertiesCollector) insertNewPoint(key []byte) {
 // Add implements `pebble.TablePropertyCollector`.
 // Add implements `TablePropertyCollector.Add`.
 func (c *RangePropertiesCollector) Add(key pebble.InternalKey, value []byte) error {
+	if key.Kind() != pebble.InternalKeyKindSet || bytes.Equal(key.UserKey, engineMetaKey) {
+		return nil
+	}
 	c.currentOffsets.Size += uint64(len(value)) + uint64(len(key.UserKey))
 	c.currentOffsets.Keys++
 	if len(c.lastKey) == 0 || c.sizeInLastRange() >= c.propSizeIdxDistance ||
@@ -386,7 +367,7 @@ func (s *sizeProperties) addAll(props rangeProperties) {
 		prevRange = r.rangeOffsets
 	}
 	if len(props) > 0 {
-		s.totalSize = props[len(props)-1].Size
+		s.totalSize += props[len(props)-1].Size
 	}
 }
 
@@ -398,10 +379,38 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-func (e *Engine) getSizeProperties() (*sizeProperties, error) {
-	sstables, err := e.db.SSTables(pebble.WithProperties())
+func decodeRangeProperties(data []byte, keyAdapter KeyAdapter) (rangeProperties, error) {
+	r := make(rangeProperties, 0, 16)
+	for len(data) > 0 {
+		if len(data) < 4 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		keyLen := int(binary.BigEndian.Uint32(data[:4]))
+		data = data[4:]
+		if len(data) < keyLen+8*2 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		key := data[:keyLen]
+		data = data[keyLen:]
+		size := binary.BigEndian.Uint64(data[:8])
+		keys := binary.BigEndian.Uint64(data[8:])
+		data = data[16:]
+		if !bytes.Equal(key, engineMetaKey) {
+			userKey, err := keyAdapter.Decode(nil, key)
+			if err != nil {
+				return nil, errors.Annotate(err, "failed to decode key with keyAdapter")
+			}
+			r = append(r, rangeProperty{Key: userKey, rangeOffsets: rangeOffsets{Size: size, Keys: keys}})
+		}
+	}
+
+	return r, nil
+}
+
+func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) (*sizeProperties, error) {
+	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
-		log.L().Warn("get table properties failed", zap.Stringer("engine", e.UUID), log.ShortError(err))
+		logger.Warn("get sst table properties failed", log.ShortError(err))
 		return nil, errors.Trace(err)
 	}
 
@@ -410,30 +419,11 @@ func (e *Engine) getSizeProperties() (*sizeProperties, error) {
 		for _, info := range level {
 			if prop, ok := info.Properties.UserProperties[propRangeIndex]; ok {
 				data := hack.Slice(prop)
-				rangeProps, err := decodeRangeProperties(data)
+				rangeProps, err := decodeRangeProperties(data, keyAdapter)
 				if err != nil {
-					log.L().Warn("decodeRangeProperties failed", zap.Stringer("engine", e.UUID),
+					logger.Warn("decodeRangeProperties failed",
 						zap.Stringer("fileNum", info.FileNum), log.ShortError(err))
 					return nil, errors.Trace(err)
-				}
-				if e.duplicateDetection {
-					newRangeProps := make(rangeProperties, 0, len(rangeProps))
-					for _, p := range rangeProps {
-						if !bytes.Equal(p.Key, engineMetaKey) {
-							p.Key, err = e.keyAdapter.Decode(nil, p.Key)
-							if err != nil {
-								log.L().Warn(
-									"decodeRangeProperties failed because the props key is invalid",
-									zap.Stringer("engine", e.UUID),
-									zap.Stringer("fileNum", info.FileNum),
-									zap.Binary("key", p.Key),
-								)
-								return nil, errors.Trace(err)
-							}
-							newRangeProps = append(newRangeProps, p)
-						}
-					}
-					rangeProps = newRangeProps
 				}
 				sizeProps.addAll(rangeProps)
 			}
