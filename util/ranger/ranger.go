@@ -53,7 +53,7 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // points2Ranges build index ranges from range points.
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldTypeBuilder) ([]*Range, error) {
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], tp)
@@ -72,7 +72,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			continue
 		}
 		// If column has not null flag, [null, null] should be removed.
-		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
+		if mysql.HasNotNullFlag(tp.GetFlag()) && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
 
@@ -87,7 +87,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 	return ranges, nil
 }
 
-func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldTypeBuilder) (*point, error) {
+func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*point, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
@@ -95,23 +95,23 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldTypeBuil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
+		if tp.GetTp() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
-		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+		} else if tp.GetTp() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if tp.Tp == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+		} else if tp.GetTp() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
-		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+		} else if tp.GetTp() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
 			if point.value.GetInt64() > 0 {
-				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				upperEnum, err := types.ParseEnumValue(tp.GetElems(), uint64(len(tp.GetElems())))
 				if err != nil {
 					return nil, err
 				}
-				casted.SetMysqlEnum(upperEnum, tp.Collate)
+				casted.SetMysqlEnum(upperEnum, tp.GetCollate())
 			}
 		} else {
 			return point, errors.Trace(err)
@@ -158,7 +158,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldTypeBuil
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
 func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints []*point,
-	ft *types.FieldTypeBuilder) ([]*Range, error) {
+	ft *types.FieldType) ([]*Range, error) {
 	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
@@ -176,7 +176,7 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin []*Range, rangePoints [
 }
 
 func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints []*point,
-	ft *types.FieldTypeBuilder) ([]*Range, error) {
+	ft *types.FieldType) ([]*Range, error) {
 	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sctx, rangePoints[i], ft)
@@ -237,11 +237,11 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldTypeBuilder) ([]*Range, error) {
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType) ([]*Range, error) {
 	ranges := make([]*Range, 0, len(rangePoints)/2)
 	var minValueDatum, maxValueDatum types.Datum
 	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
-	if mysql.HasUnsignedFlag(tp.Flag) {
+	if mysql.HasUnsignedFlag(tp.GetFlag()) {
 		minValueDatum.SetUint64(0)
 		maxValueDatum.SetUint64(math.MaxUint64)
 	} else {
@@ -287,7 +287,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 }
 
 // buildColumnRange builds range from CNF conditions.
-func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldTypeBuilder, tableRange bool, colLen int) (ranges []*Range, err error) {
+func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool, colLen int) (ranges []*Range, err error) {
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
@@ -296,7 +296,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	newTp := newFieldTypeBuilder(tp)
+	newTp := newFieldType(tp)
 	if tableRange {
 		ranges, err = points2TableRanges(sctx, rangePoints, newTp)
 	} else {
@@ -326,12 +326,12 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 }
 
 // BuildTableRange builds range of PK column for PhysicalTableScan.
-func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldTypeBuilder) ([]*Range, error) {
+func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType) ([]*Range, error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength)
 }
 
 // BuildColumnRange builds range from access conditions for general columns.
-func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldTypeBuilder, colLen int) ([]*Range, error) {
+func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
@@ -339,7 +339,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldTypeBuilder,
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
 	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	var (
@@ -347,7 +347,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldTypeBuilder,
 		err    error
 	)
 	for _, col := range d.cols {
-		newTp = append(newTp, newFieldTypeBuilder(col.RetType))
+		newTp = append(newTp, newFieldType(col.RetType))
 	}
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
@@ -471,7 +471,7 @@ func hasPrefix(lengths []int) bool {
 //    whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
 //    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
 //    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldTypeBuilder) bool {
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
 	var hasCut bool
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
@@ -500,9 +500,9 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldTypeBuil
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
 // If it's binary or ascii encoded, we will cut it by bytes rather than characters.
-func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder) bool {
+func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
-		colCharset := tp.Charset
+		colCharset := tp.GetCharset()
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
 			if len(colValue) > length {
@@ -510,7 +510,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder)
 				if v.Kind() == types.KindBytes {
 					v.SetBytes(colValue[:length])
 				} else {
-					v.SetString(v.GetString()[:length], tp.Collate)
+					v.SetString(v.GetString()[:length], tp.GetCollate())
 				}
 				return true
 			}
@@ -518,7 +518,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder)
 			rs := bytes.Runes(colValue)
 			truncateStr := string(rs[:length])
 			// truncate value and limit its length
-			v.SetString(truncateStr, tp.Collate)
+			v.SetString(truncateStr, tp.GetCollate())
 			return true
 		}
 	}
@@ -526,9 +526,9 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder)
 }
 
 // ReachPrefixLen checks whether the length of v is equal to the prefix length.
-func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder) bool {
+func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
-		colCharset := tp.Charset
+		colCharset := tp.GetCharset()
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
 			return len(colValue) == length
@@ -538,22 +538,22 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldTypeBuilder) bool
 	return false
 }
 
-// We cannot use the FieldTypeBuilder of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldTypeBuilder of column a.
-func newFieldTypeBuilder(tp *types.FieldTypeBuilder) *types.FieldTypeBuilder {
+func newFieldType(tp *types.FieldType) *types.FieldType {
 	switch tp.GetTp() {
 	// To avoid overflow error.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		newTp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
-		newTp.Flag = tp.Flag
-		newTp.Charset = tp.Charset
-		return newTp
+		newTp.Flag = tp.GetFlag()
+		newTp.Charset = tp.GetCharset()
+		return newTp.Build()
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		newTp := types.NewFieldTypeBuilderWithCollation(tp.Tp, tp.Collate, types.UnspecifiedLength)
-		newTp.Charset = tp.Charset
-		return newTp
+		newTp := types.NewFieldTypeBuilderWithCollation(tp.GetTp(), tp.GetCollate(), types.UnspecifiedLength)
+		newTp.Charset = tp.GetCharset()
+		return newTp.Build()
 	default:
 		return tp
 	}

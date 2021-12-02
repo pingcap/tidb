@@ -108,7 +108,7 @@ func TestCast(t *testing.T) {
 
 	expr := &ast.FuncCastExpr{
 		Expr: ast.NewValueExpr(1, "", ""),
-		Tp:   f,
+		Tp:   f.Build(),
 	}
 
 	ctx := MockContext()

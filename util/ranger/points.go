@@ -237,7 +237,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		op    string
 		value types.Datum
 		err   error
-		ft    *types.FieldTypeBuilder
+		ft    *types.FieldType
 	)
 
 	// refineValueAndOp refines the constant datum and operator:
@@ -245,10 +245,10 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
 	refineValueAndOp := func(col *expression.Column, value *types.Datum, op *string) (err error) {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
-			value.SetString(value.GetString(), col.RetType.Collate)
+			value.SetString(value.GetString(), col.RetType.GetCollate())
 		}
 		// If nulleq with null value, values.ToInt64 will return err
-		if col.GetType().Tp == mysql.TypeYear && !value.IsNull() {
+		if col.GetType().GetTp() == mysql.TypeYear && !value.IsNull() {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
@@ -332,7 +332,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		return nil
 	}
 
-	if ft.Tp == mysql.TypeEnum && ft.EvalType() == types.ETString {
+	if ft.GetTp() == mysql.TypeEnum && ft.EvalType() == types.ETString {
 		return handleEnumFromBinOp(r.sc, ft, value, op)
 	}
 
@@ -375,8 +375,8 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 // handleUnsignedCol handles the case when unsigned column meets negative value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleUnsignedCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (types.Datum, string, bool) {
-	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.GetFlag())
 	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
 		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
 		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
@@ -409,8 +409,8 @@ func handleUnsignedCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (
 // handleBoundCol handles the case when column meets overflow value.
 // The three returned values are: fixed constant value, fixed operator, and a boolean
 // which indicates whether the range is valid or not.
-func handleBoundCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (types.Datum, string, bool) {
-	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
+func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
+	isUnsigned := mysql.HasUnsignedFlag(ft.GetFlag())
 	isNegative := val.Kind() == types.KindInt64 && val.GetInt64() < 0
 	if isUnsigned {
 		return val, op, true
@@ -450,23 +450,23 @@ func handleBoundCol(ft *types.FieldTypeBuilder, val types.Datum, op string) (typ
 	return val, op, true
 }
 
-func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldTypeBuilder, val types.Datum, op string) []*point {
-	res := make([]*point, 0, len(ft.Elems)*2)
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+	res := make([]*point, 0, len(ft.GetElems())*2)
 	appendPointFunc := func(d types.Datum) {
 		res = append(res, &point{value: d, excl: false, start: true})
 		res = append(res, &point{value: d, excl: false, start: false})
 	}
 
 	tmpEnum := types.Enum{}
-	for i := 0; i <= len(ft.Elems); i++ {
+	for i := 0; i <= len(ft.GetElems()); i++ {
 		if i == 0 {
 			tmpEnum = types.Enum{}
 		} else {
-			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Name = ft.GetElems()[i-1]
 			tmpEnum.Value = uint64(i)
 		}
 
-		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
+		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.GetCollate())
 		if v, err := d.CompareDatum(sc, &val); err == nil {
 			switch op {
 			case ast.LT:
@@ -551,7 +551,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	colCollate := expr.GetArgs()[0].GetType().Collate
+	colCollate := expr.GetArgs()[0].GetType().GetCollate()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -570,14 +570,14 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
 			dt.SetString(dt.GetString(), colCollate)
 		}
-		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+		if expr.GetArgs()[0].GetType().GetTp() == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
 				targetType := expr.GetArgs()[0].GetType()
-				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
+				enum, parseErr := types.ParseEnumName(targetType.GetElems(), dt.GetString(), targetType.GetCollate())
 				if parseErr == nil {
-					dt.SetMysqlEnum(enum, targetType.Collate)
+					dt.SetMysqlEnum(enum, targetType.GetCollate())
 				} else {
 					err = parseErr
 				}
@@ -590,7 +590,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
+		if expr.GetArgs()[0].GetType().GetTp() == mysql.TypeYear {
 			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
@@ -628,7 +628,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
 	_, collation := expr.CharsetAndCollation()
-	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
@@ -684,11 +684,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate)
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
 		return []*point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := &point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.GetFlen()))
+	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := &point{excl: true}
@@ -698,7 +698,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.GetFlen()))
+			endPoint.value.SetBytesAsString(highValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
@@ -727,7 +727,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 			return nil
 		}
 		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
-			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.GetTp())
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.GetFlag()) && mysql.IsIntegerType(x.RetType.GetTp())
 		}
 		// negative ranges can be directly ignored for unsigned int columns.
 		if isUnsignedIntCol {

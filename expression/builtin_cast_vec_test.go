@@ -160,7 +160,7 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	t.Parallel()
 
-	col := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeDouble), Index: 0}
+	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
 	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
 	if err != nil {
 		panic(err)
@@ -172,7 +172,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	}
 
 	for _, input := range inputs {
-		result := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeDatetime), input.NumRows())
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
 		require.NoError(t, cast.vecEvalTime(input, result))
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalTime(input.GetRow(i))
@@ -188,7 +188,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 }
 
 func genCastRealAsTime() *chunk.Chunk {
-	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeDouble)}, 10)
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
 	gen := newDefaultRandGen()
 	for i := 0; i < 10; i++ {
 		if i < 5 {
@@ -204,16 +204,17 @@ func genCastRealAsTime() *chunk.Chunk {
 func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	t.Parallel()
 
-	col := &Column{RetType: types.NewFieldTypeBuilder(mysql.TypeString), Index: 0}
+	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
 	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
 	if err != nil {
 		panic(err)
 	}
 	// set `inUnion` to `true`
 	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
-	baseCast.tp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+	tpb := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	// set the `UnsignedFlag` bit
-	baseCast.tp.Flag |= mysql.UnsignedFlag
+	tpb.Flag |= mysql.UnsignedFlag
+	baseCast.tp = tpb.Build()
 	cast := &builtinCastStringAsDecimalSig{baseCast}
 
 	inputs := []*chunk.Chunk{
@@ -222,7 +223,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	}
 
 	for _, input := range inputs {
-		result := chunk.NewColumn(types.NewFieldTypeBuilder(mysql.TypeNewDecimal), input.NumRows())
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
 		require.NoError(t, cast.vecEvalDecimal(input, result))
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalDecimal(input.GetRow(i))
@@ -241,7 +242,7 @@ func genCastStringAsDecimal(isNegative bool) *chunk.Chunk {
 		sign = 1
 	}
 
-	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeString)}, 1024)
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1024)
 	for i := 0; i < 1024; i++ {
 		d := new(types.MyDecimal)
 		f := sign * rand.Float64() * 100000

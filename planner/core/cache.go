@@ -147,24 +147,24 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 }
 
 // FieldSlice is the slice of the types.FieldTypeBuilder
-type FieldSlice []types.FieldTypeBuilder
+type FieldSlice []types.FieldType
 
 // Equal compares FieldSlice with []*types.FieldTypeBuilder
 // Currently this is only used in plan cache to invalidate cache when types of variables are different.
-func (s FieldSlice) Equal(tps []*types.FieldTypeBuilder) bool {
+func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
 	for i := range tps {
 		// We only use part of logic of `func (ft *FieldTypeBuilder) Equal(other *FieldTypeBuilder)` here because (1) only numeric and
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
-		tpEqual := (s[i].Tp == tps[i].GetTp()) ||
-			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
+		tpEqual := (s[i].GetTp() == tps[i].GetTp()) ||
+			(s[i].GetTp() == mysql.TypeVarchar && tps[i].GetTp() == mysql.TypeVarString) ||
+			(s[i].GetTp() == mysql.TypeVarString && tps[i].GetTp() == mysql.TypeVarchar) ||
 			// TypeNull should be considered the same as other types.
-			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
-			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
+			(s[i].GetTp() == mysql.TypeNull || tps[i].GetTp() == mysql.TypeNull)
+		if !tpEqual || s[i].GetCollate() != tps[i].GetCollate() || s[i].GetCollate() != tps[i].GetCollate() ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].GetFlag()) != mysql.HasUnsignedFlag(tps[i].GetFlag())) {
 			return false
 		}
 	}
@@ -180,12 +180,12 @@ type PSTMTPlanCacheValue struct {
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldTypeBuilder) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PSTMTPlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
 	}
-	userVarTypes := make([]types.FieldTypeBuilder, len(userVarTps))
+	userVarTypes := make([]types.FieldType, len(userVarTps))
 	for i, tp := range userVarTps {
 		userVarTypes[i] = *tp
 	}

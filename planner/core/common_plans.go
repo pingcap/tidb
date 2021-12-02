@@ -404,7 +404,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
-	tps := make([]*types.FieldTypeBuilder, len(e.UsingVars))
+	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]

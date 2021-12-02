@@ -103,7 +103,7 @@ func TestToBool(t *testing.T) {
 
 	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(0.1415926, ft)
+	v, err := Convert(0.1415926, ft.Build())
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
@@ -147,7 +147,7 @@ func TestToInt64(t *testing.T) {
 
 	ft := NewFieldTypeBuilder(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(3.1415926, ft.Build())
 	require.NoError(t, err)
 	testDatumToInt64(t, v, int64(3))
 }
@@ -178,7 +178,7 @@ func TestConvertToFloat(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ConvertTo(sc, NewFieldTypeBuilder(testCase.GetTp()))
+		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
@@ -225,13 +225,13 @@ func TestToJSON(t *testing.T) {
 		{NewStringDatum("hello, 世界"), "", false},
 	}
 	for _, tt := range tests {
-		obtain, err := tt.datum.ConvertTo(sc, ft)
+		obtain, err := tt.datum.ConvertTo(sc, ft.Build())
 		if tt.success {
 			require.NoError(t, err)
 
 			sd := NewStringDatum(tt.expected)
 			var expected Datum
-			expected, err = sd.ConvertTo(sc, ft)
+			expected, err = sd.ConvertTo(sc, ft.Build())
 			require.NoError(t, err)
 
 			var cmp int
@@ -343,10 +343,10 @@ func TestCloneDatum(t *testing.T) {
 	}
 }
 
-func newTypeWithFlag(tp byte, flag uint) *FieldTypeBuilder {
+func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	t := NewFieldTypeBuilder(tp)
 	t.Flag |= flag
-	return t
+	return t.Build()
 }
 
 func newMyDecimal(val string, t *testing.T) *MyDecimal {
@@ -356,12 +356,12 @@ func newMyDecimal(val string, t *testing.T) *MyDecimal {
 	return &d
 }
 
-func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldTypeBuilder {
-	return &FieldTypeBuilder{
+func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
+	return (&FieldTypeBuilder{
 		Tp:      tp,
 		Flen:    flen,
 		Decimal: decimal,
-	}
+	}).Build()
 }
 
 func TestEstimatedMemUsage(t *testing.T) {
@@ -393,7 +393,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	testData := []struct {
 		a         Datum
 		res       Datum
-		retType   *FieldTypeBuilder
+		retType   *FieldType
 		roundType RoundingType
 	}{
 		// int64 reserve to uint64
@@ -517,7 +517,7 @@ func TestStringToMysqlBit(t *testing.T) {
 	tp := NewFieldTypeBuilder(mysql.TypeBit)
 	tp.Flen = 1
 	for _, tt := range tests {
-		bin, err := tt.a.convertToMysqlBit(nil, tp)
+		bin, err := tt.a.convertToMysqlBit(nil, tp.Build())
 		require.NoError(t, err)
 		require.Equal(t, tt.out, bin.b)
 	}

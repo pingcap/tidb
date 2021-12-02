@@ -107,8 +107,8 @@ func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	c.Assert(err, IsNil)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
-	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
-	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
+	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.GetFlag() & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().GetFlag() & mysql.NotNullFlag
 	c.Assert(schemaNullFlag, Equals, exprNullFlag)
 }
 
@@ -311,8 +311,8 @@ func (s *testPlanSuite) TestExtraPKNotNullFlag(c *C) {
 	c.Assert(err, IsNil, comment)
 	ds := p.(*LogicalProjection).children[0].(*LogicalAggregation).children[0].(*DataSource)
 	c.Assert(ds.Columns[2].Name.L, Equals, "_tidb_rowid")
-	c.Assert(ds.Columns[2].Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
-	c.Assert(ds.schema.Columns[2].RetType.Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
+	c.Assert(ds.Columns[2].GetFlag(), Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
+	c.Assert(ds.schema.Columns[2].RetType.GetFlag(), Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
 }
 
 func buildLogicPlan4GroupBy(s *testPlanSuite, c *C, sql string) (Plan, error) {

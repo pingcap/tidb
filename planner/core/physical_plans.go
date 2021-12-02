@@ -546,7 +546,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 		ts.Ranges = res.Ranges
 	} else {
 		var err error
-		pkTP := ts.Table.GetPkColInfo().FieldTypeBuilder
+		pkTP := ts.Table.GetPkColInfo().FieldType
 		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
 		if err != nil {
 			return nil, err

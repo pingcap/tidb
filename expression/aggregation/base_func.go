@@ -38,7 +38,7 @@ type baseFuncDesc struct {
 	// Args represents the arguments of the function.
 	Args []expression.Expression
 	// RetTp represents the return type of the function.
-	RetTp *types.FieldTypeBuilder
+	RetTp *types.FieldType
 }
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
@@ -127,12 +127,13 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 }
 
 func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
-	a.RetTp.Flen = 21
-	a.RetTp.Decimal = 0
+	builder := types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	builder.Flen = 21
+	builder.Decimal = 0
 	// count never returns null
-	a.RetTp.Flag |= mysql.NotNullFlag
-	types.SetBinChsClnFlag(a.RetTp)
+	builder.Flag |= mysql.NotNullFlag
+	types.SetBinChsClnFlag(builder)
+	a.RetTp = builder.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
@@ -160,20 +161,21 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 
 	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
+		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	case mysql.TypeDouble, mysql.TypeFloat:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	case mysql.TypeNewDecimal:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
-		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
-			a.RetTp.Decimal = mysql.MaxDecimalScale
+		builder := types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+		builder.Flen, builder.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().GetDecimal()
+		if builder.Decimal < 0 || builder.Decimal > mysql.MaxDecimalScale {
+			builder.Decimal = mysql.MaxDecimalScale
 		}
+		a.RetTp = builder.Build()
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
-		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp = a.Args[0].GetType()
 	default:
-		a.RetTp = a.Args[0].GetType().Clone()
-		a.RetTp.Flag &= ^mysql.NotNullFlag
+		tp := a.Args[0].GetType()
+		a.RetTp = tp.SetFlag(tp.GetFlag() & ^mysql.NotNullFlag)
 	}
 	return nil
 }
@@ -181,130 +183,143 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
+	var builder *types.FieldTypeBuilder
 	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
+		builder = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+		builder.Flen, builder.Decimal = mathutil.Min(a.Args[0].GetType().GetFlen()+21, mysql.MaxDecimalWidth), 0
 		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
+			builder.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeNewDecimal:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+22, a.Args[0].GetType().Decimal
+		builder = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+		builder.Flen, builder.Decimal = a.Args[0].GetType().GetFlen()+22, a.Args[0].GetType().GetDecimal()
 		if a.Args[0].GetType().GetFlen() < 0 || a.RetTp.GetFlen() > mysql.MaxDecimalWidth {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
+			builder.Flen = mysql.MaxDecimalWidth
 		}
-		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
-			a.RetTp.Decimal = mysql.MaxDecimalScale
+		if builder.Decimal < 0 || builder.Decimal > mysql.MaxDecimalScale {
+			builder.Decimal = mysql.MaxDecimalScale
 		}
 	case mysql.TypeDouble, mysql.TypeFloat:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		builder = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		builder.Flen, builder.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().GetDecimal()
 	default:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		builder = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		builder.Flen, builder.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	}
-	types.SetBinChsClnFlag(a.RetTp)
+	types.SetBinChsClnFlag(builder)
+	a.RetTp = builder.Build()
 }
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
+	var builder *types.FieldTypeBuilder
 	switch a.Args[0].GetType().GetTp() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
-		a.RetTp.Decimal = types.DivFracIncr
+		builder = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+		builder.Decimal = types.DivFracIncr
 		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().GetTp())
-		a.RetTp.Flen = GetFlen() + types.DivFracIncr
+		builder.Flen = flen + types.DivFracIncr
 	case mysql.TypeYear, mysql.TypeNewDecimal:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
-		if a.Args[0].GetType().Decimal < 0 {
-			a.RetTp.Decimal = mysql.MaxDecimalScale
+		builder = types.NewFieldTypeBuilder(mysql.TypeNewDecimal)
+		if a.Args[0].GetType().GetDecimal() < 0 {
+			builder.Decimal = mysql.MaxDecimalScale
 		} else {
-			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
+			builder.Decimal = mathutil.Min(a.Args[0].GetType().GetDecimal()+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
+		builder.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().GetFlen()+types.DivFracIncr)
 		if a.Args[0].GetType().GetFlen() < 0 {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
+			builder.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeDouble, mysql.TypeFloat:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		builder = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		builder.Flen, builder.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().GetDecimal()
 	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, 4
+		builder = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		builder.Flen, builder.Decimal = mysql.MaxRealWidth, 4
 	default:
-		a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		builder = types.NewFieldTypeBuilder(mysql.TypeDouble)
+		builder.Flen, builder.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	}
-	types.SetBinChsClnFlag(a.RetTp)
+	types.SetBinChsClnFlag(builder)
+	a.RetTp = builder.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeVarString)
-	a.RetTp.Charset, a.RetTp.Collate = charset.GetDefaultCharsetAndCollate()
+	builder := types.NewFieldTypeBuilder(mysql.TypeVarString)
+	builder.Charset, builder.Collate = charset.GetDefaultCharsetAndCollate()
 
-	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
+	builder.Flen, builder.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
+	a.RetTp = builder.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
-	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
+	if argIsScalaFunc && a.Args[0].GetType().GetTp() == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
 		// field in the "Datum". If we do not wrap a cast-as-double function on a.Args[0],
 		// error would happen when extracting the evaluation of a.Args[0] to a ProjectionExec.
 		tp := types.NewFieldTypeBuilder(mysql.TypeDouble)
 		tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 		types.SetBinChsClnFlag(tp)
-		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
+		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp.Build())
 	}
 	a.RetTp = a.Args[0].GetType()
-	if (a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin) && a.RetTp.Tp != mysql.TypeBit {
-		a.RetTp = a.Args[0].GetType().Clone()
-		a.RetTp.Flag &^= mysql.NotNullFlag
+	if (a.Name == ast.AggFuncMax || a.Name == ast.AggFuncMin) && a.RetTp.GetTp() != mysql.TypeBit {
+		tp := a.Args[0].GetType()
+		a.RetTp = tp.SetFlag(tp.GetFlag() &^ mysql.NotNullFlag)
 	}
 	// issue #13027, #13961
-	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) &&
+	if (a.RetTp.GetTp() == mysql.TypeEnum || a.RetTp.GetTp() == mysql.TypeSet) &&
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
-		a.RetTp = &types.FieldTypeBuilder{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
+		tp := types.NewFieldTypeBuilder(mysql.TypeString)
+		tp.Flen = mysql.MaxFieldCharLength
+		a.RetTp = tp.Build()
 	}
 }
 
 func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
-	a.RetTp.Flen = 21
-	types.SetBinChsClnFlag(a.RetTp)
-	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	tp.Flen = 21
+	types.SetBinChsClnFlag(tp)
+	tp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeJSON)
-	types.SetBinChsClnFlag(a.RetTp)
+	tp := types.NewFieldTypeBuilder(mysql.TypeJSON)
+	types.SetBinChsClnFlag(tp)
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
-	a.RetTp.Flen = 21
-	types.SetBinChsClnFlag(a.RetTp)
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	tp.Flen = 21
+	types.SetBinChsClnFlag(tp)
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4CumeDist() {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+	tp := types.NewFieldTypeBuilder(mysql.TypeDouble)
+	tp.Flen, tp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4Ntile() {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeLonglong)
-	a.RetTp.Flen = 21
-	types.SetBinChsClnFlag(a.RetTp)
-	a.RetTp.Flag |= mysql.UnsignedFlag
+	tp := types.NewFieldTypeBuilder(mysql.TypeLonglong)
+	tp.Flen = 21
+	types.SetBinChsClnFlag(tp)
+	tp.Flag |= mysql.UnsignedFlag
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4PercentRank() {
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-	a.RetTp.Flag, a.RetTp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+	tp := types.NewFieldTypeBuilder(mysql.TypeDouble)
+	tp.Flag, tp.Decimal = mysql.MaxRealWidth, mysql.NotFixedDec
+	a.RetTp = tp.Build()
 }
 
 func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
@@ -319,8 +334,9 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 
 func (a *baseFuncDesc) typeInfer4PopOrSamp(ctx sessionctx.Context) {
 	// var_pop/std/var_samp/stddev_samp's return value type is double
-	a.RetTp = types.NewFieldTypeBuilder(mysql.TypeDouble)
-	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+	tp := types.NewFieldTypeBuilder(mysql.TypeDouble)
+	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+	a.RetTp = tp.Build()
 }
 
 // GetDefaultValue gets the default value when the function's input is null.
@@ -344,7 +360,7 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
 	case ast.AggFuncApproxCountDistinct:
-		if a.RetTp.Tp != mysql.TypeString {
+		if a.RetTp.GetTp() != mysql.TypeString {
 			v = types.NewIntDatum(0)
 		}
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
@@ -375,7 +391,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
 	if a.Name == ast.AggFuncGroupConcat {
 		for i := 0; i < len(a.Args)-1; i++ {
-			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+			if tp := a.Args[i].GetType(); tp.GetTp() == mysql.TypeNewDecimal {
 				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 			}
 		}
@@ -402,7 +418,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETDatetime, types.ETTimestamp:
 		castFunc = func(ctx sessionctx.Context, expr expression.Expression) expression.Expression {
-			return expression.WrapWithCastAsTime(ctx, expr, retTp)
+			return expression.WrapWithCastAsTime(ctx, expr, retTp.GetTp())
 		}
 	case types.ETDuration:
 		castFunc = expression.WrapWithCastAsDuration
@@ -416,7 +432,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
-		if a.Args[i].GetType().Tp == mysql.TypeNull {
+		if a.Args[i].GetType().GetTp() == mysql.TypeNull {
 			continue
 		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
@@ -434,12 +450,12 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		// need to set a new variable for it to avoid modifying the
 		// definition in `infoschema`.
 		if col, ok := a.Args[i].(*expression.Column); ok {
-			col.RetType = types.NewFieldTypeBuilder(col.RetType.GetTp())
+			col.RetType = types.NewFieldType(col.RetType.GetTp())
 		}
 		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.
-		originTp := a.Args[i].GetType().Tp
-		*(a.Args[i].GetType()) = *(a.RetTp)
-		a.Args[i].GetType().Tp = originTp
+		tp := a.RetTp.ToBuilder()
+		tp.Tp = a.Args[i].GetType().GetTp()
+		a.Args[i].SetType(tp.Build())
 	}
 }

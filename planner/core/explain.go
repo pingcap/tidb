@@ -311,7 +311,7 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	var unsignedIntHandle bool
 	if p.Table.PKIsHandle {
 		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 		}
 	}
 	for _, ran := range p.Ranges {
@@ -592,7 +592,7 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldTypeBuilder(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
 			if err != nil {
 			}
 			exprs = append(exprs, expr)

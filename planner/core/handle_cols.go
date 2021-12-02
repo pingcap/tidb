@@ -50,7 +50,7 @@ type HandleCols interface {
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum) (int, error)
 	// GetFieldTypes return field types of columns.
-	GetFieldsTypes() []*types.FieldTypeBuilder
+	GetFieldsTypes() []*types.FieldType
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -161,8 +161,8 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldTypeBuilder {
-	fieldTps := make([]*types.FieldTypeBuilder, 0, len(cb.columns))
+func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
+	fieldTps := make([]*types.FieldType, 0, len(cb.columns))
 	for _, col := range cb.columns {
 		fieldTps = append(fieldTps, col.RetType)
 	}
@@ -250,8 +250,8 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.
-func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldTypeBuilder {
-	return []*types.FieldTypeBuilder{types.NewFieldTypeBuilder(mysql.TypeLonglong)}
+func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

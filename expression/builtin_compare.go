@@ -117,7 +117,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
-	fieldTps := make([]*types.FieldTypeBuilder, 0, len(args))
+	fieldTps := make([]*types.FieldType, 0, len(args))
 	for _, arg := range args {
 		fieldTps = append(fieldTps, arg.GetType())
 	}
@@ -147,7 +147,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if resultFieldType.Tp == mysql.TypeNull {
-		types.SetBinChsClnFlag(bf.GetTp())
+		types.SetBinChsClnFlag(bf.tp)
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
@@ -376,8 +376,8 @@ func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, i
 	return res, isNull, err
 }
 
-func aggregateType(args []Expression) *types.FieldTypeBuilder {
-	fieldTypes := make([]*types.FieldTypeBuilder, len(args))
+func aggregateType(args []Expression) *types.FieldType {
+	fieldTypes := make([]*types.FieldType, len(args))
 	for i := range fieldTypes {
 		fieldTypes[i] = args[i].GetType()
 	}
@@ -420,7 +420,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
 	aggType := aggregateType(args)
 
-	var temporalItem *types.FieldTypeBuilder
+	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
 			item := args[i].GetType()
@@ -1194,7 +1194,7 @@ func (c *compareFunctionClass) getDisplayName() string {
 }
 
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
-func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldTypeBuilder) types.EvalType {
+func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
 		if lft.Tp == rft.Tp {
 			return types.ETString
@@ -1319,7 +1319,7 @@ func isTemporalColumn(expr Expression) bool {
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldTypeBuilder, con *Constant) (_ *Constant, isExceptional bool) {
+func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
@@ -1356,7 +1356,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldTypeBuilder, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
+func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, false
@@ -1364,7 +1364,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	sc := ctx.GetSessionVars().StmtCtx
 
 	if targetFieldType.Tp == mysql.TypeBit {
-		targetFieldType = *types.NewFieldTypeBuilder(mysql.TypeLonglong)
+		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
@@ -1393,12 +1393,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
-		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldTypeBuilder(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
 	case opcode.LE, opcode.GT:
-		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldTypeBuilder(mysql.TypeUnspecified), con)
+		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
 			return tryToConvertConstantInt(ctx, &targetFieldType, resultCon)
 		}
@@ -1424,7 +1424,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			// 3. Suppose the value of `con` is 2, when `targetFieldType.Tp` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
-			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldTypeBuilder(mysql.TypeDouble))
+			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}

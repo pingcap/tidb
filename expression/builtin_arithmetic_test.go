@@ -32,7 +32,7 @@ import (
 func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	t.Parallel()
 
-	ret := &types.FieldTypeBuilder{}
+	ret := &types.FieldType{}
 	a := &types.FieldTypeBuilder{
 		Decimal: 1,
 		Flen:    3,
@@ -41,29 +41,29 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 		Decimal: 0,
 		Flen:    2,
 	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, false)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, 6, ret.GetFlen())
 
 	b.Flen = 65
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, false)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, false)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, false, false)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
 	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, false)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	b.Decimal = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, false)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
-	ret = &types.FieldTypeBuilder{}
+	ret = &types.FieldType{}
 	a = &types.FieldTypeBuilder{
 		Decimal: 1,
 		Flen:    3,
@@ -72,26 +72,26 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 		Decimal: 0,
 		Flen:    2,
 	}
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, true)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, 8, ret.GetFlen())
 
 	b.Flen = 65
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, true)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, true)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, false, true)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
 	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, 1, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, true)
+	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	b.Decimal = types.UnspecifiedLength
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
-	require.Equal(t, types.UnspecifiedLength, ret.Decimal)
+	ret = setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a.Build()}, &Constant{RetType: b.Build()}, true, true)
+	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 }
 

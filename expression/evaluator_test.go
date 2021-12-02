@@ -36,7 +36,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func kindToFieldType(kind byte) types.FieldTypeBuilder {
+func kindToFieldType(kind byte) *types.FieldType {
 	ft := types.FieldTypeBuilder{}
 	switch kind {
 	case types.KindNull:
@@ -79,18 +79,19 @@ func kindToFieldType(kind byte) types.FieldTypeBuilder {
 	case types.KindMysqlJSON:
 		ft.Tp = mysql.TypeJSON
 	}
-	return ft
+	return ft.Build()
 }
 
 func datumsToConstants(datums []types.Datum) []Expression {
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := kindToFieldType(d.Kind())
-		if types.IsNonBinaryStr(&ft) {
-			ft.Collate = d.Collation()
+		ftb := ft.ToBuilder()
+		if types.IsNonBinaryStr(ft) {
+			ftb.Collate = d.Collation()
 		}
-		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		constants = append(constants, &Constant{Value: d, RetType: &ft})
+		ftb.Flen, ftb.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		constants = append(constants, &Constant{Value: d, RetType: ftb.Build()})
 	}
 	return constants
 }

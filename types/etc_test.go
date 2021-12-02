@@ -213,7 +213,7 @@ func TestIsTypeTemporal(t *testing.T) {
 func TestIsBinaryStr(t *testing.T) {
 	t.Parallel()
 
-	in := FieldTypeBuilder{
+	in := &FieldTypeBuilder{
 		Tp:      mysql.TypeBit,
 		Flag:    mysql.UnsignedFlag,
 		Flen:    1,
@@ -222,22 +222,22 @@ func TestIsBinaryStr(t *testing.T) {
 		Collate: charset.CollationUTF8,
 	}
 	in.Collate = charset.CollationUTF8
-	res := IsBinaryStr(&in)
+	res := IsBinaryStr(in.Build())
 	require.False(t, res)
 
 	in.Collate = charset.CollationBin
-	res = IsBinaryStr(&in)
+	res = IsBinaryStr(in.Build())
 	require.False(t, res)
 
 	in.Tp = mysql.TypeBlob
-	res = IsBinaryStr(&in)
+	res = IsBinaryStr(in.Build())
 	require.True(t, res)
 }
 
 func TestIsNonBinaryStr(t *testing.T) {
 	t.Parallel()
 
-	in := FieldTypeBuilder{
+	in := &FieldTypeBuilder{
 		Tp:      mysql.TypeBit,
 		Flag:    mysql.UnsignedFlag,
 		Flen:    1,
@@ -247,15 +247,15 @@ func TestIsNonBinaryStr(t *testing.T) {
 	}
 
 	in.Collate = charset.CollationBin
-	res := IsBinaryStr(&in)
+	res := IsBinaryStr(in.Build())
 	require.False(t, res)
 
 	in.Collate = charset.CollationUTF8
-	res = IsBinaryStr(&in)
+	res = IsBinaryStr(in.Build())
 	require.False(t, res)
 
 	in.Tp = mysql.TypeBlob
-	res = IsBinaryStr(&in)
+	res = IsBinaryStr(in.Build())
 	require.False(t, res)
 }
 

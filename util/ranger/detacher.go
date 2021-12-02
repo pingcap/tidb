@@ -121,7 +121,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -143,7 +143,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -166,7 +166,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		if !ok {
 			return -1
 		}
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -262,7 +262,7 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
-func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, tpSlice []*types.FieldTypeBuilder, considerDNF bool) (*DetachRangeResult, error) {
+func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expression.Expression, tpSlice []*types.FieldType, considerDNF bool) (*DetachRangeResult, error) {
 	var (
 		eqCount int
 		ranges  []*Range
@@ -609,7 +609,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
-func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldTypeBuilder) ([]*Range, []expression.Expression, []*valueInfo, bool, error) {
+func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) ([]*Range, []expression.Expression, []*valueInfo, bool, error) {
 	firstColumnChecker := &conditionChecker{
 		checkerCol:    d.cols[0],
 		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
@@ -765,9 +765,9 @@ type rangeDetacher struct {
 
 func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, error) {
 	res := &DetachRangeResult{}
-	newTpSlice := make([]*types.FieldTypeBuilder, 0, len(d.cols))
+	newTpSlice := make([]*types.FieldType, 0, len(d.cols))
 	for _, col := range d.cols {
-		newTpSlice = append(newTpSlice, newFieldTypeBuilder(col.RetType))
+		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
 	if len(d.allConds) == 1 {
 		if sf, ok := d.allConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
@@ -794,9 +794,9 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) ([]*Range, []expression.Expression, error) {
-	newTpSlice := make([]*types.FieldTypeBuilder, 0, len(cols))
+	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
-		newTpSlice = append(newTpSlice, newFieldTypeBuilder(col.RetType))
+		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
 	d := &rangeDetacher{
 		sctx:             sctx,
