@@ -315,7 +315,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logi
 }
 
 func appendProjEliminateTraceStep(proj *LogicalProjection, opt *logicalOptimizeOp) {
-	reason := fmt.Sprintf("Pro[%v] can be eliminated", proj.ID())
+	reason := fmt.Sprintf("Proj[%v]'s Exprs are all Columns", proj.ID())
 	action := fmt.Sprintf("Proj[%v] is eliminated", proj.ID())
 	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

@@ -119,7 +119,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "agg[6] pushed down across join[5], and join right path becomes agg[8]",
-					assertReason: "agg[%v]'s functions[count(Column#38)] are decomposable with join",
+					assertReason: "agg[6]'s functions[count(Column#38)] are decomposable with join",
 				},
 			},
 		},
@@ -134,11 +134,11 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 				{
 					assertAction: "proj[6] is eliminated, and agg[11]'s functions changed into[sum(test.t.c),firstrow(test.t.d)]",
-					assertReason: "projection can be eliminated",
+					assertReason: "Proj[6] is directly below an agg[11] and has no side effects",
 				},
 				{
 					assertAction: "proj[7] is eliminated, and agg[12]'s functions changed into[sum(test.t.a),firstrow(test.t.b)]",
-					assertReason: "projection can be eliminated",
+					assertReason: "Proj[7] is directly below an agg[12] and has no side effects",
 				},
 			},
 		},

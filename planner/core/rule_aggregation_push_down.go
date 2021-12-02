@@ -517,7 +517,7 @@ func (*aggregationPushDownSolver) name() string {
 func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
 	childIdx int, opt *logicalOptimizeOp) {
 	reason := func() string {
-		buffer := bytes.NewBufferString("agg[%v]'s functions[")
+		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v]'s functions[", oldAgg.ID()))
 		for i, aggFunc := range aggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -552,7 +552,8 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 		buffer.WriteString("]")
 		return buffer.String()
 	}()
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), "projection can be eliminated", action)
+	reason := fmt.Sprintf("Proj[%v] is directly below an agg[%v] and has no side effects", proj.ID(), agg.ID())
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) {
