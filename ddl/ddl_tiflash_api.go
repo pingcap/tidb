@@ -23,8 +23,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/placement"
 	"go.uber.org/zap"
@@ -254,7 +254,8 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	// _update_cluster
+
+	// TODO Is there any ways we can get all TiFlash stores without send request to PD?
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -302,7 +303,11 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// TODO Can we batch request table?
-		if !tb.Available {
+		available := tb.Available
+		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
+			available = val.(bool)
+		})
+		if !available {
 			bo, ok := (*backoffs)[tb.ID]
 			if !ok {
 				if len(*backoffs) < PollTiFlashReplicaStatusBackoffCapacity {
@@ -357,7 +362,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 				}
 			}
 
-			// TODO Is it necessary, or we can get from TiDB, like using tb.Count?
+			// TODO It will be better if we can get `regionCount` directly from TiDB.
 			var stats helper.PDRegionStats
 			if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
 				return false, errors.Trace(err)
@@ -365,9 +370,12 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 
 			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
-			available := regionCount == flashRegionCount
+			avail := regionCount == flashRegionCount
+			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
+				avail = val.(bool)
+			})
 
-			if !available {
+			if !avail {
 				bo, ok := (*backoffs)[tb.ID]
 				if ok {
 					bo.Backoff()
@@ -377,7 +385,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 				log.Info("tiflash table is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
 			}
 
-			err := d.UpdateTableReplicaInfo(ctx, tb.ID, available)
+			err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail)
 			if err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
 			}

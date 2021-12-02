@@ -350,6 +350,37 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
+// Test when TiFlash Replia is not ready for some period of time.
+func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	ddl.DisableTiFlashPoll(s.dom.DDL())
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`), IsNil)
+	ddl.EnableTiFlashPoll(s.dom.DDL())
+	time.Sleep(ddl.PollTiFlashInterval * 2)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, false)
+	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
+	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
+	time.Sleep(ddl.PollTiFlashInterval * 1)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, false)
+	time.Sleep(ddl.PollTiFlashInterval * 1)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, true)
+}
+
 // TiFlash Table shall be eventually available, even with lots of small table created.
 func (s *tiflashDDLTestSuite) TestTiFlashMassiveReplicaAvailable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
