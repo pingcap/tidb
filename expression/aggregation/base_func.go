@@ -283,16 +283,6 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		(a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
-	// valid the precision and scale of decimal type
-	if a.RetTp.Tp == mysql.TypeNewDecimal {
-		a.RetTp = a.RetTp.Clone()
-		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
-			a.RetTp.Decimal = mysql.MaxDecimalScale
-		}
-		if a.RetTp.Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
-		}
-	}
 }
 
 func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
