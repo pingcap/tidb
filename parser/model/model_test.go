@@ -136,7 +136,7 @@ func TestModelBasic(t *testing.T) {
 	extraPK := NewExtraHandleColInfo()
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
 	require.Equal(t, charset.CharsetBin, extraPK.Charset)
-	require.Equal(t, charset.CharsetBin, extraPK.Collate)
+	require.Equal(t, charset.CollationBin, extraPK.Collate)
 }
 
 func TestJobStartTime(t *testing.T) {
