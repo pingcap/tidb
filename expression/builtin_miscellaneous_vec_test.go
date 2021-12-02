@@ -144,7 +144,7 @@ func TestSleepVectorized(t *testing.T) {
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := fc.getFunction(ctx, []Expression{col0})
 	require.NoError(t, err)
-	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{ft}, 1024)
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 	warnCnt := counter{}
 

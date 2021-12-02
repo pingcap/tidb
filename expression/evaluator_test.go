@@ -100,7 +100,9 @@ func primitiveValsToConstants(ctx sessionctx.Context, args []interface{}) []Expr
 	cons := datumsToConstants(types.MakeDatums(args...))
 	char, col := ctx.GetSessionVars().GetCharsetInfo()
 	for i, arg := range args {
-		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
+		tpb := cons[i].GetType().ToBuilder()
+		types.DefaultTypeForValue(arg, tpb, char, col)
+		cons[i].SetType(tpb.Build())
 	}
 	return cons
 }

@@ -117,8 +117,10 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = args[0].GetType().Flen // At most.
-	types.SetBinChsClnFlag(bf.GetTp())
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = args[0].GetType().GetFlen() // At most.
+	types.SetBinChsClnFlag(tpb)
+	bf.tp = tpb.Build()
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
 	mode, exists := aesModes[strings.ToLower(blockMode)]
@@ -251,8 +253,10 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
-	types.SetBinChsClnFlag(bf.GetTp())
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1) // At most.
+	types.SetBinChsClnFlag(tpb)
+	bf.tp = tpb.Build()
 
 	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
 	mode, exists := aesModes[strings.ToLower(blockMode)]
@@ -383,7 +387,9 @@ func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf.tp.Flen = args[0].GetType().Flen
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = args[0].GetType().GetFlen()
+	bf.tp = tpb.Build()
 	sig := &builtinDecodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Decode)
 	return sig, nil
@@ -446,7 +452,9 @@ func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf.tp.Flen = args[0].GetType().Flen
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = args[0].GetType().GetFlen()
+	bf.tp = tpb.Build()
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil
@@ -507,7 +515,7 @@ func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.PWDHashLen + 1
+	bf.tp = bf.tp.SetFlen(mysql.PWDHashLen + 1)
 	sig := &builtinPasswordSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Password)
 	return sig, nil
@@ -554,8 +562,10 @@ func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1024 // Max allowed random bytes
-	types.SetBinChsClnFlag(bf.GetTp())
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = 1024 // Max allowed random bytes
+	types.SetBinChsClnFlag(tpb)
+	bf.tp = tpb.Build()
 	sig := &builtinRandomBytesSig{bf}
 	return sig, nil
 }
@@ -601,8 +611,10 @@ func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 32
+	tpb := bf.tp.ToBuilder()
+	tpb.Charset, tpb.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	tpb.Flen = 32
+	bf.tp = tpb.Build()
 	sig := &builtinMD5Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MD5)
 	return sig, nil
@@ -642,8 +654,10 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 40
+	tpb := bf.tp.ToBuilder()
+	tpb.Charset, tpb.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	tpb.Flen = 40
+	bf.tp = tpb.Build()
 	sig := &builtinSHA1Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA1)
 	return sig, nil
@@ -687,8 +701,10 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-	bf.tp.Flen = 128 // sha512
+	tpb := bf.tp.ToBuilder()
+	tpb.Charset, tpb.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	tpb.Flen = 128 // sha512
+	bf.tp = tpb.Build()
 	sig := &builtinSHA2Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_SHA2)
 	return sig, nil
@@ -788,13 +804,15 @@ func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	srcLen := args[0].GetType().Flen
+	srcLen := args[0].GetType().GetFlen()
 	compressBound := srcLen + (srcLen >> 12) + (srcLen >> 14) + (srcLen >> 25) + 13
 	if compressBound > mysql.MaxBlobWidth {
 		compressBound = mysql.MaxBlobWidth
 	}
-	bf.tp.Flen = compressBound
-	types.SetBinChsClnFlag(bf.GetTp())
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = compressBound
+	types.SetBinChsClnFlag(tpb)
+	bf.tp = tpb.Build()
 	sig := &builtinCompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Compress)
 	return sig, nil
@@ -859,8 +877,10 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
-	types.SetBinChsClnFlag(bf.GetTp())
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = mysql.MaxBlobWidth
+	types.SetBinChsClnFlag(tpb)
+	bf.tp = tpb.Build()
 	sig := &builtinUncompressSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Uncompress)
 	return sig, nil
@@ -917,7 +937,9 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, ar
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 10
+	tpb := bf.tp.ToBuilder()
+	tpb.Flen = 10
+	bf.tp = tpb.Build()
 	sig := &builtinUncompressedLengthSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_UncompressedLength)
 	return sig, nil

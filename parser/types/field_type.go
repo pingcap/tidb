@@ -454,7 +454,7 @@ func NewFieldTypeBuilder(tp byte) *FieldTypeBuilder {
 }
 
 // Build returns a new FieldType
-func (ft *FieldTypeBuilder) Build() *FieldType {
+func (ft FieldTypeBuilder) Build() *FieldType {
 	return &FieldType{
 		tp:      ft.Tp,
 		flag:    ft.Flag,

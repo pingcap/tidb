@@ -27,7 +27,7 @@ import (
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
-	constant := &Constant{RetType: &types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}}
+	constant := &Constant{RetType: (&types.FieldTypeBuilder{Tp: mysql.TypeString, Charset: chs, Collate: coll}).Build()}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repertoire)
 	return constant

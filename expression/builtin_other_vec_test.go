@@ -71,7 +71,7 @@ func TestInDecimal(t *testing.T) {
 	inFunc, err := funcs[ast.In].getFunction(ctx, []Expression{col0, col1})
 	require.NoError(t, err)
 
-	input := chunk.NewChunkWithCapacity([]*types.FieldTypeBuilder{ft, ft}, 1024)
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1024)
 	for i := 0; i < 1024; i++ {
 		d0 := new(types.MyDecimal)
 		d1 := new(types.MyDecimal)

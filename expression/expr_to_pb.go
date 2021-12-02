@@ -92,7 +92,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
-func (pc *PbConverter) encodeDatum(ft *types.FieldTypeBuilder, d types.Datum) (tipb.ExprType, []byte, bool) {
+func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
 	var (
 		tp  tipb.ExprType
 		val []byte
@@ -132,7 +132,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldTypeBuilder, d types.Datum) (t
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.Tp, nil)
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetTp(), nil)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -149,16 +149,16 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldTypeBuilder, d types.Datum) (t
 	return tp, val, true
 }
 
-// ToPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
-func ToPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
+// ToPBFieldType converts *types.FieldType to *tipb.FieldType.
+func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.GetTp()),
-		Flag:    uint32(ft.Flag),
+		Flag:    uint32(ft.GetFlag()),
 		Flen:    int32(ft.GetFlen()),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
-		Elems:   ft.Elems,
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
@@ -270,7 +270,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
-	tp := *expr.RetType
+	tp := expr.RetType.ToBuilder()
 	if collate.NewCollationEnabled() {
 		_, tp.Collate = expr.CharsetAndCollation()
 	}
@@ -281,7 +281,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		Val:       encoded,
 		Sig:       pbCode,
 		Children:  children,
-		FieldType: ToPBFieldType(&tp),
+		FieldType: ToPBFieldType(tp.Build()),
 	}
 }
 

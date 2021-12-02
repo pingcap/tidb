@@ -77,8 +77,8 @@ func TestPBToExpr(t *testing.T) {
 				Val: val,
 			},
 		},
-		Sig:              tipb.ScalarFuncSig_AbsInt,
-		FieldTypeBuilder: ToPBFieldType(newIntFieldType()),
+		Sig:       tipb.ScalarFuncSig_AbsInt,
+		FieldType: ToPBFieldType(newIntFieldType().Build()),
 	}
 	_, err = PBToExpr(expr, fieldTps, sc)
 	require.Error(t, err)
@@ -139,28 +139,28 @@ func TestEval(t *testing.T) {
 		// Scalar Functions.
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
-				toPBFieldType(newIntFieldType()),
+				toPBFieldType(newIntFieldType().Build()),
 				jsonDatumExpr(t, `true`),
 			),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonDepthSig,
-				toPBFieldType(newIntFieldType()),
+				toPBFieldType(newIntFieldType().Build()),
 				jsonDatumExpr(t, `[10, {"a": 20}]`),
 			),
 			types.NewIntDatum(3),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonStorageSizeSig,
-				toPBFieldType(newIntFieldType()),
+				toPBFieldType(newIntFieldType().Build()),
 				jsonDatumExpr(t, `[{"a":{"a":1},"b":2}]`),
 			),
 			types.NewIntDatum(25),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_JsonSearchSig,
-				toPBFieldType(newJSONFieldType()),
+				toPBFieldType(newJSONFieldType().Build()),
 				jsonDatumExpr(t, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`),
 				datumExpr(t, types.NewBytesDatum([]byte(`all`))),
 				datumExpr(t, types.NewBytesDatum([]byte(`10`))),
@@ -171,613 +171,613 @@ func TestEval(t *testing.T) {
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(2333))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(2333))),
 			types.NewIntDatum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(2333))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(2333))),
 			types.NewIntDatum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewStringDatum("2333"))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewStringDatum("2333"))),
 			types.NewIntDatum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
 			types.NewIntDatum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewIntDatum(2333))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewIntDatum(2333))),
 			types.NewFloat64Datum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(2333))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(2333))),
 			types.NewFloat64Datum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewStringDatum("2333"))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewStringDatum("2333"))),
 			types.NewFloat64Datum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
 			types.NewFloat64Datum(2333),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewStringDatum("2333"))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewStringDatum("2333"))),
 			types.NewStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewIntDatum(2333))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewIntDatum(2333))),
 			types.NewStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewFloat64Datum(2333))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewFloat64Datum(2333))),
 			types.NewStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
 			types.NewStringDatum("2333"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2333")))),
 			types.NewDecimalDatum(newMyDecimal(t, "2333")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewIntDatum(2333))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewIntDatum(2333))),
 			types.NewDecimalDatum(newMyDecimal(t, "2333")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewFloat64Datum(2333))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewFloat64Datum(2333))),
 			types.NewDecimalDatum(newMyDecimal(t, "2333")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewStringDatum("2333"))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewStringDatum("2333"))),
 			types.NewDecimalDatum(newMyDecimal(t, "2333")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(2)), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(2)), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(2)), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(2)), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LTReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_EQReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LTDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_EQDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GTDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_EQDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEString,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEString,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEString,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewStringDatum("2")), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewStringDatum("2")), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQString,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GTJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[2]"), jsonDatumExpr(t, "[1]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[2]"), jsonDatumExpr(t, "[1]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_GEJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[2]"), jsonDatumExpr(t, "[1]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[2]"), jsonDatumExpr(t, "[1]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LTJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LEJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_EQJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[1]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[1]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NEJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[2]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_NullEQJson,
-				toPBFieldType(newIntFieldType()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[1]")),
+				toPBFieldType(newIntFieldType().Build()), jsonDatumExpr(t, "[1]"), jsonDatumExpr(t, "[1]")),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsNull,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_DurationIsNull,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsNull,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LeftShift,
-				ToPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(1)), datumExpr(t, types.NewIntDatum(1))),
+				ToPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(1)), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(-1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(-1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsUInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewUintDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewUintDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(-1.23))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(-1.23))),
 			types.NewFloat64Datum(1.23),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_AbsDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "-1.23")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "-1.23")))),
 			types.NewDecimalDatum(newMyDecimal(t, "1.23")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalAnd,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalOr,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_LogicalXor,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_BitAndSig,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_BitOrSig,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_BitXorSig,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(0))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_BitNegSig,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(0))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(0))),
 			types.NewIntDatum(-1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InReal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InDecimal,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InString,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewStringDatum("1")), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewIntDatum(1),
 		},
 		// {
 		// 	scalarFunctionExpr(tipb.ScalarFuncSig_InTime,
-		// 		toPBFieldType(newIntFieldType()), datumExpr(t, types.NewTimeDatum(types.ZeroDate)), datumExpr(t, types.NewTimeDatum(types.ZeroDate))),
+		// 		toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewTimeDatum(types.ZeroDate)), datumExpr(t, types.NewTimeDatum(types.ZeroDate))),
 		// 	types.NewIntDatum(1),
 		// },
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_InDuration,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second))), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewFloat64Datum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewFloat64Datum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewDecimalDatum(newMyDecimal(t, "1")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewDecimalDatum(newMyDecimal(t, "2")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewStringDatum("1"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewStringDatum("2"))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewStringDatum("2"))),
 			types.NewStringDatum("2"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfNullDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewDatum(nil)), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewDurationDatum(newDuration(time.Second)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_IfDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*2)))),
 			types.NewDurationDatum(newDuration(time.Second * 2)),
 		},
 
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDurationAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*1)))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second*1)))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewDurationDatum(newDuration(time.Second * 1)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastTimeAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewTimeDatum(newDateTime(t, "2000-01-01")))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewTimeDatum(newDateTime(t, "2000-01-01")))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastIntAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewIntDatum(20000101))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewIntDatum(20000101))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastRealAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewFloat64Datum(20000101))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewFloat64Datum(20000101))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastDecimalAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "20000101")))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "20000101")))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CastStringAsTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewStringDatum("20000101"))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewStringDatum("20000101"))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_PlusInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(3),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_PlusDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewDecimalDatum(newMyDecimal(t, "3")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_PlusReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewFloat64Datum(3),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MinusInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(-1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MinusDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewDecimalDatum(newMyDecimal(t, "-1")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MinusReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewFloat64Datum(-1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1)), datumExpr(t, types.NewIntDatum(2))),
 			types.NewIntDatum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1"))), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "2")))),
 			types.NewDecimalDatum(newMyDecimal(t, "2")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_MultiplyReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1)), datumExpr(t, types.NewFloat64Datum(2))),
 			types.NewFloat64Datum(2),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CeilIntToInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CeilIntToDec,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewDecimalDatum(newMyDecimal(t, "1")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CeilDecToInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CeilReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewFloat64Datum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_FloorIntToInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_FloorIntToDec,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewDecimalDatum(newMyDecimal(t, "1")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_FloorDecToInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_FloorReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewFloat64Datum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceInt,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewIntDatum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewIntDatum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceReal,
-				toPBFieldType(newRealFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newRealFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewFloat64Datum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceDecimal,
-				toPBFieldType(newDecimalFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newDecimalFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewDecimalDatum(newMyDecimal(t, "1")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceString,
-				toPBFieldType(newStringFieldType()), datumExpr(t, types.NewStringDatum("1"))),
+				toPBFieldType(newStringFieldType().Build()), datumExpr(t, types.NewStringDatum("1"))),
 			types.NewStringDatum("1"),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceDuration,
-				toPBFieldType(newDurFieldType()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
+				toPBFieldType(newDurFieldType().Build()), datumExpr(t, types.NewDurationDatum(newDuration(time.Second)))),
 			types.NewDurationDatum(newDuration(time.Second)),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CoalesceTime,
-				toPBFieldType(newDateFieldType()), datumExpr(t, types.NewTimeDatum(newDateTime(t, "2000-01-01")))),
+				toPBFieldType(newDateFieldType().Build()), datumExpr(t, types.NewTimeDatum(newDateTime(t, "2000-01-01")))),
 			types.NewTimeDatum(newDateTime(t, "2000-01-01")),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenInt,
-				toPBFieldType(newIntFieldType())),
+				toPBFieldType(newIntFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenReal,
-				toPBFieldType(newRealFieldType())),
+				toPBFieldType(newRealFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenDecimal,
-				toPBFieldType(newDecimalFieldType())),
+				toPBFieldType(newDecimalFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenDuration,
-				toPBFieldType(newDurFieldType())),
+				toPBFieldType(newDurFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenTime,
-				toPBFieldType(newDateFieldType())),
+				toPBFieldType(newDateFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_CaseWhenJson,
-				toPBFieldType(newJSONFieldType())),
+				toPBFieldType(newJSONFieldType().Build())),
 			types.NewDatum(nil),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsFalse,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewIntDatum(0),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsFalse,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(0),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_RealIsTrue,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewFloat64Datum(1))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewFloat64Datum(1))),
 			types.NewIntDatum(1),
 		},
 		{
 			scalarFunctionExpr(tipb.ScalarFuncSig_DecimalIsTrue,
-				toPBFieldType(newIntFieldType()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
+				toPBFieldType(newIntFieldType().Build()), datumExpr(t, types.NewDecimalDatum(newMyDecimal(t, "1")))),
 			types.NewIntDatum(1),
 		},
 	}
@@ -805,7 +805,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString:
 		expr.Tp = tipb.ExprType_String
-		expr.FieldType = toPBFieldType(types.NewFieldTypeBuilder(mysql.TypeString))
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeString))
 		expr.Val = d.GetBytes()
 	case types.KindBytes:
 		expr.Tp = tipb.ExprType_Bytes
@@ -835,7 +835,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		var err error
 		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
 		require.NoError(t, err)
-		expr.FieldType = ToPBFieldType(newDateFieldType())
+		expr.FieldType = ToPBFieldType(newDateFieldType().Build())
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
@@ -861,15 +861,15 @@ func columnExpr(columnID int64) *tipb.Expr {
 }
 
 // toPBFieldType converts *types.FieldTypeBuilder to *tipb.FieldType.
-func toPBFieldType(ft *types.FieldTypeBuilder) *tipb.FieldType {
+func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.GetTp()),
-		Flag:    uint32(ft.Flag),
+		Flag:    uint32(ft.GetFlag()),
 		Flen:    int32(ft.GetFlen()),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
-		Elems:   ft.Elems,
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
@@ -987,9 +987,9 @@ func newEnumFieldType() *types.FieldTypeBuilder {
 
 func scalarFunctionExpr(sigCode tipb.ScalarFuncSig, retType *tipb.FieldType, args ...*tipb.Expr) *tipb.Expr {
 	return &tipb.Expr{
-		Tp:               tipb.ExprType_ScalarFunc,
-		Sig:              sigCode,
-		Children:         args,
-		FieldTypeBuilder: retType,
+		Tp:        tipb.ExprType_ScalarFunc,
+		Sig:       sigCode,
+		Children:  args,
+		FieldType: retType,
 	}
 }

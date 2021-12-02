@@ -51,7 +51,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		ft.Collate = cs.name
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String
-		expr.FieldType = toPBFieldType(ft)
+		expr.FieldType = toPBFieldType(ft.Build())
 		require.Equal(t, cs.pbID, expr.FieldType.Collate)
 
 		e, err := PBToExpr(expr, fieldTps, sc)
@@ -69,7 +69,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		ft.Collate = cs.name
 		expr := new(tipb.Expr)
 		expr.Tp = tipb.ExprType_String
-		expr.FieldType = toPBFieldType(ft)
+		expr.FieldType = toPBFieldType(ft.Build())
 		require.Equal(t, -cs.pbID, expr.FieldType.Collate)
 
 		e, err := PBToExpr(expr, fieldTps, sc)

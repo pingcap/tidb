@@ -144,7 +144,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	}
 	{{- end }}
 	{{- if $InputInt }}
-		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	{{- end }}
 	var compareResult int
 	args := b.args[1:]
@@ -216,7 +216,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 			return err
 		}
 		{{- if $InputInt }}
-			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().Flag)
+			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
 		{{- end }}
 		{{- if $InputFixed }}
 			args1 := buf1.{{.Input.TypeNameInColumn}}s()

@@ -64,8 +64,9 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		if err != nil {
 			return nil, err
 		}
-		bf.tp = args[0].GetType().Clone()
-		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
+		tpb := args[0].GetType().ToBuilder()
+		tpb.Charset, tpb.Collate = charset.CharsetBin, charset.CollationBin
+		bf.tp = tpb.Build()
 		sig = &builtinInternalToBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
 	default:
@@ -90,7 +91,7 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 		return res, isNull, err
 	}
 	tp := b.args[0].GetType()
-	enc := charset.NewEncoding(tp.Charset)
+	enc := charset.NewEncoding(tp.GetCharset())
 	res, err = enc.EncodeString(val)
 	return res, false, err
 }
@@ -109,7 +110,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	enc := charset.NewEncoding(b.args[0].GetType().Charset)
+	enc := charset.NewEncoding(b.args[0].GetType().GetCharset())
 	result.ReserveString(n)
 	var encodedBuf []byte
 	for i := 0; i < n; i++ {
@@ -129,7 +130,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 type tidbFromBinaryFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldTypeBuilder
+	tp *types.FieldType
 }
 
 func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -208,17 +209,17 @@ func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, e
 	if b.tp.GetCharset() == charset.CharsetUTF8MB4 || b.tp.GetCharset() == charset.CharsetUTF8 {
 		transferString = func(s []byte) ([]byte, error) {
 			if !utf8.Valid(s) {
-				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
+				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.GetCharset())
 			}
 			return s, nil
 		}
 	} else {
-		enc := charset.NewEncoding(b.tp.Charset)
+		enc := charset.NewEncoding(b.tp.GetCharset())
 		var buf []byte
 		transferString = func(s []byte) ([]byte, error) {
 			str, err := enc.Decode(buf, s)
 			if err != nil {
-				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
+				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.GetCharset())
 			}
 			return str, nil
 		}
@@ -242,7 +243,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldTypeBuilder) (res Expression) {
+func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -264,16 +265,16 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 		ast.Substring, ast.Mid, ast.Translate, ast.InsertFunc, ast.Lpad, ast.Rpad, ast.Elt, ast.ExportSet, ast.MakeSet,
 		ast.FindInSet, ast.Regexp, ast.Field, ast.Locate, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
 		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat:
-		if ec.GetCharset() == charset.CharsetBin && expr.GetType().Charset != charset.CharsetBin {
+		if ec.Charset == charset.CharsetBin && expr.GetType().GetCharset() != charset.CharsetBin {
 			return BuildToBinaryFunction(ctx, expr)
 		} else if ec.Charset != charset.CharsetBin && expr.GetType().GetCharset() == charset.CharsetBin {
-			ft := expr.GetType().Clone()
+			ft := expr.GetType().ToBuilder()
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
-			return BuildFromBinaryFunction(ctx, expr, ft)
+			return BuildFromBinaryFunction(ctx, expr, ft.Build())
 		}
 	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesEncrypt, ast.AesDecrypt, ast.Decode, ast.Encode,
 		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
-		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
+		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().GetCharset()); err != nil {
 			return BuildToBinaryFunction(ctx, expr)
 		}
 	}

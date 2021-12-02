@@ -250,7 +250,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().GetCollate())
 					}
 				}
 			}
@@ -504,7 +504,7 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 		}
 	}
 	if not {
-		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), expr)
+		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr, not
 }
@@ -692,7 +692,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 	t := types.NewFieldTypeBuilder(tp)
 	t.Flag |= flag
-	return &Constant{Value: d, RetType: t}
+	return &Constant{Value: d, RetType: t.Build()}
 }
 
 // ParamMarkerExpression generate a getparam function expression.
@@ -701,7 +701,7 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (E
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldTypeBuilder(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
-	value := &Constant{Value: v.Datum, RetType: tp}
+	value := &Constant{Value: v.Datum, RetType: tp.Build()}
 	if useCache || isPointExec {
 		value.ParamMarker = &ParamMarker{
 			order: v.Order,
@@ -724,7 +724,9 @@ func DisableParseJSONFlag4Expr(expr Expression) {
 	if _, isCorCol := expr.(*CorrelatedColumn); isCorCol {
 		return
 	}
-	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+	tpb := expr.GetType().ToBuilder()
+	tpb.Flag &= ^mysql.ParseToJSONFlag
+	expr.SetType(tpb.Build())
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -777,8 +779,8 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 
 // BuildNotNullExpr wraps up `not(isnull())` for given expression.
 func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
-	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldTypeBuilder(mysql.TypeTiny), expr)
-	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldTypeBuilder(mysql.TypeTiny), isNull)
+	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
 }
 
