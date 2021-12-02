@@ -10648,3 +10648,12 @@ func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
 	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
+
+func (s *testIntegrationSuite) TestIssue30101(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
+	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
+	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
+}

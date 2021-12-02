@@ -759,7 +759,7 @@ func TestStmtSummaryTable(t *testing.T) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, 1, len(rows[0]))
-	require.Regexp(t, ".*\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME.*", rows[0][0])
+	require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"
