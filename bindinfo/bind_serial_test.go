@@ -826,11 +826,11 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
 	require.Equal(t, nil, err)
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func TestExplainTableStmts(t *testing.T) {
@@ -861,7 +861,8 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
 
 	err := tk1.ExecToErr("select * from t")
-	require.Regexp(t, ".*No database selected", err)
+	require.Error(t, err)
+	require.Regexp(t, "No database selected$", err)
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
 	tk1.MustExec("select * from test.t")
