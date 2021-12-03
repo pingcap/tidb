@@ -68,14 +68,14 @@ var (
 	// PollTiFlashReplicaStatusBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashReplicaStatusBackoffMaxTick = 60
 	// PollTiFlashReplicaStatusBackoffMinTick is the max tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashReplicaStatusBackoffMinTick  = 1
+	PollTiFlashReplicaStatusBackoffMinTick  = 2
 	pollTiFlashReplicaStatusBackoffCapacity = 1000
 )
 
 // NewPollTiFlashReplicaStatusBackoff create an instance with the smallest interval.
 func NewPollTiFlashReplicaStatusBackoff() PollTiFlashReplicaStatusBackoff {
 	return PollTiFlashReplicaStatusBackoff{
-		Counter:   0,
+		Counter:   1,
 		Threshold: PollTiFlashReplicaStatusBackoffMinTick,
 	}
 }
@@ -88,6 +88,7 @@ func (b *PollTiFlashReplicaStatusBackoff) Tick() bool {
 	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick {
 		b.Threshold = PollTiFlashReplicaStatusBackoffMaxTick
 	}
+	log.Info("Tick", zap.Int("Counter", b.Counter), zap.Int("Threshold", b.Threshold))
 	defer func() {
 		b.Counter += 1
 		b.Counter %= b.Threshold
@@ -108,6 +109,7 @@ func (b *PollTiFlashReplicaStatusBackoff) Backoff() {
 		return
 	}
 	b.Threshold *= 2
+	b.Counter = 1
 }
 
 func makeBaseRule() placement.Rule {
@@ -385,14 +387,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 					bo.Backoff()
 				}else{
 					// If the table is not available at first check, it should be added into `backoffs`
+					log.Info("TiFlash replica is not ready, add to backoffs", zap.Int64("tableId", tb.ID))
 					if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
 						newBackoff := NewPollTiFlashReplicaStatusBackoff()
 						(*backoffs)[tb.ID] = &newBackoff
 					}
 				}
-				log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+				log.Info("Update tiflash replica sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 			} else {
-				log.Info("tiflash table is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
+				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
+				delete(*backoffs, tb.ID)
 			}
 
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {

@@ -362,8 +362,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`), IsNil)
 	ddl.EnableTiFlashPoll(s.dom.DDL())
-	// 1 -> 1 -> 2
-	time.Sleep(ddl.PollTiFlashInterval * 4)
+	// 1 -> 2
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
