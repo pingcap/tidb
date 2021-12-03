@@ -911,8 +911,6 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1132,9 +1130,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
