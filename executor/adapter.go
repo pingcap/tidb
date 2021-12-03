@@ -433,8 +433,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
 	defer func() {
-		// If the stmt has been handled like `insert`, The session tracker detachment will be directly
-		// done in the `defer` function. If the stmt has not been handled, the detachment will be done in
+		// If the stmt has been handled, The session tracker detachment will be directly
+		// done in the `defer` function. If the stmt hasn't been handled, the detachment will be done in
 		// `rs.Close` in `handleStmt`
 		sc := a.Ctx.GetSessionVars().StmtCtx
 		if sc != nil && handled {

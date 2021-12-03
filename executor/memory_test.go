@@ -142,7 +142,7 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
 	c.Assert(originConsume, Equals, afterConsume)
 
-	// assert not detach before run select query
+	// assert stmt trackers haven't been detaced before Next
 	rs, err := tk.Exec("select * from t t1 join t t2 join t t3")
 	c.Assert(err, Equals, nil)
 	defer rs.Close()
