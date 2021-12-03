@@ -21,11 +21,8 @@ package ddl
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
