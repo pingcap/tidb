@@ -316,3 +316,68 @@ func TestWeekday(t *testing.T) {
 		require.Equal(t, tt.Expect, weekday.String())
 	}
 }
+
+func TestFindZoneTransition(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		TZ      string
+		dt      string
+		Expect  string
+		Success bool
+	}{
+		{"Australia/Lord_Howe", "2020-06-29 03:45:00", "", false},
+		{"Australia/Lord_Howe", "2020-10-04 02:15:00", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Europe/Vilnius", "2020-03-29 03:45:00", "2020-03-29 04:00:00 EEST +0300", true},
+		{"Europe/Vilnius", "2020-10-25 03:45:00", "2020-10-25 03:00:00 EET +0200", true},
+		{"Europe/Vilnius", "2020-06-29 03:45:00", "", false},
+		{"Europe/Amsterdam", "2020-03-29 02:45:00", "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", "2020-10-25 02:35:00", "2020-10-25 02:00:00 CET +0100", true},
+	}
+
+	for _, tt := range tests {
+		loc, err := time.LoadLocation(tt.TZ)
+		require.NoError(t, err)
+		tm, err := time.ParseInLocation("2006-01-02 15:04:05", tt.dt, loc)
+		require.NoError(t, err)
+		tp, err := FindZoneTransition(tm, loc)
+		if !tt.Success {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tt.Expect, tp.Format("2006-01-02 15:04:05 MST -0700"))
+		}
+	}
+}
+
+func TestAdjustedGoTime(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		TZ      string
+		dt      CoreTime
+		Expect  string
+		Success bool
+	}{
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 15, 00, 0), "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 +1030 +1030", true},
+		{"Australia/Lord_Howe", FromDate(2020, 04, 04, 01, 45, 00, 0), "2020-04-04 01:45:00 +11 +1100", true},
+		{"Europe/Vilnius", FromDate(2020, 03, 29, 03, 45, 00, 0), "2020-03-29 04:00:00 EEST +0300", true},
+		{"Europe/Vilnius", FromDate(2020, 10, 25, 03, 45, 00, 0), "2020-10-25 03:45:00 EET +0200", true},
+		{"Europe/Vilnius", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 EEST +0300", true},
+		{"Europe/Amsterdam", FromDate(2020, 03, 29, 02, 45, 00, 0), "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", FromDate(2020, 10, 25, 02, 35, 00, 0), "2020-10-25 02:35:00 CET +0100", true},
+		{"UTC", FromDate(2020, 2, 31, 02, 35, 00, 0), "", false},
+		// TODO: Test out-of-range values?
+	}
+
+	for _, tt := range tests {
+		loc, err := time.LoadLocation(tt.TZ)
+		require.NoError(t, err)
+		tp, err := tt.dt.AdjustedGoTime(loc)
+		if !tt.Success {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tt.Expect, tp.Format("2006-01-02 15:04:05 MST -0700"))
+		}
+	}
+}

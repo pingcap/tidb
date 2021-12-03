@@ -2020,6 +2020,10 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("1447410019.012 1447410019.0123"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 11:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
+	tk.MustExec("SET time_zone = 'Europe/Vilnius'")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00')").Check(testkit.Rows("1585443600"))
+	tk.MustQuery("SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))").Check(testkit.Rows("2020-03-29 04:00:00"))
+	tk.MustExec("SET time_zone = DEFAULT")
 
 	result = tk.MustQuery("SELECT TIME_FORMAT('bad string', '%H:%i:%s %p');")
 	result.Check(testkit.Rows("<nil>"))
