@@ -39,6 +39,9 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			return err
 		}
 
+		txn.SetOption(EnableAsyncCommit, true)
+		txn.SetOption(Enable1PC, true)
+
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -343,6 +344,11 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
+
+	// shuffle ranges
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(ranges), func(i, j int) { ranges[i], ranges[j] = ranges[j], ranges[i] })
+
 	return ranges, nil
 }
 
