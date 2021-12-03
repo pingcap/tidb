@@ -998,13 +998,12 @@ func getEnumDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		v.SetMysqlEnum(enumVal, col.Collate)
 		return v.ToString()
 	}
-	// Ref: https://dev.mysql.com/doc/refman/8.0/en/enum.html
-	// Trailing spaces are automatically deleted from ENUM member values in the table definition when a table is created.
 	str, err := v.ToString()
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	// Ref Issue: https://github.com/pingcap/tidb/issues/29327
+	// Ref: https://dev.mysql.com/doc/refman/8.0/en/enum.html
+	// Trailing spaces are automatically deleted from ENUM member values in the table definition when a table is created.
 	str = strings.TrimRight(str, " ")
 	enumVal, err := types.ParseEnumName(col.Elems, str, col.Collate)
 	if err != nil {
