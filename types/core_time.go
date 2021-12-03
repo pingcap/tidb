@@ -191,7 +191,7 @@ func FindZoneTransition(tIn gotime.Time, loc *gotime.Location) (gotime.Time, err
 	// Check most common case first, DST transition on full hour.
 	// round truncates away from zero!
 	t2 := tIn.Round(gotime.Hour).Add(-1 * gotime.Hour)
-	t1 := t2.Round(gotime.Hour).Add(-1 * gotime.Second)
+	t1 := t2.Add(-1 * gotime.Second)
 	_, offset1 := t1.Zone()
 	_, offset2 := t2.Zone()
 	if offset1 != offset2 {
