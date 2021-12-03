@@ -241,7 +241,11 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) b
 // MustUseIndex4ExplainFor checks if the result execution plan contains specific index(es).
 func (tk *TestKit) MustUseIndex4ExplainFor(result *Result, index string) bool {
 	for i := range result.rows {
+		// It depends on whether we enable to collect the execution info.
 		if strings.Contains(result.rows[i][3], "index:"+index) {
+			return true
+		}
+		if strings.Contains(result.rows[i][4], "index:"+index) {
 			return true
 		}
 	}
