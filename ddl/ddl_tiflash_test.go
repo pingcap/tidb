@@ -28,6 +28,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/store/gcworker"
 
 	"github.com/pingcap/failpoint"
@@ -60,6 +63,7 @@ type tiflashDDLTestSuite struct {
 	startTime    time.Time
 	tiflash      mockTiFlash
 	cluster      *unistore.Cluster
+	tiflashDelay time.Duration
 }
 
 var _ = SerialSuites(&tiflashDDLTestSuite{})
@@ -112,6 +116,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	s.tiflashDelay = 0
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -258,6 +263,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	c.Assert(err, IsNil)
 	pi := tb.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
+
+	// Partition `lessThan` shall be ready
 	for _, p := range pi.Definitions {
 		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
 		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
@@ -541,6 +548,7 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 			return
 		}
 		table, ok := s.tiflash.SyncStatus[tableID]
+		log.Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
 		if !ok {
 			b := []byte("0\n\n")
 			w.WriteHeader(http.StatusOK)
@@ -637,16 +645,21 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		// Set up mock tiflash replica
 		// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
-		if z, ok := s.tiflash.SyncStatus[tid]; ok {
-			z.Regions = []int{1}
-			s.tiflash.SyncStatus[tid] = z
-		} else {
-			s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
-				Regions: []int{1},
-				Accel:   false,
+		go func() {
+			time.Sleep(s.tiflashDelay)
+			log.Warn("TiFlash replica is available after delay", zap.Duration("duration", s.tiflashDelay))
+			if z, ok := s.tiflash.SyncStatus[tid]; ok {
+				z.Regions = []int{1}
+				s.tiflash.SyncStatus[tid] = z
+			} else {
+				s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
+					Regions: []int{1},
+					Accel:   false,
+				}
 			}
-		}
+		}()
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
 		// Delete placement rule
