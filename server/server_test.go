@@ -1418,7 +1418,7 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 		row := make([]string, 9)
 		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7], &row[8])
 		require.NoError(t, err)
-		require.Regexp(t, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*", strings.Join(row, ","))
+		require.Regexp(t, "^Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1", strings.Join(row, ","))
 		require.NoError(t, rows.Close())
 	})
 }
@@ -1894,7 +1894,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func (cli *testServerClient) waitUntilServerOnline() {
+func (cli *testServerClient) waitUntilServerCanConnect() {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {
@@ -1911,8 +1911,14 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect DB in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
 
-	for retry = 0; retry < retryTime; retry++ {
+func (cli *testServerClient) waitUntilServerOnline() {
+	// connect server
+	cli.waitUntilServerCanConnect()
+
+	retry := 0
+	for ; retry < retryTime; retry++ {
 		// fetch http status
 		resp, err := cli.fetchStatus("/status")
 		if err == nil {
