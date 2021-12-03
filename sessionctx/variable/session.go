@@ -964,6 +964,10 @@ type SessionVars struct {
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
 
+	// ExecCounter is a pointer to the execcount.ExecCounter instance
+	// maintained in the session structure. The life cycle of ExecCounter
+	// is managed by session, and SessionVars maintains only a pointer.
+	// See session.execCounter for more information.
 	ExecCounter *execcount.ExecCounter
 }
 
