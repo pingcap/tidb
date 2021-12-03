@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package topsql
+package execcount
 
 import (
 	"sync"
@@ -30,6 +30,19 @@ const (
 	// to report all aggregated data.
 	execCounterManagerUploadDuration = 30 * time.Second
 )
+
+var globalExecCounterManager *execCounterManager
+
+func SetupExecCounter() {
+	globalExecCounterManager = newExecCountManager()
+	go globalExecCounterManager.Run()
+}
+
+func CloseExecCounter() {
+	if globalExecCounterManager != nil {
+		globalExecCounterManager.close()
+	}
+}
 
 // ExecCountMap represents Map<SQLDigest, Map<Timestamp, Count>>.
 // We put SQLDigest in front of the two-dimensional map, because SQLDigest

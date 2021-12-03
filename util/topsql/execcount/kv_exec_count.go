@@ -1,4 +1,4 @@
-package topsql
+package execcount
 
 import (
 	"encoding/json"
@@ -9,6 +9,19 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
+
+var globalKvExecCounterManager *kvExecCounterManager
+
+func SetupKvExecCounter() {
+	globalKvExecCounterManager = newKvExecCountManager()
+	go globalKvExecCounterManager.Run()
+}
+
+func CloseKvExecCounter() {
+	if globalKvExecCounterManager != nil {
+		globalKvExecCounterManager.close()
+	}
+}
 
 type KvExecCountMap map[string]map[string]map[int64]uint64
 

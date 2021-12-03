@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/execcount"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -232,9 +233,9 @@ type session struct {
 	// taken away by the background goroutine. The background goroutine will
 	// continue to aggregate all the local data in each session, and finally
 	// report them to the remote regularly.
-	execCounter *topsql.ExecCounter
+	execCounter *execcount.ExecCounter
 
-	kvExecCounter *topsql.KvExecCounter
+	kvExecCounter *execcount.KvExecCounter
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -2647,8 +2648,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		execCounter:          topsql.CreateExecCounter(),
-		kvExecCounter:        topsql.CreateKvExecCounter(),
+		execCounter:          execcount.CreateExecCounter(),
+		kvExecCounter:        execcount.CreateKvExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2682,8 +2683,8 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		execCounter:          topsql.CreateExecCounter(),
-		kvExecCounter:        topsql.CreateKvExecCounter(),
+		execCounter:          execcount.CreateExecCounter(),
+		kvExecCounter:        execcount.CreateKvExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,

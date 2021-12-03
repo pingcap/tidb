@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql/execcount"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/zap"
@@ -36,11 +37,7 @@ const (
 	MaxPlanTextSize = 32 * 1024
 )
 
-var (
-	globalTopSQLReport         reporter.TopSQLReporter
-	globalExecCounterManager   *execCounterManager
-	globalKvExecCounterManager *kvExecCounterManager
-)
+var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
@@ -48,10 +45,8 @@ func SetupTopSQL() {
 	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
-	globalExecCounterManager = newExecCountManager()
-	globalKvExecCounterManager = newKvExecCountManager()
-	go globalExecCounterManager.Run()
-	go globalKvExecCounterManager.Run()
+	execcount.SetupExecCounter()
+	execcount.SetupKvExecCounter()
 }
 
 // Close uses to close and release the top sql resource.
@@ -59,12 +54,8 @@ func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}
-	if globalExecCounterManager != nil {
-		globalExecCounterManager.close()
-	}
-	if globalKvExecCounterManager != nil {
-		globalKvExecCounterManager.close()
-	}
+	execcount.CloseExecCounter()
+	execcount.CloseKvExecCounter()
 }
 
 // AttachSQLInfo attach the sql information info top sql.
