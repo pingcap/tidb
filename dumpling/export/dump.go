@@ -366,14 +366,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// adjust table collation
-			if table.Type == TableTypeBase {
-				newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				meta.(*tableMeta).showCreateTable = newCreateSQL
-			}
+
 			if !conf.NoSchemas {
 				if table.Type == TableTypeView {
 					task := NewTaskViewMeta(dbName, table.Name, meta.ShowCreateTable(), meta.ShowCreateView())
@@ -382,6 +375,12 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 						return tctx.Err()
 					}
 				} else {
+					// adjust table collation
+					newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					meta.(*tableMeta).showCreateTable = newCreateSQL
 					task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
@@ -448,7 +447,7 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
-		return originSQL, err
+		return originSQL, nil
 	}
 	createStmt, ok := stmt.(*ast.CreateTableStmt)
 	if !ok {

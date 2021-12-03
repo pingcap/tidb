@@ -1388,21 +1388,11 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 	return regionsInfo, err
 }
 
-// GetDBCollation gets db collation from INFORMATION_SCHEMA.SCHEMATA
-func GetDBCollation(db *sql.Conn, database string) (string, error) {
-	query := fmt.Sprintf("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s'", database)
-	var collation string
-	err := simpleQuery(db, query, func(rows *sql.Rows) error {
-		return rows.Scan(&collation)
-	})
-	return collation, err
-}
-
 // GetCharsetAndDefaultCollation gets charset and default collation map.
 func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
 	charsetAndDefaultCollation := make(map[string]string)
 	query := "SHOW CHARACTER SET"
-	rows, err := db.QueryContext(ctx, query)
+
 	// Show an example.
 	/*
 		mysql> SHOW CHARACTER SET;
@@ -1415,13 +1405,14 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 		| binary   | Binary pseudo charset           | binary              |      1 |
 		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
 		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
 	*/
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
-	if rows.Err() != nil {
-		return nil, errors.Annotatef(err, "sql: %s", query)
-	}
+
 	defer rows.Close()
 	for rows.Next() {
 		var charset, description, collation string
@@ -1430,6 +1421,9 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 			return nil, errors.Annotatef(err, "sql: %s", query)
 		}
 		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if rows.Close() != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err
 }

@@ -1747,25 +1747,26 @@ func TestPickupPossibleField(t *testing.T) {
 	}
 }
 
-func TestGetDBCollation(t *testing.T) {
+func TestGetCharsetAndDefaultCollation(t *testing.T) {
 	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, db.Close())
 	}()
-
-	conn, err := db.Conn(context.Background())
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	require.NoError(t, err)
 
-	mock.ExpectQuery("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = 'test'").
-		WillReturnRows(sqlmock.NewRows([]string{"DEFAULT_COLLATION_NAME"}).
-			AddRow("utf8mb4_bin"))
+	mock.ExpectQuery("SHOW CHARACTER SET").
+		WillReturnRows(sqlmock.NewRows([]string{"Charset", "Description", "Default collation", "Maxlen"}).
+			AddRow("utf8mb4", "UTF-8 Unicode", "utf8mb4_0900_ai_ci", 4).
+			AddRow("latin1", "cp1252 West European", "latin1_swedish_ci", 1))
 
-	collation, err := GetDBCollation(conn, "test")
+	charsetAndDefaultCollation, err := GetCharsetAndDefaultCollation(ctx, conn)
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4_bin", collation)
+	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
+	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
 }
 
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
