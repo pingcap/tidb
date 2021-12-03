@@ -18,7 +18,7 @@ on:
       - master
       - release-*
     paths:
-      - 'dumpling/**'
+      - 'dumpling/**.go'
       - 'br/pkg/storage/**'
       - 'br/pkg/utils/**'
       - 'br/pkg/summary/**'
