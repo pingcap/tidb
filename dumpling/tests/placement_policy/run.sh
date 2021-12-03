@@ -28,4 +28,3 @@ diff "$DUMPLING_BASE_NAME/result/x1-placement-policy-create.sql" "$DUMPLING_OUTP
 run_sql "drop placement policy if exists x"
 run_sql "drop placement policy if exists x1"
 run_sql "drop database if exists policy"
-
