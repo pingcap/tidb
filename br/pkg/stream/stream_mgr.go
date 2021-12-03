@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
@@ -83,7 +82,6 @@ func BuildObserveDataRanges(
 
 	ranges := make([]kv.KeyRange, 0, len(dbs)+1)
 	for _, dbInfo := range dbs {
-		// skip system databases
 		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
@@ -104,6 +102,7 @@ func BuildObserveDataRanges(
 				continue
 			}
 
+			log.Warn("", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
 			tableRanges, err := buildObserveTableKeyRanges(tableInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -123,7 +122,10 @@ func BuildObserveMetaRange() (*kv.KeyRange, error) {
 		return nil, err
 	}
 
-	startKey := append(codec.EncodeBytes(nil, metaPrefix), low...)
-	endKey := append(codec.EncodeBytes(nil, metaPrefix), high...)
+	startKey := make([]byte, 0, len(metaPrefix)+len(low))
+	startKey = append(append(startKey, metaPrefix...), low...)
+
+	endKey := make([]byte, 0, len(metaPrefix)+len(high))
+	endKey = append(append(endKey, metaPrefix...), high...)
 	return &kv.KeyRange{StartKey: startKey, EndKey: endKey}, nil
 }
