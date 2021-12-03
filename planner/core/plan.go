@@ -309,9 +309,6 @@ type LogicalPlan interface {
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
 	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
-
-	// buildPhysicalOptimizeTraceInfo initialize the Physical Optimize trace information.
-	buildPhysicalOptimizeTraceInfo(p Plan, prop string) *tracing.PhysicalOptimizeTraceInfo
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -393,9 +390,8 @@ func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanT
 	return planTrace
 }
 
-// buildPhysicalOptimizeTraceInfo implements LogicalPlan
-func (p *baseLogicalPlan) buildPhysicalOptimizeTraceInfo(plan Plan, prop string) *tracing.PhysicalOptimizeTraceInfo {
-	traceInfo := &tracing.PhysicalOptimizeTraceInfo{ID: p.ID(), TP: p.TP(), Property: prop, ExplainInfo: plan.ExplainInfo()}
+func buildPhysicalOptimizeTraceInfo(p Plan, prop string) *tracing.PhysicalOptimizeTraceInfo {
+	traceInfo := &tracing.PhysicalOptimizeTraceInfo{ID: p.ID(), TP: p.TP(), Property: prop, ExplainInfo: p.ExplainInfo()}
 	return traceInfo
 }
 

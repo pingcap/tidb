@@ -104,12 +104,23 @@ type PhysicalOptimizeTraceInfo struct {
 	// ExplainInfo should be implemented by each implemented LogicalPlan
 	ExplainInfo string `json:"info"`
 
-	BestTask   *PhysicalOptimizeTraceInfo   `json:"best"`
-	Candidates []*PhysicalOptimizeTraceInfo `json:"candidates"`
+	BestTask   *TaskInfo   `json:"best"`
+	Candidates []*TaskInfo `json:"candidates"`
+}
+
+type TaskInfo struct {
+	Cost float64 `json:"cost"`
 }
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
 	Root    *PhysicalOptimizeTraceInfo
 	Current *PhysicalOptimizeTraceInfo
+}
+
+func (t *PhysicalOptimizeTracer) AppendPhysicalOptimizeToCurrent(info *PhysicalOptimizeTraceInfo) *PhysicalOptimizeTraceInfo {
+	t.Current.Children = append(t.Current.Children, info)
+	tmpInfo := t.Current
+	t.Current = info
+	return tmpInfo
 }
