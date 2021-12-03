@@ -647,9 +647,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}
 		// Set up mock tiflash replica
 		// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
-		go func() {
-			time.Sleep(s.tiflashDelay)
-			log.Warn("TiFlash replica is available after delay", zap.Duration("duration", s.tiflashDelay))
+		f := func() {
 			if z, ok := s.tiflash.SyncStatus[tid]; ok {
 				z.Regions = []int{1}
 				s.tiflash.SyncStatus[tid] = z
@@ -659,7 +657,16 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 					Accel:   false,
 				}
 			}
-		}()
+		}
+		if s.tiflashDelay > 0 {
+			go func() {
+				time.Sleep(s.tiflashDelay)
+				log.Warn("TiFlash replica is available after delay", zap.Duration("duration", s.tiflashDelay))
+				f()
+			}()
+		}else{
+			f()
+		}
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
 		// Delete placement rule
