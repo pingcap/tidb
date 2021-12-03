@@ -63,6 +63,87 @@ func TestExecCountMap_Merge(t *testing.T) {
 	assert.Len(t, m1, 3)
 }
 
+func TestKvExecCountMap_Merge(t *testing.T) {
+	m1 := KvExecCountMap{
+		"SQL-1": {
+			"ADDR-1": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+			"ADDR-2": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+		},
+		"SQL-2": {
+			"ADDR-2": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+			"ADDR-3": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+		},
+	}
+	m2 := KvExecCountMap{
+		"SQL-2": {
+			"ADDR-3": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+			"ADDR-4": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+		},
+		"SQL-3": {
+			"ADDR-4": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+			"ADDR-5": {
+				10001: 1,
+				10002: 2,
+				10003: 3,
+			},
+		},
+	}
+	m1.Merge(m2)
+	assert.Len(t, m1, 3)
+	assert.Len(t, m1["SQL-1"], 2)
+	assert.Len(t, m1["SQL-2"], 3)
+	assert.Len(t, m1["SQL-3"], 2)
+	assert.Equal(t, uint64(1), m1["SQL-1"]["ADDR-1"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-1"]["ADDR-1"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-1"]["ADDR-1"][10003])
+	assert.Equal(t, uint64(1), m1["SQL-1"]["ADDR-2"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-1"]["ADDR-2"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-1"]["ADDR-2"][10003])
+	assert.Equal(t, uint64(1), m1["SQL-2"]["ADDR-2"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-2"]["ADDR-2"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-2"]["ADDR-2"][10003])
+	assert.Equal(t, uint64(2), m1["SQL-2"]["ADDR-3"][10001])
+	assert.Equal(t, uint64(4), m1["SQL-2"]["ADDR-3"][10002])
+	assert.Equal(t, uint64(6), m1["SQL-2"]["ADDR-3"][10003])
+	assert.Equal(t, uint64(1), m1["SQL-2"]["ADDR-4"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-2"]["ADDR-4"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-2"]["ADDR-4"][10003])
+	assert.Equal(t, uint64(1), m1["SQL-3"]["ADDR-4"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-3"]["ADDR-4"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-3"]["ADDR-4"][10003])
+	assert.Equal(t, uint64(1), m1["SQL-3"]["ADDR-5"][10001])
+	assert.Equal(t, uint64(2), m1["SQL-3"]["ADDR-5"][10002])
+	assert.Equal(t, uint64(3), m1["SQL-3"]["ADDR-5"][10003])
+}
+
 func TestCreateExecCounter(t *testing.T) {
 	globalExecCounterManager = nil
 	counter := CreateExecCounter()
@@ -102,5 +183,49 @@ func TestExecCounter_Count_Take(t *testing.T) {
 		assert.Equal(t, uint64(3), v)
 	}
 	m = counter.Take()
+	assert.Len(t, m, 0)
+}
+
+func TestExecCounter_CountKv_TakeKv(t *testing.T) {
+	globalExecCounterManager = newExecCountManager()
+	counter := CreateExecCounter()
+	m := counter.TakeKv()
+	assert.Len(t, m, 0)
+	counter.CountKv("SQL-1", "ADDR-1", 11)
+	counter.CountKv("SQL-1", "ADDR-2", 12)
+	counter.CountKv("SQL-2", "ADDR-2", 22)
+	counter.CountKv("SQL-2", "ADDR-3", 23)
+	counter.CountKv("SQL-3", "ADDR-3", 33)
+	counter.CountKv("SQL-3", "ADDR-4", 34)
+	m = counter.TakeKv()
+	assert.Len(t, m, 3)
+	assert.Len(t, m["SQL-1"], 2)
+	assert.Len(t, m["SQL-2"], 2)
+	assert.Len(t, m["SQL-3"], 2)
+	assert.Len(t, m["SQL-1"]["ADDR-1"], 1)
+	assert.Len(t, m["SQL-1"]["ADDR-2"], 1)
+	assert.Len(t, m["SQL-2"]["ADDR-2"], 1)
+	assert.Len(t, m["SQL-2"]["ADDR-3"], 1)
+	assert.Len(t, m["SQL-3"]["ADDR-3"], 1)
+	assert.Len(t, m["SQL-3"]["ADDR-4"], 1)
+	for _, v := range m["SQL-1"]["ADDR-1"] {
+		assert.Equal(t, uint64(11), v)
+	}
+	for _, v := range m["SQL-1"]["ADDR-2"] {
+		assert.Equal(t, uint64(12), v)
+	}
+	for _, v := range m["SQL-2"]["ADDR-2"] {
+		assert.Equal(t, uint64(22), v)
+	}
+	for _, v := range m["SQL-2"]["ADDR-3"] {
+		assert.Equal(t, uint64(23), v)
+	}
+	for _, v := range m["SQL-3"]["ADDR-3"] {
+		assert.Equal(t, uint64(33), v)
+	}
+	for _, v := range m["SQL-3"]["ADDR-4"] {
+		assert.Equal(t, uint64(34), v)
+	}
+	m = counter.TakeKv()
 	assert.Len(t, m, 0)
 }

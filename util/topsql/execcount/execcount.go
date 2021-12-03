@@ -92,8 +92,9 @@ func CreateExecCounter() *ExecCounter {
 		return nil
 	}
 	counter := &ExecCounter{
-		execCount: ExecCountMap{},
-		closed:    atomic.NewBool(false),
+		execCount:   ExecCountMap{},
+		kvExecCount: KvExecCountMap{},
+		closed:      atomic.NewBool(false),
 	}
 	globalExecCounterManager.register(counter)
 	return counter
@@ -232,7 +233,9 @@ func (m *execCounterManager) collect() {
 			m.counters.Delete(id)
 		}
 		execCount := counter.Take()
+		kvExecCount := counter.TakeKv()
 		m.execCount.Merge(execCount)
+		m.kvExecCount.Merge(kvExecCount)
 		return true
 	})
 }
