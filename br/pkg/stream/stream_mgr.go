@@ -81,7 +81,7 @@ func BuildObserveDataRanges(
 		return nil, errors.Trace(err)
 	}
 
-	ranges := make([]kv.KeyRange, 0, len(dbs))
+	ranges := make([]kv.KeyRange, 0, len(dbs)+1)
 	for _, dbInfo := range dbs {
 		// skip system databases
 		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {

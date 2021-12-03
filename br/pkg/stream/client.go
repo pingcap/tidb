@@ -4,7 +4,9 @@ import (
 	"context"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 )
 
 type Ranges = []kv.KeyRange
@@ -32,18 +34,29 @@ func NewMetaDataClient() MetaDataClient {
 }
 
 func (*metaDataClient) PutTask(ctx context.Context, task TaskInfo) error {
+	log.Info("put stream task",
+		zap.String("task-name", task.Name),
+		zap.Strings("table-Filter", task.TableFilter),
+		zap.Uint64("start-ts", task.StartTs),
+		zap.Uint64("end-ts", task.EndTs),
+		zap.Bool("pausing", task.Pausing),
+		zap.Int("range-nr", len(task.Ranges)),
+	)
 	return nil
 }
 
 func (*metaDataClient) DeleteTask(ctx context.Context, taskName string) error {
+	log.Info("delete stream task", zap.String("task-name", taskName))
 	return nil
 }
 
 func (*metaDataClient) PauseTask(ctx context.Context, taskName string) error {
+	log.Info("pause stream task", zap.String("task-name", taskName))
 	return nil
 }
 
 func (*metaDataClient) ResumeTask(ctx context.Context, taskName string) error {
+	log.Info("resume stream task", zap.String("task-name", taskName))
 	return nil
 }
 

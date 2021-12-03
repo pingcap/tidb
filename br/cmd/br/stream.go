@@ -16,14 +16,11 @@ package main
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
 )
 
@@ -40,11 +37,6 @@ func NewStreamCommand() *cobra.Command {
 			build.LogInfo(build.BR)
 			utils.LogEnvVariables()
 			task.LogArguments(c)
-
-			// Do not run ddl worker in BR.
-			//ddl.RunWorker = false
-
-			//summary.SetUnit(summary.BackupUnit)
 			return nil
 		},
 	}
@@ -67,9 +59,9 @@ func newStreamStartCommand() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamTaskNameFlags(command.Flags())
+	task.DefineStreamCommonFlags(command.Flags())
 	task.DefineFilterFlags(command, acceptAllTables)
-	task.DefineStreamTSFlags(command.PersistentFlags())
+	task.DefineStreamStartFlags(command.PersistentFlags())
 	return command
 }
 
@@ -83,7 +75,7 @@ func newStreamStopCommand() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamTaskNameFlags(command.Flags())
+	task.DefineStreamCommonFlags(command.Flags())
 	return command
 }
 
@@ -97,7 +89,7 @@ func newStreamPauseCommand() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamTaskNameFlags(command.Flags())
+	task.DefineStreamCommonFlags(command.Flags())
 	return command
 }
 
@@ -112,7 +104,7 @@ func newSteramResumeComamnd() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamTaskNameFlags(command.Flags())
+	task.DefineStreamCommonFlags(command.Flags())
 	return command
 }
 
@@ -124,7 +116,7 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	if cmdName == task.StreamStart {
-		if err := cfg.ParseTSFromFlags(command.Flags()); err != nil {
+		if err := cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -136,14 +128,5 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 
-	commandFn, exist := task.StreamCommandMap[cmdName]
-	if !exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s\n", cmdName)
-	}
-
-	if err := commandFn(ctx, tidbGlue, cmdName, &cfg); err != nil {
-		log.Error("failed to stream", zap.String("command", cmdName), zap.Error(err))
-		return errors.Trace(err)
-	}
-	return nil
+	return task.RunStreamCommand(ctx, tidbGlue, cmdName, &cfg)
 }

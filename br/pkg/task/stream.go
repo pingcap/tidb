@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
@@ -37,9 +38,10 @@ import (
 )
 
 const (
-	flagStreamTaskName = "task-name"
+	flagStreamTaskName = "taskName"
 	flagStreamStartTS  = "startTS"
 	flagStreamEndTS    = "endTS"
+	flagGCSafePointTTS = "gcTTL"
 )
 
 var (
@@ -63,25 +65,37 @@ type StreamConfig struct {
 	taskName string
 
 	// this part only stream start includes
+
+	// startTs usually equals the tso of full-backup, but user can reset it
 	startTS uint64
 	endTS   uint64
+	// safePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
+	safePointTTL int64
 }
 
-func DefineStreamTSFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamStartTS, "0", "start ts, use for backup stream log. "+
-		"support TSO or datetime, e.g. '400036290571534337', '2018-05-11 01:42:23'")
-	flags.String(flagStreamEndTS, "2099-1-1 00:00:01", "start ts, use for backup stream log. "+
+// DefineStreamStartFlags defines flags used for `stream start`
+func DefineStreamStartFlags(flags *pflag.FlagSet) {
+	flags.String(flagStreamStartTS, "", "start ts, usually equals last full backupTS, used for backup log.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
+		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 }
 
-func DefineStreamTaskNameFlags(flags *pflag.FlagSet) {
+// DefineStreamCommonFlags define common flags for `stream task`
+func DefineStreamCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, "", "The task name for backup stream log.")
 }
 
-func (cfg *StreamConfig) ParseTSFromFlags(flags *pflag.FlagSet) error {
+// ParseStreamStartFromFlags parse parameters for `stream start`
+func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	tsString, err := flags.GetString(flagStreamStartTS)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(tsString) <= 0 {
+		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters startTS")
 	}
 
 	if cfg.startTS, err = ParseTSString(tsString); err != nil {
@@ -97,12 +111,18 @@ func (cfg *StreamConfig) ParseTSFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.startTS > cfg.endTS {
-		return errors.Annotate(berrors.ErrInvalidArgument, "startTS should be smaller than endTS")
+	if cfg.safePointTTL, err = flags.GetInt64(flagGCSafePointTTS); err != nil {
+		return errors.Trace(err)
 	}
+
+	if cfg.safePointTTL <= 0 {
+		cfg.safePointTTL = utils.DefaultStreamGCSafePointTTL
+	}
+
 	return nil
 }
 
+// ParseCommonFromFlags parse parameters for `stream task`
 func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	if err = cfg.Config.ParseFromFlags(flags); err != nil {
@@ -110,7 +130,14 @@ func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	cfg.taskName, err = flags.GetString(flagStreamTaskName)
-	return errors.Trace(err)
+	if err != nil {
+		errors.Trace(err)
+	}
+
+	if len(cfg.taskName) <= 0 {
+		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters taskName")
+	}
+	return nil
 }
 
 type streamStartMgr struct {
@@ -168,6 +195,54 @@ func (s *streamStartMgr) setLock(ctx context.Context) error {
 	return s.bc.SetLockFile(ctx)
 }
 
+// checkStartTS checks that startTS should be smaller than currentTS,
+// and endTS is larger than currentTS.
+func (s *streamStartMgr) checkStartTS(ctx context.Context) error {
+	currentTS, err := s.getTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if currentTS <= s.Cfg.startTS || s.Cfg.endTS <= currentTS {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"invalid timestamps, startTS %llu should be smaller than currentTS %llu",
+			s.Cfg.startTS, currentTS)
+	}
+	if s.Cfg.endTS <= currentTS {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"invalid timestamps, endTS %llu should be larger than currentTS %llu",
+			s.Cfg.endTS, currentTS)
+	}
+
+	return nil
+}
+
+// setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
+// and set startTS as a serverSafePoint to PD
+func (s *streamStartMgr) setGCSafePoint(ctx context.Context) error {
+	if err := s.checkStartTS(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.Cfg.startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sp := utils.BRServiceSafePoint{
+		ID:       utils.MakeSafePointID(),
+		TTL:      s.Cfg.safePointTTL,
+		BackupTS: s.Cfg.startTS,
+	}
+	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("set stream safePoint", zap.Object("safePoint", sp))
+	return nil
+}
+
 func (s *streamStartMgr) getTS(ctx context.Context) (uint64, error) {
 	p, l, err := s.mgr.PdController.GetPDClient().GetTS(ctx)
 	if err != nil {
@@ -178,17 +253,16 @@ func (s *streamStartMgr) getTS(ctx context.Context) (uint64, error) {
 }
 
 func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
-	currentTS, err := s.getTS(ctx)
+	dRanges, err := stream.BuildObserveDataRanges(
+		s.mgr.GetStorage(),
+		s.Cfg.TableFilter,
+		s.Cfg.startTS,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	mRange, err := stream.BuildObserveMetaRange()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	dRanges, err := stream.BuildObserveDataRanges(s.mgr.GetStorage(), s.Cfg.TableFilter, currentTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -201,13 +275,39 @@ func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange,
 	return rs, nil
 }
 
+// RunStreamCommand run all kinds of `stream task``
+func RunStreamCommand(
+	ctx context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	cfg.adjust()
+	commandFn, exist := StreamCommandMap[cmdName]
+	if !exist {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s\n", cmdName)
+	}
+
+	if err := commandFn(ctx, g, cmdName, cfg); err != nil {
+		log.Error("failed to stream", zap.String("command", cmdName), zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 // RunStreamStart specifies starting a stream task
-func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+func RunStreamStart(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunStream", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.RunStreamStart", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -219,6 +319,9 @@ func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 	defer streamMgr.close()
 
 	if err := streamMgr.setLock(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -254,12 +357,20 @@ func RunStreamStart(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 }
 
 // RunStreamStop specifies stoping a stream task
-func RunStreamStop(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+func RunStreamStop(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunStream", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamStop",
+			opentracing.ChildOf(span.Context()),
+		)
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -279,12 +390,20 @@ func RunStreamStop(c context.Context, g glue.Glue, cmdName string, cfg *StreamCo
 }
 
 // RunStreamPause specifies pausing a stream task
-func RunStreamPause(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+func RunStreamPause(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunStream", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamPause",
+			opentracing.ChildOf(span.Context()),
+		)
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -304,12 +423,20 @@ func RunStreamPause(c context.Context, g glue.Glue, cmdName string, cfg *StreamC
 }
 
 // RunStreamResume specifies resuming a stream task
-func RunStreamResume(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+func RunStreamResume(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunStream", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamResume",
+			opentracing.ChildOf(span.Context()),
+		)
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
