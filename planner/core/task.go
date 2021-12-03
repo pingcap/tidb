@@ -2258,7 +2258,6 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
 		p.PartitionInfos = append(p.PartitionInfos, TableScanAndPartitionInfo{x, x.PartitionInfo})
-	case *PhysicalExchangeReceiver:
 	default:
 		for _, ch := range mppPlan.Children() {
 			collectPartitionInfosFromMPPPlan(p, ch)
