@@ -15,8 +15,6 @@
 package execcount
 
 import (
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -54,8 +52,14 @@ func (m ExecCountMap) Merge(other ExecCountMap) {
 	}
 }
 
+// KvExecCountMap represents Map<SQLDigest, Map<TiKVAddr, Map<Timestamp, Count>>>.
+// We keep this order of the three-dimensional map because usually:
+//     len(SQLDigest) > len(TiKVAddr) > len(Timestamp)
+// This can reduce unnecessary memory usage.
 type KvExecCountMap map[string]map[string]map[int64]uint64
 
+// Merge merges other into KvExecCountMap.
+// Values with the same SQL, same addr and same timestamp will be added.
 func (m KvExecCountMap) Merge(other KvExecCountMap) {
 	for newSQL, newAddrTsCount := range other {
 		addrTsCount, ok := m[newSQL]
@@ -118,6 +122,14 @@ func (c *ExecCounter) Count(sql string, n uint64) {
 	tsCount[ts] += n
 }
 
+// CountKv is used to count the number of executions of a certain SQLon a certain tikv node.
+// You don't need to provide execution time. By default, the time when you call CountKv is
+// considered the time when RPC is ready to request. The parameter sql is a universal string,
+// and ExecCounter does not care whether it is a normalized SQL or a stringified SQL digest.
+// The parameter addr is also opaque, but ExecCounter will expect it to be usually shorter
+// than the parameter sql, this is due to memory usage, because it is in a lower dimension
+// in the map, so it will be duplicated in map.
+// CountKv is thread-safe.
 func (c *ExecCounter) CountKv(sql, addr string, n uint64) {
 	ts := time.Now().Unix()
 	c.kvMu.Lock()
@@ -135,7 +147,7 @@ func (c *ExecCounter) CountKv(sql, addr string, n uint64) {
 	tsCount[ts] += n
 }
 
-// Take removes all existing data from ExecCounter.
+// Take removes all existing ExecCountMap data from ExecCounter.
 // Take is thread-safe.
 func (c *ExecCounter) Take() ExecCountMap {
 	c.mu.Lock()
@@ -145,6 +157,8 @@ func (c *ExecCounter) Take() ExecCountMap {
 	return execCount
 }
 
+// TakeKv removes all existing KvExecCountMap data from ExecCounter.
+// TakeKv is thread-safe.
 func (c *ExecCounter) TakeKv() KvExecCountMap {
 	c.kvMu.Lock()
 	defer c.kvMu.Unlock()
@@ -153,6 +167,11 @@ func (c *ExecCounter) TakeKv() KvExecCountMap {
 	return kvExecCount
 }
 
+// RPCInterceptor returns a tikvrpc.Interceptor for client-go.
+// The returned interceptor is generally expected to be set to transaction or
+// snapshot. In this way, the logic preset by ExecCounter will be executed before
+// each RPC request is initiated, to count the number of SQL executions of the
+// TiKV dimension.
 func (c *ExecCounter) RPCInterceptor(sql string) tikvrpc.Interceptor {
 	if c == nil {
 		return nil
@@ -214,9 +233,6 @@ func (m *execCounterManager) Run() {
 		case <-uploadTicker.C:
 			// TODO(mornyx): upload m.execCount & m.kvExecCount. Here is a bridge connecting
 			//               the exec-count module with the existing top-sql cpu reporter.
-			b, _ := json.MarshalIndent(m.kvExecCount, "", "  ")
-			fmt.Println(string(b))
-			fmt.Println("=====")
 			m.execCount = ExecCountMap{}
 			m.kvExecCount = KvExecCountMap{}
 		}

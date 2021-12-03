@@ -36,10 +36,13 @@ import (
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
-	// TODO: comment
+	// Bind an interceptor for client-go to count the number of SQL executions of each TiKV (if any).
 	if variable.TopSQLEnabled() && sctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
+			// Unlike calling Transaction or Snapshot interface, in this package we directly
+			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
+			// calling SetInterceptor on Transaction or Snapshot.
 			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
@@ -99,10 +102,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}
 	}
 
-	// TODO: comment
+	// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 	if variable.TopSQLEnabled() && sctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
+			// Unlike calling Transaction or Snapshot interface, in this package we directly
+			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
+			// calling SetInterceptor on Transaction or Snapshot.
 			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
@@ -169,10 +175,13 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	// TODO: comment
+	// Bind an interceptor for client-go to count the number of SQL executions of each TiKV (if any).
 	if variable.TopSQLEnabled() && stmtCtx.ExecCounter != nil {
 		normalized, digest := stmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
+			// Unlike calling Transaction or Snapshot interface, in this package we directly
+			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
+			// calling SetInterceptor on Transaction or Snapshot.
 			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}

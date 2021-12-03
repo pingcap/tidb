@@ -556,6 +556,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if sessVars.ExecCounter != nil {
 		normalized, digest := sessVars.StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
+			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 			s.txn.SetOption(kv.RPCInterceptor, sessVars.ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}

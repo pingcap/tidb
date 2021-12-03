@@ -1909,6 +1909,8 @@ func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snap
 	}
 }
 
+// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
+// the number of SQL executions of each TiKV.
 func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() && vars.ExecCounter != nil {
 		normalized, digest := vars.StmtCtx.SQLDigest()

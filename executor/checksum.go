@@ -130,10 +130,13 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
-	// TODO: comment
+	// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 	if variable.TopSQLEnabled() && e.ctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
+			// Unlike calling Transaction or Snapshot interface, in distsql package we directly
+			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
+			// calling SetInterceptor on Transaction or Snapshot.
 			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, e.ctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
