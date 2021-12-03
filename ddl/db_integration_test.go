@@ -3621,6 +3621,7 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 	}
 }
 
+// See https://github.com/pingcap/tidb/issues/29327
 func (s *testIntegrationSuite3) TestEnumDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
