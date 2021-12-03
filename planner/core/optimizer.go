@@ -317,11 +317,7 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 	}
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	neededColumns := collectNeededColumns(plan)
-	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
-	// TODO check missing
-	for col := range neededColumns {
-		missingColumns = append(missingColumns, col)
-	}
+	missingColumns := statsHandle.GenHistMissingColumns(neededColumns)
 	if len(missingColumns) > 0 {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmtCtx.StatsLoad.NeededColumns = missingColumns

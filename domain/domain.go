@@ -1271,7 +1271,7 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	for i, ctx := range ctxList {
 		statsHandle.SubCtxs[i] = ctx
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
 	}
 }
 

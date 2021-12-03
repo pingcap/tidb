@@ -1077,6 +1077,10 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
+func (c *Column) IsHistNeeded() bool {
+	return !c.NotAccurate() && c.Histogram.NDV > 0 && c.notNullCount() == 0
+}
+
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil

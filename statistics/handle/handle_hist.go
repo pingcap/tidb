@@ -30,6 +30,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// GenHistMissingColumns generates hist-missing columns based on neededColumns and statsCache.
+func (h *Handle) GenHistMissingColumns(neededColumns map[model.TableColumnID]struct{}) []model.TableColumnID {
+	statsCache := h.statsCache.Load().(statsCache)
+	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
+	for col := range neededColumns {
+		tbl, ok := statsCache.tables[col.TableID]
+		if !ok {
+			continue
+		}
+		colHist, ok := tbl.Columns[col.ColumnID]
+		if !ok {
+			continue
+		}
+		if colHist.IsHistNeeded() {
+			missingColumns = append(missingColumns, col)
+		}
+	}
+	return missingColumns
+}
+
 type NeededColumnsCh struct {
 	ColumnsCh        chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
@@ -52,7 +72,7 @@ func (h *Handle) AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, t
 var ErrExit = errors.New("Stop loading since domain is closed.")
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg sync.WaitGroup) error {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) error {
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
