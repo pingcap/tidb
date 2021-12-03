@@ -376,6 +376,15 @@ func (s *testValidatorSuite) TestLargeVarcharAutoConv(c *C) {
 	c.Assert(err, IsNil)
 	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
 	s.runSQL(c, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := s.se.GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3 as for first stmt, ddl will append a warning for column b
+	c.Assert(warnCnt, Equals, uint16(3))
+	warns := s.se.GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		c.Assert(terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert), IsTrue)
+	}
+
+	s.se.GetSessionVars().StmtCtx.SetWarnings(warns[:0])
 	_, err = s.se.Execute(context.Background(), "SET sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
 	c.Assert(err, IsNil)
 }
