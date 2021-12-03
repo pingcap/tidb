@@ -87,6 +87,17 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagJoinReOrder},
+			assertRuleName: "join_reorder",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "join order become (((t1*t2)*(t3*t4))*t5) from origin ((((t1*t2)*t3)*t4)*t5)",
+					assertReason: "new join order is better than origin join order",
+				},
+			},
+		},
+		{
 			sql:            "select min(distinct a) from t group by a",
 			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
 			assertRuleName: "aggregation_eliminate",

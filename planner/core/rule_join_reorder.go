@@ -15,10 +15,13 @@
 package core
 
 import (
+	"bytes"
 	"context"
-
+	"fmt"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -56,7 +59,11 @@ type jrNode struct {
 }
 
 func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return s.optimizeRecursive(p.SCtx(), p)
+	origin := opt.traceJoinReorder(p)
+	p, err := s.optimizeRecursive(p.SCtx(), p)
+	now := opt.traceJoinReorder(p)
+	appendJoinReorderTraceStep(origin, now, opt)
+	return p, err
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
@@ -193,4 +200,84 @@ func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode
 
 func (*joinReOrderSolver) name() string {
 	return "join_reorder"
+}
+
+func appendJoinReorderTraceStep(origin, now *tracing.LogicalPlanTrace, opt *logicalOptimizeOp) {
+	if origin == nil || now == nil {
+		return
+	}
+	foldOriginOrder := joinOrderToString(origin)
+	foldNowOrder := joinOrderToString(now)
+	if foldOriginOrder != foldNowOrder {
+		action := fmt.Sprintf("join order become %v from origin %v", foldNowOrder, foldOriginOrder)
+		reason := "new join order is better than origin join order"
+		opt.appendStepToCurrent(now.ID, now.TP, reason, action)
+	}
+}
+
+func (op *logicalOptimizeOp) traceJoinReorder(p LogicalPlan) *tracing.LogicalPlanTrace {
+	if op.tracer == nil {
+		return nil
+	}
+	return extractJoinAndDataSource(p.buildLogicalPlanTrace(p))
+}
+
+// joinOrderToString let Join(DataSource, DataSource) become '(t1*t2)'
+func joinOrderToString(t *tracing.LogicalPlanTrace) string {
+	if t.TP == plancodec.TypeJoin {
+		buffer := bytes.NewBufferString("(")
+		for i, child := range t.Children {
+			if i > 0 {
+				buffer.WriteString("*")
+			}
+			buffer.WriteString(joinOrderToString(child))
+		}
+		buffer.WriteString(")")
+		return buffer.String()
+	} else if t.TP == plancodec.TypeDataSource {
+		return t.ExplainInfo[6:]
+	}
+	return ""
+}
+
+// extractJoinAndDataSource will only keep join and dataSource operator and remove other operators.
+// For example: Proj->Join->(Proj->DataSource, DataSource) will become Join->(DataSource, DataSource)
+func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanTrace {
+	root := findRootJoin(t)
+	if root == nil {
+		return nil
+	}
+	simplify(root)
+	return root
+}
+
+func simplify(node *tracing.LogicalPlanTrace) {
+	if len(node.Children) < 1 {
+		return
+	}
+	for valid := true; !valid; valid = true {
+		newChildren := make([]*tracing.LogicalPlanTrace, 0)
+		for _, child := range node.Children {
+			if child.TP != plancodec.TypeDataSource && child.TP != plancodec.TypeJoin {
+				newChildren = append(newChildren, child.Children...)
+				valid = false
+			} else {
+				newChildren = append(newChildren, child)
+			}
+		}
+		node.Children = newChildren
+	}
+	for _, child := range node.Children {
+		simplify(child)
+	}
+}
+
+func findRootJoin(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanTrace {
+	if t.TP == plancodec.TypeJoin {
+		return t
+	}
+	if len(t.Children) < 1 {
+		return nil
+	}
+	return findRootJoin(t.Children[0])
 }
