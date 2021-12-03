@@ -1422,7 +1422,7 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 		}
 		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
 	}
-	if rows.Close() != nil {
+	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err
