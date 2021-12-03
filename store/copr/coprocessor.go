@@ -306,7 +306,8 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
-	resolvedLocks util.TSSet
+	resolvedLocks  util.TSSet
+	committedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
 }
@@ -444,7 +445,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, false),
+			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,

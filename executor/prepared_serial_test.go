@@ -105,10 +105,10 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	require.Regexp(t, ".*TopN.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "TopN")
 
 	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
-	require.Regexp(t, ".*TopN.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "TopN")
 
 	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('max_min_eliminate');")
 	tk.MustExec("ADMIN reload opt_rule_blacklist;")
@@ -121,10 +121,10 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// Plans that have been cached will not be affected by the blacklist.
-	require.Regexp(t, ".*TopN.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "TopN")
 
 	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
-	require.Regexp(t, ".*StreamAgg.*", res.Rows()[0][0])
+	require.Contains(t, res.Rows()[0][0], "StreamAgg")
 
 	// test the blacklist of Expression Pushdown
 	tk.MustExec("drop table if exists t;")
@@ -136,7 +136,7 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, 3, len(res.Rows()))
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "Selection")
 	require.Equal(t, "gt(test.t.a, 2), lt(test.t.a, 2)", res.Rows()[1][4])
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
@@ -155,14 +155,14 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// The expressions can still be pushed down to tikv.
 	require.Equal(t, 3, len(res.Rows()))
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "Selection")
 	require.Equal(t, "gt(test.t.a, 2), lt(test.t.a, 2)", res.Rows()[1][4])
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	require.Equal(t, 4, len(res.Rows()))
-	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
+	require.Contains(t, res.Rows()[0][0], "Selection")
 	require.Equal(t, "lt(test.t.a, 2)", res.Rows()[0][4])
-	require.Regexp(t, ".*Selection.*", res.Rows()[2][0])
+	require.Contains(t, res.Rows()[2][0], "Selection")
 	require.Equal(t, "gt(test.t.a, 2)", res.Rows()[2][4])
 
 	tk.MustExec("DELETE FROM mysql.expr_pushdown_blacklist;")
@@ -1020,7 +1020,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Equal(t, 4, len(res.Rows()))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
+	require.Contains(t, res.Rows()[0][0], "IndexMerge")
 
 	tk.MustExec("set @@tidb_enable_index_merge = 0;")
 	tk.MustExec("execute stmt;")
@@ -1029,7 +1029,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Equal(t, 4, len(res.Rows()))
-	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
+	require.Contains(t, res.Rows()[0][0], "IndexMerge")
 	tk.MustExec("execute stmt;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
@@ -1046,8 +1046,8 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*Apply.*", res.Rows()[1][0])
-	require.Regexp(t, ".*Concurrency.*", res.Rows()[1][5])
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	require.Contains(t, res.Rows()[1][5], "Concurrency")
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
@@ -1055,7 +1055,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*Apply.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "Apply")
 	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
 	// Do not use the parallel apply.
 	require.False(t, strings.Contains(executionInfo, "Concurrency"))
@@ -1076,8 +1076,8 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*Apply.*", res.Rows()[1][0])
-	require.Regexp(t, ".*cache:ON.*", res.Rows()[1][5])
+	require.Contains(t, res.Rows()[1][0], "Apply")
+	require.Contains(t, res.Rows()[1][5], "cache:ON")
 
 	tk.MustExec("set tidb_mem_quota_apply_cache=0")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
@@ -1085,7 +1085,7 @@ func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Regexp(t, ".*Apply.*", res.Rows()[1][0])
+	require.Contains(t, res.Rows()[1][0], "Apply")
 	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
 	// Do not use the apply cache.
 	require.True(t, strings.Contains(executionInfo, "cache:OFF"))
