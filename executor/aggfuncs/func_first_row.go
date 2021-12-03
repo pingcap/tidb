@@ -14,6 +14,13 @@
 package aggfuncs
 
 import (
+<<<<<<< HEAD
+=======
+	"unsafe"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
+>>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -444,7 +451,14 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of first_row should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

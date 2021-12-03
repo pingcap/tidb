@@ -14,6 +14,13 @@
 package aggfuncs
 
 import (
+<<<<<<< HEAD
+=======
+	"unsafe"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
+>>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -58,7 +65,14 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -206,7 +220,14 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if err != nil {
 		return err
 	}
-	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
+	if e.retTp == nil {
+		return errors.New("e.retTp of avg should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}

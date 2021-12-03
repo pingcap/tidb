@@ -1221,6 +1221,7 @@ func BuildFinalModeAggregation(
 			if aggFunc.Name == ast.AggFuncAvg {
 				cntAgg := *aggFunc
 				cntAgg.Name = ast.AggFuncCount
+<<<<<<< HEAD
 				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
 				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
 				sumAgg := *aggFunc
@@ -1232,6 +1233,30 @@ func BuildFinalModeAggregation(
 				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
 				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
+=======
+				err := cntAgg.TypeInfer(sctx)
+				if err != nil { // must not happen
+					partial = nil
+					final = original
+					return
+				}
+				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
+				// we must call deep clone in this case, to avoid sharing the arguments.
+				sumAgg := aggFunc.Clone()
+				sumAgg.Name = ast.AggFuncSum
+				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
+				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
+				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
+				newAggFunc := *aggFunc
+				newAggFunc.Name = aggFunc.Name
+				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, &newAggFunc)
+				if aggFunc.Name == ast.AggFuncGroupConcat {
+					// append the last separator arg
+					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
+				}
+>>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
 			} else {
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
@@ -1248,7 +1273,81 @@ func BuildFinalModeAggregation(
 	return
 }
 
+<<<<<<< HEAD
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+=======
+// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
+// 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
+// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
+// If there is no avg, nothing is changed and return nil.
+func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
+	newSchema := expression.NewSchema()
+	newSchema.Keys = p.schema.Keys
+	newSchema.UniqueKeys = p.schema.UniqueKeys
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
+	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
+	// add agg functions schema
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncAvg {
+			// inset a count(column)
+			avgCount := aggFunc.Clone()
+			avgCount.Name = ast.AggFuncCount
+			err := avgCount.TypeInfer(p.ctx)
+			if err != nil { // must not happen
+				return nil
+			}
+			newAggFuncs = append(newAggFuncs, avgCount)
+			avgCountCol := &expression.Column{
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  avgCount.RetTp,
+			}
+			newSchema.Append(avgCountCol)
+			// insert a sum(column)
+			avgSum := aggFunc.Clone()
+			avgSum.Name = ast.AggFuncSum
+			avgSum.TypeInfer4AvgSum(avgSum.RetTp)
+			newAggFuncs = append(newAggFuncs, avgSum)
+			avgSumCol := &expression.Column{
+				UniqueID: p.schema.Columns[i].UniqueID,
+				RetType:  avgSum.RetTp,
+			}
+			newSchema.Append(avgSumCol)
+			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
+			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
+			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
+			exprs = append(exprs, divide)
+		} else {
+			newAggFuncs = append(newAggFuncs, aggFunc)
+			newSchema.Append(p.schema.Columns[i])
+			exprs = append(exprs, p.schema.Columns[i])
+		}
+	}
+	// no avgs
+	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
+	if len(p.schema.Columns) == len(newSchema.Columns) && !p.isFinalAgg() {
+		return nil
+	}
+	// add remaining columns to exprs
+	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
+		exprs = append(exprs, p.schema.Columns[i])
+	}
+	proj := PhysicalProjection{
+		Exprs:                exprs,
+		CalculateNoDelay:     false,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
+	proj.SetSchema(p.schema)
+
+	p.AggFuncs = newAggFuncs
+	p.schema = newSchema
+
+	return proj
+}
+
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final PhysicalPlan) {
+>>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
