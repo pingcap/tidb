@@ -194,7 +194,7 @@ func TestBindingSymbolList(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "ia(a)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "ia(a)"), res.Rows())
 	tk.MustExec("execute stmt1;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -211,7 +211,7 @@ func TestBindingSymbolList(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "ib(b)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "ib(b)"), res.Rows())
 
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
@@ -255,7 +255,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt1;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -270,7 +270,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
 	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"))
 
@@ -280,7 +280,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"))
+	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
 	tk.MustExec("execute stmt2;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -292,7 +292,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"))
+	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
 	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -305,7 +305,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt3;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -320,7 +320,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
 	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"))
 
@@ -330,7 +330,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"))
+	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
 	tk.MustExec("execute stmt4;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -342,7 +342,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"))
+	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -355,7 +355,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt5;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -369,7 +369,7 @@ func TestDMLSQLBind(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	res = tk.MustQuery("explain for connection "+strconv.FormatUint(tkProcess.ID, 10), res.Rows())
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
 
 	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
@@ -384,7 +384,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -397,7 +397,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 	tk.MustExec("execute stmt6;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -412,7 +412,7 @@ func TestDMLSQLBind(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 }
 
 func TestBestPlanInBaselines(t *testing.T) {
