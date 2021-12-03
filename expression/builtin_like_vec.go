@@ -16,6 +16,7 @@ package expression
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
@@ -53,7 +54,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 	escapes := bufEscape.Int64s()
-
+	focusCI := isFocusCI(b.ctx)
 	// Must not use b.pattern to avoid data race
 	pattern := b.collator().Pattern()
 
@@ -62,6 +63,10 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
+			continue
+		}
+		if focusCI && strings.EqualFold(bufPattern.GetString(i), bufVal.GetString(i)) {
+			i64s[i] = 1
 			continue
 		}
 		pattern.Compile(bufPattern.GetString(i), byte(escapes[i]))

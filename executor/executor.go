@@ -1820,6 +1820,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
+		if stmt.Tp == ast.ShowColumns || stmt.Tp == ast.ShowStatus || stmt.Tp == ast.ShowCollation {
+			ctx.SetValue(sessionctx.FocusCI, true)
+		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
 		sc.IgnoreZeroInDate = true

@@ -387,6 +387,9 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(ErrNoDB)
 	}
+	if strings.EqualFold(currentDB, "INFORMATION_SCHEMA") {
+		p.ctx.SetValue(sessionctx.FocusCI, true)
+	}
 	sName := model.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 

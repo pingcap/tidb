@@ -51,6 +51,8 @@ package expression
 const newLine = "\n"
 
 const builtinCompareImports = `import (
+	"strings"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -76,7 +78,11 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 	if err := b.args[1].VecEval{{ .type.TypeName }}(b.ctx, input, buf1); err != nil {
 		return err
 	}
-
+{{- if eq .type.ETName "String" }}
+{{- if eq .compare.CompareName "EQ" }}
+	focusCI := isFocusCI(b.ctx)
+{{- end }}
+{{- end }}
 {{ if .type.Fixed }}
 	arg0 := buf0.{{ .type.TypeNameInColumn }}s()
 	arg1 := buf1.{{ .type.TypeNameInColumn }}s()
@@ -93,6 +99,12 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Real" }}
 		val := types.CompareFloat64(arg0[i], arg1[i])
 {{- else if eq .type.ETName "String" }}
+		{{- if eq .compare.CompareName "EQ" }}
+		if focusCI {
+			i64s[i] = boolToInt64(strings.EqualFold(buf0.GetString(i), buf1.GetString(i)))
+			continue
+		}
+		{{- end }}
 		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 {{- else if eq .type.ETName "Duration" }}
 		val := types.CompareDuration(arg0[i], arg1[i])
@@ -101,11 +113,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEvalInt(in
 {{- else if eq .type.ETName "Decimal" }}
 		val := arg0[i].Compare(&arg1[i])
 {{- end }}
-		if val {{ .compare.Operator }} 0 {
-			i64s[i] = 1
-		} else {
-			i64s[i] = 0
-		}
+		i64s[i] = boolToInt64(val {{ .compare.Operator }} 0)
 	}
 	return nil
 }

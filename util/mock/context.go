@@ -122,6 +122,12 @@ func (c *Context) Value(key fmt.Stringer) interface{} {
 	return value
 }
 
+// GetCheckValue gets the check value associated with this context for key.
+func (c *Context) GetCheckValue(key fmt.Stringer) (interface{}, bool) {
+	value, ok := c.values[key]
+	return value, ok
+}
+
 // ClearValue implements sessionctx.Context ClearValue interface.
 func (c *Context) ClearValue(key fmt.Stringer) {
 	delete(c.values, key)

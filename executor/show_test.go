@@ -1674,3 +1674,31 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
+
+func (s *testSuite5) TestShow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int);")
+	tk.MustExec("create table 中文t(中文id int);")
+	defer tk.Exec("drop table t, 中文t;")
+	// Test for https://github.com/pingcap/tidb/issues/29910
+	tk.MustQuery("show full columns from t like 'ID';").Check(testkit.Rows("id int(11) <nil> YES  <nil>  select,insert,update,references "))
+	tk.MustQuery("show full columns from t like 'id';").Check(testkit.Rows("id int(11) <nil> YES  <nil>  select,insert,update,references "))
+	tk.MustQuery("show full columns from 中文t like '中文ID';").Check(testkit.Rows("中文id int(11) <nil> YES  <nil>  select,insert,update,references "))
+
+	// Test for https://github.com/pingcap/tidb/issues/26253
+	tk.MustQuery("show status like 'ssl_cipher';").Check(testkit.Rows("Ssl_cipher "))
+	tk.MustQuery("show status like 'Ssl_cipher';").Check(testkit.Rows("Ssl_cipher "))
+
+	// Test for https://github.com/pingcap/tidb/issues/30357
+	tk.MustQuery("select TABLE_NAME from information_schema.tables where table_schema='test' and table_name='T'").Check(
+		testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.tables where table_schema='test' and table_name='t'").Check(
+		testkit.Rows("t"))
+	tk.MustQuery("select TABLE_NAME from information_schema.tables where table_schema='test' and table_name='中文T'").Check(
+		testkit.Rows("中文t"))
+
+	tk.MustQuery("show collation like 'utf8mb4_bin';").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("show collation like 'UTF8MB4_BIN';").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+}

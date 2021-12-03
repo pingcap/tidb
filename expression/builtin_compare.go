@@ -2740,6 +2740,15 @@ func compareNull(lhsIsNull, rhsIsNull bool) int64 {
 	return 1
 }
 
+func isFocusCI(ctx sessionctx.Context) bool {
+	if t, ok := ctx.GetCheckValue(sessionctx.FocusCI); ok {
+		if val, ok := t.(bool); ok && val {
+			return true
+		}
+	}
+	return false
+}
+
 // CompareFunc defines the compare function prototype.
 type CompareFunc = func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error)
 
@@ -2803,6 +2812,9 @@ func CompareStringWithCollationInfo(sctx sessionctx.Context, lhsArg, rhsArg Expr
 
 	if isNull0 || isNull1 {
 		return compareNull(isNull0, isNull1), true, nil
+	}
+	if isFocusCI(sctx) && strings.EqualFold(arg0, arg1) {
+		return 0, false, nil
 	}
 	return int64(types.CompareString(arg0, arg1, collation)), false, nil
 }

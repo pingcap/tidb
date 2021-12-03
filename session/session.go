@@ -2273,6 +2273,13 @@ func (s *session) Value(key fmt.Stringer) interface{} {
 	return value
 }
 
+func (s *session) GetCheckValue(key fmt.Stringer) (interface{}, bool) {
+	s.mu.RLock()
+	value, ok := s.mu.values[key]
+	s.mu.RUnlock()
+	return value, ok
+}
+
 func (s *session) ClearValue(key fmt.Stringer) {
 	s.mu.Lock()
 	delete(s.mu.values, key)

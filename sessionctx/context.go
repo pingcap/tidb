@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -66,6 +67,9 @@ type Context interface {
 
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) interface{}
+
+	// GetCheckValue gets the check value associated with this context for key.
+	GetCheckValue(key fmt.Stringer) (interface{}, bool)
 
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
@@ -159,6 +163,9 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
+
+	// FocusCI is the key for indicating if case-insensitive is focused.
+	FocusCI = stringutil.StringerStr("FocusCI")
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
