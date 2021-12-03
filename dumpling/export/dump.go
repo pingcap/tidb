@@ -467,7 +467,7 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 	// get db collation
 	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 	if !ok {
-		tctx.L().WARN("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
 		return originSQL, nil
 	}
 
