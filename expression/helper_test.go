@@ -64,8 +64,25 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
+<<<<<<< HEAD
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
 	c.Assert(err, IsNil)
+=======
+	// trigger the stmt context cache.
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
+	require.NoError(t, err)
+
+	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, v1, v2)
+
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
+	require.NoError(t, err)
+>>>>>>> 28446605c... expression: fix tidb can't alter table from other-type with null value to timestamp with NOT NULL attribute (#29664)
 
 	tbl := []struct {
 		Expr interface{}

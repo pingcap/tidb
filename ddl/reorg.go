@@ -170,6 +170,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      time.Local,
 		}
 	}
 	if w.reorgCtx.doneCh == nil {

@@ -1752,3 +1752,408 @@ func (s *testColumnTypeChangeSuite) TestDDLExitWhenCancelMeetPanic(c *C) {
 	c.Assert(job.ErrorCount, Equals, int64(4))
 	c.Assert(job.Error.Error(), Equals, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 }
+<<<<<<< HEAD
+=======
+
+// Close issue #24253
+func (s *testColumnTypeChangeSuite) TestChangeIntToBitWillPanicInBackfillIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` int(11) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  `c` decimal(10,2) DEFAULT NULL," +
+		"  KEY `idx1` (`a`)," +
+		"  UNIQUE KEY `idx2` (`a`)," +
+		"  KEY `idx3` (`a`,`b`)," +
+		"  KEY `idx4` (`a`,`b`,`c`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into t values(19,1,1),(17,2,2)")
+	tk.MustExec("alter table t modify a bit(5) not null")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bit(5) NOT NULL,\n" +
+		"  `b` varchar(10) DEFAULT NULL,\n" +
+		"  `c` decimal(10,2) DEFAULT NULL,\n" +
+		"  KEY `idx1` (`a`),\n" +
+		"  UNIQUE KEY `idx2` (`a`),\n" +
+		"  KEY `idx3` (`a`,`b`),\n" +
+		"  KEY `idx4` (`a`,`b`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("\x13 1 1.00", "\x11 2 2.00"))
+}
+
+// Close issue #24584
+func (s *testColumnTypeChangeSuite) TestCancelCTCInReorgStateWillCauseGoroutineLeak(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic", `return(true)`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInfiniteReorgLogic")
+	}()
+
+	// set ddl hook
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	tk.MustExec("drop table if exists ctc_goroutine_leak")
+	tk.MustExec("create table ctc_goroutine_leak (a int)")
+	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
+	tbl := testGetTableByName(c, tk.Se, "test", "ctc_goroutine_leak")
+
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+			jobID = job.ID
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	var (
+		wg       = sync.WaitGroup{}
+		alterErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+	}()
+	<-ddl.TestReorgGoroutineRunning
+	tk.MustExec("admin cancel ddl jobs " + strconv.Itoa(int(jobID)))
+	wg.Wait()
+	c.Assert(alterErr.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+}
+
+// Close issue #24971, #24973, #24974
+func (s *testColumnTypeChangeSuite) TestCTCShouldCastTheDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("alter table t add column b bit(51) default 1512687856625472")                 // virtual fill the column data
+	tk.MustGetErrCode("alter table t modify column b decimal(30,18)", mysql.ErrDataOutOfRange) // because 1512687856625472 is out of range.
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table tbl_1 (col int)")
+	tk.MustExec("insert into tbl_1 values (9790)")
+	tk.MustExec("alter table tbl_1 add column col1 blob(6) collate binary not null")
+	tk.MustQuery("select col1 from tbl_1").Check(testkit.Rows(""))
+	tk.MustGetErrCode("alter table tbl_1 change column col1 col2 int", mysql.ErrTruncatedWrongValue)
+	tk.MustQuery("select col1 from tbl_1").Check(testkit.Rows(""))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table tbl(col_214 decimal(30,8))")
+	tk.MustExec("replace into tbl values (89687.448)")
+	tk.MustExec("alter table tbl add column col_279 binary(197) collate binary default 'RAWTdm' not null")
+	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+	tk.MustGetErrCode("alter table tbl change column col_279 col_287 int", mysql.ErrTruncatedWrongValue)
+	tk.MustQuery("select col_279 from tbl").Check(testkit.Rows("RAWTdm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+}
+
+// Close issue #25037
+// 1: for default value of binary of create-table, it should append the \0 as the suffix to meet flen.
+// 2: when cast the bit to binary, we should consider to convert it to uint then cast uint to string, rather than taking the bit to string directly.
+func (s *testColumnTypeChangeSuite) TestCTCCastBitToBinary(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// For point 1:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a binary(10) default 't')")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(10) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// For point 2 with binary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a binary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` binary(248) DEFAULT 't\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+
+	// For point 2 with varbinary:
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bit(13) not null) collate utf8mb4_general_ci")
+	tk.MustExec("insert into t values ( 4047 )")
+	tk.MustExec("alter table t change column a a varbinary(248) collate binary default 't'")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` varbinary(248) DEFAULT 't'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("4047"))
+}
+
+func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a text, unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a int;")
+	showCreateTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), unique index idx(a(2)));")
+	tk.MustExec("alter table t modify column a float;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a char(255), b text, unique index idx(a(2), b(10)));")
+	tk.MustExec("alter table t modify column b int;")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`(2),`b`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(250), unique key idx(a(10)));")
+	tk.MustExec("alter table t modify a char(9);")
+	showCreateTable = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	c.Assert(strings.Contains(showCreateTable, "UNIQUE KEY `idx` (`a`)"), IsTrue,
+		Commentf("%s", showCreateTable))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(700), key(a(700)));")
+	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
+}
+
+// Fix issue https://github.com/pingcap/tidb/issues/25469
+func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("drop table if exists t")
+
+	// Normal cast datetime to timestamp can succeed.
+	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
+}
+
+// https://github.com/pingcap/tidb/issues/25285.
+func (s *testColumnTypeChangeSuite) TestCastFromZeroIntToTimeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	prepare := func() {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int);")
+		tk.MustExec("insert into t values (0);")
+	}
+	const errCodeNone = -1
+	testCases := []struct {
+		sqlMode string
+		errCode int
+	}{
+		{"STRICT_TRANS_TABLES", mysql.ErrTruncatedWrongValue},
+		{"STRICT_ALL_TABLES", mysql.ErrTruncatedWrongValue},
+		{"NO_ZERO_IN_DATE", errCodeNone},
+		{"NO_ZERO_DATE", errCodeNone},
+		{"ALLOW_INVALID_DATES", errCodeNone},
+		{"", errCodeNone},
+	}
+	for _, tc := range testCases {
+		prepare()
+		tk.MustExec(fmt.Sprintf("set @@sql_mode = '%s';", tc.sqlMode))
+		if tc.sqlMode == "NO_ZERO_DATE" {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("<nil>"))
+		} else {
+			tk.MustQuery(`select date(0);`).Check(testkit.Rows("0000-00-00"))
+		}
+		tk.MustQuery(`select time(0);`).Check(testkit.Rows("00:00:00"))
+		if tc.errCode == errCodeNone {
+			tk.MustExec("alter table t modify column a date;")
+			prepare()
+			tk.MustExec("alter table t modify column a datetime;")
+			prepare()
+			tk.MustExec("alter table t modify column a timestamp;")
+		} else {
+			tk.MustGetErrCode("alter table t modify column a date;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a datetime;", mysql.ErrTruncatedWrongValue)
+			tk.MustGetErrCode("alter table t modify column a timestamp;", mysql.ErrTruncatedWrongValue)
+		}
+	}
+	tk.MustExec("drop table if exists t;")
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a time default 0);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("insert into t values (NULL);")
+	tk.MustExec("insert into t values ('12');")
+	tk.MustExec("insert into t values ('00:19:59');")
+	tk.MustExec("insert into t values ('00:20:13');")
+	tk.MustExec("alter table t modify column a year;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("0", "<nil>", "2012", "1959", "2013"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id bigint primary key, a time);")
+	tk.MustExec("replace into t values (1, '10:10:10');")
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustExec("replace into t values (1, '12:13:14');")
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("alter table t modify column a year;")
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows("Warning 1264 Out of range value for column 'a', the value is '12:13:14'"))
+}
+
+// Fix issue: https://github.com/pingcap/tidb/issues/26292
+// Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
+// For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
+// For ddl reorging or changing column in ctc, it need report some errors.
+func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
+	tk.MustExec("insert into t values(now())")
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// use new session to check meta in callback function.
+	internalTK := testkit.NewTestKit(c, s.store)
+	internalTK.MustExec("use test")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(len(tbl.Cols()), Equals, 1)
+
+	hook := &ddl.TestDDLCallback{}
+	var (
+		checkErr1 error
+		checkErr2 error
+	)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr1 != nil || checkErr2 != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			_, checkErr1 = internalTK.Exec("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
+			_, checkErr2 = internalTK.Exec("update t set `a` = '3977-02-22'")
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
+	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	tk.MustExec("drop table if exists t")
+}
+
+// https://github.com/pingcap/tidb/issues/25282.
+func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a mediumint unsigned);")
+	tk.MustExec("insert into t values (180857);")
+	tk.MustExec("alter table t modify column a time;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
+	tk.MustExec("drop table if exists t;")
+}
+
+// See https://github.com/pingcap/tidb/issues/25287.
+func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bit(45));")
+	tk.MustExec("insert into t values (1174717);")
+	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
+	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250));")
+	tk.MustExec("insert into t values('0123456789abc');")
+	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
+	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Some ddl cases.
+	prepare := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare()
+	tk.MustExec("alter table t modify column a timestamp NOT NULL")
+	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+
+	prepare()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful.
+	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+
+	prepare2 := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a timestamp null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare2()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
+	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+
+	// Some dml cases.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp NOT NULL)")
+	_, err = tk.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+
+	_, err = tk.Exec("insert into t values(null)")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+>>>>>>> 28446605c... expression: fix tidb can't alter table from other-type with null value to timestamp with NOT NULL attribute (#29664)
