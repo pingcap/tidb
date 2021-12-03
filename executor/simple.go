@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -160,7 +161,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
 	case *ast.AdminStmt:
-		err = e.executeAdminReloadStatistics(x)
+		err = e.executeAdmin(x)
 	}
 	e.done = true
 	return err
@@ -1659,6 +1660,16 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	}
 }
 
+func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
+	switch s.Tp {
+	case ast.AdminReloadStatistics:
+		return e.executeAdminReloadStatistics(s)
+	case ast.AdminFlushPlanCache:
+		return e.executeAdminFlushPlanCache(s)
+	}
+	return nil
+}
+
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
 		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
@@ -1667,4 +1678,18 @@ func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
+}
+
+func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminFlushPlanCache {
+		return errors.New("This AdminStmt is not ADMIN FLUSH PLAN_CACHE")
+	}
+	if !e.ctx.GetSessionVars().StmtCtx.UseCache {
+		return errors.New("The config's for plan cache is disable")
+	}
+	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
+	e.ctx.GetSessionVars().LastUpdateTime4PC = now
+	e.ctx.PreparedPlanCache().DeleteAll()
+	domain.GetDomain(e.ctx).ExpiredTimeStamp4PC = now
+	return nil
 }

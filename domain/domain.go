@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -89,6 +90,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
+	ExpiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session

@@ -1848,6 +1848,7 @@ const (
 	AdminShowTelemetry
 	AdminResetTelemetryID
 	AdminReloadStatistics
+	AdminFlushPlanCache
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
