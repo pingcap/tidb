@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -129,17 +128,7 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 }
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
-	ctx := context.TODO()
-	// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-	if variable.TopSQLEnabled() && e.ctx.GetSessionVars().ExecCounter != nil {
-		normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
-		if len(normalized) > 0 && digest != nil {
-			// Unlike calling Transaction or Snapshot interface, in distsql package we directly
-			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
-			// calling SetInterceptor on Transaction or Snapshot.
-			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, e.ctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
-		}
-	}
+	ctx := distsql.BindSQLExecCounter(context.TODO(), e.ctx.GetSessionVars().StmtCtx)
 	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, err
