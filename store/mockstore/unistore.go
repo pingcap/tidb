@@ -24,7 +24,7 @@ import (
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
-	client, pdClient, cluster, err := unistore.New(opts.path, opts.testGen)
+	client, pdClient, cluster, err := unistore.New(opts.path, opts.testGenConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

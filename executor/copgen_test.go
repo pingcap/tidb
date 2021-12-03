@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,9 @@ type TestSuite struct {
 }
 
 func TestCopGen(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithTestGen())
+	config := &unistore.TestGenConfig{}
+
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithTestGen(config))
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -30,15 +33,13 @@ func TestCopGen(t *testing.T) {
 	fmt.Println("run select")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 
-	tbl, exists := dom.InfoSchema().TableByID(43)
-	require.True(t, exists)
-	fmt.Println(tbl.Meta().Name)
-	tbl2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	fmt.Println(tbl2.Meta().ID)
+	fmt.Println(tbl.Meta().ID)
+	config.TableOfInterest = append(config.TableOfInterest, tbl.Meta().ID)
 
 	fmt.Println("")
 	fmt.Println("")
-	tk.MustQuery("select * from t where a != 1").Check(testkit.Rows("2 2 2", "3 3 3"))
+	tk.MustQuery("select * from t where a * 2 - 1 != 1").Check(testkit.Rows("2 2 2", "3 3 3"))
 
 }

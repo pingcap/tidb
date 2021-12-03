@@ -90,7 +90,7 @@ type mockOptions struct {
 	path             string
 	txnLocalLatches  uint
 	storeType        StoreType
-	testGen          bool
+	testGenConfig    *unistore.TestGenConfig
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -140,9 +140,9 @@ func WithTxnLocalLatches(capacity uint) MockTiKVStoreOption {
 	}
 }
 
-func WithTestGen() MockTiKVStoreOption {
+func WithTestGen(config *unistore.TestGenConfig) MockTiKVStoreOption {
 	return func(c *mockOptions) {
-		c.testGen = true
+		c.testGenConfig = config
 	}
 }
 

@@ -36,6 +36,7 @@ import (
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -44,16 +45,29 @@ import (
 // For gofail injection.
 var undeterminedErr = terror.ErrResultUndetermined
 
+type TestGenConfig struct {
+	TableOfInterest []int64
+}
+
+func (c *TestGenConfig) IsTableInterested(tid int64) bool {
+	for _, v := range c.TableOfInterest {
+		if tid == v {
+			return true
+		}
+	}
+	return false
+}
+
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
-	usSvr      *us.Server
-	cluster    *Cluster
-	path       string
-	rawHandler *rawHandler
-	persistent bool
-	closed     int32
-	testGen    bool
+	usSvr         *us.Server
+	cluster       *Cluster
+	path          string
+	rawHandler    *rawHandler
+	persistent    bool
+	closed        int32
+	testGenConfig *TestGenConfig
 }
 
 // UnistoreRPCClientSendHook exports for test.
@@ -304,7 +318,7 @@ func (c *RPCClient) sendRequest(ctx context.Context, addr string, req *tikvrpc.R
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.sendRequest(ctx, addr, req, timeout)
-	if !c.testGen {
+	if c.testGenConfig == nil {
 		return resp, err
 	}
 	switch req.Type {
@@ -312,16 +326,26 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		cop := req.Cop()
 		start := cop.Ranges[0].Start
 		tid := tablecodec.DecodeTableID(start)
-		fmt.Printf("Sending Cop Request to Table %d\n", tid)
-		fmt.Println(cop)
-		fmt.Println(resp)
+		if c.testGenConfig.IsTableInterested(tid) {
+			fmt.Printf("Sending Cop Request to Table %d\n", tid)
+			dag := &tipb.DAGRequest{}
+			dag.Unmarshal(cop.Data)
+			fmt.Println("cop request")
+			fmt.Println(cop)
+			fmt.Println("dag request")
+			fmt.Println(dag)
+			fmt.Println("resp")
+			fmt.Println(resp)
+		}
 	case tikvrpc.CmdScan:
 		scan := req.Scan()
 		start := scan.StartKey
 		tid := tablecodec.DecodeTableID(start)
-		fmt.Printf("Sending Scan Request to Table %d\n", tid)
-		fmt.Println(scan)
-		fmt.Println(resp)
+		if c.testGenConfig.IsTableInterested(tid) {
+			fmt.Printf("Sending Scan Request to Table %d\n", tid)
+			fmt.Println(scan)
+			fmt.Println(resp)
+		}
 	}
 	return resp, err
 }

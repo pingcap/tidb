@@ -24,7 +24,7 @@ import (
 )
 
 // New creates an embed unistore client, pd client and cluster handler.
-func New(path string, testGen bool) (*RPCClient, pd.Client, *Cluster, error) {
+func New(path string, testGenConfig *TestGenConfig) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
 		var err error
@@ -59,12 +59,12 @@ func New(path string, testGen bool) (*RPCClient, pd.Client, *Cluster, error) {
 
 	cluster := newCluster(rm)
 	client := &RPCClient{
-		usSvr:      srv,
-		cluster:    cluster,
-		path:       path,
-		persistent: persistent,
-		rawHandler: newRawHandler(),
-		testGen:    testGen,
+		usSvr:         srv,
+		cluster:       cluster,
+		path:          path,
+		persistent:    persistent,
+		rawHandler:    newRawHandler(),
+		testGenConfig: testGenConfig,
 	}
 	pdClient := newPDClient(pd)
 
