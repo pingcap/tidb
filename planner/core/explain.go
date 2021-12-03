@@ -355,33 +355,31 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	if len(p.PartitionInfos) == 0 {
 		ts := p.TablePlans[0].(*PhysicalTableScan)
 		return getAccessObjectForTableScan(sctx, ts, p.PartitionInfo)
-	} else {
-		if len(p.PartitionInfos) == 1 {
-			return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].TableScan, p.PartitionInfos[0].PartitionInfo)
-		}
-		var buffer bytes.Buffer
-		for index, info := range p.PartitionInfos {
-			if index > 0 {
-				buffer.WriteString(", ")
-			}
-
-			tblName := info.TableScan.Table.Name.O
-			if info.TableScan.TableAsName != nil && info.TableScan.TableAsName.O != "" {
-				tblName = info.TableScan.TableAsName.O
-			}
-
-			if info.TableScan.Table.GetPartitionInfo() == nil {
-				buffer.WriteString("table of ")
-				buffer.WriteString(tblName)
-				continue
-			} else {
-				buffer.WriteString(getAccessObjectForTableScan(sctx, info.TableScan, info.PartitionInfo))
-				buffer.WriteString(" of ")
-				buffer.WriteString(tblName)
-			}
-		}
-		return buffer.String()
 	}
+	if len(p.PartitionInfos) == 1 {
+		return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].tableScan, p.PartitionInfos[0].partitionInfo)
+	}
+	var buffer bytes.Buffer
+	for index, info := range p.PartitionInfos {
+		if index > 0 {
+			buffer.WriteString(", ")
+		}
+
+		tblName := info.tableScan.Table.Name.O
+		if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
+			tblName = info.tableScan.TableAsName.O
+		}
+
+		if info.tableScan.Table.GetPartitionInfo() == nil {
+			buffer.WriteString("table of ")
+			buffer.WriteString(tblName)
+			continue
+		}
+		buffer.WriteString(getAccessObjectForTableScan(sctx, info.tableScan, info.partitionInfo))
+		buffer.WriteString(" of ")
+		buffer.WriteString(tblName)
+	}
+	return buffer.String()
 }
 
 func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {

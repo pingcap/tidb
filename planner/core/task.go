@@ -2257,7 +2257,7 @@ func (t *mppTask) convertToRootTask(ctx sessionctx.Context) *rootTask {
 func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
-		p.PartitionInfos = append(p.PartitionInfos, TableScanAndPartitionInfo{x, x.PartitionInfo})
+		p.PartitionInfos = append(p.PartitionInfos, tableScanAndPartitionInfo{x, x.PartitionInfo})
 	default:
 		for _, ch := range mppPlan.Children() {
 			collectPartitionInfosFromMPPPlan(p, ch)

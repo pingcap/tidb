@@ -68,9 +68,9 @@ var (
 	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
-type TableScanAndPartitionInfo struct {
-	TableScan     *PhysicalTableScan
-	PartitionInfo PartitionInfo
+type tableScanAndPartitionInfo struct {
+	tableScan     *PhysicalTableScan
+	partitionInfo PartitionInfo
 }
 
 // PhysicalTableReader is the table reader in tidb.
@@ -92,7 +92,7 @@ type PhysicalTableReader struct {
 	// Used by partition table.
 	PartitionInfo PartitionInfo
 	// Used by MPP, because MPP plan may contain union, it is possible that a physical table reader contains more than 1 table scan
-	PartitionInfos []TableScanAndPartitionInfo
+	PartitionInfos []tableScanAndPartitionInfo
 }
 
 // PartitionInfo indicates partition helper info in physical plan.
