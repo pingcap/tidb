@@ -36,7 +36,7 @@ import (
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
-	ctx = BindSQLExecCounter(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = BindSQLExecCounterInCtx(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
 	if resp == nil {
@@ -92,7 +92,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}
 	}
 
-	ctx = BindSQLExecCounter(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = BindSQLExecCounterInCtx(ctx, sctx.GetSessionVars().StmtCtx)
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -155,7 +155,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	ctx = BindSQLExecCounter(ctx, stmtCtx)
+	ctx = BindSQLExecCounterInCtx(ctx, stmtCtx)
 	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -251,9 +251,9 @@ func init() {
 	}
 }
 
-// BindSQLExecCounter binds an interceptor for client-go to count the
+// BindSQLExecCounterInCtx binds an interceptor for client-go to count the
 // number of SQL executions of each TiKV (if any).
-func BindSQLExecCounter(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
+func BindSQLExecCounterInCtx(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
 	if variable.TopSQLEnabled() && stmtCtx.ExecCounter != nil {
 		normalized, digest := stmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
