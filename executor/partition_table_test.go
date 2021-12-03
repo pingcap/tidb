@@ -1747,7 +1747,7 @@ func (s *partitionTableSuite) TestMPPQueryExplainInfo(c *C) {
 		c.Assert(err == nil, IsTrue)
 	}
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
-	c.Assert(err == nil, IsTrue)
+	c.Assert(err, IsNil)
 	tk.MustExec(`insert into t values (2), (7), (12)`)
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustPartition(`select * from t where a < 3`, "p0").Sort().Check(testkit.Rows("2"))
