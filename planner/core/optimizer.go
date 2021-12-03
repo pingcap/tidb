@@ -281,7 +281,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	ok, err := SyncLoadNeededColumns(logic, sctx)
 	if !ok || err != nil {
-		if sctx.GetSessionVars().GetPseudoForLoadTimeout() {
+		if config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
 			sctx.GetSessionVars().StmtCtx.StatsLoad.Fallback = true
 		} else {
 			return nil, 0, err
@@ -311,7 +311,7 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 	if sctx.GetSessionVars().InRestrictedSQL {
 		return true, nil
 	}
-	syncWait := sctx.GetSessionVars().GetStatsSyncWait()
+	syncWait := config.GetGlobalConfig().Stats.SyncLoadWait
 	if syncWait <= 0 {
 		return true, nil
 	}
