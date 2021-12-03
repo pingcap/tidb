@@ -21,8 +21,10 @@ package ddl
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -394,11 +396,11 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 					}
 				}
 				log.Info("Update tiflash replica sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
-				//err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
+				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 			} else {
 				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
 				delete(*backoffs, tb.ID)
-				//err = infosync.DeleteTiFlashTableSyncProgress(tb.ID)
+				err = infosync.DeleteTiFlashTableSyncProgress(tb.ID)
 			}
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))

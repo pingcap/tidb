@@ -287,7 +287,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	s.CheckFlashback(tk, c)
