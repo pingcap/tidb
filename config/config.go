@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -301,6 +302,41 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+// AtomicBool is a helper type for atomic operations on a boolean value.
+type AtomicBool struct {
+	atomicutil.Bool
+}
+
+// NewAtomicBool creates an AtomicBool.
+func NewAtomicBool(v bool) *AtomicBool {
+	return &AtomicBool{*atomicutil.NewBool(v)}
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+func (b AtomicBool) MarshalText() ([]byte, error) {
+	if b.Load() {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+func (b *AtomicBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	case "true":
+		*b = AtomicBool{*atomicutil.NewBool(true)}
+	case "false":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	default:
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -320,12 +356,12 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -619,7 +655,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
-		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
+		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Status: Status{
 		ReportStatus:    true,

@@ -143,7 +143,7 @@ func TestEscapeSQL(t *testing.T) {
 			name:   "%? missing arguments",
 			input:  "select %? from %?",
 			params: []interface{}{4},
-			err:    "missing arguments.*",
+			err:    "^missing arguments",
 		},
 		{
 			name:   "nil",
@@ -339,7 +339,7 @@ func TestEscapeSQL(t *testing.T) {
 			name:   "identifier, wrong arg",
 			input:  "use %n",
 			params: []interface{}{3},
-			err:    "expect a string identifier.*",
+			err:    "^expect a string identifier",
 		},
 		{
 			name:   "identifier",
