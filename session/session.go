@@ -234,8 +234,6 @@ type session struct {
 	// continue to aggregate all the local data in each session, and finally
 	// report them to the remote regularly.
 	execCounter *execcount.ExecCounter
-
-	kvExecCounter *execcount.KvExecCounter
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -555,10 +553,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	if sessVars.KvExecCounter != nil {
+	if sessVars.ExecCounter != nil {
 		normalized, digest := sessVars.StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
-			s.txn.SetOption(kv.RPCInterceptor, sessVars.KvExecCounter.RPCInterceptor(digest.String()))
+			s.txn.SetOption(kv.RPCInterceptor, sessVars.ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
@@ -1545,7 +1543,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.KvExecCounter = s.kvExecCounter
+	s.sessionVars.ExecCounter = s.execCounter
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1988,7 +1986,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	s.sessionVars.KvExecCounter = s.kvExecCounter
+	s.sessionVars.ExecCounter = s.execCounter
 	if variable.TopSQLEnabled() {
 		if s.execCounter != nil {
 			s.execCounter.Count(preparedStmt.SQLDigest.String(), 1)
@@ -2649,7 +2647,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
 		execCounter:          execcount.CreateExecCounter(),
-		kvExecCounter:        execcount.CreateKvExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2684,7 +2681,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
 		execCounter:          execcount.CreateExecCounter(),
-		kvExecCounter:        execcount.CreateKvExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,

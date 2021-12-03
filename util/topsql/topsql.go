@@ -46,7 +46,6 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 	execcount.SetupExecCounter()
-	execcount.SetupKvExecCounter()
 }
 
 // Close uses to close and release the top sql resource.
@@ -55,7 +54,6 @@ func Close() {
 		globalTopSQLReport.Close()
 	}
 	execcount.CloseExecCounter()
-	execcount.CloseKvExecCounter()
 }
 
 // AttachSQLInfo attach the sql information info top sql.

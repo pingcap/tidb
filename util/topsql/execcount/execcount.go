@@ -15,9 +15,12 @@
 package execcount
 
 import (
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
@@ -30,19 +33,6 @@ const (
 	// to report all aggregated data.
 	execCounterManagerUploadDuration = 30 * time.Second
 )
-
-var globalExecCounterManager *execCounterManager
-
-func SetupExecCounter() {
-	globalExecCounterManager = newExecCountManager()
-	go globalExecCounterManager.Run()
-}
-
-func CloseExecCounter() {
-	if globalExecCounterManager != nil {
-		globalExecCounterManager.close()
-	}
-}
 
 // ExecCountMap represents Map<SQLDigest, Map<Timestamp, Count>>.
 // We put SQLDigest in front of the two-dimensional map, because SQLDigest
@@ -64,14 +54,29 @@ func (m ExecCountMap) Merge(other ExecCountMap) {
 	}
 }
 
+type KvExecCountMap map[string]map[string]map[int64]uint64
+
+func (m KvExecCountMap) Merge(other KvExecCountMap) {
+	for newSQL, newAddrTsCount := range other {
+		addrTsCount, ok := m[newSQL]
+		if !ok {
+			m[newSQL] = newAddrTsCount
+			continue
+		}
+		ExecCountMap(addrTsCount).Merge(newAddrTsCount)
+	}
+}
+
 // ExecCounter is a counter used locally in each session.
 // We can count the number of SQL executions on ExecCounter, and it
 // is expected that these statistics will eventually be collected
 // and merged in the background.
 type ExecCounter struct {
-	mu        sync.Mutex
-	execCount ExecCountMap
-	closed    *atomic.Bool
+	mu          sync.Mutex
+	execCount   ExecCountMap
+	kvMu        sync.Mutex
+	kvExecCount KvExecCountMap
+	closed      *atomic.Bool
 }
 
 // CreateExecCounter try to create and register an ExecCounter.
@@ -112,6 +117,23 @@ func (c *ExecCounter) Count(sql string, n uint64) {
 	tsCount[ts] += n
 }
 
+func (c *ExecCounter) CountKv(sql, addr string, n uint64) {
+	ts := time.Now().Unix()
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
+	addrTsCount, ok := c.kvExecCount[sql]
+	if !ok {
+		c.kvExecCount[sql] = map[string]map[int64]uint64{}
+		addrTsCount = c.kvExecCount[sql]
+	}
+	tsCount, ok := addrTsCount[addr]
+	if !ok {
+		addrTsCount[addr] = map[int64]uint64{}
+		tsCount = addrTsCount[addr]
+	}
+	tsCount[ts] += n
+}
+
 // Take removes all existing data from ExecCounter.
 // Take is thread-safe.
 func (c *ExecCounter) Take() ExecCountMap {
@@ -120,6 +142,26 @@ func (c *ExecCounter) Take() ExecCountMap {
 	execCount := c.execCount
 	c.execCount = ExecCountMap{}
 	return execCount
+}
+
+func (c *ExecCounter) TakeKv() KvExecCountMap {
+	c.kvMu.Lock()
+	defer c.kvMu.Unlock()
+	kvExecCount := c.kvExecCount
+	c.kvExecCount = KvExecCountMap{}
+	return kvExecCount
+}
+
+func (c *ExecCounter) RPCInterceptor(sql string) tikvrpc.Interceptor {
+	if c == nil {
+		return nil
+	}
+	return func(next tikvrpc.InterceptorFunc) tikvrpc.InterceptorFunc {
+		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			c.CountKv(sql, target, 1)
+			return next(target, req)
+		}
+	}
 }
 
 // Close marks ExecCounter as "closed".
@@ -141,14 +183,16 @@ type execCounterManager struct {
 	counters     sync.Map // map[uint64]*ExecCounter
 	curCounterID atomic.Uint64
 	execCount    ExecCountMap
+	kvExecCount  KvExecCountMap
 	closeCh      chan struct{}
 }
 
 // newExecCountManager creates an empty execCounterManager.
 func newExecCountManager() *execCounterManager {
 	return &execCounterManager{
-		execCount: ExecCountMap{},
-		closeCh:   make(chan struct{}),
+		execCount:   ExecCountMap{},
+		kvExecCount: KvExecCountMap{},
+		closeCh:     make(chan struct{}),
 	}
 }
 
@@ -167,9 +211,13 @@ func (m *execCounterManager) Run() {
 		case <-collectTicker.C:
 			m.collect()
 		case <-uploadTicker.C:
-			// TODO(mornyx): upload m.execCount. Here is a bridge connecting the
-			//               exec-count module with the existing top-sql cpu reporter.
+			// TODO(mornyx): upload m.execCount & m.kvExecCount. Here is a bridge connecting
+			//               the exec-count module with the existing top-sql cpu reporter.
+			b, _ := json.MarshalIndent(m.kvExecCount, "", "  ")
+			fmt.Println(string(b))
+			fmt.Println("=====")
 			m.execCount = ExecCountMap{}
+			m.kvExecCount = KvExecCountMap{}
 		}
 	}
 }
@@ -198,4 +246,19 @@ func (m *execCounterManager) register(counter *ExecCounter) {
 // close ends the execution of the current execCounterManager.
 func (m *execCounterManager) close() {
 	m.closeCh <- struct{}{}
+}
+
+var globalExecCounterManager *execCounterManager
+
+// SetupExecCounter is used to initialize the background goroutine of the exec-count module.
+func SetupExecCounter() {
+	globalExecCounterManager = newExecCountManager()
+	go globalExecCounterManager.Run()
+}
+
+// CloseExecCounter is used to stop the background goroutine of the exec-count module.
+func CloseExecCounter() {
+	if globalExecCounterManager != nil {
+		globalExecCounterManager.close()
+	}
 }

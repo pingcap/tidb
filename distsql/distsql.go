@@ -37,10 +37,10 @@ import (
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	// TODO: comment
-	if variable.TopSQLEnabled() && sctx.GetSessionVars().KvExecCounter != nil {
+	if variable.TopSQLEnabled() && sctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
-			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
 
@@ -100,10 +100,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	// TODO: comment
-	if variable.TopSQLEnabled() && sctx.GetSessionVars().KvExecCounter != nil {
+	if variable.TopSQLEnabled() && sctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
-			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
 
@@ -170,10 +170,10 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	// TODO: comment
-	if variable.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
+	if variable.TopSQLEnabled() && stmtCtx.ExecCounter != nil {
 		normalized, digest := stmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
-			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.KvExecCounter.RPCInterceptor(digest.String()))
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
 	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)

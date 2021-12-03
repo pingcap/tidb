@@ -198,7 +198,7 @@ type StatementContext struct {
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 
-	KvExecCounter *execcount.KvExecCounter
+	ExecCounter *execcount.ExecCounter
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -131,10 +131,10 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
 	// TODO: comment
-	if variable.TopSQLEnabled() && e.ctx.GetSessionVars().KvExecCounter != nil {
+	if variable.TopSQLEnabled() && e.ctx.GetSessionVars().ExecCounter != nil {
 		normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
 		if len(normalized) > 0 && digest != nil {
-			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, e.ctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, e.ctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
 		}
 	}
 	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
