@@ -91,7 +91,7 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
-	// Used by MPP, because MPP plan may contain union, it is possible that a physical table reader contains more than 1 table scan
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	PartitionInfos []tableScanAndPartitionInfo
 }
 
