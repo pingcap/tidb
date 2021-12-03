@@ -359,6 +359,16 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	if len(p.PartitionInfos) == 1 {
 		return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].tableScan, p.PartitionInfos[0].partitionInfo)
 	}
+	containsPartitionTable := false
+	for _, info := range p.PartitionInfos {
+		if info.tableScan.Table.GetPartitionInfo() != nil {
+			containsPartitionTable = true
+			break
+		}
+	}
+	if !containsPartitionTable {
+		return ""
+	}
 	var buffer bytes.Buffer
 	for index, info := range p.PartitionInfos {
 		if index > 0 {
