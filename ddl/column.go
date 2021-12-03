@@ -1353,9 +1353,9 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
 	val := w.rowMap[w.oldColInfo.ID]
 	col := w.newColInfo
-	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp {
+	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.Flag) {
 		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.Tp, int8(col.Decimal)); err == nil {
-			// convert null value to timestamp should be substituted with current timestamp.
+			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
 			w.rowMap[w.oldColInfo.ID] = v
 		}
 	}
