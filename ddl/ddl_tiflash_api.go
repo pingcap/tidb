@@ -314,13 +314,12 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		if !available {
 			bo, ok := (*backoffs)[tb.ID]
 			if !ok {
-				if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
-					newBackoff := NewPollTiFlashReplicaStatusBackoff()
-					(*backoffs)[tb.ID] = &newBackoff
-				}
+				// Small table may be already ready at first check later.
+				// so we omit assigning into `backoffs` map for the first time.
 			} else {
 				if !bo.Tick() {
 					// Skip
+					log.Info("Escape checking available status", zap.Int64("tableId", tb.ID))
 					continue
 				}
 			}
@@ -382,15 +381,21 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			if !avail {
 				bo, ok := (*backoffs)[tb.ID]
 				if ok {
+					log.Info("TiFlash replica is not ready, trigger backoff", zap.Int64("tableId", tb.ID))
 					bo.Backoff()
+				}else{
+					// If the table is not available at first check, it should be added into `backoffs`
+					if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
+						newBackoff := NewPollTiFlashReplicaStatusBackoff()
+						(*backoffs)[tb.ID] = &newBackoff
+					}
 				}
 				log.Info("Update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 			} else {
 				log.Info("tiflash table is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
 			}
 
-			err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail)
-			if err != nil {
+			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
 			}
 		}
