@@ -15,16 +15,9 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
-	"time"
 
-	"github.com/BurntSushi/toml"
-	"github.com/pingcap/errors"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 )
 
@@ -76,6 +69,16 @@ func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []
 
 func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (acceptedItems, rejectedItems []string) {
 	t := dstConf.Type()
+	if t.Name() == "AtomicBool" {
+		if reflect.DeepEqual(dstConf.Interface().(AtomicBool), newConf.Interface().(AtomicBool)) {
+			return
+		}
+		if _, ok := dynamicConfigItems[fieldPath]; ok {
+			dstConf.Set(newConf)
+			return []string{fieldPath}, nil
+		}
+		return nil, []string{fieldPath}
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 		dstConf = dstConf.Elem()
@@ -104,35 +107,8 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 	return
 }
 
-func atomicWriteConfig(c *Config, confPath string) (err error) {
-	content, err := encodeConfig(c)
-	if err != nil {
-		return err
-	}
-	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
-	if err := os.WriteFile(tmpConfPath, []byte(content), 0600); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(os.Rename(tmpConfPath, confPath))
-}
-
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
-
-func encodeConfig(conf *Config) (string, error) {
-	confBuf := bytes.NewBuffer(nil)
-	te := toml.NewEncoder(confBuf)
-	if err := te.Encode(conf); err != nil {
-		return "", errors.New("encode config error=" + err.Error())
-	}
-	return confBuf.String(), nil
-}
-
-func decodeConfig(content string) (*Config, error) {
-	c := new(Config)
-	_, err := toml.Decode(content, c)
-	return c, err
-}
 
 // FlattenConfigItems flatten this config, see more cases in the test.
 func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interface{} {

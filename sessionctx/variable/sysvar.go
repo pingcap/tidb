@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +30,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -79,6 +82,11 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+)
+
+// Global config name list.
+const (
+	GlobalConfigEnableTopSQL = "enable_resource_metering"
 )
 
 // SysVar is for system variable.
@@ -133,6 +141,10 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// GlobalConfigName is the global config name of this global variable.
+	// If the global variable has the global config name,
+	// it should store the global config into PD(etcd) too when set global variable.
+	GlobalConfigName string
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
@@ -253,7 +265,7 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 	}
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
-	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue, err
 	}
@@ -264,8 +276,8 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 	return normalizedValue, nil
 }
 
-// validateFromType provides automatic validation based on the SysVar's type
-func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+// ValidateFromType provides automatic validation based on the SysVar's type
+func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
@@ -315,7 +327,11 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 // may be less sophisticated in normalizing values. But errors should be caught and handled,
 // because otherwise there will be upgrade issues.
 func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
-	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	warns := vars.StmtCtx.GetWarnings()
+	defer func() {
+		vars.StmtCtx.SetWarnings(warns) // RelaxedValidation = trim warnings too.
+	}()
+	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue
 	}
@@ -644,8 +660,24 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: PlacementChecks, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePlacementChecks = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
-	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true},
+	{Scope: ScopeSession, Name: Timestamp, Value: DefTimestamp, skipInit: true, MinValue: 0, MaxValue: 2147483647, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
+		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != DefTimestamp {
+			return timestamp, nil
+		}
+		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
+		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
+		// It's GetGlobal func will only be called when "set timestamp = default".
+		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
+		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
+		return DefTimestamp, nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
@@ -779,6 +811,20 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
+	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
+		GetGlobal: func(sv *SessionVars) (string, error) {
+			return strconv.FormatFloat(MaxTSOBatchWaitInterval.Load(), 'f', -1, 64), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			MaxTSOBatchWaitInterval.Store(tidbOptFloat64(val, DefTiDBTSOClientBatchMaxWaitTime))
+			return nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBEnableTSOFollowerProxy, Value: BoolToOnOff(DefTiDBEnableTSOFollowerProxy), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		EnableTSOFollowerProxy.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
@@ -1283,6 +1329,26 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(ProcessGeneralLog.Load()), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		maxAge, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return err
+		}
+
+		GlobalLogMaxDays.Store(int32(maxAge))
+
+		cfg := config.GetGlobalConfig().Log.ToLogConfig()
+		cfg.Config.File.MaxDays = int(maxAge)
+
+		err = logutil.ReplaceLogger(cfg)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(int64(GlobalLogMaxDays.Load()), 10), nil
+	}},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, skipInit: true, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 		return nil
@@ -1552,10 +1618,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(enabled), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		config.GetGlobalConfig().Log.EnableSlowLog.Store(TiDBOptOn(val))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), nil
+		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
@@ -1685,10 +1751,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: Off, Type: TypeBool},
 	{Scope: ScopeSession, Name: PluginLoad, Value: "", GetSession: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Plugin.Dir, nil
+		return config.GetGlobalConfig().Plugin.Load, nil
 	}},
 	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin", GetSession: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Plugin.Load, nil
+		return config.GetGlobalConfig().Plugin.Dir, nil
 	}},
 
 	/* tikv gc metrics */
@@ -1729,9 +1795,9 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tikv_gc_scan_lock_mode", val, "Mode of scanning locks, \"physical\" or \"legacy\"")
 	}},
-	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
-	{Scope: ScopeGlobal | ScopeSession, Name: TMPTableSize, Value: strconv.Itoa(DefTMPTableSize), Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxInt64, IsHintUpdatable: true, AllowEmpty: true, SetSession: func(s *SessionVars, val string) error {
-		s.TMPTableSize = tidbOptInt64(val, DefTMPTableSize)
+	// It's different from tmp_table_size or max_heap_table_size. See https://github.com/pingcap/tidb/issues/28691.
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTmpTableMaxSize, Value: strconv.Itoa(DefTiDBTmpTableMaxSize), Type: TypeUnsigned, MinValue: 1 << 20, MaxValue: 1 << 37, SetSession: func(s *SessionVars, val string) error {
+		s.TMPTableSize = tidbOptInt64(val, DefTiDBTmpTableMaxSize)
 		return nil
 	}},
 	// variable for top SQL feature.
@@ -1740,7 +1806,7 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		TopSQLVariable.Enable.Store(TiDBOptOn(s))
 		return nil
-	}},
+	}, GlobalConfigName: GlobalConfigEnableTopSQL},
 	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(TopSQLVariable.PrecisionSeconds.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
@@ -1787,18 +1853,52 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
-
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuousRegion, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuousRegion), SetSession: func(s *SessionVars, val string) error {
-		s.EnableMPPBalanceWithContinuousRegion = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePseudoForOutdatedStats, Value: BoolToOnOff(DefTiDBEnablePseudoForOutdatedStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuousRegionCount, Value: strconv.Itoa(DefEnableMPPBalanceWithContinuousRegionCount), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, AllowEmpty: true, SetSession: func(s *SessionVars, val string) error {
-		s.EnableMPPBalanceWithContinuousRegionCount = tidbOptInt64(val, DefEnableMPPBalanceWithContinuousRegionCount)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRegardNULLAsPoint, Value: BoolToOnOff(DefTiDBRegardNULLAsPoint), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.RegardNULLAsPoint = TiDBOptOn(val)
 		return nil
 	}},
 
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
+	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
+	{Scope: ScopeSession, Name: RandSeed1, Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed1(uint32(tidbOptPositiveInt32(val, 0)))
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return "0", nil
+	}},
+	{Scope: ScopeSession, Name: RandSeed2, Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed2(uint32(tidbOptPositiveInt32(val, 0)))
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return "0", nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePaging = TiDBOptOn(val)
+		return nil
+	}},
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	var str []string
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1893,6 +1993,8 @@ const (
 	SkipNameResolve = "skip_name_resolve"
 	// ForeignKeyChecks is the name for 'foreign_key_checks' system variable.
 	ForeignKeyChecks = "foreign_key_checks"
+	// PlacementChecks is the name for 'placement_checks' system variable.
+	PlacementChecks = "placement_checks"
 	// SQLSafeUpdates is the name for 'sql_safe_updates' system variable.
 	SQLSafeUpdates = "sql_safe_updates"
 	// WarningCount is the name for 'warning_count' system variable.
@@ -1905,8 +2007,6 @@ const (
 	MaxConnectErrors = "max_connect_errors"
 	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
 	TableDefinitionCache = "table_definition_cache"
-	// TMPTableSize is the name for 'tmp_table_size' system variable.
-	TMPTableSize = "tmp_table_size"
 	// Timestamp is the name for 'timestamp' system variable.
 	Timestamp = "timestamp"
 	// ConnectTimeout is the name for 'connect_timeout' system variable.
@@ -2101,6 +2201,12 @@ const (
 	LastInsertID = "last_insert_id"
 	// Identity is the name of 'identity' system variable.
 	Identity = "identity"
+	// TiDBAllowFunctionForExpressionIndex is the name of `TiDBAllowFunctionForExpressionIndex` system variable.
+	TiDBAllowFunctionForExpressionIndex = "tidb_allow_function_for_expression_index"
+	// RandSeed1 is the name of 'rand_seed1' system variable.
+	RandSeed1 = "rand_seed1"
+	// RandSeed2 is the name of 'rand_seed2' system variable.
+	RandSeed2 = "rand_seed2"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

@@ -234,7 +234,7 @@ func TestErrorBind(t *testing.T) {
 
 	rs, err := tk.Exec("show global bindings")
 	require.NoError(t, err)
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
@@ -555,7 +555,7 @@ func TestHintsSetID(t *testing.T) {
 
 	utilCleanBindingEnv(tk, dom)
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
-	require.True(t, terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError))
+	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -826,11 +826,11 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
 	require.Equal(t, nil, err)
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
-	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
+	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func TestExplainTableStmts(t *testing.T) {
@@ -861,7 +861,8 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
 
 	err := tk1.ExecToErr("select * from t")
-	require.Regexp(t, ".*No database selected", err)
+	require.Error(t, err)
+	require.Regexp(t, "No database selected$", err)
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
 	tk1.MustExec("select * from test.t")
@@ -883,17 +884,32 @@ func TestBindingWithoutCharset(t *testing.T) {
 	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'", rows[0][1])
 }
 
-func TestGCBindRecord(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+func TestBindingWithMultiParenthesis(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create global binding for select * from (select * from t where a = 1) tt using select * from (select * from t where a = 1) tt")
+	tk.MustExec("create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from ( select * from `test` . `t` where `a` = ? ) as `tt`", rows[0][0])
+	require.Equal(t, "SELECT * FROM (SELECT * FROM `test`.`t` WHERE `a` = 1) AS `tt`", rows[0][1])
+}
+
+func TestGCBindRecord(t *testing.T) {
 	// set lease for gc tests
 	originLease := bindinfo.Lease
 	bindinfo.Lease = 0
-
 	defer func() {
 		bindinfo.Lease = originLease
 	}()
+
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
