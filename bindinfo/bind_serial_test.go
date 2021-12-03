@@ -369,8 +369,8 @@ func TestDMLSQLBind(t *testing.T) {
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection "+strconv.FormatUint(tkProcess.ID, 10), res.Rows())
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"))
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
 
 	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
