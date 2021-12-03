@@ -424,7 +424,7 @@ func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, orig
 	// get db collation
 	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 	if !ok {
-		tctx.L().Error("not found database charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		tctx.L().Warn("not found database charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
 		return originSQL, nil
 	}
 	// add collation
@@ -437,7 +437,7 @@ func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, orig
 		In:    bf,
 	})
 	if err != nil {
-		return "", err
+		return "", errors.Trace(err)
 	}
 	return bf.String(), nil
 }
@@ -467,7 +467,7 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 	// get db collation
 	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
 	if !ok {
-		tctx.L().Error("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		tctx.L().WARN("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
 		return originSQL, nil
 	}
 
@@ -481,7 +481,7 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 		In:    bf,
 	})
 	if err != nil {
-		return "", err
+		return "", errors.Trace(err)
 	}
 	return bf.String(), nil
 }
