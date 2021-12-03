@@ -912,7 +912,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*as
 }
 
 func getBindSQL(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defaultDB string, blockOffsetStart int) string {
-	counter := -1
+	maxHintOffset := 0
 	blockHintProcessor := hint.BlockHintProcessor{}
 	offsetToHintMap := make(map[int][]*ast.TableOptimizerHint)
 	for _, pHint := range planHints {
@@ -921,15 +921,15 @@ func getBindSQL(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defa
 		hints = append(hints, pHint)
 		offsetToHintMap[hintOffset] = hints
 
-		if hintOffset > counter {
-			counter = hintOffset
+		if hintOffset > maxHintOffset {
+			maxHintOffset = hintOffset
 		}
 	}
 	if len(offsetToHintMap) == 0 {
 		return ""
 	}
-	tableHints := make([][]*ast.TableOptimizerHint, counter+1)
-	for offset := 0; offset <= counter; offset++ {
+	tableHints := make([][]*ast.TableOptimizerHint, maxHintOffset+1)
+	for offset := 0; offset <= maxHintOffset; offset++ {
 		hints := offsetToHintMap[blockOffsetStart+offset]
 		tableHints[offset] = hints
 	}
