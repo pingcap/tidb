@@ -98,11 +98,11 @@ func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOpt
 	return op
 }
 
-func (op *logicalOptimizeOp) appendBeforeRuleOptimize(name string, before LogicalPlan) {
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace(before))
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
@@ -112,11 +112,11 @@ func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action stri
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
 }
 
-func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
+func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace(final))
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -232,9 +232,14 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		// if table with lock-write table dropped, we can access other table, such as `rename` operation
+		if err == lock.ErrLockedTableDropped {
+			break
+		}
 		if err != nil {
 			return err
 		}
@@ -316,7 +321,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 // Todo: make more careful check here.
 func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
 	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
-		sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 	}
 }
 
@@ -372,12 +377,14 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	opt := defaultLogicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
+	vars := logic.SCtx().GetSessionVars()
+	if vars.StmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			stmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.LogicalOptimizeTrace = tracer
 		}()
 	}
 	var err error
@@ -388,13 +395,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendBeforeRuleOptimize(rule.name(), logic)
+		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
-		opt.trackAfterRuleOptimize(logic)
 	}
+	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 

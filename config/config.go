@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -301,6 +302,41 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+// AtomicBool is a helper type for atomic operations on a boolean value.
+type AtomicBool struct {
+	atomicutil.Bool
+}
+
+// NewAtomicBool creates an AtomicBool.
+func NewAtomicBool(v bool) *AtomicBool {
+	return &AtomicBool{*atomicutil.NewBool(v)}
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+func (b AtomicBool) MarshalText() ([]byte, error) {
+	if b.Load() {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+func (b *AtomicBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	case "true":
+		*b = AtomicBool{*atomicutil.NewBool(true)}
+	case "false":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	default:
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -320,12 +356,12 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -434,11 +470,12 @@ type Performance struct {
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                  int     `toml:"gogc" json:"gogc"`
-	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
+	// Deprecated
+	MemProfileInterval  string `toml:"-" json:"-"`
+	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                int    `toml:"gogc" json:"gogc"`
+	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -618,7 +655,7 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
-		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
+		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -647,7 +684,6 @@ var defaultConf = Config{
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
@@ -738,20 +774,21 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":               {},
+	"pessimistic-txn.ttl":              {},
+	"pessimistic-txn.enable":           {},
+	"log.file.log-rotate":              {},
+	"log.log-slow-query":               {},
+	"txn-local-latches":                {},
+	"txn-local-latches.enabled":        {},
+	"txn-local-latches.capacity":       {},
+	"performance.max-memory":           {},
+	"max-txn-time-use":                 {},
+	"experimental.allow-auto-random":   {},
+	"enable-redact-log":                {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":    {},
+	"alter-primary-key":                {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                 {},
+	"performance.mem-profile-interval": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
