@@ -1744,7 +1744,7 @@ func (s *partitionTableSuite) TestMPPQueryExplainInfo(c *C) {
 	tb := testGetTableByName(c, tk.Se, "tiflash_partition_test", "t")
 	for _, partition := range tb.Meta().GetPartitionInfo().Definitions {
 		err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.ID, true)
-		c.Assert(err == nil, IsTrue)
+		c.Assert(err, IsNil)
 	}
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
