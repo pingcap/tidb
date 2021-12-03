@@ -58,8 +58,10 @@ type TraceExec struct {
 
 	builder *executorBuilder
 	format  string
+
 	// optimizerTrace indicates 'trace plan statement'
-	optimizerTrace bool
+	optimizerTrace       bool
+	optimizerTraceTarget string
 }
 
 // Next executes real query and collects span later.
@@ -113,16 +115,31 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 		return errors.AddStack(err)
 	}
 	stmtCtx := se.GetSessionVars().StmtCtx
-	origin := stmtCtx.EnableOptimizeTrace
-	stmtCtx.EnableOptimizeTrace = true
+
+	var option *bool
+	if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+		option = &stmtCtx.EnableOptimizerCETrace
+	} else {
+		option = &stmtCtx.EnableOptimizeTrace
+	}
+	origin := *option
+	*option = true
 	defer func() {
-		stmtCtx.EnableOptimizeTrace = origin
+		*option = origin
 	}()
+
 	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
-	res, err := json.Marshal(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
+
+	var traceResult interface{}
+	if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+		traceResult = stmtCtx.OptimizerCETrace
+	} else {
+		traceResult = stmtCtx.LogicalOptimizeTrace
+	}
+	res, err := json.Marshal(traceResult)
 	if err != nil {
 		return errors.AddStack(err)
 	}

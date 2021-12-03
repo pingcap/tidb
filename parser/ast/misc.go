@@ -120,9 +120,11 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 type TraceStmt struct {
 	stmtNode
 
-	Stmt      StmtNode
-	Format    string
-	TracePlan bool
+	Stmt   StmtNode
+	Format string
+
+	TracePlan       bool
+	TracePlanTarget string
 }
 
 // Restore implements Node interface.

@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -278,6 +280,21 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizerCETrace {
+		traceRecords := stmtCtx.OptimizerCETrace
+		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+		for _, rec := range traceRecords {
+			tbl, ok := is.TableByID(rec.TableID)
+			if !ok {
+				logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+					zap.Int64("table id", rec.TableID))
+			}
+			rec.TableName = tbl.Meta().Name.O
+		}
+	}
+
 	return finalPlan, cost, nil
 }
 
