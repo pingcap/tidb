@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -129,6 +130,13 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	ctx := context.TODO()
+	// TODO: comment
+	if variable.TopSQLEnabled() && e.ctx.GetSessionVars().KvExecCounter != nil {
+		normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
+		if len(normalized) > 0 && digest != nil {
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, e.ctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+		}
+	}
 	res, err := distsql.Checksum(ctx, e.ctx.GetClient(), req, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
 		return nil, err

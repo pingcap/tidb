@@ -120,6 +120,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
+	case kv.RPCInterceptor:
+		s.KVSnapshot.SetInterceptor(val.(tikvrpc.Interceptor))
 	}
 }
 

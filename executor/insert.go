@@ -67,6 +67,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		return err
 	}
 	setResourceGroupTaggerForTxn(sessVars.StmtCtx, txn)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, txn)
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.

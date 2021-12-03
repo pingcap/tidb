@@ -275,6 +275,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
 				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+				if e.ctx.GetSessionVars().KvExecCounter != nil {
+					normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
+					if len(normalized) > 0 && digest != nil {
+						txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+					}
+				}
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

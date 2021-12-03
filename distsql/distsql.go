@@ -23,17 +23,27 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
+	// TODO: comment
+	if variable.TopSQLEnabled() && sctx.GetSessionVars().KvExecCounter != nil {
+		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+		if len(normalized) > 0 && digest != nil {
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+		}
+	}
+
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
 	if resp == nil {
@@ -88,6 +98,15 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 				zap.String("stmt", originalSQL))
 		}
 	}
+
+	// TODO: comment
+	if variable.TopSQLEnabled() && sctx.GetSessionVars().KvExecCounter != nil {
+		normalized, digest := sctx.GetSessionVars().StmtCtx.SQLDigest()
+		if len(normalized) > 0 && digest != nil {
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, sctx.GetSessionVars().KvExecCounter.RPCInterceptor(digest.String()))
+		}
+	}
+
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -149,8 +168,15 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
-	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false, nil)
+	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
+	// TODO: comment
+	if variable.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
+		normalized, digest := stmtCtx.SQLDigest()
+		if len(normalized) > 0 && digest != nil {
+			ctx = tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.KvExecCounter.RPCInterceptor(digest.String()))
+		}
+	}
+	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

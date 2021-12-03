@@ -68,9 +68,9 @@ const (
 	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
-
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
+	RPCInterceptor
 )
 
 // ReplicaReadType is the type of replica to read data from

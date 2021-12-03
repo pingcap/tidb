@@ -37,8 +37,9 @@ const (
 )
 
 var (
-	globalTopSQLReport       reporter.TopSQLReporter
-	globalExecCounterManager *execCounterManager
+	globalTopSQLReport         reporter.TopSQLReporter
+	globalExecCounterManager   *execCounterManager
+	globalKvExecCounterManager *kvExecCounterManager
 )
 
 // SetupTopSQL sets up the top-sql worker.
@@ -48,7 +49,9 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 	globalExecCounterManager = newExecCountManager()
+	globalKvExecCounterManager = newKvExecCountManager()
 	go globalExecCounterManager.Run()
+	go globalKvExecCounterManager.Run()
 }
 
 // Close uses to close and release the top sql resource.
@@ -58,6 +61,9 @@ func Close() {
 	}
 	if globalExecCounterManager != nil {
 		globalExecCounterManager.close()
+	}
+	if globalKvExecCounterManager != nil {
+		globalKvExecCounterManager.close()
 	}
 }
 

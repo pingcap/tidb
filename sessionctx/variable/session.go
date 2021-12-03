@@ -30,6 +30,7 @@ import (
 	"time"
 
 	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/topsql"
 
 	"github.com/pingcap/errors"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -962,6 +963,8 @@ type SessionVars struct {
 	EnableStmtOptimizeTrace bool
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
+
+	KvExecCounter *topsql.KvExecCounter
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
