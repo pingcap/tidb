@@ -110,6 +110,10 @@ func TestIsUUID(t *testing.T) {
 		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
 		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
 		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
+		// This is a bug in google/uuid#60
+		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
+		// This is a format google/uuid support
+		{"urn:uuid:99a9ad03-5298-11ec-8f5c-00ff90147ac3", 1},
 	}
 
 	fc := funcs[ast.IsUUID]
