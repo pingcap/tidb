@@ -57,6 +57,7 @@ var (
 	_ functionClass = &vitessHashFunctionClass{}
 	_ functionClass = &uuidToBinFunctionClass{}
 	_ functionClass = &binToUUIDFunctionClass{}
+	_ functionClass = &isUUIDFunctionClass{}
 )
 
 var (
@@ -78,6 +79,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
+	_ builtinFunc = &builtinIsUUIDSig{}
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
 	_ builtinFunc = &builtinUUIDToBinSig{}
