@@ -112,7 +112,7 @@ func TestIsUUID(t *testing.T) {
 		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
 		// This is a bug in google/uuid#60
 		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
-		// This is a format google/uuid support
+		// This is a format google/uuid support, while mysql doesn't
 		{"urn:uuid:99a9ad03-5298-11ec-8f5c-00ff90147ac3", 1},
 	}
 
