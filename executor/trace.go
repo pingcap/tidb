@@ -24,12 +24,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -111,7 +112,16 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	e.executeChild(ctx, se.(sqlexec.SQLExecutor))
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizeTrace
+	stmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		stmtCtx.EnableOptimizeTrace = origin
+	}()
+	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
+	}
 	res, err := json.Marshal(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
 	if err != nil {
 		return errors.AddStack(err)
@@ -188,11 +198,8 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	vars := e.ctx.GetSessionVars()
 	origin := vars.InRestrictedSQL
 	vars.InRestrictedSQL = true
-	originOptimizeTrace := vars.EnableStmtOptimizeTrace
-	vars.EnableStmtOptimizeTrace = e.optimizerTrace
 	defer func() {
 		vars.InRestrictedSQL = origin
-		vars.EnableStmtOptimizeTrace = originOptimizeTrace
 	}()
 	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
 	if err != nil {
@@ -303,7 +310,7 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 }
 
 func generateOptimizerTraceFile() (*os.File, string, error) {
-	dirPath := getOptimizerTraceDirName()
+	dirPath := domain.GetOptimizerTraceDirName()
 	// Create path
 	err := os.MkdirAll(dirPath, os.ModePerm)
 	if err != nil {
@@ -323,10 +330,4 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 		return nil, "", errors.AddStack(err)
 	}
 	return zf, fileName, nil
-}
-
-// getOptimizerTraceDirName returns optimizer trace directory path.
-// The path is related to the process id.
-func getOptimizerTraceDirName() string {
-	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
 }

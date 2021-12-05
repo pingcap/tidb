@@ -1631,27 +1631,7 @@ func buildTableInfo(
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
-	if tbInfo.IsCommonHandle {
-		// Ensure tblInfo's each non-unique secondary-index's len + primary-key's len <= MaxIndexLength for clustered index table.
-		var pkLen, idxLen int
-		pkLen, err = indexColumnsLen(tbInfo.Columns, tables.FindPrimaryIndex(tbInfo).Columns)
-		if err != nil {
-			return
-		}
-		for _, idx := range tbInfo.Indices {
-			if idx.Unique {
-				// Only need check for non-unique secondary-index.
-				continue
-			}
-			idxLen, err = indexColumnsLen(tbInfo.Columns, idx.Columns)
-			if err != nil {
-				return
-			}
-			if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
-				return nil, errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-			}
-		}
-	}
+
 	return
 }
 
@@ -4231,7 +4211,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, sctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, sctx, true, ident.Schema, ident.Name, newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -4262,6 +4242,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      sctx.GetSessionVars().Location(),
 		},
 		Args: []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
@@ -4272,9 +4253,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 // Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
 //
-// For clustered index:
-//  Change column in pk need recheck all non-unique index, new pk len + index len < maxIndexLength.
-//  Change column in secondary only need related index, pk len + new index len < maxIndexLength.
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
@@ -4289,40 +4267,31 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	}
 
 	pkIndex := tables.FindPrimaryIndex(tbInfo)
-	var clusteredPkLen int
-	if tbInfo.IsCommonHandle {
-		var err error
-		clusteredPkLen, err = indexColumnsLen(columns, pkIndex.Columns)
-		if err != nil {
-			return err
-		}
-	}
 
-	checkOneIndex := func(indexInfo *model.IndexInfo, pkLenAppendToKey int, skipCheckIfNotModify bool) (modified bool, err error) {
+	checkOneIndex := func(indexInfo *model.IndexInfo) (err error) {
+		var modified bool
 		for _, col := range indexInfo.Columns {
 			if col.Name.L == originalCol.Name.L {
 				modified = true
 				break
 			}
 		}
-		if skipCheckIfNotModify && !modified {
+		if !modified {
 			return
 		}
 		err = checkIndexInModifiableColumns(columns, indexInfo.Columns)
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns, pkLenAppendToKey)
+		err = checkIndexPrefixLength(columns, indexInfo.Columns)
 		return
 	}
 
-	// Check primary key first and get "does primary key's column has be modified?" info.
-	var (
-		pkModified bool
-		err        error
-	)
+	// Check primary key first.
+	var err error
+
 	if pkIndex != nil {
-		pkModified, err = checkOneIndex(pkIndex, 0, true)
+		err = checkOneIndex(pkIndex)
 		if err != nil {
 			return err
 		}
@@ -4333,12 +4302,9 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if indexInfo.Primary {
 			continue
 		}
-		var pkLenAppendToKey int
-		if !indexInfo.Unique {
-			pkLenAppendToKey = clusteredPkLen
-		}
-
-		_, err = checkOneIndex(indexInfo, pkLenAppendToKey, !tbInfo.IsCommonHandle || !pkModified)
+		// the second param should always be set to true, check index length only if it was modified
+		// checkOneIndex needs one param only.
+		err = checkOneIndex(indexInfo)
 		if err != nil {
 			return err
 		}
@@ -4516,6 +4482,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
@@ -4719,6 +4686,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
 	} else if tb.Meta().TempTableType != model.TempTableNone {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
+	}
+
+	// Ban setting replica count for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+		if !ok {
+			return errAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.Charset)
+		}
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
@@ -5319,6 +5294,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -5473,22 +5449,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
-	if !unique && tblInfo.IsCommonHandle {
-		// Ensure new created non-unique secondary-index's len + primary-key's len <= MaxIndexLength in clustered index table.
-		var pkLen, idxLen int
-		pkLen, err = indexColumnsLen(tblInfo.Columns, tables.FindPrimaryIndex(tblInfo).Columns)
-		if err != nil {
-			return err
-		}
-		idxLen, err = indexColumnsLen(finalColumns, indexColumns)
-		if err != nil {
-			return err
-		}
-		if pkLen+idxLen > config.GetGlobalConfig().MaxIndexLength {
-			return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
-		}
-	}
-
 	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
 		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
@@ -5517,6 +5477,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
