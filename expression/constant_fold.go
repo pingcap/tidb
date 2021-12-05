@@ -143,7 +143,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 			foldedExpr.GetType().Decimal = expr.GetType().Decimal
 			return foldedExpr, isDeferredConst
 		}
-		return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
+		return foldedExpr, isDeferredConst
 	}
 	return expr, isDeferredConst
 }
@@ -154,7 +154,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return function(x)
 		}
 

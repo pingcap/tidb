@@ -39,6 +39,10 @@ func (r *testStorageSuite) TestCreateStorage(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(s.GetNoop(), NotNil)
 
+	s, err = ParseBackend("hdfs://127.0.0.1:1231/backup", nil)
+	c.Assert(err, IsNil)
+	c.Assert(s.GetHdfs().GetRemote(), Equals, "hdfs://127.0.0.1:1231/backup")
+
 	_, err = ParseBackend("s3:///bucket/more/prefix/", &BackendOptions{})
 	c.Assert(err, ErrorMatches, `please specify the bucket for s3 in s3:///bucket/more/prefix/.*`)
 

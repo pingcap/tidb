@@ -14,21 +14,20 @@
 package ast_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 )
 
-var _ = Suite(&testDDLSuite{})
-
-type testDDLSuite struct {
-}
-
-func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
+func TestDDLVisitorCover(t *testing.T) {
+	t.Parallel()
 	ce := &checkExpr{}
 	constraint := &Constraint{Keys: []*IndexPartSpecification{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}
 
-	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, PlacementSpecs: []*PlacementSpec{{}, {}}, AttributesSpec: &AttributesSpec{}}
+	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, AttributesSpec: &AttributesSpec{}}
 
 	stmts := []struct {
 		node             Node
@@ -62,13 +61,14 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 	for _, v := range stmts {
 		ce.reset()
 		v.node.Accept(checkVisitor{})
-		c.Check(ce.enterCnt, Equals, v.expectedEnterCnt)
-		c.Check(ce.leaveCnt, Equals, v.expectedLeaveCnt)
+		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
+		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
 		v.node.Accept(visitor1{})
 	}
 }
 
-func (ts *testDDLSuite) TestDDLIndexColNameRestore(c *C) {
+func TestDDLIndexColNameRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"(a + 1)", "(`a`+1)"},
 		{"(1 * 1 + (1 + 1))", "(1*1+(1+1))"},
@@ -77,10 +77,11 @@ func (ts *testDDLSuite) TestDDLIndexColNameRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateIndexStmt).IndexPartSpecifications[0]
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE INDEX idx ON t (%s) USING HASH", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE INDEX idx ON t (%s) USING HASH", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLIndexExprRestore(c *C) {
+func TestDDLIndexExprRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"world", "`world`"},
 		{"world(2)", "`world`(2)"},
@@ -88,10 +89,11 @@ func (ts *testDDLSuite) TestDDLIndexExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateIndexStmt).IndexPartSpecifications[0]
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE INDEX idx ON t (%s) USING HASH", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE INDEX idx ON t (%s) USING HASH", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLOnDeleteRestore(c *C) {
+func TestDDLOnDeleteRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"on delete restrict", "ON DELETE RESTRICT"},
 		{"on delete CASCADE", "ON DELETE CASCADE"},
@@ -101,12 +103,13 @@ func (ts *testDDLSuite) TestDDLOnDeleteRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Constraints[1].Refer.OnDelete
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s)", extractNodeFunc)
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) on update CASCADE %s)", extractNodeFunc)
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s on update CASCADE)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) on update CASCADE %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s on update CASCADE)", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLOnUpdateRestore(c *C) {
+func TestDDLOnUpdateRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ON UPDATE RESTRICT", "ON UPDATE RESTRICT"},
 		{"on update CASCADE", "ON UPDATE CASCADE"},
@@ -116,12 +119,13 @@ func (ts *testDDLSuite) TestDDLOnUpdateRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Constraints[1].Refer.OnUpdate
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE %s )", extractNodeFunc)
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s ON DELETE CASCADE)", extractNodeFunc)
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id)  %s )", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE %s )", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s ON DELETE CASCADE)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id)  %s )", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
+func TestDDLIndexOption(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"key_block_size=16", "KEY_BLOCK_SIZE=16"},
 		{"USING HASH", "USING HASH"},
@@ -136,20 +140,22 @@ func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateIndexStmt).IndexOption
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestTableToTableRestore(c *C) {
+func TestTableToTableRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"t1 to t2", "`t1` TO `t2`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*RenameTableStmt).TableToTables[0]
 	}
-	RunNodeRestoreTest(c, testCases, "rename table %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "rename table %s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLReferenceDefRestore(c *C) {
+func TestDDLReferenceDefRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"REFERENCES parent(id) ON DELETE CASCADE ON UPDATE RESTRICT", "REFERENCES `parent`(`id`) ON DELETE CASCADE ON UPDATE RESTRICT"},
 		{"REFERENCES parent(id) ON DELETE CASCADE", "REFERENCES `parent`(`id`) ON DELETE CASCADE"},
@@ -162,10 +168,11 @@ func (ts *testDDLSuite) TestDDLReferenceDefRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Constraints[1].Refer
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) %s)", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLConstraintRestore(c *C) {
+func TestDDLConstraintRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"INDEX par_ind (parent_id)", "INDEX `par_ind`(`parent_id`)"},
 		{"INDEX par_ind (parent_id(6))", "INDEX `par_ind`(`parent_id`(6))"},
@@ -204,7 +211,7 @@ func (ts *testDDLSuite) TestDDLConstraintRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Constraints[0]
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT, parent_id INT, %s)", extractNodeFunc)
 
 	specialCommentCases := []NodeRestoreTestCase{
 		{"PRIMARY KEY (id) CLUSTERED", "PRIMARY KEY(`id`) /*T![clustered_index] CLUSTERED */"},
@@ -212,12 +219,13 @@ func (ts *testDDLSuite) TestDDLConstraintRestore(c *C) {
 		{"PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */", "PRIMARY KEY(`id`) /*T![clustered_index] CLUSTERED */"},
 		{"primary key (id) /*T![clustered_index] NONCLUSTERED */", "PRIMARY KEY(`id`) /*T![clustered_index] NONCLUSTERED */"},
 	}
-	RunNodeRestoreTestWithFlags(c, specialCommentCases,
+	runNodeRestoreTestWithFlags(t, specialCommentCases,
 		"CREATE TABLE child (id INT, parent_id INT, %s)",
 		extractNodeFunc, format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment)
 }
 
-func (ts *testDDLSuite) TestDDLColumnOptionRestore(c *C) {
+func TestDDLColumnOptionRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"primary key", "PRIMARY KEY"},
 		{"not null", "NOT NULL"},
@@ -248,10 +256,11 @@ func (ts *testDDLSuite) TestDDLColumnOptionRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Cols[0].Options[0]
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE child (id INT %s)", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLColumnDefRestore(c *C) {
+func TestDDLColumnDefRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		// for type
 		{"id json", "`id` JSON"},
@@ -372,10 +381,11 @@ func (ts *testDDLSuite) TestDDLColumnDefRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*CreateTableStmt).Cols[0]
 	}
-	RunNodeRestoreTest(c, testCases, "CREATE TABLE t (%s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "CREATE TABLE t (%s)", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLTruncateTableStmtRestore(c *C) {
+func TestDDLTruncateTableStmtRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"truncate t1", "TRUNCATE TABLE `t1`"},
 		{"truncate table t1", "TRUNCATE TABLE `t1`"},
@@ -384,10 +394,11 @@ func (ts *testDDLSuite) TestDDLTruncateTableStmtRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*TruncateTableStmt)
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestDDLDropTableStmtRestore(c *C) {
+func TestDDLDropTableStmtRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"drop table t1", "DROP TABLE `t1`"},
 		{"drop table if exists t1", "DROP TABLE IF EXISTS `t1`"},
@@ -398,10 +409,11 @@ func (ts *testDDLSuite) TestDDLDropTableStmtRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*DropTableStmt)
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestColumnPositionRestore(c *C) {
+func TestColumnPositionRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"", ""},
 		{"first", "FIRST"},
@@ -410,10 +422,11 @@ func (ts *testDDLSuite) TestColumnPositionRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0].Position
 	}
-	RunNodeRestoreTest(c, testCases, "alter table t add column a varchar(255) %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "alter table t add column a varchar(255) %s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestAlterTableSpecRestore(c *C) {
+func TestAlterTableSpecRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ENGINE innodb", "ENGINE = innodb"},
 		{"ENGINE = innodb", "ENGINE = innodb"},
@@ -539,10 +552,11 @@ func (ts *testDDLSuite) TestAlterTableSpecRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0]
 	}
-	RunNodeRestoreTest(c, testCases, "ALTER TABLE t %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "ALTER TABLE t %s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestAlterTableOptionRestore(c *C) {
+func TestAlterTableOptionRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ALTER TABLE t ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8", "ALTER TABLE `t` ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8"},
 		{"ALTER TABLE t ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8", "ALTER TABLE `t` ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8"},
@@ -550,10 +564,11 @@ func (ts *testDDLSuite) TestAlterTableOptionRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestAdminRepairTableRestore(c *C) {
+func TestAdminRepairTableRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ADMIN REPAIR TABLE t CREATE TABLE t (a int)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` INT)"},
 		{"ADMIN REPAIR TABLE t CREATE TABLE t (a char(1), b int)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` CHAR(1),`b` INT)"},
@@ -562,10 +577,11 @@ func (ts *testDDLSuite) TestAdminRepairTableRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
-func (ts *testDDLSuite) TestSequenceRestore(c *C) {
+func TestSequenceRestore(t *testing.T) {
+	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"create sequence seq", "CREATE SEQUENCE `seq`"},
 		{"create sequence if not exists seq", "CREATE SEQUENCE IF NOT EXISTS `seq`"},
@@ -606,5 +622,28 @@ func (ts *testDDLSuite) TestSequenceRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node
 	}
-	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestDropIndexRestore(t *testing.T) {
+	t.Parallel()
+	sourceSQL := "drop index if exists idx on t"
+	cases := []struct {
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{format.DefaultRestoreFlags, "DROP INDEX IF EXISTS `idx` ON `t`"},
+		{format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
 }

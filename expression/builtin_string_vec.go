@@ -34,20 +34,27 @@ import (
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
-		return err
-	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
-
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
-	}
-	return nil
+	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	for i := 0; i < input.NumRows(); i++ {
+		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+	}
+
+	return nil
+}
+
+func (b *builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -141,7 +148,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
@@ -440,7 +447,6 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	var encodedBuf []byte
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
@@ -450,15 +456,7 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		buf0Bytes := buf0.GetBytes(i)
-		if b.encoding.Enabled() {
-			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
-			if err != nil {
-				return err
-			}
-			buf0Bytes = encodedBuf
-		}
-		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
+		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0.GetBytes(i))))
 	}
 	return nil
 }
@@ -687,6 +685,14 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if encoding == nil {
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
+	decoder := encoding.NewDecoder()
+	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
+	isRetBinary := types.IsBinaryStr(b.tp)
+	enc := charset.NewEncoding(b.tp.Charset)
+	if isRetBinary {
+		enc = charset.NewEncoding(b.args[0].GetType().Charset)
+	}
+
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
@@ -694,11 +700,24 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetString(i)
-		target, _, err := transform.String(encoding.NewDecoder(), exprI)
-		if err != nil {
-			return err
+		if isBinaryStr {
+			target, _, err := transform.String(decoder, exprI)
+			if err != nil {
+				result.AppendNull()
+				continue
+			}
+			result.AppendString(target)
+		} else {
+			if isRetBinary {
+				str, err := enc.EncodeString(exprI)
+				if err != nil {
+					return err
+				}
+				result.AppendString(str)
+				continue
+			}
+			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
 		}
-		result.AppendString(target)
 	}
 	return nil
 }
@@ -884,7 +903,6 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err = b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2015,33 +2033,21 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf2.IsNull(i) {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		useDefaultRemStr := buf1.IsNull(i)
 		direction := ast.TrimDirectionType(buf2.GetInt64(i))
 		baseStr := buf0.GetString(i)
 		remStr := buf1.GetString(i)
-		if direction == ast.TrimLeading {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimLeft(baseStr, remStr))
-			}
-		} else if direction == ast.TrimTrailing {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimRight(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimRight(baseStr, remStr))
-			}
-		} else {
-			if useDefaultRemStr {
-				result.AppendString(strings.Trim(baseStr, spaceChars))
-			} else {
-				tmpStr := trimLeft(baseStr, remStr)
-				result.AppendString(trimRight(tmpStr, remStr))
-			}
+		switch direction {
+		case ast.TrimLeading:
+			result.AppendString(trimLeft(baseStr, remStr))
+		case ast.TrimTrailing:
+			result.AppendString(trimRight(baseStr, remStr))
+		default:
+			tmpStr := trimLeft(baseStr, remStr)
+			result.AppendString(trimRight(tmpStr, remStr))
 		}
 	}
 	return nil
@@ -2062,10 +2068,14 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return err
 	}
+
+	enc := charset.NewEncoding(charSet)
+	var encodedBuf []byte
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -2074,8 +2084,12 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetString(i)
-		i64s[i] = ord(str)
+		str := buf.GetBytes(i)
+		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = ord(encoded)
 	}
 	return nil
 }
@@ -2217,6 +2231,9 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2225,7 +2242,11 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		str := buf.GetBytes(i)
-		i64s[i] = int64(len(str) * 8)
+		dBytes, err := enc.Encode(nil, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(len(dBytes) * 8)
 	}
 	return nil
 }
@@ -2260,6 +2281,8 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	for i := 0; i < l-1; i++ {
 		bufint[i] = buf[i].Int64s()
 	}
+	var resultBytes []byte
+	enc := charset.NewEncoding(b.tp.Charset)
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2268,8 +2291,15 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			}
 			bigints = append(bigints, bufint[j][i])
 		}
-		tempString := string(b.convertToBytes(bigints))
-		result.AppendString(tempString)
+		dBytes := b.convertToBytes(bigints)
+
+		resultBytes, err := enc.Decode(resultBytes, dBytes)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(resultBytes))
 	}
 	return nil
 }
@@ -2419,7 +2449,6 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {

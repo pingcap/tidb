@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -41,6 +42,29 @@ func NewDBTestKit(t *testing.T, db *sql.DB) *DBTestKit {
 	}
 }
 
+// MustPrepare creates a prepared statement for later queries or executions.
+func (tk *DBTestKit) MustPrepare(query string) *sql.Stmt {
+	stmt, err := tk.db.Prepare(query)
+	tk.require.NoErrorf(err, "Prepare %s", query)
+	return stmt
+}
+
+// MustExecPrepared executes a prepared statement with the given arguments and
+// returns a Result summarizing the effect of the statement.
+func (tk *DBTestKit) MustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
+	res, err := stmt.Exec(args...)
+	tk.require.NoErrorf(err, "Execute prepared with args: %s", args)
+	return res
+}
+
+// MustQueryPrepared executes a prepared query statement with the given arguments
+// and returns the query results as a *Rows.
+func (tk *DBTestKit) MustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
+	rows, err := stmt.Query(args...)
+	tk.require.NoErrorf(err, "Query prepared with args: %s", args)
+	return rows
+}
+
 // MustExec query the statements and returns the result.
 func (tk *DBTestKit) MustExec(sql string, args ...interface{}) sql.Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
@@ -57,4 +81,17 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rows, comment)
 	return rows
+}
+
+// MustQueryRows query the statements
+func (tk *DBTestKit) MustQueryRows(query string, args ...interface{}) {
+	rows := tk.MustQuery(query, args...)
+	tk.require.True(rows.Next())
+	tk.require.NoError(rows.Err())
+	rows.Close()
+}
+
+// GetDB returns the underlay sql.DB instance.
+func (tk *DBTestKit) GetDB() *sql.DB {
+	return tk.db
 }
