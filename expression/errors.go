@@ -90,8 +90,9 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	return nil
 }
 
-// handleAllowedPacketOverflowedErr reports error or warning depend on the context.
-func handleAllowedPacketOverflowedErr(ctx sessionctx.Context, err error) error {
+// handleAllowedPacketOverflowed reports error or warning depend on the context.
+func handleAllowedPacketOverflowed(ctx sessionctx.Context, funcName string, maxAllowedPacketSize uint64) error {
+	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(funcName, maxAllowedPacketSize)
 	sc := ctx.GetSessionVars().StmtCtx
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
