@@ -141,6 +141,7 @@ func TestRegression(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	if regression {
+		t.Parallel()
 		ts.runTestRegression(t, nil, "Regression")
 	}
 }
@@ -153,6 +154,7 @@ func TestUint64(t *testing.T) {
 }
 
 func TestSpecialType(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -160,6 +162,7 @@ func TestSpecialType(t *testing.T) {
 }
 
 func TestPreparedString(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -167,6 +170,7 @@ func TestPreparedString(t *testing.T) {
 }
 
 func TestPreparedTimestamp(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -174,6 +178,7 @@ func TestPreparedTimestamp(t *testing.T) {
 }
 
 func TestConcurrentUpdate(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -181,6 +186,7 @@ func TestConcurrentUpdate(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -188,6 +194,7 @@ func TestErrorCode(t *testing.T) {
 }
 
 func TestAuth(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -196,6 +203,7 @@ func TestAuth(t *testing.T) {
 }
 
 func TestIssues(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -205,12 +213,14 @@ func TestIssues(t *testing.T) {
 }
 
 func TestDBNameEscape(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestDBNameEscape(t)
 }
 
 func TestResultFieldTableIsNull(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -218,6 +228,7 @@ func TestResultFieldTableIsNull(t *testing.T) {
 }
 
 func TestStatusAPI(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -366,6 +377,7 @@ func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 }
 
 func TestMultiStatements(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -878,6 +890,7 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestClientWithCollation(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1083,6 +1096,7 @@ func TestInitConnect(t *testing.T) {
 }
 
 func TestSumAvg(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestSumAvg(t)
@@ -1650,6 +1664,7 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn fu
 }
 
 func TestLocalhostClientMapping(t *testing.T) {
+	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
