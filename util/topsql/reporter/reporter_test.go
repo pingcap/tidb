@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -421,6 +422,56 @@ func TestCollectInternal(t *testing.T) {
 		require.True(t, exist)
 		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
 	}
+}
+
+func TestReportedMetaCacheBasic(t *testing.T) {
+	data := reportData{
+		collectedData:     nil,
+		normalizedSQLMap:  &sync.Map{},
+		normalizedPlanMap: &sync.Map{},
+	}
+	data.normalizedSQLMap.Store("a", "a")
+	data.normalizedPlanMap.Store("1", "1")
+	cache := NewReportedMetaCache(4, 10)
+	cache.removeRepeatReportData(&data)
+	require.Equal(t, 2, cache.lru.Size())
+	sqlA, _ := data.normalizedSQLMap.Load("a")
+	require.Equal(t, "a", sqlA)
+	plan1, _ := data.normalizedPlanMap.Load("1")
+	require.Equal(t, "1", plan1)
+
+	data.normalizedSQLMap.Store("b", "b")
+	data.normalizedPlanMap.Store("2", "2")
+	cache.removeRepeatReportData(&data)
+	require.Equal(t, 4, cache.lru.Size())
+	sqlA, ok := data.normalizedSQLMap.Load("a")
+	require.False(t, ok)
+	require.Equal(t, nil, sqlA)
+	plan1, ok = data.normalizedPlanMap.Load("1")
+	require.False(t, ok)
+	require.Equal(t, nil, plan1)
+	sqlB, _ := data.normalizedSQLMap.Load("b")
+	require.Equal(t, "b", sqlB)
+	plan2, _ := data.normalizedPlanMap.Load("2")
+	require.Equal(t, "2", plan2)
+
+	// Test ttl.
+	data.normalizedSQLMap.Store("a", "a")
+	data.normalizedSQLMap.Store("b", "b")
+	future := time.Now().Unix() + 20
+	cache.removeRepeatReportMeta(data.normalizedSQLMap, future)
+	sqlA, _ = data.normalizedSQLMap.Load("a")
+	require.Equal(t, "a", sqlA)
+	require.Equal(t, 4, cache.lru.Size())
+	sqlB, _ = data.normalizedSQLMap.Load("b")
+	require.Equal(t, "b", sqlB)
+
+	cv, ok := cache.lru.Get(reportMetaCacheKey("a"))
+	require.True(t, ok)
+	require.Equal(t, future, cv.(reportMetaCacheValue).ts)
+	cv, ok = cache.lru.Get(reportMetaCacheKey("b"))
+	require.True(t, ok)
+	require.Equal(t, future, cv.(reportMetaCacheValue).ts)
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {

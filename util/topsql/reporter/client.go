@@ -39,12 +39,15 @@ type GRPCReportClient struct {
 	conn       *grpc.ClientConn
 	// calling decodePlan this can take a while, so should not block critical paths
 	decodePlan planBinaryDecodeFunc
+	// cache to avoid repeated reporting.
+	cache *ReportedMetaCache
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
 func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
 	return &GRPCReportClient{
 		decodePlan: decodePlan,
+		cache:      NewReportedMetaCache(defReportMetaCacheCapacity, defReportMetaCacheTimeSecs),
 	}
 }
 
@@ -60,6 +63,8 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 	if err != nil {
 		return err
 	}
+
+	r.cache.removeRepeatReportData(&data)
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 3)
@@ -213,6 +218,9 @@ func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPC
 		// Address is not changed, skip.
 		return nil
 	}
+
+	// create a new cache for the new connection.
+	r.cache = NewReportedMetaCache(defReportMetaCacheCapacity, defReportMetaCacheTimeSecs)
 
 	if r.conn != nil {
 		err := r.conn.Close()
