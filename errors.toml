@@ -1816,7 +1816,6 @@ error = '''
 writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}
 '''
 
-
 ["tikv:1105"]
 error = '''
 Unknown error
