@@ -795,6 +795,14 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 	value := writeBufs.RowValBuf
 
+	// The setPresume flag marks situations that the insert statement must fail if the to be inserted key
+	// already exists in the store. There are 3 different ways doing existence check:
+	// 1. The transaction is in pessimistic mode, the existence check will be done in the pessimistic lock phase.
+	// 2. The transaction is in optimistic mode:
+	//    2.1 The `presumeNotExist` flag will be used, and the check will be done in the prewrite phase in 2pc.
+	//    2.1 The `tidb_constraint_check_in_place` system variable is on. The existence check will be done immediately
+	//        executing the statement, the `presumeNotExist` flag is still needed to ensure the existence check result
+	//        is valid in 2pc.
 	var setPresume bool
 	if !sctx.GetSessionVars().StmtCtx.BatchCheck {
 		if t.meta.TempTableType != model.TempTableNone {
@@ -821,7 +829,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists, kv.SetNewlyInserted)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -837,6 +845,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 				createIdxOpts = append(createIdxOpts, raw)
 			}
 		}
+	}
+	if setPresume {
+		createIdxOpts = append(createIdxOpts, table.IndexIsNewlyCreated)
 	}
 	// Insert new entries into indices.
 	h, err := t.addIndices(sctx, recordID, r, txn, createIdxOpts)

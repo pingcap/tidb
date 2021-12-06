@@ -146,6 +146,9 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	if flag.HasNeedLocked() {
 		v = kv.ApplyFlagsOps(v, kv.SetNeedLocked)
 	}
+	if flag.HasNewlyInserted() {
+		v = kv.ApplyFlagsOps(v, kv.SetNewlyInserted)
+	}
 	return v
 }
 
@@ -155,6 +158,8 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetPresumeKeyNotExists
 	case kv.SetNeedLocked:
 		return tikvstore.SetNeedLocked
+	case kv.SetNewlyInserted:
+		return tikvstore.SetNewlyInserted
 	}
 	return 0
 }

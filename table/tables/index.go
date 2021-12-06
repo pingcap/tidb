@@ -184,8 +184,17 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
-	if !distinct || skipCheck || opt.Untouched {
+	if skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
+		return nil, err
+	}
+
+	if !distinct {
+		if opt.NewlyInserted {
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetNewlyInserted)
+		} else {
+			err = txn.GetMemBuffer().Set(key, idxVal)
+		}
 		return nil, err
 	}
 
@@ -213,7 +222,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			if opt.NewlyInserted {
+				err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists, kv.SetNewlyInserted)
+			} else {
+				err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			}
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}

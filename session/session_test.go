@@ -5883,3 +5883,63 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 			"  `cs1` int(11) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func (s *testSessionSuite) TestOptimizedDeleteYourWrites(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
+
+	session1.MustExec("drop table if exists t;")
+	session1.MustExec("create table t (c1 int primary key, c2 int, c3 int, unique key k1(c2), key k2(c3));")
+	session1.MustExec("insert into t select 1, 1, 1")
+	// Optimistic delete your write, delete operation is skipped.
+	for _, checkInPlace := range []bool{false, true} {
+		if checkInPlace {
+			session1.MustExec(`set tidb_constraint_check_in_place = "on";`)
+		}
+		session1.MustExec("begin pessimistic")
+		session1.MustExec("update t set c3 = c3 + 1")
+		session1.MustExec("delete from t")
+		session1.MustExec("commit")
+		session2.MustExec("admin check table t;")
+		session1.MustExec("begin optimistic;")
+		session1.MustExec("insert into t select 1, 1, 1")
+		session1.MustExec("delete from t")
+		session1.MustExec("commit")
+		session2.MustExec("admin check table t;")
+	}
+
+	session1.MustExec(`set tidb_constraint_check_in_place = "off";`)
+	session2.MustExec("drop table if exists t;")
+	session2.MustExec("create table t (c1 int primary key, c2 int, c3 int, unique key k1(c2), key k2(c3));")
+	session2.MustExec("insert into t select 1, 1, 1")
+	// Optimistic delete your write, delete could not be skipped.
+	for _, checkInPlace := range []bool{false, true} {
+		if checkInPlace {
+			session1.MustExec(`set tidb_constraint_check_in_place = "on";`)
+		}
+		session1.MustExec("begin optimistic;")
+		session1.MustExec("delete from t")
+		session1.MustExec("insert into t select 1, 1, 1")
+		session1.MustExec("delete from t where c1 = 1")
+		session1.MustExec("commit")
+		session2.MustExec("admin check table t;")
+	}
+	session1.MustExec("begin optimistic;")
+	session1.MustExec("insert into t select 1, 1, 1")
+	session1.MustExec("delete from t")
+	session1.MustExec("commit")
+	session2.MustExec("admin check table t;")
+	session2.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+
+	// Index key conflicts.
+	session1.MustExec("drop table if exists t")
+	session1.MustExec("create table t (id int primary key, v int, unique index (v));")
+	session1.MustExec("insert into t values (1, 10);")
+	session2.MustExec("begin")
+	session2.MustExec("delete from t where id = 1;")
+	session2.MustExec("insert into t values (2, 10);")
+	session2.MustExec("delete from t where id = 2;")
+	session2.MustExec("commit")
+	session2.MustExec("admin check table t;")
+	session2.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
