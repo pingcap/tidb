@@ -306,6 +306,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+			}
+		})
 		return nil
 	})
 	var jobs string
@@ -315,7 +320,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
-	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
