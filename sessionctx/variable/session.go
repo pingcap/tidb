@@ -435,6 +435,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	Paging
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -1902,6 +1903,9 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+}
+
+type Paging struct {
 }
 
 const (
