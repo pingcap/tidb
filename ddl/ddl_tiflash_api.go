@@ -221,7 +221,7 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashRep
 	}
 }
 
-// TODO test _update_http_port, since we have no etcdCli
+// UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
 func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
 	if len(addrAndPort) < 2 {
@@ -248,9 +248,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 		}
 	}
 	if origin != httpAddr {
-		// TODO add lease ttl
 		log.Warn(fmt.Sprintf("Update status addr to %v\n", httpAddr))
-		// TODO this may fail with no error
 		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
 		if err != nil {
 			return errors.Trace(err)
@@ -270,7 +268,8 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	// We need the updated infomation about TiFlash stores.
+	// We need the up-to-date information about TiFlash stores.
+	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -285,21 +284,22 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		}
 	}
 
+	// The following loop updates TiFlash store's status address.
 	for _, store := range tiflashStores {
 		s := store
 		err := d.UpdateTiFlashHTTPAddress(&s)
 		log.Error("Update TiFlash status address failed", zap.Error(err))
 	}
 
-	// Main body of table_update
+	// Start to process every table.
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 	if schema == nil {
 		return false, errors.New("Schema is nil")
 	}
 
-	// Compute table_list
 	var tableList = make([]PollTiFlashReplicaStatusContext, 0)
 
+	// Collect TiFlash Replica info, for every table.
 	for _, db := range schema.AllSchemas() {
 		tbls := schema.SchemaTables(db.Name)
 		for _, tbl := range tbls {
@@ -308,7 +308,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		}
 	}
 
-	// Removed pd rule handling to somewhere else
+	// Missing/Removed pd rule handling.
 	if handlePd {
 		if err := HandlePlacementRuleRoutine(ctx, d, tableList); err != nil {
 			log.Error("handle placement rule routine error", zap.Error(err))
@@ -337,7 +337,10 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 
 			allReplicaReady = false
 
-			// We don't need to set accelerate schedule, since it is already done in DDL.
+			// We don't need to set accelerate schedule for this table, since it is already done in DDL, when
+			// 1. Add partition
+			// 2. Set TiFlash replica
+
 			// Compute sync data process by request TiFlash.
 			regionReplica := make(map[int64]int)
 			for _, store := range tiflashStores {
@@ -376,7 +379,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 				}
 			}
 
-			// TODO It will be better if we can get `regionCount` directly from TiDB.
+			// Get most up-to-date replica count from pd.
 			var stats helper.PDRegionStats
 			if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
 				return false, errors.Trace(err)
@@ -392,19 +395,18 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			if !avail {
 				bo, ok := (*backoffs)[tb.ID]
 				if ok {
-					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID))
+					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 					bo.Backoff()
 				} else {
 					// If the table is not available at first check, it should be added into `backoffs`
 					if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
-						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID))
+						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 						newBackoff := NewPollTiFlashReplicaStatusBackoff()
 						(*backoffs)[tb.ID] = &newBackoff
 					} else {
-						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID))
+						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 					}
 				}
-				log.Info("Update tiflash replica sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 			} else {
 				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
@@ -420,8 +422,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 	return allReplicaReady, nil
 }
 
-// GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
-// it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
+// This function derives from GetDropOrTruncateTableInfoFromJobsByStore
 func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, store *kv.Storage, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
 		// Check GC safe point for getting snapshot infoSchema.
@@ -498,9 +499,9 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	return nil
 }
 
-// HandlePlacementRuleRoutine fetch all rules from pd, and remove all obsolete rules.
+// HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules, and add all missing rules.
+// It handles rare situation, when we fail to alter pd rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []PollTiFlashReplicaStatusContext) error {
-	// TODO Is it OK to do this in `doGCPlacementRules`, rather than looping?
 	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
 
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
@@ -529,8 +530,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	}
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
-		// TODO Can we batch request table?
-		// Implement _check_and_make_rule
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
 		if _, ok := allRules[ruleID]; !ok {
 			// Mostly because of a previous failure of setting pd rule.
@@ -547,7 +546,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 
 	// Remove rules of non-existing table
 	for _, v := range allRules {
-		log.Info("remove tiflash rule", zap.String("id", v.ID))
+		log.Info("Remove TiFlash rule", zap.String("id", v.ID))
 		if err := tikvHelper.DeletePlacementRule("tiflash", v.ID); err != nil {
 			return errors.Trace(err)
 		}

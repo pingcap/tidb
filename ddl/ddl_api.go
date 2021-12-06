@@ -3271,6 +3271,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	if d.IsTiFlashPollEnabled() && meta.TiFlashReplica != nil {
+		// Must set placement rule before the ActionAddTablePartition job is in queue.
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
 			log.Error("can not get Helper")
@@ -4770,6 +4771,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	tblInfo := tb.Meta()
 	if d.IsTiFlashPollEnabled() {
+		// Must set placement rule before the ActionSetTiFlashReplica job is in queue.
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
 			log.Error("can not get Helper")
@@ -4785,7 +4787,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 					return errors.Trace(err)
 				}
 			}
-			// Partitions that in adding mid-state.
+			// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
 			for _, p := range pi.AddingDefinitions {
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
