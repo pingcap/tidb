@@ -316,7 +316,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("[ddl] adding DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 	}
