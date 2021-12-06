@@ -920,13 +920,38 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	selectivity := tableRows / indexRows
 	idxCst := indexRows * sessVars.CPUFactor
 	// try paging API
-	if ctx.GetSessionVars().EnablePaging {
-		expectIndexRows := t.expectCnt / selectivity
-		rpcCnt := float64(int(math.Log(expectIndexRows/64) / math.Log(2)))
-		pagingCst := rpcCnt*sessVars.CPUFactor*40 + expectIndexRows*sessVars.CPUFactor
+	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 {
+		//expectIndexRows := t.expectCnt / selectivity
+		rpcCnt := float64(1)
+		if t.expectCnt > 64 {
+			rpcCnt = float64(int(1 + math.Log(t.expectCnt/64)/math.Log(2)))
+		}
+		scanCst := t.expectCnt * sessVars.CPUFactor
+		var extractRows func(p PhysicalPlan) float64
+		extractRows = func(p PhysicalPlan) float64 {
+			f := float64(0)
+			for _, c := range t.indexPlan.Children() {
+				if len(c.Children()) != 0 {
+					f += extractRows(c)
+				} else {
+					f += c.statsInfo().RowCount
+				}
+			}
+			return f
+		}
+		cmpRate := float64(1)
+		if sourceRows := extractRows(t.indexPlan); sourceRows > scanCst {
+			cmpRate = indexRows / sourceRows
+		}
+		t.indexPlan.Children()
+		pagingCst := (rpcCnt-1)*sessVars.CPUFactor*40 + t.expectCnt*sessVars.CPUFactor
+		pagingCst *= cmpRate
 		if pagingCst < idxCst {
 			idxCst = pagingCst
 			p.Paging = true
+			if p, ok := t.indexPlan.(*PhysicalIndexScan); ok {
+				p.Paging = true
+			}
 		}
 	}
 	newTask.cst += idxCst
@@ -1155,6 +1180,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 			pushedDownLimit.cost = cop.cost()
 		}
+		cop.expectCnt = float64(p.Count)
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
 	} else if mpp, ok := t.(*mppTask); ok {
