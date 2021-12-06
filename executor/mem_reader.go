@@ -626,7 +626,7 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
 	numHandles := 0
 	for i, tbl := range tbls {
-		handles, err := m.unionHandles(kvRanges[i], m.memReaders)
+		handles, err := m.unionHandles(kvRanges[i])
 		if err != nil {
 			return nil, err
 		}
@@ -662,14 +662,14 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 }
 
 // Union all handles of different Indexes.
-func (_ *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
-	if len(memReaders) != len(kvRanges) {
+func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange) (finalHandles []kv.Handle, err error) {
+	if len(m.memReaders) != len(kvRanges) {
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memReaders)")
 	}
 
 	hMap := kv.NewHandleMap()
 	var handles []kv.Handle
-	for i, reader := range memReaders {
+	for i, reader := range m.memReaders {
 		switch r := reader.(type) {
 		case *memTableReader:
 			r.kvRanges = kvRanges[i]
