@@ -20,11 +20,11 @@
 package common
 
 import (
-	"github.com/pingcap/failpoint"
 	"reflect"
 	"syscall"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"golang.org/x/sys/unix"
 )
 
