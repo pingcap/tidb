@@ -26,12 +26,24 @@ type predicateColumnCollector struct {
 	colMap map[int64]map[model.TableColumnID]struct{}
 	// predicateCols records predicate columns.
 	predicateCols map[model.TableColumnID]struct{}
+	// cols is used to store columns collected from expressions and saves some allocation.
+	cols []*expression.Column
+}
+
+func newPredicateColumnCollector() *predicateColumnCollector {
+	return &predicateColumnCollector{
+		colMap:        make(map[int64]map[model.TableColumnID]struct{}),
+		predicateCols: make(map[model.TableColumnID]struct{}),
+		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
+		cols: make([]*expression.Column, 0, 8),
+	}
 }
 
 func (c *predicateColumnCollector) addPredicateColumn(col *expression.Column) {
 	tblColIDs, ok := c.colMap[col.UniqueID]
 	if !ok {
 		// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
+		// logutil.BgLogger().Info(fmt.Sprintf("uniqueID:%v, ID:%v, name:%s", col.UniqueID, col.ID, col.OrigName))
 		return
 	}
 	for tblColID := range tblColIDs {
@@ -40,15 +52,14 @@ func (c *predicateColumnCollector) addPredicateColumn(col *expression.Column) {
 }
 
 func (c *predicateColumnCollector) addPredicateColumnsFromExpression(expr expression.Expression) {
-	cols := expression.ExtractColumns(expr)
+	cols := expression.ExtractColumnsAndCorColumns(c.cols[:0], expr)
 	for _, col := range cols {
 		c.addPredicateColumn(col)
 	}
 }
 
-func (c *predicateColumnCollector) addPredicateColumnsFromExpressions(exprs []expression.Expression) {
-	cols := make([]*expression.Column, 0, len(exprs))
-	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+func (c *predicateColumnCollector) addPredicateColumnsFromExpressions(list []expression.Expression) {
+	cols := expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
 	for _, col := range cols {
 		c.addPredicateColumn(col)
 	}
@@ -62,6 +73,7 @@ func (c *predicateColumnCollector) updateColMap(col *expression.Column, relatedC
 		tblColIDs, ok := c.colMap[relatedCol.UniqueID]
 		if !ok {
 			// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
+			// logutil.BgLogger().Info(fmt.Sprintf("uniqueID:%v, ID:%v, name:%s", col.UniqueID, col.ID, col.OrigName))
 			continue
 		}
 		for tblColID := range tblColIDs {
@@ -71,13 +83,11 @@ func (c *predicateColumnCollector) updateColMap(col *expression.Column, relatedC
 }
 
 func (c *predicateColumnCollector) updateColMapFromExpression(col *expression.Column, expr expression.Expression) {
-	c.updateColMap(col, expression.ExtractColumns(expr))
+	c.updateColMap(col, expression.ExtractColumnsAndCorColumns(c.cols[:0], expr))
 }
 
-func (c *predicateColumnCollector) updateColMapFromExpressions(col *expression.Column, exprs []expression.Expression) {
-	relatedCols := make([]*expression.Column, 0, len(exprs))
-	relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, exprs, nil)
-	c.updateColMap(col, relatedCols)
+func (c *predicateColumnCollector) updateColMapFromExpressions(col *expression.Column, list []expression.Expression) {
+	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
 func (ds *DataSource) updateColMapAndAddPredicateColumns(c *predicateColumnCollector) {
@@ -219,4 +229,15 @@ func (c *predicateColumnCollector) collectFromPlan(lp LogicalPlan) {
 			c.updateColMap(col, []*expression.Column{x.seedSchema.Columns[i]})
 		}
 	}
+}
+
+// CollectPredicateColumnsForTest collects predicate columns from logical plan. It is only for test.
+func CollectPredicateColumnsForTest(lp LogicalPlan) []model.TableColumnID {
+	collector := newPredicateColumnCollector()
+	collector.collectFromPlan(lp)
+	tblColIDs := make([]model.TableColumnID, 0, len(collector.predicateCols))
+	for tblColID := range collector.predicateCols {
+		tblColIDs = append(tblColIDs, tblColID)
+	}
+	return tblColIDs
 }
