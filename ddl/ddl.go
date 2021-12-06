@@ -94,13 +94,6 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	// PollTiFlashInterval is the interval between every PollTiFlashReplicaStatus call.
-	PollTiFlashInterval = 2 * time.Second
-	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
-	PullTiFlashPdTick = 60
-	// ReschePullTiFlash is set true, so we do a fully sync, regardless of PullTiFlashPdTick.
-	// Set to be true, when last TiFlash pd rule fails.
-	ReschePullTiFlash = uint32(0)
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.

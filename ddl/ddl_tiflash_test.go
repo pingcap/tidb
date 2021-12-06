@@ -116,6 +116,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	ddl.PullTiFlashPdTick = 60
 	s.tiflashDelay = 0
 }
 
@@ -359,6 +360,35 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 
 // Test when TiFlash Replia is not ready for some period of time.
 func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
+	backoff := ddl.NewPollTiFlashReplicaStatusBackoff()
+	c.Assert(backoff.Tick(), Equals, false)
+	c.Assert(backoff.Tick(), Equals, true)
+	backoff.Backoff()
+	for i := 0; i < 3; i++ {
+		c.Assert(backoff.Tick(), Equals, false)
+	}
+	c.Assert(backoff.Tick(), Equals, true)
+	backoff.Backoff()
+	for i := 0; i < 7; i++ {
+		c.Assert(backoff.Tick(), Equals, false)
+	}
+	c.Assert(backoff.Tick(), Equals, true)
+	backoff.Backoff()
+	for i := 0; i < ddl.PollTiFlashReplicaStatusBackoffMaxTick-1; i++ {
+		c.Assert(backoff.Tick(), Equals, false)
+	}
+	c.Assert(backoff.Tick(), Equals, true)
+
+	origin := ddl.PollTiFlashReplicaStatusBackoffMinTick
+	ddl.PollTiFlashReplicaStatusBackoffMinTick = 1
+	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
+	c.Assert(backoff.Tick(), Equals, true)
+	backoff.Backoff()
+	c.Assert(backoff.Tick(), Equals, false)
+	c.Assert(backoff.Tick(), Equals, true)
+
+	ddl.PollTiFlashReplicaStatusBackoffMinTick = origin
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -664,7 +694,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 				log.Warn("TiFlash replica is available after delay", zap.Duration("duration", s.tiflashDelay))
 				f()
 			}()
-		}else{
+		} else {
 			f()
 		}
 	}).Methods(http.MethodPost)

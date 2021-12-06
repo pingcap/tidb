@@ -24,6 +24,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
@@ -60,16 +62,23 @@ type PollTiFlashReplicaStatusContext struct {
 	HighPriority   bool
 }
 
-// PollTiFlashReplicaStatusBackoff records backoff for each TiFlash Table
+// PollTiFlashReplicaStatusBackoff records backoff for each TiFlash Table.
 type PollTiFlashReplicaStatusBackoff struct {
 	Counter   int
 	Threshold int
 }
 
 var (
+	// PollTiFlashInterval is the interval between every PollTiFlashReplicaStatus call.
+	PollTiFlashInterval = 2 * time.Second
+	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
+	PullTiFlashPdTick = 60 * 5
+	// ReschePullTiFlash is set true, so we do a fully sync, regardless of PullTiFlashPdTick.
+	// Set to be true, when last TiFlash pd rule fails.
+	ReschePullTiFlash = uint32(0)
 	// PollTiFlashReplicaStatusBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashReplicaStatusBackoffMaxTick = 60
-	// PollTiFlashReplicaStatusBackoffMinTick is the max tick before we try to update TiFlash replica availability for one table.
+	PollTiFlashReplicaStatusBackoffMaxTick = 10
+	// PollTiFlashReplicaStatusBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashReplicaStatusBackoffMinTick  = 2
 	pollTiFlashReplicaStatusBackoffCapacity = 1000
 )
@@ -90,7 +99,6 @@ func (b *PollTiFlashReplicaStatusBackoff) Tick() bool {
 	if b.Threshold > PollTiFlashReplicaStatusBackoffMaxTick {
 		b.Threshold = PollTiFlashReplicaStatusBackoffMaxTick
 	}
-	log.Info("Tick", zap.Int("Counter", b.Counter), zap.Int("Threshold", b.Threshold))
 	defer func() {
 		b.Counter += 1
 		b.Counter %= b.Threshold
@@ -262,8 +270,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-
-	// TODO Is there any ways we can get all TiFlash stores without send request to PD?
+	// We need the updated infomation about TiFlash stores.
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -310,7 +317,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
-		// TODO Can we batch request table?
+		// These request can be batched as an optimization.
 		available := tb.Available
 		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
 			available = val.(bool)
@@ -385,14 +392,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			if !avail {
 				bo, ok := (*backoffs)[tb.ID]
 				if ok {
-					log.Info("TiFlash replica is not ready, trigger backoff", zap.Int64("tableId", tb.ID))
+					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID))
 					bo.Backoff()
 				} else {
 					// If the table is not available at first check, it should be added into `backoffs`
-					log.Info("TiFlash replica is not ready, add to backoffs", zap.Int64("tableId", tb.ID))
 					if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
+						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID))
 						newBackoff := NewPollTiFlashReplicaStatusBackoff()
 						(*backoffs)[tb.ID] = &newBackoff
+					} else {
+						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID))
 					}
 				}
 				log.Info("Update tiflash replica sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
