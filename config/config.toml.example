@@ -238,6 +238,14 @@ metrics-interval = 15
 # Record statements qps by database name if it is enabled.
 record-db-qps = false
 
+# After a duration of this time in seconds if the server doesn't see any activity it pings
+# the client to see if the transport is still alive.
+grpc-keepalive-time = 10
+
+# After having pinged for keepalive check, the server waits for a duration of Timeout in seconds
+# and if no activity is seen even after that the connection is closed.
+grpc-keepalive-timeout = 3
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0

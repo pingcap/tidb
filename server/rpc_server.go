@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 )
 
@@ -47,7 +49,10 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.KeepaliveParams(keepalive.ServerParameters{
+		Time:    time.Duration(config.Status.GrpcKeepAliveTime) * time.Second,
+		Timeout: time.Duration(config.Status.GrpcKeepAliveTimeout) * time.Second,
+	}))
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
