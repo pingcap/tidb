@@ -662,7 +662,7 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 }
 
 // Union all handles of different Indexes.
-func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
+func (_ *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
 	if len(memReaders) != len(kvRanges) {
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memReaders)")
 	}
