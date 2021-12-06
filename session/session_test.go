@@ -2212,6 +2212,22 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("commit")
 }
 
+func (s *testSchemaSerialSuite) TestValidationRecursion(c *C) {
+	// We have to expect that validation functions will call GlobalVarsAccessor.GetGlobalSysVar().
+	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
+	// function because it might cause infinite recursion.
+	// See: https://github.com/pingcap/tidb/issues/30255
+	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
+	}}
+	variable.RegisterSysVar(&sv)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	val, err := sv.Validate(tk.Se.GetSessionVars(), "test2", variable.ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "test")
+}
+
 func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
