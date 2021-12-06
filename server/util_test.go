@@ -603,5 +603,6 @@ func newTestConfig() *config.Config {
 	cfg.Host = "127.0.0.1"
 	cfg.Status.StatusHost = "127.0.0.1"
 	cfg.Security.AutoTLS = false
+	cfg.Socket = ""
 	return cfg
 }
