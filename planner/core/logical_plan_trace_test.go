@@ -160,7 +160,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
-					assertReason: "The columns[test.t.a,test.t.b] in agg are from outer table, and the functions are duplicate agnostic",
+					assertReason: "The columns[test.t.a,test.t.b] in agg are from outer table, and the agg functions are duplicate agnostic",
 				},
 			},
 		},

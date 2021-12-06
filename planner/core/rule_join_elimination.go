@@ -272,7 +272,7 @@ func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan L
 			}
 			buffer.WriteString(col.String())
 		}
-		buffer.WriteString("] in agg are from outer table, and the functions are duplicate agnostic")
+		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()
 	}()
 	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v]", join.ID(), outerPlan.TP(), outerPlan.ID())
