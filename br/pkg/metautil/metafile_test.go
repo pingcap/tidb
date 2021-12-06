@@ -5,7 +5,6 @@ package metautil
 import (
 	"context"
 	"crypto/sha256"
-	"regexp"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -87,7 +86,8 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
 	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 
-	require.Regexp(t, regexp.MustCompile(".*ErrInvalidMetaFile.*"), err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ErrInvalidMetaFile")
 }
 
 func TestWalkMetaFile(t *testing.T) {
