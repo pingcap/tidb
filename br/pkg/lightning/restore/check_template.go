@@ -51,7 +51,7 @@ type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
 	criticalFailedCount int
-	warnMsgs 			[]string
+	normalMsgs          []string // only used in unit test now
 	criticalMsgs        []string
 	t                   table.Writer
 }
@@ -80,11 +80,14 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 		switch t {
 		case Critical:
 			c.criticalFailedCount++
-			c.criticalMsgs = append(c.criticalMsgs, msg)
 		case Warn:
 			c.warnFailedCount++
-			c.warnMsgs = append(c.warnMsgs, msg)
 		}
+	}
+	if !passed && t == Critical {
+		c.criticalMsgs = append(c.criticalMsgs, msg)
+	} else {
+		c.normalMsgs = append(c.normalMsgs, msg)
 	}
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()

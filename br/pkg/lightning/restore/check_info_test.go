@@ -17,11 +17,11 @@ package restore
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"os"
 	"path/filepath"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -432,7 +432,7 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	c.Assert(tmpl.warnFailedCount, Equals, 1)
 	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.failedMsg[1], Matches, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB")
+	c.Assert(tmpl.warnMsgs[1], Matches, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB")
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
@@ -441,7 +441,7 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	c.Assert(tmpl.warnFailedCount, Equals, 1)
 	c.Assert(tmpl.criticalFailedCount, Equals, 1)
-	c.Assert(tmpl.failedMsg[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports")
+	c.Assert(tmpl.criticalMsgs[0], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB, please set `tikv-importer.disk-quota` to a smaller value than 2KiB or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports")
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
@@ -451,5 +451,5 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	c.Assert(tmpl.warnFailedCount, Equals, 1)
 	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.failedMsg[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import")
+	c.Assert(tmpl.warnMsgs[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import")
 }
