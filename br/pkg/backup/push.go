@@ -166,7 +166,7 @@ func (push *pushDown) pushBackup(
 					var errMsg string
 					if utils.MessageIsNotFoundStorageError(errPb.GetMsg()) {
 						errMsg = fmt.Sprintf("File or directory not found error occurs on TiKV Node(store id: %v; Address: %s). "+
-							"work around:please ensure br and tikv node share a same disk and the user of br and tikv has same uid.",
+							"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
 							store.GetId(), redact.String(store.GetAddress()))
 						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
 					}
