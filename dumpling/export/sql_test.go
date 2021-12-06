@@ -1736,6 +1736,60 @@ func TestPickupPossibleField(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestCheckIfSeqExists(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("1"))
+
+	exists, err := CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, true, exists)
+
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"c"}).
+			AddRow("0"))
+
+	exists, err = CheckIfSeqExists(conn)
+	require.NoError(t, err)
+	require.Equal(t, false, exists)
+}
+
+func TestGetCharsetAndDefaultCollation(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW CHARACTER SET").
+		WillReturnRows(sqlmock.NewRows([]string{"Charset", "Description", "Default collation", "Maxlen"}).
+			AddRow("utf8mb4", "UTF-8 Unicode", "utf8mb4_0900_ai_ci", 4).
+			AddRow("latin1", "cp1252 West European", "latin1_swedish_ci", 1))
+
+	charsetAndDefaultCollation, err := GetCharsetAndDefaultCollation(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_0900_ai_ci", charsetAndDefaultCollation["utf8mb4"])
+	require.Equal(t, "latin1_swedish_ci", charsetAndDefaultCollation["latin1"])
+}
+
+>>>>>>> 9d307b00a... dumpling: fix dump failed when sequence exists (#30164)
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,

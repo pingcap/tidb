@@ -878,7 +878,20 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
-	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, getListTableTypeByConf(conf), tableTypes...)
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		tctx.L().Warn("dumpling tableType `sequence` is unsupported for now")
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
 	if err != nil {
 		return err
 	}
