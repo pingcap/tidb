@@ -476,6 +476,32 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 }
 
+func (s *testDDLSerialSuite) TestAddBatchJobError(c *C) {
+	store := testCreateStore(c, "test_add_batch_job_error")
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	ctx := testNewContext(d)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`), IsNil)
+	// Test the job runner should not hang forever.
+	job := &model.Job{SchemaID: 1, TableID: 1}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mockAddBatchDDLJobsErr")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr"), IsNil)
+}
+
 func testCheckOwner(c *C, d *ddl, expectedVal bool) {
 	c.Assert(d.isOwner(), Equals, expectedVal)
 }
