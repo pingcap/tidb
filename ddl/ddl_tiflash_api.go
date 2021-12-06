@@ -103,10 +103,7 @@ func (b *PollTiFlashReplicaStatusBackoff) Tick() bool {
 		b.Counter += 1
 		b.Counter %= b.Threshold
 	}()
-	if b.Counter%b.Threshold == 0 {
-		return true
-	}
-	return false
+	return b.Counter%b.Threshold == 0
 }
 
 // Backoff will increase Threshold
@@ -408,10 +405,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 					}
 				}
 				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
+				if err != nil {
+					return false, errors.Trace(err)
+				}
 			} else {
 				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
 				delete(*backoffs, tb.ID)
 				err = infosync.DeleteTiFlashTableSyncProgress(tb.ID)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
 			}
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
