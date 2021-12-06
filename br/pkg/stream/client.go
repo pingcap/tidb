@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/binary"
+	"math"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -137,7 +138,7 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
 func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
-	min := uint64(0xffffffff)
+	min := uint64(math.MaxUint64)
 	scanner := scanEtcdPrefix(t.cli.Client, CheckPointsOf(t.Info.Name, store))
 	kvs, err := scanner.AllPages(ctx, 1024)
 	if err != nil {
