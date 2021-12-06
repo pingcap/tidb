@@ -32,8 +32,11 @@ import (
 )
 
 var (
-	ErrInconsistentRowValue     = dbterror.ClassTable.NewStd(errno.ErrInconsistentRowValue)
-	ErrInconsistentHandle       = dbterror.ClassTable.NewStd(errno.ErrInconsistentHandle)
+	// ErrInconsistentRowValue is the error when values in a row insertion does not match the expected ones.
+	ErrInconsistentRowValue = dbterror.ClassTable.NewStd(errno.ErrInconsistentRowValue)
+	// ErrInconsistentHandle is the error when the handle in the row/index insertions does not match.
+	ErrInconsistentHandle = dbterror.ClassTable.NewStd(errno.ErrInconsistentHandle)
+	// ErrInconsistentIndexedValue is the error when decoded values from the index mutation cannot match row value
 	ErrInconsistentIndexedValue = dbterror.ClassTable.NewStd(errno.ErrInconsistentIndexedValue)
 )
 
