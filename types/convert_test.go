@@ -240,10 +240,10 @@ func TestConvertType(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
 	require.Equal(t, "-9999.9999", v.(*MyDecimal).String())
 	v, err = Convert("1,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
 	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("1,999,999.00", ft)
-	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
 	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("199.00 ", ft)
 	require.NoError(t, err)
@@ -991,76 +991,97 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 func TestConvertJSONToInt(t *testing.T) {
 	t.Parallel()
 	var tests = []struct {
-		In  string
-		Out int64
+		in  string
+		out int64
+		err bool
 	}{
-		{`{}`, 0},
-		{`[]`, 0},
-		{`3`, 3},
-		{`-3`, -3},
-		{`4.5`, 4},
-		{`true`, 1},
-		{`false`, 0},
-		{`null`, 0},
-		{`"hello"`, 0},
-		{`"123hello"`, 123},
-		{`"1234"`, 1234},
+		{in: `{}`, err: true},
+		{in: `[]`, err: true},
+		{in: `3`, out: 3},
+		{in: `-3`, out: -3},
+		{in: `4.5`, out: 4},
+		{in: `true`, out: 1},
+		{in: `false`, out: 0},
+		{in: `null`, err: true},
+		{in: `"hello"`, err: true},
+		{in: `"123hello"`, out: 123, err: true},
+		{in: `"1234"`, out: 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.in)
 		require.NoError(t, err)
 
-		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
-		require.Equal(t, tt.Out, casted)
+		casted, err := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
+		if tt.err {
+			require.Error(t, err, tt)
+		} else {
+			require.NoError(t, err, tt)
+		}
+		require.Equal(t, tt.out, casted)
 	}
 }
 
 func TestConvertJSONToFloat(t *testing.T) {
 	t.Parallel()
 	var tests = []struct {
-		In  interface{}
-		Out float64
+		in  interface{}
+		out float64
 		ty  json.TypeCode
+		err bool
 	}{
-		{make(map[string]interface{}), 0, json.TypeCodeObject},
-		{make([]interface{}, 0), 0, json.TypeCodeArray},
-		{int64(3), 3, json.TypeCodeInt64},
-		{int64(-3), -3, json.TypeCodeInt64},
-		{uint64(1 << 63), 1 << 63, json.TypeCodeUint64},
-		{float64(4.5), 4.5, json.TypeCodeFloat64},
-		{true, 1, json.TypeCodeLiteral},
-		{false, 0, json.TypeCodeLiteral},
-		{nil, 0, json.TypeCodeLiteral},
-		{"hello", 0, json.TypeCodeString},
-		{"123.456hello", 123.456, json.TypeCodeString},
-		{"1234", 1234, json.TypeCodeString},
+		{in: make(map[string]interface{}), ty: json.TypeCodeObject, err: true},
+		{in: make([]interface{}, 0), ty: json.TypeCodeArray, err: true},
+		{in: int64(3), out: 3, ty: json.TypeCodeInt64},
+		{in: int64(-3), out: -3, ty: json.TypeCodeInt64},
+		{in: uint64(1 << 63), out: 1 << 63, ty: json.TypeCodeUint64},
+		{in: float64(4.5), out: 4.5, ty: json.TypeCodeFloat64},
+		{in: true, out: 1, ty: json.TypeCodeLiteral},
+		{in: false, out: 0, ty: json.TypeCodeLiteral},
+		{in: nil, ty: json.TypeCodeLiteral, err: true},
+		{in: "hello", ty: json.TypeCodeString, err: true},
+		{in: "123.456hello", out: 123.456, ty: json.TypeCodeString, err: true},
+		{in: "1234", out: 1234, ty: json.TypeCodeString},
 	}
 	for _, tt := range tests {
-		j := json.CreateBinary(tt.In)
+		j := json.CreateBinary(tt.in)
 		require.Equal(t, tt.ty, j.TypeCode)
-		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
-		require.Equal(t, tt.Out, casted)
+		casted, err := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
+		if tt.err {
+			require.Error(t, err, tt)
+		} else {
+			require.NoError(t, err, tt)
+		}
+		require.Equal(t, tt.out, casted)
 	}
 }
 
 func TestConvertJSONToDecimal(t *testing.T) {
 	t.Parallel()
 	var tests = []struct {
-		In  string
-		Out *MyDecimal
+		in  string
+		out *MyDecimal
+		err bool
 	}{
-		{`3`, NewDecFromStringForTest("3")},
-		{`-3`, NewDecFromStringForTest("-3")},
-		{`4.5`, NewDecFromStringForTest("4.5")},
-		{`"1234"`, NewDecFromStringForTest("1234")},
-		{`"1234567890123456789012345678901234567890123456789012345"`, NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+		{in: `3`, out: NewDecFromStringForTest("3")},
+		{in: `-3`, out: NewDecFromStringForTest("-3")},
+		{in: `4.5`, out: NewDecFromStringForTest("4.5")},
+		{in: `"1234"`, out: NewDecFromStringForTest("1234")},
+		{in: `"1234567890123456789012345678901234567890123456789012345"`, out: NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+		{in: `true`, out: NewDecFromStringForTest("1")},
+		{in: `false`, out: NewDecFromStringForTest("0")},
+		{in: `null`, out: NewDecFromStringForTest("0"), err: true},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseBinaryFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.in)
 		require.NoError(t, err)
 		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
-		require.NoErrorf(t, err, "input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j)
-		require.Equalf(t, 0, casted.Compare(tt.Out), "input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j)
+		errMsg := fmt.Sprintf("input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
+		if tt.err {
+			require.Error(t, err, errMsg)
+		} else {
+			require.NoError(t, err, errMsg)
+		}
+		require.Equalf(t, 0, casted.Compare(tt.out), "input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
 	}
 }
 
