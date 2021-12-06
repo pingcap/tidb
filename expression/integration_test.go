@@ -9900,6 +9900,15 @@ func (s *testIntegrationSuite) TestEnumIndex(c *C) {
 		testkit.Rows(" "))
 	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
 		testkit.Rows(" "))
+
+	// issue30174
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE `t1` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,\n  `c2` blob NOT NULL,\n  PRIMARY KEY (`c2`(5)),\n  UNIQUE KEY `idx_89` (`c1`)\n);")
+	tk.MustExec("CREATE TABLE `t2` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'Alice',\n  `c2` enum('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'David',\n  `c3` enum('Alice','Bob','Charlie','David') NOT NULL,\n  PRIMARY KEY (`c3`,`c2`)\n);")
+	tk.MustExec("insert into t1 values('Charlie','');")
+	tk.MustExec("insert into t2 values('Charlie','Charlie','Alice');")
+	tk.MustQuery("select * from t2 where c3 in (select c2 from t1);").Check(
+		testkit.Rows())
 }
 
 // Previously global values were cached. This is incorrect.
