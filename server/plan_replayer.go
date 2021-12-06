@@ -95,9 +95,13 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
+		_, err = w.Write(content)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
-		w.Write(content)
 		return
 	}
 	if handler.infoGetter == nil {
@@ -141,10 +145,14 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
+		_, err = w.Write(content)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		// find dump file in one remote tidb-server, return file directly
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
-		w.Write(content)
 		return
 	}
 	// we can't find dump file in any tidb-server, return 404 directly
