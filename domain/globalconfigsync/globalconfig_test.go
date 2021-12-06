@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
@@ -67,11 +68,9 @@ func TestStoreGlobalConfig(t *testing.T) {
 	defer cluster.Terminate(t)
 	domain.GetGlobalConfigSyncer().SetEtcdClient(cluster.RandClient())
 
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_top_sql=1;")
-	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_top_sql=1;")
 
 	for i := 0; i < 20; i++ {
 		resp, err := cluster.RandClient().Get(context.Background(), "/global/config/enable_resource_metering")
@@ -87,6 +86,8 @@ func TestStoreGlobalConfig(t *testing.T) {
 		require.Equal(t, len(resp.Kvs), 1)
 		require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
 		require.Equal(t, resp.Kvs[0].Value, []byte("true"))
+
+		tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
 		return
 	}
 
