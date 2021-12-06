@@ -216,6 +216,9 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 		tk.MustExec("delete from t1;")
 		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("commit;")
+		if i == 1 {
+			tk.MustExec("set transaction isolation level repeatable read;")
+		}
 	}
 
 	// Same with above, but select ... for update.
