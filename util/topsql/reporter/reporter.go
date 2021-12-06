@@ -350,36 +350,30 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	}
 }
 
-// for simplify slice removal
-var tmpSlice []ReportClient
-
 func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
 	tsr.clientRegistry.visitAndClear(func(client ReportClient) {
 		tsr.clients = append(tsr.clients, client)
 	})
 
-	for i := range tsr.clients {
-		client := tsr.clients[i]
+	idx := 0
+	pendingCnt := 0
+	for _, client := range tsr.clients {
 		if client.IsDown() {
 			client.Close()
-		} else {
-			tmpSlice = append(tmpSlice, client)
+			continue
 		}
+		if client.IsPending() {
+			pendingCnt += 1
+		}
+		tsr.clients[idx] = client
+		idx++
 	}
-	tsr.clients, tmpSlice = tmpSlice, tsr.clients
-	tmpSlice = tmpSlice[:0]
+	tsr.clients = tsr.clients[:idx]
 
 	if len(tsr.clients) > 256 {
 		logutil.BgLogger().Warn("[top-sql] too many clients", zap.Int("count", len(tsr.clients)))
 	}
 
-	pendingCnt := 0
-	for i := range tsr.clients {
-		client := tsr.clients[i]
-		if client.IsPending() {
-			pendingCnt += 1
-		}
-	}
 	runningCnt := len(tsr.clients) - pendingCnt
 	variable.TopSQLVariable.InstanceEnable.Store(runningCnt > 0)
 }
