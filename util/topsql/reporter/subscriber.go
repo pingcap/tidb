@@ -56,23 +56,16 @@ func (t *TopSQLPublisher) Subscribe(
 ) error {
 	sc := newSubClient(stream, t.decodePlan)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go sc.run(&wg)
-
 	t.clientRegistry.register(sc)
+	sc.run()
 
-	wg.Wait()
 	return nil
 }
 
 type subClient struct {
-	stream   tipb.TopSQLPubSub_SubscribeServer
-	sendTask chan struct {
-		data    reportData
-		timeout time.Duration
-	}
-	isDown *atomic.Bool
+	stream     tipb.TopSQLPubSub_SubscribeServer
+	sendTaskCh chan sendTask
+	isDown     *atomic.Bool
 
 	decodePlan planBinaryDecodeFunc
 }
@@ -81,36 +74,25 @@ func newSubClient(
 	stream tipb.TopSQLPubSub_SubscribeServer,
 	decodePlan planBinaryDecodeFunc,
 ) *subClient {
-	sendTask := make(chan struct {
-		data    reportData
-		timeout time.Duration
-	})
 	return &subClient{
-		stream:   stream,
-		sendTask: sendTask,
-		isDown:   atomic.NewBool(false),
+		stream:     stream,
+		sendTaskCh: make(chan sendTask),
+		isDown:     atomic.NewBool(false),
 
 		decodePlan: decodePlan,
 	}
 }
 
-func (s *subClient) run(wg *sync.WaitGroup) {
-	defer func() {
-		wg.Done()
-		s.isDown.Store(true)
-	}()
+func (s *subClient) run() {
+	defer s.isDown.Store(true)
 
-	for task := range s.sendTask {
+	for task := range s.sendTaskCh {
 		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
 		start := time.Now()
 
 		var err error
 		doneCh := make(chan struct{})
-		go func(
-			task struct {
-				data    reportData
-				timeout time.Duration
-			}) {
+		go func(task sendTask) {
 			util.WithRecovery(func() {
 				defer func() {
 					doneCh <- struct{}{}
@@ -288,10 +270,7 @@ func (s *subClient) Send(data reportData, timeout time.Duration) {
 	}
 
 	select {
-	case s.sendTask <- struct {
-		data    reportData
-		timeout time.Duration
-	}{data: data, timeout: timeout}:
+	case s.sendTaskCh <- sendTask{data: data, timeout: timeout}:
 		// sent successfully
 	default:
 		ignoreReportChannelFullCounter.Inc()
@@ -308,5 +287,5 @@ func (s *subClient) IsDown() bool {
 }
 
 func (s *subClient) Close() {
-	close(s.sendTask)
+	close(s.sendTaskCh)
 }

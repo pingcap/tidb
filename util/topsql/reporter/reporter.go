@@ -496,6 +496,8 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	select {
 	case tsr.reportCollectedDataChan <- data:
 	default:
+		// ignore if chan blocked
+		ignoreReportChannelFullCounter.Inc()
 	}
 }
 

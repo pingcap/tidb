@@ -16,12 +16,12 @@ package reporter
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -75,22 +75,21 @@ func (r *ReportClientRegistry) register(client ReportClient) {
 type GRPCReportClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
-	sendTask   chan struct {
-		data    reportData
-		timeout time.Duration
-	}
+	sendTaskCh chan sendTask
 	// calling decodePlan this can take a while, so should not block critical paths
 	decodePlan planBinaryDecodeFunc
+}
+
+type sendTask struct {
+	data    reportData
+	timeout time.Duration
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
 func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
 	client := &GRPCReportClient{
 		decodePlan: decodePlan,
-		sendTask: make(chan struct {
-			data    reportData
-			timeout time.Duration
-		}),
+		sendTaskCh: make(chan sendTask),
 	}
 
 	go util.WithRecovery(client.run, nil)
@@ -98,7 +97,7 @@ func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
 }
 
 func (r *GRPCReportClient) run() {
-	for task := range r.sendTask {
+	for task := range r.sendTaskCh {
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 		if targetRPCAddr == "" {
 			continue
@@ -122,10 +121,7 @@ var _ ReportClient = &GRPCReportClient{}
 // Send implements the ReportClient interface.
 func (r *GRPCReportClient) Send(data reportData, timeout time.Duration) {
 	select {
-	case r.sendTask <- struct {
-		data    reportData
-		timeout time.Duration
-	}{data: data, timeout: timeout}:
+	case r.sendTaskCh <- sendTask{data: data, timeout: timeout}:
 		// sent successfully
 	default:
 		ignoreReportChannelFullCounter.Inc()
@@ -179,7 +175,7 @@ func (r *GRPCReportClient) IsDown() bool {
 
 // Close uses to close grpc connection.
 func (r *GRPCReportClient) Close() {
-	close(r.sendTask)
+	close(r.sendTaskCh)
 	if r.conn == nil {
 		return
 	}
