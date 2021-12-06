@@ -517,26 +517,7 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		return nil, nil
 	}
 
-	colIDs := make(map[int64]int, len(m.columns))
-	for i, col := range m.columns {
-		colIDs[col.ID] = i
-	}
-
-	tblInfo := m.table.Meta()
-	colInfos := make([]rowcodec.ColInfo, 0, len(m.columns))
-	for i := range m.columns {
-		col := m.columns[i]
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
-	if len(pkColIDs) == 0 {
-		pkColIDs = []int64{-1}
-	}
-	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
+	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.table, m.columns)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
@@ -645,7 +626,7 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 	tblKVRanges := make([]kv.KeyRange, 0, 16)
 	numHandles := 0
 	for i, tbl := range tbls {
-		handles, err := unionHandles(kvRanges[i], m.memReaders)
+		handles, err := m.unionHandles(kvRanges[i], m.memReaders)
 		if err != nil {
 			return nil, err
 		}
@@ -680,32 +661,8 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 	return memTblReader.getMemRows()
 }
 
-func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
-	colIDs := make(map[int64]int, len(columns))
-	for i, col := range columns {
-		colIDs[col.ID] = i
-	}
-
-	tblInfo := table.Meta()
-	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
-	for i := range columns {
-		col := columns[i]
-		colInfos = append(colInfos, rowcodec.ColInfo{
-			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
-			Ft:         rowcodec.FieldTypeFromModelColumn(col),
-		})
-	}
-	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
-	if len(pkColIDs) == 0 {
-		pkColIDs = []int64{-1}
-	}
-	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
-	return colIDs, pkColIDs, rd
-}
-
 // Union all handles of different Indexes.
-func unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
+func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandles []kv.Handle, err error) {
 	if len(memReaders) != len(kvRanges) {
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memReaders)")
 	}
@@ -737,4 +694,28 @@ func unionHandles(kvRanges [][]kv.KeyRange, memReaders []memReader) (finalHandle
 
 func (m *memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
+}
+
+func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
+	colIDs := make(map[int64]int, len(columns))
+	for i, col := range columns {
+		colIDs[col.ID] = i
+	}
+
+	tblInfo := table.Meta()
+	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
+	return colIDs, pkColIDs, rd
 }
