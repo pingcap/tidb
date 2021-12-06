@@ -1387,3 +1387,43 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 	})
 	return regionsInfo, err
 }
+
+// GetCharsetAndDefaultCollation gets charset and default collation map.
+func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
+	charsetAndDefaultCollation := make(map[string]string)
+	query := "SHOW CHARACTER SET"
+
+	// Show an example.
+	/*
+		mysql> SHOW CHARACTER SET;
+		+----------+---------------------------------+---------------------+--------+
+		| Charset  | Description                     | Default collation   | Maxlen |
+		+----------+---------------------------------+---------------------+--------+
+		| armscii8 | ARMSCII-8 Armenian              | armscii8_general_ci |      1 |
+		| ascii    | US ASCII                        | ascii_general_ci    |      1 |
+		| big5     | Big5 Traditional Chinese        | big5_chinese_ci     |      2 |
+		| binary   | Binary pseudo charset           | binary              |      1 |
+		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
+		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
+	*/
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var charset, description, collation string
+		var maxlen int
+		if scanErr := rows.Scan(&charset, &description, &collation, &maxlen); scanErr != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	return charsetAndDefaultCollation, err
+}
