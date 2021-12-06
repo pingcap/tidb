@@ -1249,7 +1249,8 @@ func TestGracefulShutdown(t *testing.T) {
 
 	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
-	require.Regexp(t, ".*connect: connection refused", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "connect: connection refused$", err.Error())
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
@@ -1568,7 +1569,7 @@ func TestTopSQLReceiver(t *testing.T) {
 		for _, r := range records {
 			sqlMeta, exist := receiverServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			require.True(t, exist)
-			require.Regexp(t, "select.*from.*join.*", sqlMeta.NormalizedSql)
+			require.Regexp(t, "^select.*from.*join", sqlMeta.NormalizedSql)
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
@@ -1576,7 +1577,7 @@ func TestTopSQLReceiver(t *testing.T) {
 			require.True(t, exist)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
-			require.Regexp(t, ".*Join.*Select.*", plan)
+			require.Regexp(t, "Join.*Select", plan)
 		}
 	}
 	runWorkload := func(start, end int) context.CancelFunc {
