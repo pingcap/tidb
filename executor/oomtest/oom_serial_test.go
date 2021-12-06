@@ -56,13 +56,15 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 	tk.MustExec("create table t_MemTracker4UpdateExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.tracker)
+	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
 
 	tk.Session().GetSessionVars().MemQuotaQuery = 244
 	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 }
 
 func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
@@ -77,54 +79,62 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	tk.MustExec("create table t_MemTracker4InsertAndReplaceExec (id int, a int, b int, index idx_a(`a`))")
 
 	log.SetLevel(zap.InfoLevel)
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.tracker)
+	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.tracker = ""
+	oom.SetTracker("")
+
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.tracker = ""
+	oom.SetTracker("")
+
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec select * from t")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.tracker = ""
+	oom.SetTracker("")
+
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec select * from t")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
 	tk.Session().GetSessionVars().DMLBatchSize = 1
 	tk.Session().GetSessionVars().BatchInsert = true
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 
-	oom.tracker = ""
+	oom.SetTracker("")
+
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("replace into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = -1
 }
 
@@ -140,27 +150,33 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	// delete from single table
 	log.SetLevel(zap.InfoLevel)
 	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.MustExec("delete from MemTracker4DeleteExec1")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.MustExec("insert into MemTracker4DeleteExec1 values (1,1,1), (2,2,2), (3,3,3)")
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("delete from MemTracker4DeleteExec1")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
 
 	// delete from multiple table
 	tk.Session().GetSessionVars().MemQuotaQuery = 100000
 	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
 	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "", oom.GetTracker())
 	tk.MustExec("insert into MemTracker4DeleteExec1 values(1,1,1)")
 	tk.MustExec("insert into MemTracker4DeleteExec2 values(1,1,1)")
-	oom.tracker = ""
+
+	oom.SetTracker("")
+
 	tk.Session().GetSessionVars().MemQuotaQuery = 10000
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
-	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.tracker)
+	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.GetTracker())
 }
 
 var oom *oomCapture
@@ -177,6 +193,18 @@ type oomCapture struct {
 	zapcore.Core
 	tracker string
 	mu      sync.Mutex
+}
+
+func (h *oomCapture) SetTracker(tracker string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tracker = tracker
+}
+
+func (h *oomCapture) GetTracker() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.tracker
 }
 
 func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
