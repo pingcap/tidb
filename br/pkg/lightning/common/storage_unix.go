@@ -20,6 +20,7 @@
 package common
 
 import (
+	"github.com/pingcap/failpoint"
 	"reflect"
 	"syscall"
 
@@ -29,8 +30,12 @@ import (
 
 // GetStorageSize gets storage's capacity and available size
 func GetStorageSize(dir string) (size StorageSize, err error) {
-	var stat unix.Statfs_t
+	failpoint.Inject("GetStorageSize", func(val failpoint.Value) {
+		injectedSize := val.(int)
+		failpoint.Return(StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil)
+	})
 
+	var stat unix.Statfs_t
 	err = unix.Statfs(dir, &stat)
 	if err != nil {
 		return size, errors.Annotatef(err, "cannot get disk capacity at %s", dir)
