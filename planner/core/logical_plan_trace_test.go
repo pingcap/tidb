@@ -142,6 +142,36 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select max(a)-min(a) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add sort[8],add limit[9] during eliminate agg[4] max function",
+					assertReason: "agg[4] has only one function[max] without group by, the columns in agg[4] should be sorted",
+				},
+				{
+					assertAction: "add sort[10],add limit[11] during eliminate agg[6] min function",
+					assertReason: "agg[6] has only one function[min] without group by, the columns in agg[6] should be sorted",
+				},
+				{
+					assertAction: "agg[2] splited into aggs[4,6], and add joins[12] as their parent during eliminate agg[2] multi min/max functions",
+					assertReason: "each column is sorted and has index in agg[4,6] and none of them has group by statement",
+				},
+			},
+		},
+		{
+			sql:            "select max(f) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add sort[4],add limit[5] during eliminate agg[2] max function",
+					assertReason: "agg[2] has only one function[max] without group by, the columns in agg[2] should be sorted",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
