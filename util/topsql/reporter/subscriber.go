@@ -116,7 +116,7 @@ func (s *subClient) run() {
 				)
 				return
 			}
-		case <-time.After(task.timeout):
+		case <-ctx.Done():
 			cancel()
 			logutil.BgLogger().Warn(
 				"[top-sql] client failed to send data to subscriber due to timeout",

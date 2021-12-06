@@ -355,15 +355,12 @@ func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
 		tsr.clients = append(tsr.clients, client)
 	})
 
+	// Remove all down clients
 	idx := 0
-	pendingCnt := 0
 	for _, client := range tsr.clients {
 		if client.IsDown() {
 			client.Close()
 			continue
-		}
-		if client.IsPending() {
-			pendingCnt += 1
 		}
 		tsr.clients[idx] = client
 		idx++
@@ -371,9 +368,16 @@ func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
 	tsr.clients = tsr.clients[:idx]
 
 	if len(tsr.clients) > 256 {
-		logutil.BgLogger().Warn("[top-sql] too many clients", zap.Int("count", len(tsr.clients)))
+		logutil.BgLogger().Warn("[top-sql] too many clients, keep 10 first", zap.Int("count", len(tsr.clients)))
+		tsr.clients = tsr.clients[:10]
 	}
 
+	pendingCnt := 0
+	for _, client := range tsr.clients {
+		if client.IsPending() {
+			pendingCnt += 1
+		}
+	}
 	runningCnt := len(tsr.clients) - pendingCnt
 	variable.TopSQLVariable.InstanceEnable.Store(runningCnt > 0)
 }

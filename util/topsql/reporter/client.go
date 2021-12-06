@@ -71,8 +71,8 @@ func (r *ReportClientRegistry) register(client ReportClient) {
 	r.newClients = append(r.newClients, client)
 }
 
-// GRPCReportClient reports data to grpc servers.
-type GRPCReportClient struct {
+// ConfigAssignedRemoteClient reports data to grpc servers.
+type ConfigAssignedRemoteClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
@@ -85,9 +85,9 @@ type sendTask struct {
 	timeout time.Duration
 }
 
-// NewGRPCReportClient returns a new GRPCReportClient
-func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
-	client := &GRPCReportClient{
+// NewGRPCReportClient returns a new ConfigAssignedRemoteClient
+func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *ConfigAssignedRemoteClient {
+	client := &ConfigAssignedRemoteClient{
 		decodePlan: decodePlan,
 		sendTaskCh: make(chan sendTask),
 	}
@@ -96,7 +96,7 @@ func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
 	return client
 }
 
-func (r *GRPCReportClient) run() {
+func (r *ConfigAssignedRemoteClient) run() {
 	for task := range r.sendTaskCh {
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 		if targetRPCAddr == "" {
@@ -116,10 +116,10 @@ func (r *GRPCReportClient) run() {
 	}
 }
 
-var _ ReportClient = &GRPCReportClient{}
+var _ ReportClient = &ConfigAssignedRemoteClient{}
 
 // Send implements the ReportClient interface.
-func (r *GRPCReportClient) Send(data reportData, timeout time.Duration) {
+func (r *ConfigAssignedRemoteClient) Send(data reportData, timeout time.Duration) {
 	select {
 	case r.sendTaskCh <- sendTask{data: data, timeout: timeout}:
 		// sent successfully
@@ -130,7 +130,7 @@ func (r *GRPCReportClient) Send(data reportData, timeout time.Duration) {
 }
 
 // Currently the doSend will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *GRPCReportClient) doSend(ctx context.Context, addr string, data reportData) (err error) {
+func (r *ConfigAssignedRemoteClient) doSend(ctx context.Context, addr string, data reportData) (err error) {
 	err = r.tryEstablishConnection(ctx, addr)
 	if err != nil {
 		return
@@ -164,17 +164,17 @@ func (r *GRPCReportClient) doSend(ctx context.Context, addr string, data reportD
 }
 
 // IsPending implements ReportClient interface.
-func (r *GRPCReportClient) IsPending() bool {
+func (r *ConfigAssignedRemoteClient) IsPending() bool {
 	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
 }
 
 // IsDown implements ReportClient interface.
-func (r *GRPCReportClient) IsDown() bool {
+func (r *ConfigAssignedRemoteClient) IsDown() bool {
 	return false
 }
 
 // Close uses to close grpc connection.
-func (r *GRPCReportClient) Close() {
+func (r *ConfigAssignedRemoteClient) Close() {
 	close(r.sendTaskCh)
 	if r.conn == nil {
 		return
@@ -187,7 +187,7 @@ func (r *GRPCReportClient) Close() {
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
+func (r *ConfigAssignedRemoteClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -220,7 +220,7 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+func (r *ConfigAssignedRemoteClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
@@ -256,7 +256,7 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
+func (r *ConfigAssignedRemoteClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
 	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
@@ -295,7 +295,7 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 }
 
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
-func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
+func (r *ConfigAssignedRemoteClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
 	if r.curRPCAddr == targetRPCAddr && r.conn != nil {
 		// Address is not changed, skip.
 		return nil
@@ -314,7 +314,7 @@ func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPC
 	return nil
 }
 
-func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
+func (r *ConfigAssignedRemoteClient) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	return grpc.DialContext(
