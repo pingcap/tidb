@@ -1750,6 +1750,12 @@ func TestPickupPossibleField(t *testing.T) {
 func TestCheckIfSeqExists(t *testing.T) {
 	t.Parallel()
 
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
