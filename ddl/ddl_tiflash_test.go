@@ -110,13 +110,16 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	session.DisableStats4Test()
 
 	s.dom, err = session.BootstrapSession(s.store)
+
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
+	log.Info("Mock stat", zap.String("pd address", s.pdMockAddr), zap.Any("infosyncer", s.dom.InfoSyncer()))
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick = 60
+
 	s.tiflashDelay = 0
 }
 

@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/meta"
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
@@ -40,7 +41,6 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -425,8 +425,8 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 	return allReplicaReady, nil
 }
 
-// This function derives from GetDropOrTruncateTableInfoFromJobsByStore
-func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, store *kv.Storage, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
+func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
 		// Check GC safe point for getting snapshot infoSchema.
 		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
@@ -437,8 +437,7 @@ func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 			continue
 		}
 
-		snapMeta := meta.NewSnapshotMeta((*store).GetSnapshot(kv.NewVersion(job.StartTS)))
-		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
+		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
@@ -487,7 +486,15 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		return false, nil
 	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		return getDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, &store, handleJobAndTableInfo)
+		getTable := func (StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
+			snapMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(StartTS)))
+			if err != nil {
+				return nil, err
+			}
+			tbl, err := snapMeta.GetTable(SchemaID, TableID)
+			return tbl, err
+		}
+		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, handleJobAndTableInfo)
 	}
 
 	err = admin.IterAllDDLJobs(txn, fn)
@@ -501,6 +508,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	}
 	return nil
 }
+
 
 // HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules, and add all missing rules.
 // It handles rare situation, when we fail to alter pd rules.
