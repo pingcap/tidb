@@ -19,7 +19,6 @@
 package ddl
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -35,8 +34,6 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"go.uber.org/zap"
 
-	//ddlutil "github.com/pingcap/tidb/ddl/util"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -341,39 +338,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			// Compute sync data process by request TiFlash.
 			regionReplica := make(map[int64]int)
 			for _, store := range tiflashStores {
-				statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
-					util.InternalHTTPSchema(),
-					store.Store.StatusAddress,
-					tb.ID,
-				)
-				resp, err := util.InternalHTTPClient().Get(statURL)
-				if err != nil {
-					continue
-				}
-
-				defer func() {
-					resp.Body.Close()
-				}()
-
-				reader := bufio.NewReader(resp.Body)
-				ns, _, _ := reader.ReadLine()
-				n, err := strconv.ParseInt(string(ns), 10, 64)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				for i := int64(0); i < n; i++ {
-					rs, _, _ := reader.ReadLine()
-					// For (`table`, `store`), has region `r`
-					r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
-					if err != nil {
-						return false, errors.Trace(err)
-					}
-					if i, ok := regionReplica[r]; ok {
-						regionReplica[r] = i + 1
-					} else {
-						regionReplica[r] = 1
-					}
-				}
+				helper.CollectTiFlashStatus(store.Store.StatusAddress, tb.ID, &regionReplica)
 			}
 
 			// Get most up-to-date replica count from pd.
@@ -486,7 +451,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		return false, nil
 	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		getTable := func (StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
+		getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
 			snapMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(StartTS)))
 			if err != nil {
 				return nil, err
@@ -508,7 +473,6 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	}
 	return nil
 }
-
 
 // HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules, and add all missing rules.
 // It handles rare situation, when we fail to alter pd rules.

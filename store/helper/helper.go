@@ -15,6 +15,7 @@
 package helper
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
@@ -1087,4 +1088,41 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	tableID := tablecodec.DecodeTableID(decodedEndKey)
 	tableID -= 1
 	return tableID
+}
+
+func CollectTiFlashStatus(statusAddress string, tableId int64, regionReplica *map[int64]int) error {
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		tableId,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return nil
+	}
+
+	defer func() {
+		resp.Body.Close()
+	}()
+
+	reader := bufio.NewReader(resp.Body)
+	ns, _, _ := reader.ReadLine()
+	n, err := strconv.ParseInt(string(ns), 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i := int64(0); i < n; i++ {
+		rs, _, _ := reader.ReadLine()
+		// For (`table`, `store`), has region `r`
+		r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if i, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = i + 1
+		} else {
+			(*regionReplica)[r] = 1
+		}
+	}
+	return nil
 }
