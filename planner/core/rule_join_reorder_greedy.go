@@ -44,46 +44,51 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan, error) {
-	s.directMap = make(map[LogicalPlan]map[LogicalPlan]struct{}, len(s.directedEdges))
+	joinNodeCount := 0
 	for _, node := range joinNodePlans {
 		_, err := node.p.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
+			id:      joinNodeCount,
 			p:       node.p,
 			cumCost: s.baseNodeCumCost(node.p),
 		})
+		node.id = joinNodeCount
+		joinNodeCount++
 	}
 
+	s.directGraph = make([][]byte, joinNodeCount)
 	for _, edge := range s.directedEdges {
 		if !edge.isImplicit && edge.joinType == InnerJoin {
 			continue
 		}
-		nodeSet := s.directMap[edge.left.p]
-		if nodeSet == nil {
-			nodeSet = make(map[LogicalPlan]struct{})
-			s.directMap[edge.left.p] = nodeSet
+		nodeBitSet := s.directGraph[edge.left.id]
+		if nodeBitSet == nil {
+			nodeBitSet = make([]byte, (joinNodeCount+7)>>3)
+			s.directGraph[edge.left.id] = nodeBitSet
 		}
-		nodeSet[edge.right.p] = struct{}{}
+		rightOffset := byte(1 << (7 & edge.right.id))
+		nodeBitSet[edge.right.id>>3] |= rightOffset
 	}
 
-	for isPropagated := false; isPropagated; {
-		for _, set := range s.directMap {
-			oldSize := len(set)
-			newSet := make(map[LogicalPlan]struct{})
-			for k1 := range set {
-				for k2 := range s.directMap[k1] {
-					newSet[k2] = struct{}{}
+	for isPropagated := true; isPropagated; {
+		isPropagated = false
+		for idx, nodeBitSet := range s.directGraph {
+			baseV := 0
+			for k1 := range nodeBitSet {
+				for i := 0; i < 8; i++ {
+					mask := nodeBitSet[k1] & (1 << i)
+					if mask > 0 {
+						isChange := s.merge(nodeBitSet, s.directGraph[k1<<3+i])
+						s.directGraph[idx] = nodeBitSet
+						if isChange {
+							isPropagated = true
+						}
+					}
 				}
-			}
-
-			for k2 := range newSet {
-				set[k2] = struct{}{}
-			}
-			newSize := len(set)
-			if oldSize != newSize {
-				isPropagated = true
+				baseV += 8
 			}
 		}
 	}
@@ -92,16 +97,12 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan,
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		joinGroup1 := s.curJoinGroup[i]
 		joinGroup2 := s.curJoinGroup[j]
-		if set, ok := s.directMap[joinGroup1.p]; ok {
-			if _, ok = set[joinGroup2.p]; ok {
-				return true
-			}
+		if s.directGraph[joinGroup1.id] != nil && ((s.directGraph[joinGroup1.id][joinGroup2.id>>3] & (1 << byte(7&joinGroup2.id))) > 0) {
+			return true
 		}
 
-		if set, ok := s.directMap[joinGroup2.p]; ok {
-			if _, ok = set[joinGroup1.p]; ok {
-				return false
-			}
+		if s.directGraph[joinGroup2.id] != nil && ((s.directGraph[joinGroup2.id][joinGroup1.id>>3] & (1 << byte(7&joinGroup1.id))) > 0) {
+			return false
 		}
 
 		return joinGroup1.cumCost < joinGroup2.cumCost
@@ -117,6 +118,19 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan,
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
+}
+
+func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool) {
+	isChange = false
+	for i, _ := range src {
+		if src[i] > 0 {
+			if dest[i]&src[i] == src[i] {
+				isChange = true
+			}
+			dest[i] = dest[i] | src[i]
+		}
+	}
+	return
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {

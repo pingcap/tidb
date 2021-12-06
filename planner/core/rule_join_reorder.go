@@ -160,10 +160,12 @@ type directedEdge struct {
 }
 
 type joinNode struct {
-	p LogicalPlan
+	id int
+	p  LogicalPlan
 }
 
 type jrNode struct {
+	id      int
 	p       LogicalPlan
 	cumCost float64
 }
@@ -255,7 +257,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	remainJoinGroup []*jrNode
 	otherConds      []expression.Expression
 	// A map maintain plan and plans which must join after the plan
-	directMap map[LogicalPlan]map[LogicalPlan]struct{}
+	directGraph [][]byte
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
