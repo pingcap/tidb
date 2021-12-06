@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -62,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -1057,6 +1057,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
+	}
+
+	us.collators = make([]collate.Collator, 0, len(us.columns))
+	for _, tp := range retTypes(us) {
+		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
 	}
 
 	switch x := reader.(type) {

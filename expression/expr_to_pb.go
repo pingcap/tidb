@@ -231,7 +231,8 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 
 	return &tipb.Expr{
 		Tp:  tipb.ExprType_ColumnRef,
-		Val: codec.EncodeInt(nil, id)}
+		Val: codec.EncodeInt(nil, id),
+	}
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
