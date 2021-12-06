@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -25,10 +26,14 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
+
+// ErrIncorrectIndexCount indicates that #(index_insertion) is not a multiple of #(row_insertion).
+var ErrIncorrectIndexCount = dbterror.ClassTable.NewStd(errno.ErrIncorrectIndexCount)
 
 type mutation struct {
 	key     kv.Key
@@ -404,8 +409,7 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 	for tableID, count := range indexInsertionCount {
 		// TODO: always? what if like backfilling?
 		if rowInsertionCount[tableID] > 0 && count%rowInsertionCount[tableID] != 0 {
-			return errors.Errorf("inconsistent index insertion count %d and row insertion count %d",
-				count, rowInsertionCount[tableID])
+			return ErrIncorrectIndexCount.GenWithStackByArgs(count, rowInsertionCount[tableID])
 		}
 	}
 	return nil

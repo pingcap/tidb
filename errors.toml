@@ -1801,6 +1801,11 @@ error = '''
 column %s can't be in none state
 '''
 
+["table:8140"]
+error = '''
+incorrect index count in txn, row insertions: %d, index insertions: %d
+'''
+
 ["tikv:1105"]
 error = '''
 Unknown error
