@@ -74,6 +74,9 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 
+	flags.Uint32(flagConcurrency, 128, "The size of thread pool on br that executes the task," +
+		"one task represents apply one sst file to TiKV")
+
 	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
 	flags.Uint64(FlagMergeRegionKeyCount, restore.DefaultMergeRegionKeyCount,
@@ -103,6 +106,7 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	return errors.Trace(err)
 }
 
@@ -140,7 +144,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if cfg.Config.Concurrency == 0 {
 		cfg.Config.Concurrency = defaultRestoreConcurrency
 	}
