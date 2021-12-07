@@ -448,7 +448,8 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 		if !left.start || right.start || left.excl || right.excl {
 			return nil
 		}
-		cmp, err := left.value.CompareDatum(sc, &right.value)
+		// Since the point's collations are equal to the column's collation, we can use any of them.
+		cmp, err := left.value.Compare(sc, &right.value, collate.GetCollator(left.value.Collation()))
 		if err != nil || cmp != 0 {
 			return nil
 		}
@@ -715,7 +716,8 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil
 	}
-	cmp, err := lhs.value.CompareDatum(sc, rhs.value)
+	// binary collator may not the best choice, but it can make sure the result is correct.
+	cmp, err := lhs.value.Compare(sc, rhs.value, collate.GetBinaryCollator())
 	if err != nil {
 		return false, err
 	}

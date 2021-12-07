@@ -180,7 +180,6 @@ func TestInitialHandshake(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -489,7 +488,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -911,8 +909,6 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1132,14 +1128,10 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
