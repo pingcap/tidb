@@ -1258,7 +1258,7 @@ func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
 	default:
 		var err error
 		for i := 0; i < p.ChildrenCount(); i++ {
-			err = addExtraPIDColumnToDataSource(p.GetChild(0), info)
+			err = addExtraPIDColumnToDataSource(p.GetChild(i), info)
 			if err != nil {
 				return err
 			}

@@ -309,7 +309,7 @@ func (s *testPlanSuite) TestExtraPKNotNullFlag(c *C) {
 	c.Assert(err, IsNil, comment)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 	c.Assert(err, IsNil, comment)
-	ds := p.(*LogicalProjection).GetChild(0).(*LogicalAggregation).GetChild(1).(*DataSource)
+	ds := p.(*LogicalProjection).GetChild(0).(*LogicalAggregation).GetChild(0).(*DataSource)
 	c.Assert(ds.Columns[2].Name.L, Equals, "_tidb_rowid")
 	c.Assert(ds.Columns[2].Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
 	c.Assert(ds.schema.Columns[2].RetType.Flag, Equals, mysql.PriKeyFlag|mysql.NotNullFlag)
