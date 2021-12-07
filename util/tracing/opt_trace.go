@@ -93,3 +93,15 @@ type CETraceRecord struct {
 	Expr      string `json:"expr"`
 	RowCount  uint64 `json:"row_count"`
 }
+
+func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
+	ret := make([]*CETraceRecord, 0, len(records))
+	exists := make(map[CETraceRecord]struct{}, len(records))
+	for _, rec := range records {
+		if _, ok := exists[*rec]; !ok {
+			ret = append(ret, rec)
+			exists[*rec] = struct{}{}
+		}
+	}
+	return ret
+}

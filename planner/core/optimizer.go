@@ -283,6 +283,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizerCETrace {
+		stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
 		traceRecords := stmtCtx.OptimizerCETrace
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		for _, rec := range traceRecords {
