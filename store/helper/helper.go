@@ -1091,11 +1091,11 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 }
 
 // CollectTiFlashStatus query sync status of one table from TiFlash store.
-func CollectTiFlashStatus(statusAddress string, tableId int64, regionReplica *map[int64]int) error {
+func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
 	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
 		util.InternalHTTPSchema(),
 		statusAddress,
-		tableId,
+		tableID,
 	)
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
