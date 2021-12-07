@@ -113,7 +113,7 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lockType.String(), "WRITE")
 	require.Equal(t, lease, leaseVal)
 
-	// // Lock for write again
+	// Lock for write again
 	leaseVal = oracle.GoTimeToTS(physicalTime.Add(800 * time.Millisecond))
 	require.NoError(t, h.LockForWrite(ctx, 5, leaseVal))
 	lockType, _, err = h.Load(ctx, 5)
