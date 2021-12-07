@@ -166,6 +166,7 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
 func ExtractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
 	switch v := expr.(type) {
 	case *Column:
@@ -180,6 +181,7 @@ func ExtractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
 	return result
 }
 
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
 func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
 	for _, expr := range list {
 		result = ExtractColumnsAndCorColumns(result, expr)
