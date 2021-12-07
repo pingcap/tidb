@@ -349,6 +349,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		if err == nil {
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
+				terror.Log(res.Body.Close())
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
