@@ -96,27 +96,34 @@ func (e *EncodingUTF8) validateUTF8(dest, src []byte, isUTF8MB4, checkMB4Value b
 		return src, len(src), true
 	}
 	doMB4CharCheck := !isUTF8MB4 && checkMB4Value
-	if len(dest) < len(src) {
-		dest = make([]byte, 0, len(src))
-	}
-	consumed := 0
-	ok := true
+	// The first check.
+	invalidPos := -1
 	for i, w := 0, 0; i < len(src); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRune(src[i:])
 		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
-			if ok {
-				ok = false
-			}
+			invalidPos = i
+			break
+		}
+	}
+	if invalidPos == -1 {
+		return src, len(src), true
+	}
+	// The second check replaces invalid characters.
+	if len(dest) < len(src) {
+		dest = make([]byte, 0, len(src))
+	}
+	dest = dest[:0]
+	for i, w := 0, 0; i < len(src); i += w {
+		var rv rune
+		rv, w = utf8.DecodeRune(src[i:])
+		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
 			dest = append(dest, '?')
 			continue
 		}
 		dest = append(dest, src[i:i+w]...)
-		if ok {
-			consumed += w
-		}
 	}
-	return dest, consumed, ok
+	return dest, invalidPos, false
 }
 
 // ToUpper implements Encoding interface.

@@ -20,12 +20,12 @@ package table
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/config"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -310,6 +310,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		return casted, err
 	}
 
+	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
+		truncateTrailingSpaces(&casted)
+	}
+
 	err = validateStringDatum(ctx, &val, &casted, col)
 	if forceIgnoreTruncate {
 		err = nil
@@ -320,9 +324,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
 	if !types.IsString(col.Tp) {
 		return nil
-	}
-	if !types.IsBinaryStr(&col.FieldType) {
-		truncateTrailingSpaces(casted)
 	}
 	// Skip utf8 check if possible.
 	if mysql.IsUTF8Charset(col.Charset) && ctx.GetSessionVars().SkipUTF8Check {
@@ -335,22 +336,18 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	// Handle string in other charsets.
 	enc := charset.FindEncoding(col.Charset)
 	if _, ok := enc.(*charset.EncodingUTF8MB3); ok && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
+		// Use a strict mode implementation. 4 bytes characters are invalid.
 		enc = charset.EncodingUTF8MB3StrictImpl
 	}
+	// from_binary: convert the binary to utf8.
 	if origin.Collation() == charset.CharsetBin {
-		// Convert to corresponding charset from binary to utf8.
 		src := casted.GetBytes()
 		encBytes, nSrc, err := enc.Decode(nil, src)
 		if err != nil {
-			// Remove the trailing invalid characters.
 			var err1 error
+			// Remove the trailing invalid characters.
 			encBytes, _, err1 = enc.Decode(encBytes, src[:nSrc])
-			if err1 != nil {
-				logutil.BgLogger().Info("validateStringDatum.Decode failed",
-					zap.String("charset", col.Charset),
-					zap.Binary("src", src),
-					zap.Int("invalid bytes position", nSrc))
-			}
+			skipErr(err1)
 			casted.SetBytes(encBytes)
 			return handleWrongCharsetValue(ctx, col, src, nSrc)
 		}
@@ -365,6 +362,8 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	}
 	return nil
 }
+
+func skipErr(_ error) {}
 
 // ColDesc describes column information like MySQL desc and show columns do.
 type ColDesc struct {

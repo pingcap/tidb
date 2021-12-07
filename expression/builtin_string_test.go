@@ -1446,10 +1446,10 @@ func TestChar(t *testing.T) {
 		result   interface{}
 		warnings int
 	}{
-		//{"65", 66, 67.5, "utf8", "ABD", 0},               // float
-		//{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
-		//{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // negative int
-		//{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
+		{"65", 66, 67.5, "utf8", "ABD", 0},                               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},                           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},                   // negative int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0},                 // invalid 'a'
 		{"65", -1, 67.5, "utf8", nil, 1},                                 // with utf8, return nil
 		{"a", -1, 67.5, "utf8", nil, 1},                                  // with utf8, return nil
 		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
