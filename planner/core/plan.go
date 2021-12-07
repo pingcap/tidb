@@ -308,7 +308,7 @@ type LogicalPlan interface {
 	canPushToCop(store kv.StoreType) bool
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
+	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -382,10 +382,10 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 }
 
 // buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP()}
+func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
 	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
 	}
 	return planTrace
 }

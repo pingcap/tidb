@@ -467,7 +467,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
-		if v, err := d.CompareDatum(sc, &val); err == nil {
+		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.Collate)); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
