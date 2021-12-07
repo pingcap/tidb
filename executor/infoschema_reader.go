@@ -1452,7 +1452,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 		return err
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
+	tables := tikvHelper.GetTablesInfoWithKeyRange(allSchemas)
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, tables)
 	for i := range regionsInfo.Regions {
 		tableList := tableInfos[regionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
