@@ -169,7 +169,7 @@ func TestChecking(t *testing.T) {
 
 func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 	ctx := context.Background()
-	taskName := "two tables"
+	taskName := "two_tables"
 	task := simpleTask(taskName, 2)
 	taskData, err := task.PBInfo.Marshal()
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 
 func testForwardProgress(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 	ctx := context.Background()
-	taskName := "many-tables"
+	taskName := "many_tables"
 	taskInfo := simpleTask(taskName, 65)
 	defer func() {
 		require.NoError(t, metaCli.DeleteTask(ctx, taskName))
