@@ -35,7 +35,7 @@ func needIncludeChildrenString(plan Plan) bool {
 		// but we still wants to include its child plan's information when calling `toString` on union.
 		return true
 	case LogicalPlan:
-		return len(x.Children()) > 1
+		return x.ChildrenCount() > 1
 	case PhysicalPlan:
 		return len(x.Children()) > 1
 	default:
@@ -50,8 +50,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			idxs = append(idxs, len(strs))
 		}
 
-		for _, c := range x.Children() {
-			strs, idxs = toString(c, strs, idxs)
+		for i := 0; i < x.ChildrenCount(); i++ {
+			strs, idxs = toString(x.GetChild(i), strs, idxs)
 		}
 	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
