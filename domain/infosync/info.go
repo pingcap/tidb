@@ -15,7 +15,6 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -99,6 +98,7 @@ type InfoSyncer struct {
 	prometheusAddr   string
 	modifyTime       time.Time
 	labelRuleManager LabelRuleManager
+	placementManager PlacementManager
 }
 
 // ServerInfo is server static information.
@@ -179,8 +179,10 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	}
 	if etcdCli != nil {
 		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
+		is.placementManager = initPlacementManager(etcdCli.Endpoints())
 	} else {
 		is.labelRuleManager = initLabelRuleManager([]string{})
+		is.placementManager = initPlacementManager([]string{})
 	}
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -213,6 +215,13 @@ func initLabelRuleManager(addrs []string) LabelRuleManager {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
 	return &PDLabelManager{addrs: addrs}
+}
+
+func initPlacementManager(addrs []string) PlacementManager {
+	if len(addrs) == 0 {
+		return &mockPlacementManager{}
+	}
+	return &PDPlacementManager{addrs: addrs}
 }
 
 // GetServerInfo gets self server static information.
@@ -334,11 +343,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-
+		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
+		metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 		if err == nil {
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
+				terror.Log(res.Body.Close())
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
@@ -401,22 +412,7 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 		return nil, err
 	}
 
-	bundles := []*placement.Bundle{}
-	if is.etcdCli == nil {
-		return bundles, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &bundles)
-	}
-	return bundles, err
+	return is.placementManager.GetAllRuleBundles(ctx)
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
@@ -426,53 +422,17 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 		return nil, err
 	}
 
-	bundle := &placement.Bundle{ID: name}
-
-	if is.etcdCli == nil {
-		return bundle, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, bundle)
-	}
-	return bundle, err
+	return is.placementManager.GetRuleBundle(ctx, name)
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
-	if len(bundles) == 0 {
-		return nil
-	}
-
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
 
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	b, err := json.Marshal(bundles)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
-	return err
+	return is.placementManager.PutRuleBundles(ctx, bundles)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
