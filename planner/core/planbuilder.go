@@ -3120,16 +3120,8 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 		// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 		if column.IsGenerated() {
-			if expr, ok := assign.Expr.(*ast.DefaultExpr); ok {
-				if expr.Name == nil {
-					// DEFAULT
-					continue
-				}
-				defIdx, err := expression.FindFieldName(p.tableColNames, expr.Name)
-				if err == nil && idx == defIdx {
-					// this_col = DEFAULT(this_col)
-					continue
-				}
+			if IsDefaultExprSameColumn(p.tableColNames[idx:idx+1], assign.Expr) {
+				continue
 			}
 			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
 		}

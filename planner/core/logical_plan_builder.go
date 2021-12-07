@@ -4860,11 +4860,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
-		if extractDefaultExpr(assign.Expr) != nil {
-			modifyColumns[columnFullName] = true
-		} else {
-			modifyColumns[columnFullName] = false
-		}
+		modifyColumns[columnFullName] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -4892,7 +4888,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 			if ok && !isDefault {
-				// TODO: can still be col_name = DEFAULT(col_name) which should be OK!
 				return nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -5001,6 +4996,23 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 		return expr
 	}
 	return nil
+}
+
+// IsDefaultExprSameColumn - DEFAULT or col = DEFAULT(col)
+func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
+	if expr, ok := node.(*ast.DefaultExpr); ok {
+		if expr.Name == nil {
+			// col = DEFAULT
+			return true
+		} else {
+			refIdx, err := expression.FindFieldName(names, expr.Name)
+			if refIdx == 0 && err == nil {
+				// col = DEFAULT(col)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
