@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -492,6 +494,32 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 }
 
+func (s *testDDLSerialSuite) TestAddBatchJobError(c *C) {
+	store := testCreateStore(c, "test_add_batch_job_error")
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	ctx := testNewContext(d)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`), IsNil)
+	// Test the job runner should not hang forever.
+	job := &model.Job{SchemaID: 1, TableID: 1}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mockAddBatchDDLJobsErr")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr"), IsNil)
+}
+
 func testCheckOwner(c *C, d *ddl, expectedVal bool) {
 	c.Assert(d.isOwner(), Equals, expectedVal)
 }
@@ -511,6 +539,37 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+}
+
+func testCheckJobDoneT(t *testing.T, d *ddl, job *model.Job, isAdd bool) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		historyJob, err := tt.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.Equal(t, model.JobStateSynced, historyJob.State)
+		if isAdd {
+			require.Equal(t, model.StatePublic, historyJob.SchemaState)
+		} else {
+			require.Equal(t, model.StateNone, historyJob.SchemaState)
+		}
+
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func testCheckJobCancelledT(t *testing.T, d *ddl, job *model.Job, state *model.SchemaState) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		historyJob, err := tt.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+		if state != nil {
+			require.Equal(t, *state, historyJob.SchemaState)
+		}
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaState) {
@@ -544,6 +603,23 @@ func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, c *C, schemaID, 
 	return job
 }
 
+func doDDLJobErrWithSchemaStateT(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tableID int64, tp model.ActionType,
+	args []interface{}, state *model.SchemaState) *model.Job {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	err := d.doDDLJob(ctx, job)
+	// TODO: Add the detail error check.
+	require.Error(t, err, "err:%v", err)
+	testCheckJobCancelledT(t, d, job, state)
+
+	return job
+}
+
 func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, c *C, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}) {
 	job := &model.Job{
@@ -560,6 +636,11 @@ func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, c *C, schemaID, tableID int
 func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
 	ctx sessionctx.Context, d *ddl) *model.Job {
 	return doDDLJobErrWithSchemaState(ctx, d, c, schemaID, tableID, tp, args, nil)
+}
+
+func doDDLJobErrT(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{},
+	ctx sessionctx.Context, d *ddl) *model.Job {
+	return doDDLJobErrWithSchemaStateT(ctx, d, t, schemaID, tableID, tp, args, nil)
 }
 
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
