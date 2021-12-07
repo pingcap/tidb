@@ -1147,7 +1147,7 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
 	if result, _, ok := enc.Validate(nil, hack.Slice(expr)); !ok {
-		return string(result), true, nil
+		return string(result), false, nil
 	}
 	return expr, false, nil
 }

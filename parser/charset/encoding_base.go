@@ -24,10 +24,6 @@ import (
 
 var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
-func wrap1300Err(invalidBytes []byte) error {
-	return errInvalidCharacterString.GenWithStackByArgs()
-}
-
 // EncodingBase defines some generic functions.
 type EncodingBase struct {
 	enc encoding.Encoding

@@ -42,13 +42,13 @@ type Encoding interface {
 	// Encode converts bytes from utf-8 charset to current charset.
 	// Invalid characters are replaced with '?' in the result.
 	// The first nSrc bytes are processed in src.
-	Encode(dest, src[]byte) (result []byte, nSrc int, err error)
+	Encode(dest, src []byte) (result []byte, nSrc int, err error)
 	// EncodeString is the string version of Encoding.Encode.
 	EncodeString(dest []byte, src string) (result string, nSrc int, err error)
 	// Decode converts bytes from current charset to utf-8 charset.
 	// Invalid characters are replaced with '?' in the result.
 	// The first nSrc bytes are processed in src.
-	Decode(dest, src[]byte) (result []byte, nSrc int, err error)
+	Decode(dest, src []byte) (result []byte, nSrc int, err error)
 	// DecodeString is the string version of Encoding.Decode.
 	DecodeString(dest []byte, src string) (result string, nSrc int, err error)
 }

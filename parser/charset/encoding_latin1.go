@@ -20,7 +20,7 @@ import (
 )
 
 // EncodingLatin1Impl is the instance of EncodingLatin1.
-var EncodingLatin1Impl = &EncodingLatin1 {
+var EncodingLatin1Impl = &EncodingLatin1{
 	EncodingBase{enc: charmap.Windows1252},
 }
 

@@ -20,7 +20,7 @@ import (
 )
 
 // EncodingBinImpl is the instance of EncodingBin.
-var EncodingBinImpl = &EncodingBin {
+var EncodingBinImpl = &EncodingBin{
 	EncodingBase{enc: encoding.Nop},
 }
 

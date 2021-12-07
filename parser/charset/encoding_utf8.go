@@ -20,13 +20,15 @@ import (
 
 // EncodingUTF8Impl is the instance of EncodingUTF8.
 var EncodingUTF8Impl = &EncodingUTF8{}
+
 // EncodingUTF8MB3Impl is the instance of EncodingUTF8MB3.
 var EncodingUTF8MB3Impl = &EncodingUTF8MB3{}
+
 // EncodingUTF8MB3StrictImpl is the instance of EncodingUTF8MB3Strict.
 var EncodingUTF8MB3StrictImpl = &EncodingUTF8MB3Strict{}
 
 // EncodingUTF8 is TiDB's default encoding.
-type EncodingUTF8 struct {}
+type EncodingUTF8 struct{}
 
 // Name implements Encoding interface.
 func (e *EncodingUTF8) Name() string {
@@ -82,8 +84,12 @@ func (e *EncodingUTF8) DecodeString(dest []byte, src string) (string, int, error
 }
 
 // Validate implements Encoding interface.
-func (e *EncodingUTF8) Validate(dest, src[] byte) ([]byte, int, bool) {
-	return e.validateUTF8(dest, src, true, true)
+func (e *EncodingUTF8) Validate(dest, src []byte) ([]byte, int, bool) {
+	ret, nSrc, ok := e.validateUTF8(dest, src, true, true)
+	if !ok {
+		return ret, nSrc, false
+	}
+	return ret, nSrc, true
 }
 
 // validateUTF8 considers the mb3 case.
@@ -177,7 +183,7 @@ type EncodingUTF8MB3Strict struct {
 }
 
 // Validate implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Validate(dest, src[] byte) ([]byte, int, bool) {
+func (e *EncodingUTF8MB3Strict) Validate(dest, src []byte) ([]byte, int, bool) {
 	return e.validateUTF8(dest, src, false, true)
 }
 

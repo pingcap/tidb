@@ -21,7 +21,7 @@ import (
 )
 
 // EncodingASCIIImpl is the instance of EncodingASCII.
-var EncodingASCIIImpl = &EncodingASCII {
+var EncodingASCIIImpl = &EncodingASCII{
 	EncodingBase{enc: encoding.Nop},
 }
 
@@ -63,7 +63,7 @@ func (e *EncodingASCII) Validate(dest, src []byte) (result []byte, nSrc int, ok 
 	}
 	if invalidPos == -1 {
 		// Quick check passed.
-		return src, len(src),true
+		return src, len(src), true
 	}
 	if len(dest) < len(src) {
 		dest = make([]byte, 0, len(src))

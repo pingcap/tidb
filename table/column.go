@@ -322,7 +322,8 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 }
 
 func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
-	if !types.IsString(col.Tp) {
+	// Only strings are need to validate.
+	if !(types.IsTypeVarchar(col.Tp) || types.IsTypeChar(col.Tp)) {
 		return nil
 	}
 	// Skip utf8 check if possible.
@@ -348,16 +349,16 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 			// Remove the trailing invalid characters.
 			encBytes, _, err1 = enc.Decode(encBytes, src[:nSrc])
 			skipErr(err1)
-			casted.SetBytes(encBytes)
+			casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
 			return handleWrongCharsetValue(ctx, col, src, nSrc)
 		}
-		casted.SetBytes(encBytes)
+		casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
 		return nil
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
 	if ret, invalidPos, ok := enc.Validate(nil, str); !ok {
-		casted.SetBytes(ret)
+		casted.SetBytesAsString(ret, charset.CharsetUTF8MB4, 0)
 		return handleWrongCharsetValue(ctx, col, str, invalidPos)
 	}
 	return nil

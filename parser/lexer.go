@@ -146,6 +146,9 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
+	if mysql.IsUTF8Charset(s.encoding.Name()) {
+		return sql
+	}
 	utf8Lit, _, err := s.encoding.DecodeString(nil, sql)
 	if err != nil {
 		s.AppendError(err)

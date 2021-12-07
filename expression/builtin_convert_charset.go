@@ -268,22 +268,26 @@ const (
 var convertActionMap = map[funcProp][]string{
 	funcPropNone: {
 		/* arguments are numbers */ ast.Bin, ast.CharFunc,
-		/* not binary aware */ ast.CharLength, ast.CharacterLength, ast.Elt,
+		/* not binary aware */ ast.CharLength, ast.CharacterLength, ast.Elt, ast.Space,
 	},
 	funcPropBinAware: {
 		// The arguments of these functions are wrapped with to_binary().
 		// For compatibility reason, legacy charsets arguments are not wrapped.
 		// Legacy charsets: utf8mb4, utf8, latin1, ascii, binary.
-		ast.ASCII, ast.BitLength, ast.Field,
+		ast.ASCII, ast.BitLength,
 		ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress,
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress, ast.AesEncrypt,
 	},
 	funcPropAuto: {
 		// The arguments of these functions are wrapped with to_binary()/from_binary() according to
 		// the evaluated result charset and the argument charset.
 		// For binary argument && string result, wrap it with from_binary().
 		// For string argument && binary result, wrap it with to_binary().
-		ast.Concat, ast.ConcatWS, ast.ExportSet,
+		/* string-related */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.InsertFunc, ast.Left, ast.Lpad,
+		ast.Right, ast.Rpad, ast.Locate, ast.Replace, ast.Reverse, ast.Substr, ast.Substring,
+
+		ast.MakeSet, ast.FindInSet, ast.Regexp, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
+		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat,
 	},
 }
 
@@ -315,7 +319,7 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			}
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin {
-			if isLegacyCharset(dstChs) {
+			if ctx.GetSessionVars().SkipUTF8Check && isLegacyCharset(dstChs) {
 				return expr
 			}
 			ft := expr.GetType().Clone()
