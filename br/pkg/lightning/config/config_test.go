@@ -307,6 +307,15 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 			expectedCA:  "",
 			expectedTLS: "skip-verify",
 		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca.pem"
+				tls-config-name = "third-name"
+			`,
+			expectedCA:  "/path/to/ca.pem",
+			expectedTLS: "cluster",
+		}, // test set tls-config-name not affects TiDB.TLS
 	}
 
 	for _, tc := range testCases {

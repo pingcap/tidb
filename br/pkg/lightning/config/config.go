@@ -552,25 +552,39 @@ type Security struct {
 	KeyPath  string `toml:"key-path" json:"key-path"`
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
+
+	// this is used to set tls config for lightning in DM
+	// DM may running manying lightning at same time, so we need to set different tls config name for each lightning
+	TLSConfigName string `toml:"tls-config-name" json:"tls-config-name"`
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// RegistersMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
+	if sec.TLSConfigName == "" {
+		sec.TLSConfigName = "cluster" // this the default value in Config.TiDB.TLS, see more in `CheckAndAdjustSecurity`
+	}
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
-	switch {
-	case err != nil:
+	if err != nil {
 		return errors.Trace(err)
-	case tlsConfig != nil:
+	}
+	if tlsConfig != nil {
 		// error happens only when the key coincides with the built-in names.
-		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
-	default:
-		gomysql.DeregisterTLSConfig("cluster")
+		_ = gomysql.RegisterTLSConfig(sec.TLSConfigName, tlsConfig)
 	}
 	return nil
+}
+
+// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// for use in `sql.Open()`. This method is goroutine-safe.
+func (sec *Security) DeregisterMySQL() {
+	if sec == nil {
+		return
+	}
+	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
 }
 
 // A duration which can be deserialized from a TOML string.
