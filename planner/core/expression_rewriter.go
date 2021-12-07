@@ -1488,12 +1488,17 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
+			if er.ctxStack[i].GetType().EvalType() == types.ETString {
+				tp := er.ctxStack[i].GetType().Clone()
+				tp.Charset, tp.Collate = coll.Charset, coll.Collation
+				er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
+				er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
+			}
 			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
 			if err != nil {
 				er.err = err
 				return
 			}
-			expr.SetCharsetAndCollation(coll.Charset, coll.Collation)
 			eqFunctions = append(eqFunctions, expr)
 		}
 		function = expression.ComposeDNFCondition(er.sctx, eqFunctions...)
