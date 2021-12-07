@@ -555,7 +555,7 @@ type Security struct {
 
 	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
 	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
-	TLSConfigName string
+	TLSConfigName string `toml:"-" json:"-"`
 }
 
 // RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
