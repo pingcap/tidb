@@ -229,4 +229,5 @@ func checkData(t *testing.T, path string, client *testServerClient) {
 	require.Equal(t, "test", tableName)
 	require.Equal(t, int64(3), modifyCount)
 	require.Equal(t, int64(4), count)
+	require.NoError(t, rows.Close())
 }
