@@ -1023,7 +1023,7 @@ func TestTan(t *testing.T) {
 			} else if c.expected == 0 {
 				require.Equal(t, c.expected, d.GetFloat64())
 			} else {
-				require.InEpsilon(t, c.expected, d.GetFloat64(), 1E-15)
+				require.InEpsilon(t, c.expected, d.GetFloat64(), 1e-15)
 			}
 		}
 	}
