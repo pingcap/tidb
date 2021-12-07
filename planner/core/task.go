@@ -923,7 +923,9 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 {
 		//expectIndexRows := t.expectCnt / selectivity
 		rpcCnt := float64(1)
-		if t.expectCnt > 64 {
+		if t.expectCnt > 16320 {
+			rpcCnt = float64(int(9 + (t.expectCnt-16320)/64))
+		} else if t.expectCnt > 64 {
 			rpcCnt = float64(int(1 + math.Log(t.expectCnt/64)/math.Log(2)))
 		}
 		scanCst := t.expectCnt * sessVars.CPUFactor
@@ -943,7 +945,6 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		if sourceRows := extractRows(t.indexPlan); sourceRows > scanCst {
 			cmpRate = indexRows / sourceRows
 		}
-		t.indexPlan.Children()
 		pagingCst := (rpcCnt-1)*sessVars.CPUFactor*40 + t.expectCnt*sessVars.CPUFactor
 		pagingCst *= cmpRate
 		if pagingCst < idxCst {
