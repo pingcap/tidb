@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
@@ -95,43 +94,6 @@ func (s *testSuiteBase) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-}
-
-type logHook struct {
-	zapcore.Core
-	results string
-}
-
-func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	message := entry.Message
-	if idx := strings.Index(message, "[stats"); idx != -1 {
-		h.results = h.results + message
-		for _, f := range fields {
-			h.results = h.results + ", " + f.Key + "=" + h.field2String(f)
-		}
-	}
-	return nil
-}
-
-func (h *logHook) field2String(field zapcore.Field) string {
-	switch field.Type {
-	case zapcore.StringType:
-		return field.String
-	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
-		return fmt.Sprintf("%v", field.Integer)
-	case zapcore.Float64Type:
-		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
-	case zapcore.StringerType:
-		return field.Interface.(fmt.Stringer).String()
-	}
-	return "not support"
-}
-
-func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if h.Enabled(e.Level) {
-		return ce.AddCore(e, h)
-	}
-	return ce
 }
 
 // TODO replace cleanEnv with createTestKitAndDom in gc_test.go when migrate this file
