@@ -339,7 +339,7 @@ func RunStreamStart(
 	}
 
 	ti := stream.TaskInfo{
-		StreamBackupTaskInfo: backuppb.StreamBackupTaskInfo{
+		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     streamMgr.bc.GetStorageBackend(),
 			StartTs:     cfg.startTS,
 			EndTs:       cfg.endTS,
@@ -349,8 +349,11 @@ func RunStreamStart(
 		Ranges:  ranges,
 		Pausing: false,
 	}
-	streamClient := stream.NewMetaDataClient()
-	if err := streamClient.PutTask(ctx, ti); err != nil {
+
+	cli := stream.MetaDataClient{
+		streamMgr.mgr.GetDomain().GetEtcdClient(),
+	}
+	if err := cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -375,14 +378,23 @@ func RunStreamStop(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamClient := stream.NewMetaDataClient()
+	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer streamMgr.close()
+
+	cli := stream.MetaDataClient{
+		streamMgr.mgr.GetDomain().GetEtcdClient(),
+	}
+
 	// to add backoff
-	_, err := streamClient.GetTask(ctx, cfg.taskName)
+	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = streamClient.DeleteTask(ctx, cfg.taskName)
+	err = cli.DeleteTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -408,14 +420,22 @@ func RunStreamPause(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamClient := stream.NewMetaDataClient()
+	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer streamMgr.close()
+
+	cli := stream.MetaDataClient{
+		streamMgr.mgr.GetDomain().GetEtcdClient(),
+	}
 	// to add backoff
-	_, err := streamClient.GetTask(ctx, cfg.taskName)
+	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = streamClient.PauseTask(ctx, cfg.taskName)
+	err = cli.PauseTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -441,14 +461,22 @@ func RunStreamResume(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamClient := stream.NewMetaDataClient()
+	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer streamMgr.close()
+
+	cli := stream.MetaDataClient{
+		streamMgr.mgr.GetDomain().GetEtcdClient(),
+	}
 	// to add backoff
-	_, err := streamClient.GetTask(ctx, cfg.taskName)
+	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = streamClient.ResumeTask(ctx, cfg.taskName)
+	err = cli.ResumeTask(ctx, cfg.taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
