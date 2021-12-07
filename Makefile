@@ -133,7 +133,7 @@ gotest: failpoint-enable
 	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci_part_1: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
-	@echo "Running in native mode."
+	@echo "Running gotest_in_verify_ci_part_1."
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
@@ -143,7 +143,7 @@ gotest_in_verify_ci_part_1: failpoint-enable tools/bin/gotestsum tools/bin/gocov
 	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci_part_2: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
-	@echo "Running in native mode."
+	@echo "Running gotest_in_verify_ci_part_2."
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
