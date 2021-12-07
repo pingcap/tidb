@@ -122,7 +122,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan,
 
 func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool) {
 	isChange = false
-	for i, _ := range src {
+	for i := range src {
 		if src[i] > 0 {
 			if dest[i]&src[i] == src[i] {
 				isChange = true
