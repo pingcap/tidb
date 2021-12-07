@@ -554,7 +554,7 @@ type Security struct {
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
 
 	// this is used to set tls config for lightning in DM
-	// DM may running manying lightning at same time, so we need to set different tls config name for each lightning
+	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
 	TLSConfigName string `toml:"tls-config-name" json:"tls-config-name"`
 }
 
@@ -578,8 +578,7 @@ func (sec *Security) RegisterMySQL() error {
 	return nil
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
-// for use in `sql.Open()`. This method is goroutine-safe.
+// DeregisterMySQL deregisters the TLS config with security.TLSConfigName
 func (sec *Security) DeregisterMySQL() {
 	if sec == nil {
 		return
