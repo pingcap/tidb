@@ -937,6 +937,7 @@ func TestConvert(t *testing.T) {
 	wrongFunction := f.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	require.Error(t, err)
 	require.Equal(t, "[expression:1115]Unknown character set: 'wrongcharset'", err.Error())
 }
 

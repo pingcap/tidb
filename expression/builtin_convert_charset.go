@@ -279,13 +279,13 @@ var convertActionMap = map[funcProp][]string{
 		/* only 1 string arg, no implicit conversion */
 		ast.CharLength, ast.CharacterLength, ast.FromBase64, ast.Lcase, ast.Left, ast.LoadFile,
 		ast.Lower, ast.LTrim, ast.Mid, ast.Ord, ast.Quote, ast.Repeat, ast.Reverse, ast.Right,
-		ast.RTrim, ast.Soundex, ast.Substr, ast.Substring, ast.Ucase, ast.Unhex, ast.Upper,
+		ast.RTrim, ast.Soundex, ast.Substr, ast.Substring, ast.Ucase, ast.Unhex, ast.Upper, ast.WeightString,
 		/* args are independent, no implicit conversion */
 		ast.Elt,
 	},
 	funcPropBinAware: {
 		/* result is binary-aware */
-		ast.ASCII, ast.BitLength, ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64, ast.WeightString,
+		ast.ASCII, ast.BitLength, ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64,
 		/* encrypt functions */
 		ast.AesDecrypt, ast.Decode, ast.Encode, ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1,
 		ast.SHA2, ast.Compress, ast.AesEncrypt,

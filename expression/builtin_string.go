@@ -1132,8 +1132,10 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-
 	argTp, resultTp := b.args[0].GetType(), b.tp
+	if !charset.IsSupportedEncoding(resultTp.Charset) {
+		return "", false, errUnknownCharacterSet.GenWithStackByArgs(resultTp.Charset)
+	}
 	if types.IsBinaryStr(argTp) {
 		// Convert charset binary -> utf8. If it meets error, NULL is returned.
 		enc := charset.FindEncoding(resultTp.Charset)

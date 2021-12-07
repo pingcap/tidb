@@ -59,6 +59,12 @@ type EncodingOperation interface {
 	ToLower(src string) string
 }
 
+// IsSupportedEncoding checks if the charset is fully supported.
+func IsSupportedEncoding(charset string) bool {
+	_, ok := encodingMap[charset]
+	return ok
+}
+
 // FindEncoding finds the encoding according to charset.
 func FindEncoding(charset string) Encoding {
 	if len(charset) == 0 {
