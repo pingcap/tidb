@@ -151,9 +151,24 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrInvalidTaskInfo"]
+error = '''
+task info is invalid
+'''
+
+["BR:PiTR:ErrMalformedMetadata"]
+error = '''
+malformed metadata
+'''
+
 ["BR:PiTR:ErrPiTRInvalidCDCLogFormat"]
 error = '''
 invalid cdc log format
+'''
+
+["BR:PiTR:ErrTaskNotFound"]
+error = '''
+task not found
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
