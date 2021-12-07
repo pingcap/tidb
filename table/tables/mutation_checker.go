@@ -212,9 +212,9 @@ func checkIndexKeys(
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta().Name.O)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta().Name.O)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -302,7 +302,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
-	tableName string,
+	tableInfo *model.TableInfo,
 ) error {
 	for i := range indexData {
 		decodedMutationDatum := indexData[i]
@@ -324,14 +324,14 @@ func compareIndexData(
 
 		if comparison != 0 {
 			logutil.BgLogger().Error(
-				"inconsistent index data", zap.String("table", tableName),
+				"inconsistent index data", zap.String("table", tableInfo.Name.O),
 				zap.String("index", indexInfo.Name.O),
 				zap.String("column", cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O),
 				logutil2.Redact(zap.String("decoded datum", decodedMutationDatum.String())),
 				logutil2.Redact(zap.String("expected datum", expectedDatum.String())),
 			)
 			return ErrInconsistentIndexedValue.GenWithStackByArgs(
-				tableName, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
+				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
 		}
