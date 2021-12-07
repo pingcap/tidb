@@ -1,3 +1,4 @@
+// Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 // This package tests the login in MetaClient with a embed etcd.
 
 package stream_test
