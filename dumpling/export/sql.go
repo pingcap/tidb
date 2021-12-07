@@ -725,6 +725,19 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	return count > 0, nil
 }
 
+// CheckIfSeqExists use sql to check whether sequence exists
+func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+	var count int
+	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&count)
+	if err != nil {
+		return false, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	return count > 0, nil
+}
+
 // CheckTiDBEnableTableLock use sql variable to check whether current TiDB has TiKV
 func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
 	tidbConfig, err := getTiDBConfig(db)
@@ -1386,4 +1399,44 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 		return nil
 	})
 	return regionsInfo, err
+}
+
+// GetCharsetAndDefaultCollation gets charset and default collation map.
+func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
+	charsetAndDefaultCollation := make(map[string]string)
+	query := "SHOW CHARACTER SET"
+
+	// Show an example.
+	/*
+		mysql> SHOW CHARACTER SET;
+		+----------+---------------------------------+---------------------+--------+
+		| Charset  | Description                     | Default collation   | Maxlen |
+		+----------+---------------------------------+---------------------+--------+
+		| armscii8 | ARMSCII-8 Armenian              | armscii8_general_ci |      1 |
+		| ascii    | US ASCII                        | ascii_general_ci    |      1 |
+		| big5     | Big5 Traditional Chinese        | big5_chinese_ci     |      2 |
+		| binary   | Binary pseudo charset           | binary              |      1 |
+		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
+		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
+	*/
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var charset, description, collation string
+		var maxlen int
+		if scanErr := rows.Scan(&charset, &description, &collation, &maxlen); scanErr != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	return charsetAndDefaultCollation, err
 }
