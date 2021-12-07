@@ -38,6 +38,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	client := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Port = client.port
+	cfg.Socket = ""
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
 

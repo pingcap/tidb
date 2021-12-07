@@ -894,8 +894,6 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -905,9 +903,8 @@ func TestHandleAuthPlugin(t *testing.T) {
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
+	ctx := context.Background()
 
-<<<<<<< HEAD
-=======
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER unativepassword")
 	defer func() {
@@ -915,34 +912,19 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}()
 
 	// 5.7 or newer client trying to authenticate with mysql_native_password
->>>>>>> 7fc6ebbda... privilege, session, server: consistently map user login to identity (#30204)
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
-<<<<<<< HEAD
-		collation: mysql.DefaultCollationID,
-		server:    srv,
-		user:      "root",
-=======
 		server: srv,
 		user:   "unativepassword",
->>>>>>> 7fc6ebbda... privilege, session, server: consistently map user login to identity (#30204)
 	}
-	ctx := context.Background()
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-<<<<<<< HEAD
-	}
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-
-	resp.Capability = mysql.ClientProtocol41
-	err = cc.handleAuthPlugin(ctx, &resp)
-	require.NoError(t, err)
-=======
 		AuthPlugin: mysql.AuthNativePassword,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
@@ -953,7 +935,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -975,7 +956,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -998,7 +978,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1021,7 +1000,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1043,7 +1021,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1067,7 +1044,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1090,7 +1066,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1112,7 +1087,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc = &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		pkt: &packetIO{
@@ -1127,52 +1101,4 @@ func TestHandleAuthPlugin(t *testing.T) {
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeUser"))
-}
-
-func TestAuthPlugin2(t *testing.T) {
-
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	cfg := newTestConfig()
-	cfg.Socket = ""
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-
-	drv := NewTiDBDriver(store)
-	srv, err := NewServer(cfg, drv)
-	require.NoError(t, err)
-
-	cc := &clientConn{
-		connectionID: 1,
-		alloc:        arena.NewAllocator(1024),
-		chunkAlloc:   chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-		server: srv,
-		user:   "root",
-	}
-	ctx := context.Background()
-	se, _ := session.CreateSession4Test(store)
-	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
-	}
-	cc.ctx = tc
-
-	resp := handshakeResponse41{
-		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
-	}
-
-	cc.isUnixSocket = true
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
-	respAuthSwitch, err := cc.checkAuthPlugin(ctx, &resp)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
-	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
-	require.NoError(t, err)
-
->>>>>>> 7fc6ebbda... privilege, session, server: consistently map user login to identity (#30204)
 }
