@@ -76,7 +76,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -240,7 +239,6 @@ func TestStatusPort(t *testing.T) {
 	defer cleanup()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -270,7 +268,6 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -325,7 +322,6 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -878,7 +874,6 @@ func TestSystemTimeZone(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -1199,7 +1194,6 @@ func TestGracefulShutdown(t *testing.T) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
