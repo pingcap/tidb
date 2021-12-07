@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -341,8 +342,13 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 		for _, col := range missingColumns {
 			statsHandle.AppendNeededColumn(col, wg, timeout)
 		}
+		metrics.SyncLoadCounter.Inc()
+		t := time.Now()
 		if util.WaitTimeout(wg, timeout) {
+			metrics.SyncLoadTimeoutCounter.Inc()
 			return false, errors.New("Fail to load stats for columns, timeout.")
+		} else {
+			metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
 		}
 	}
 	return true, nil
