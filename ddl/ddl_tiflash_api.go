@@ -343,7 +343,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			}
 
 			// Get most up-to-date replica count from pd.
-			
+
 			//var stats helper.PDRegionStats
 			//if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
 			//	return false, errors.Trace(err)
