@@ -198,7 +198,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 func TestAdminRecoverIndex(t *testing.T) {
 	t.Parallel()
 
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
+	store, d, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -231,7 +231,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	// Make some corrupted index.
 	ctx := mock.NewContext()
 	ctx.Store = store
-	is := domain.InfoSchema()
+	is := d.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
 	tbl, err := is.TableByName(dbName, tblName)
@@ -352,7 +352,7 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), cHandle)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	require.Error(t, err)
+	require.NoError(t, err)
 	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
 	tk.MustGetErrCode("admin check index t idx", mysql.ErrAdminCheckTable)
 
@@ -1035,9 +1035,9 @@ func (l *logEntry) checkMsg(t *testing.T, msg string) {
 func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 	for _, rf := range requireFields {
 		var f *zapcore.Field
-		for _, field := range l.fields {
+		for i, field := range l.fields {
 			if field.Equals(rf) {
-				f = &field
+				f = &l.fields[i]
 				break
 			}
 		}
@@ -1048,9 +1048,9 @@ func (l *logEntry) checkField(t *testing.T, requireFields ...zapcore.Field) {
 
 func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {
 	var f *zapcore.Field
-	for _, field := range l.fields {
+	for i, field := range l.fields {
 		if field.Key == fieldName {
-			f = &field
+			f = &l.fields[i]
 			break
 		}
 	}
@@ -1322,144 +1322,12 @@ func TestCheckFailReport(t *testing.T) {
 	}()
 }
 
-func (s *testSuiteJoinSerial) TestAdminCheckTableFailed(t *testing.T) {
-	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3), unique key(c2), key(c2, c3))")
-	tk.MustExec("insert admin_test (c1, c2, c3) values (-10, -20, 'y'), (-1, -10, 'z'), (1, 11, 'a'), (2, 12, 'b'), (5, 15, 'c'), (10, 20, 'd'), (20, 30, 'e')")
-
-	// Make some corrupted index. Build the index information.
-	s.ctx = mock.NewContext()
-	s.ctx.Store = s.store
-	is := s.domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("admin_test")
-	tbl, err := is.TableByName(dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[1]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	sc := s.ctx.GetSessionVars().StmtCtx
-	tk.Session().GetSessionVars().IndexLookupSize = 3
-	tk.Session().GetSessionVars().MaxChunkSize = 3
-
-	// Reduce one row of index.
-	// Table count > index count.
-	// Index c2 is missing 11.
-	txn, err := s.store.Begin()
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), kv.IntHandle(-1))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: -1, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
-	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
-	tk.MustExec("set @@tidb_redact_log=1;")
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=0;")
-	r := tk.MustQuery("admin recover index admin_test c2")
-	r.Check(testkit.Rows("1 7"))
-	tk.MustExec("admin check table admin_test")
-
-	// Add one row of index.
-	// Table count < index count.
-	// Index c2 has one more values than table data: 0, and the handle 0 hasn't correlative record.
-	txn, err = s.store.Begin()
-	require.NoError(t, err)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(0), kv.IntHandle(0), nil)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: 0, index-values:\"handle: 0, values: [KindInt64 0 KindInt64 0]\" != record-values:\"\"")
-	tk.MustExec("set @@tidb_redact_log=1;")
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ?, index-values:\"?\" != record-values:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=0;")
-
-	// Add one row of index.
-	// Table count < index count.
-	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
-	txn, err = s.store.Begin()
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), kv.IntHandle(0))
-	require.NoError(t, err)
-	// Make sure the index value "19" is smaller "21". Then we scan to "19" before "21".
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(19), kv.IntHandle(10), nil)
-	require.NoError(t, err)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), kv.IntHandle(2), nil)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"2\", index-values:\"KindInt64 13\" != record-values:\"KindInt64 12\", compare err:<nil>")
-	tk.MustExec("set @@tidb_redact_log=1;")
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=0;")
-
-	// Table count = index count.
-	// Two indices have the same handle.
-	txn, err = s.store.Begin()
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), kv.IntHandle(2))
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), kv.IntHandle(2))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"10\", index-values:\"KindInt64 19\" != record-values:\"KindInt64 20\", compare err:<nil>")
-	tk.MustExec("set @@tidb_redact_log=1;")
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=0;")
-
-	// Table count = index count.
-	// Index c2 has one line of data is 19, the corresponding table data is 20.
-	txn, err = s.store.Begin()
-	require.NoError(t, err)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), kv.IntHandle(2), nil)
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), kv.IntHandle(10))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"10\", index-values:\"KindInt64 19\" != record-values:\"KindInt64 20\", compare err:<nil>")
-	tk.MustExec("set @@tidb_redact_log=1;")
-	err = tk.ExecToErr("admin check table admin_test")
-	require.Error(t, err)
-	require.EqualError(t, err, "[executor:8134]data inconsistency in table: admin_test, index: c2, col: c2, handle: \"?\", index-values:\"?\" != record-values:\"?\", compare err:\"?\"")
-	tk.MustExec("set @@tidb_redact_log=0;")
-
-	// Recover records.
-	txn, err = s.store.Begin()
-	require.NoError(t, err)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), kv.IntHandle(10))
-	require.NoError(t, err)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(20), kv.IntHandle(10), nil)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	tk.MustExec("admin check table admin_test")
-}
-
-func (s *testSuite8) TestAdminCheckTable(t *testing.T) {
+func TestAdminCheckTable(t *testing.T) {
 	// test NULL value.
-	tk := testkit.NewTestKit(t, s.store)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_null (
 		a int(11) NOT NULL,
