@@ -260,34 +260,47 @@ type funcProp int8
 
 const (
 	funcPropNone funcProp = iota
+	// The arguments of these functions are wrapped with to_binary().
+	// For compatibility reason, legacy charsets arguments are not wrapped.
+	// Legacy charsets: utf8mb4, utf8, latin1, ascii, binary.
 	funcPropBinAware
+	// The arguments of these functions are wrapped with to_binary() or from_binary() according to
+	// the evaluated result charset and the argument charset.
+	//   For binary argument && string result, wrap it with from_binary().
+	//   For string argument && binary result, wrap it with to_binary().
 	funcPropAuto
 )
 
 // convertActionMap collects from https://dev.mysql.com/doc/refman/8.0/en/string-functions.html.
 var convertActionMap = map[funcProp][]string{
 	funcPropNone: {
-		/* arguments are numbers */ ast.Bin, ast.CharFunc,
-		/* not binary aware */ ast.CharLength, ast.CharacterLength, ast.Elt, ast.Space,
+		/* args != strings */
+		ast.Bin, ast.CharFunc, ast.DateFormat, ast.Oct, ast.Space,
+		/* only 1 string arg, no implicit conversion */
+		ast.CharLength, ast.CharacterLength, ast.FromBase64, ast.Lcase, ast.Left, ast.LoadFile,
+		ast.Lower, ast.LTrim, ast.Mid, ast.Ord, ast.Quote, ast.Repeat, ast.Reverse, ast.Right,
+		ast.RTrim, ast.Soundex, ast.Substr, ast.Substring, ast.Ucase, ast.Unhex, ast.Upper,
+		/* args are independent, no implicit conversion */
+		ast.Elt,
 	},
 	funcPropBinAware: {
-		// The arguments of these functions are wrapped with to_binary().
-		// For compatibility reason, legacy charsets arguments are not wrapped.
-		// Legacy charsets: utf8mb4, utf8, latin1, ascii, binary.
-		ast.ASCII, ast.BitLength,
-		ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress, ast.AesEncrypt,
+		/* result is binary-aware */
+		ast.ASCII, ast.BitLength, ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64, ast.WeightString,
+		/* encrypt functions */
+		ast.AesDecrypt, ast.Decode, ast.Encode, ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1,
+		ast.SHA2, ast.Compress, ast.AesEncrypt,
 	},
 	funcPropAuto: {
-		// The arguments of these functions are wrapped with to_binary()/from_binary() according to
-		// the evaluated result charset and the argument charset.
-		// For binary argument && string result, wrap it with from_binary().
-		// For string argument && binary result, wrap it with to_binary().
-		/* string-related */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.InsertFunc, ast.Left, ast.Lpad,
-		ast.Right, ast.Rpad, ast.Locate, ast.Replace, ast.Reverse, ast.Substr, ast.Substring,
-
-		ast.MakeSet, ast.FindInSet, ast.Regexp, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
-		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat,
+		/* string functions */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.FindInSet,
+		ast.InsertFunc, ast.Instr, ast.Lpad, ast.Locate, ast.Lpad, ast.MakeSet, ast.Position,
+		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim,
+		/* operators */
+		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
+		ast.Case,
+		/* string comparing */
+		ast.Like, ast.Strcmp,
+		/* regex */
+		ast.Regexp,
 	},
 }
 
