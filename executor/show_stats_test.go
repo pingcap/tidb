@@ -258,7 +258,7 @@ func TestShowStatusSnapshot(t *testing.T) {
 	tk.MustQuery("show table status;").Check(testkit.Rows())
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	result := tk.MustQuery("show table status;")
-	require.Regexp(t, "t", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][0])
 }
 
 func TestShowStatsExtended(t *testing.T) {

@@ -215,7 +215,7 @@ func TestWriteEngineFailed(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, nil, rows)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable write error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable write error", err.Error())
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 }
@@ -243,7 +243,7 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRows(ctx, nil, rows)
 	require.Error(t, err)
-	require.Regexp(t, ".*fake recoverable write batch error", err.Error())
+	require.Regexp(t, "fake recoverable write batch error$", err.Error())
 	_, err = writer.Close(ctx)
 	require.NoError(t, err)
 }
@@ -264,7 +264,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1)
 	require.Error(t, err)
-	require.Regexp(t, "fake unrecoverable import error.*", err.Error())
+	require.Regexp(t, "^fake unrecoverable import error", err.Error())
 }
 
 func TestImportFailedWithRetry(t *testing.T) {
@@ -285,7 +285,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1)
 	require.Error(t, err)
-	require.Regexp(t, ".*fake recoverable import error", err.Error())
+	require.Regexp(t, "fake recoverable import error$", err.Error())
 }
 
 func TestImportFailedRecovered(t *testing.T) {

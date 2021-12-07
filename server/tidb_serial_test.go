@@ -106,7 +106,6 @@ func TestTLSAuto(t *testing.T) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -162,7 +161,6 @@ func TestTLSBasic(t *testing.T) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -234,7 +232,6 @@ func TestTLSVerify(t *testing.T) {
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -302,7 +299,6 @@ func TestErrorNoRollback(t *testing.T) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -367,6 +363,7 @@ func TestPrepareCount(t *testing.T) {
 	err = qctx.GetStatement(stmt.ID()).Close()
 	require.NoError(t, err)
 	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, qctx.Close())
 }
 
 func TestDefaultCharacterAndCollation(t *testing.T) {
@@ -422,7 +419,6 @@ func TestReloadTLS(t *testing.T) {
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
