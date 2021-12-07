@@ -346,13 +346,13 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		}
 		if sc.EnableOptimizerCETrace && ok {
-			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats-Pseudo", uint64(result))
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
 		}
 		return result, nil
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
 	if sc.EnableOptimizerCETrace {
-		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats", uint64(result))
+		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
