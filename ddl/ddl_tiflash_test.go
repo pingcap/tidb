@@ -19,6 +19,7 @@
 package ddl_test
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,10 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
@@ -72,6 +76,19 @@ const (
 	RoundToBeAvailable               = 1
 	RoundToBeAvailablePartitionTable = 3
 )
+
+func TestComputeTiFlashStatus(t *testing.T) {
+	regionReplica := make(map[int64]int)
+	resp1 := "0\n\n"
+	resp2 := "1\n1009\n"
+	br1 := bufio.NewReader(strings.NewReader(resp1))
+	br2 := bufio.NewReader(strings.NewReader(resp2))
+	err := helper.ComputeTiFlashStatus(br1, &regionReplica)
+	require.NoError(t, err)
+	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
+	require.NoError(t, err)
+	require.Equal(t, len(regionReplica), 1)
+}
 
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error

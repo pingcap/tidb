@@ -1090,23 +1090,8 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	return tableID
 }
 
-// CollectTiFlashStatus query sync status of one table from TiFlash store.
-func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
-	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
-		util.InternalHTTPSchema(),
-		statusAddress,
-		tableID,
-	)
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return nil
-	}
-
-	defer func() {
-		resp.Body.Close()
-	}()
-
-	reader := bufio.NewReader(resp.Body)
+// ComputeTiFlashStatus is helper function for CollectTiFlashStatus.
+func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) error {
 	ns, _, _ := reader.ReadLine()
 	n, err := strconv.ParseInt(string(ns), 10, 64)
 	if err != nil {
@@ -1124,6 +1109,29 @@ func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *ma
 		} else {
 			(*regionReplica)[r] = 1
 		}
+	}
+	return nil
+}
+
+// CollectTiFlashStatus query sync status of one table from TiFlash store.
+func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return nil
+	}
+
+	defer func() {
+		resp.Body.Close()
+	}()
+
+	reader := bufio.NewReader(resp.Body)
+	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
