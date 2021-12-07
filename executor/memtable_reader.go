@@ -928,15 +928,6 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	tables []helper.TableInfoWithKeyRange,
 	tz *time.Location,
 ) ([][]types.Datum, error) {
-	// _, startKey, _ := codec.DecodeBytes(hisHotRegion.StartKey, []byte{})
-	// _, endKey, _ := codec.DecodeBytes(hisHotRegion.EndKey, []byte{})
-	// region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
-	// hotRange, err := helper.NewRegionFrameRange(region)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
 	regionsInfo := &helper.RegionsInfo{
 		Count: 1,
 		Regions: []helper.RegionInfo{
@@ -948,7 +939,7 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	}
 	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, tables)
 
-	// Ignore row without corresponding schema tableInfo.
+	// Ignore row without corresponding schema.
 	if tableInfos == nil {
 		return nil, nil
 	}
