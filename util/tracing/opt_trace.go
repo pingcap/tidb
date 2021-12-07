@@ -94,6 +94,7 @@ type CETraceRecord struct {
 	RowCount  uint64 `json:"row_count"`
 }
 
+// DedupCETrace deduplicate a slice of *CETraceRecord and return the deduplicated slice
 func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 	ret := make([]*CETraceRecord, 0, len(records))
 	exists := make(map[CETraceRecord]struct{}, len(records))
