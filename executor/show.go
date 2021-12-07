@@ -862,13 +862,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(" VIRTUAL")
 			}
 		}
+		if mysql.HasNotNullFlag(col.Flag) {
+			buf.WriteString(" NOT NULL")
+		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			hasAutoIncID = true
-			buf.WriteString(" NOT NULL AUTO_INCREMENT")
+			buf.WriteString(" AUTO_INCREMENT")
 		} else {
-			if mysql.HasNotNullFlag(col.Flag) {
-				buf.WriteString(" NOT NULL")
-			}
 			// default values are not shown for generated columns in MySQL
 			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
