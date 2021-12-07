@@ -3192,15 +3192,8 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 	case *ast.DefaultExpr:
 		refCol := col
 		if x.Name != nil {
-			found := false
-			for _, col := range insertPlan.Table.Cols() {
-				if col.Name.L == x.Name.Name.L {
-					refCol = col
-					found = true
-					break
-				}
-			}
-			if !found {
+			refCol = table.FindColLowerCase(insertPlan.Table.Cols(), x.Name.Name.L)
+			if refCol == nil {
 				return nil, ErrUnknownColumn.GenWithStackByArgs(x.Name.OrigColName(), clauseMsg[fieldList])
 			}
 			// Cannot use DEFAULT(generated column) except for the same column
