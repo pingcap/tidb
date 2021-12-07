@@ -180,7 +180,7 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec("create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));")
 		if i == 1 {
-			tk.MustExec("set transaction isolation level read committed;")
+			tk.MustExec("set tx_isolation = 'READ-COMMITTED';")
 		}
 		tk.MustExec("begin;")
 		// Expect two IndexScan(c1, c2).
@@ -217,7 +217,7 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
 		tk.MustExec("commit;")
 		if i == 1 {
-			tk.MustExec("set transaction isolation level repeatable read;")
+			tk.MustExec("set tx_isolation = 'REPEATABLE-READ';")
 		}
 	}
 
