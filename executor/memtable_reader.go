@@ -44,11 +44,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -778,8 +776,8 @@ type HistoryHotRegion struct {
 	FlowBytes     float64 `json:"flow_bytes,omitempty"`
 	KeyRate       float64 `json:"key_rate,omitempty"`
 	QueryRate     float64 `json:"query_rate,omitempty"`
-	StartKey      []byte  `json:"start_key,omitempty"`
-	EndKey        []byte  `json:"end_key,omitempty"`
+	StartKey      string  `json:"start_key,omitempty"`
+	EndKey        string  `json:"end_key,omitempty"`
 }
 
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
@@ -893,8 +891,8 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	}
 	// Merge the results
 	var finalRows [][]types.Datum
-	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tz := sctx.GetSessionVars().Location()
+	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
@@ -903,14 +901,15 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	tables := tikvHelper.GetTablesInfoWithKeyRange(allSchemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
-		row, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, allSchemas, tz)
+		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)
 		if err != nil {
 			return nil, err
 		}
-		if row != nil {
-			finalRows = append(finalRows, row)
+		if rows != nil {
+			finalRows = append(finalRows, rows...)
 		}
 		minTimeItem.messages.HistoryHotRegion = minTimeItem.messages.HistoryHotRegion[1:]
 		// Fetch next message item
@@ -926,74 +925,89 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	hisHotRegion *HistoryHotRegion,
 	tikvHelper *helper.Helper,
-	allSchemas []*model.DBInfo,
+	tables []helper.TableInfoWithKeyRange,
 	tz *time.Location,
-) ([]types.Datum, error) {
-	_, startKey, _ := codec.DecodeBytes(hisHotRegion.StartKey, []byte{})
-	_, endKey, _ := codec.DecodeBytes(hisHotRegion.EndKey, []byte{})
-	region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
-	hotRange, err := helper.NewRegionFrameRange(region)
-	if err != nil {
-		return nil, err
-	}
+) ([][]types.Datum, error) {
+	// _, startKey, _ := codec.DecodeBytes(hisHotRegion.StartKey, []byte{})
+	// _, endKey, _ := codec.DecodeBytes(hisHotRegion.EndKey, []byte{})
+	// region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
+	// hotRange, err := helper.NewRegionFrameRange(region)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
-	// Ignore row without corresponding schema f.
-	if f == nil {
+	// f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
+	regionsInfo := &helper.RegionsInfo{
+		Count: 1,
+		Regions: []helper.RegionInfo{
+			{
+				ID:       int64(hisHotRegion.RegionID),
+				StartKey: hisHotRegion.StartKey,
+				EndKey:   hisHotRegion.EndKey},
+		},
+	}
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, tables)
+
+	// Ignore row without corresponding schema tableInfo.
+	if tableInfos == nil {
 		return nil, nil
 	}
-	row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-	updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+	var rows [][]types.Datum
+	for _, tableInfo := range tableInfos[int64(hisHotRegion.RegionID)] {
+		updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+		if updateTimestamp.Location() != tz {
+			updateTimestamp.In(tz)
+		}
+		updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
+		row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
 
-	if updateTimestamp.Location() != tz {
-		updateTimestamp.In(tz)
-	}
-	updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-	row[0].SetMysqlTime(updateTime)
-	row[1].SetString(strings.ToUpper(f.DBName), mysql.DefaultCollationName)
-	row[2].SetString(strings.ToUpper(f.TableName), mysql.DefaultCollationName)
-	row[3].SetInt64(f.TableID)
-	if f.IndexName != "" {
-		row[4].SetString(strings.ToUpper(f.IndexName), mysql.DefaultCollationName)
-		row[5].SetInt64(f.IndexID)
-	} else {
-		row[4].SetNull()
-		row[5].SetNull()
-	}
-	row[6].SetInt64(int64(hisHotRegion.RegionID))
-	row[7].SetInt64(int64(hisHotRegion.StoreID))
-	row[8].SetInt64(int64(hisHotRegion.PeerID))
-	if hisHotRegion.IsLearner {
-		row[9].SetInt64(1)
-	} else {
-		row[9].SetInt64(0)
-	}
-	if hisHotRegion.IsLeader {
-		row[10].SetInt64(1)
-	} else {
-		row[10].SetInt64(0)
-	}
+		row[0].SetMysqlTime(updateTime)
+		row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
+		row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
+		row[3].SetInt64(tableInfo.Table.ID)
+		if tableInfo.IsIndex {
+			row[4].SetString(strings.ToUpper(tableInfo.Index.Name.O), mysql.DefaultCollationName)
+			row[5].SetInt64(tableInfo.Index.ID)
+		} else {
+			row[4].SetNull()
+			row[5].SetNull()
+		}
+		row[6].SetInt64(int64(hisHotRegion.RegionID))
+		row[7].SetInt64(int64(hisHotRegion.StoreID))
+		row[8].SetInt64(int64(hisHotRegion.PeerID))
+		if hisHotRegion.IsLearner {
+			row[9].SetInt64(1)
+		} else {
+			row[9].SetInt64(0)
+		}
+		if hisHotRegion.IsLeader {
+			row[10].SetInt64(1)
+		} else {
+			row[10].SetInt64(0)
+		}
 
-	row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
-	if hisHotRegion.HotDegree != 0 {
-		row[12].SetInt64(hisHotRegion.HotDegree)
-	} else {
-		row[12].SetNull()
+		row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
+		if hisHotRegion.HotDegree != 0 {
+			row[12].SetInt64(hisHotRegion.HotDegree)
+		} else {
+			row[12].SetNull()
+		}
+		if hisHotRegion.FlowBytes != 0 {
+			row[13].SetFloat64(hisHotRegion.FlowBytes)
+		} else {
+			row[13].SetNull()
+		}
+		if hisHotRegion.KeyRate != 0 {
+			row[14].SetFloat64(hisHotRegion.KeyRate)
+		} else {
+			row[14].SetNull()
+		}
+		if hisHotRegion.QueryRate != 0 {
+			row[15].SetFloat64(hisHotRegion.QueryRate)
+		} else {
+			row[15].SetNull()
+		}
+		rows = append(rows, row)
 	}
-	if hisHotRegion.FlowBytes != 0 {
-		row[13].SetFloat64(hisHotRegion.FlowBytes)
-	} else {
-		row[13].SetNull()
-	}
-	if hisHotRegion.KeyRate != 0 {
-		row[14].SetFloat64(hisHotRegion.KeyRate)
-	} else {
-		row[14].SetNull()
-	}
-	if hisHotRegion.QueryRate != 0 {
-		row[15].SetFloat64(hisHotRegion.QueryRate)
-	} else {
-		row[15].SetNull()
-	}
-	return row, nil
+	return rows, nil
 }
