@@ -23,8 +23,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/meta"
 	"time"
+
+	"github.com/pingcap/tidb/meta"
 
 	"github.com/pingcap/tidb/domain/infosync"
 
