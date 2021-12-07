@@ -43,7 +43,6 @@ func (c *predicateColumnCollector) addPredicateColumn(col *expression.Column) {
 	tblColIDs, ok := c.colMap[col.UniqueID]
 	if !ok {
 		// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
-		// logutil.BgLogger().Info(fmt.Sprintf("uniqueID:%v, ID:%v, name:%s", col.UniqueID, col.ID, col.OrigName))
 		return
 	}
 	for tblColID := range tblColIDs {
@@ -73,7 +72,6 @@ func (c *predicateColumnCollector) updateColMap(col *expression.Column, relatedC
 		tblColIDs, ok := c.colMap[relatedCol.UniqueID]
 		if !ok {
 			// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
-			// logutil.BgLogger().Info(fmt.Sprintf("uniqueID:%v, ID:%v, name:%s", col.UniqueID, col.ID, col.OrigName))
 			continue
 		}
 		for tblColID := range tblColIDs {
@@ -192,12 +190,12 @@ func (c *predicateColumnCollector) collectFromPlan(lp LogicalPlan) {
 		for _, corCols := range x.CorCols {
 			c.addPredicateColumn(&corCols.Column)
 		}
-	case *LogicalTopN:
+	case *LogicalSort:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpression(item.Expr)
 		}
-	case *LogicalSort:
+	case *LogicalTopN:
 		// Assume statistics of all the columns in ByItems are needed.
 		for _, item := range x.ByItems {
 			c.addPredicateColumnsFromExpression(item.Expr)
@@ -207,13 +205,24 @@ func (c *predicateColumnCollector) collectFromPlan(lp LogicalPlan) {
 	case *LogicalPartitionUnionAll:
 		x.updateColMapAndAddPredicateColumns(c)
 	case *LogicalCTE:
+		// Visit seedPartLogicalPlan and recursivePartLogicalPlan first.
+		c.collectFromPlan(x.cte.seedPartLogicalPlan)
+		if x.cte.recursivePartLogicalPlan != nil {
+			c.collectFromPlan(x.cte.recursivePartLogicalPlan)
+		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns
 		seedColumns := x.cte.seedPartLogicalPlan.Schema().Columns
-		recursiveColumns := x.cte.recursivePartLogicalPlan.Schema().Columns
+		var recursiveColumns []*expression.Column
+		if x.cte.recursivePartLogicalPlan != nil {
+			recursiveColumns = x.cte.recursivePartLogicalPlan.Schema().Columns
+		}
 		relatedCols := make([]*expression.Column, 0, 2)
 		for i, col := range columns {
-			relatedCols = append(relatedCols[:0], seedColumns[i], recursiveColumns[i])
+			relatedCols = append(relatedCols[:0], seedColumns[i])
+			if recursiveColumns != nil {
+				relatedCols = append(relatedCols, recursiveColumns[i])
+			}
 			c.updateColMap(col, relatedCols)
 		}
 		// If IsDistinct is true, then we use getColsNDV to calculate row count(see (*LogicalCTE).DeriveStat). In this case
