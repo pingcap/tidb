@@ -553,19 +553,16 @@ type Security struct {
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
 
-	// this is used to set tls config for lightning in DM
+	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
 	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
-	TLSConfigName string `toml:"tls-config-name" json:"tls-config-name"`
+	TLSConfigName string
 }
 
-// RegistersMySQL registers the TLS config with name "cluster" or security.TLSConfigName
+// RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
-	}
-	if sec.TLSConfigName == "" {
-		sec.TLSConfigName = "cluster" // this the default value in Config.TiDB.TLS, see more in `CheckAndAdjustSecurity`
 	}
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
 	if err != nil {
@@ -1137,7 +1134,10 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 	switch cfg.TiDB.TLS {
 	case "":
 		if len(cfg.TiDB.Security.CAPath) > 0 {
-			cfg.TiDB.TLS = "cluster"
+			if cfg.TiDB.Security.TLSConfigName == "" {
+				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+			}
+			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
 			cfg.TiDB.TLS = "false"
 		}
