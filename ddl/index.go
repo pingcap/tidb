@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1060,7 +1061,9 @@ var mockNotOwnerErrOnce uint32
 // getIndexRecord gets index columns values use w.rowDecoder, and generate indexRecord.
 func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
 	cols := w.table.WritableCols()
-	sysZone := timeutil.SystemLocation()
+	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	str := fmt.Sprintf("xxxIdx -------------------------------- sysTZ:%v, utilTZ:%v", sysZone, timeutil.SystemLocation())
+	logutil.BgLogger().Warn(str)
 	failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 		if valStr, ok := val.(string); ok {
 			switch valStr {
@@ -1085,6 +1088,8 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
+		str = fmt.Sprintf("xxxIdx 11 -------------------------------- idxVal:%v", idxColumnVal)
+		logutil.BgLogger().Warn(str)
 		if ok {
 			idxVal[j] = idxColumnVal
 			continue
@@ -1094,6 +1099,8 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 			return nil, errors.Trace(err)
 		}
 
+		str = fmt.Sprintf("xxxIdx 22 -------------------------------- idxVal:%v", idxColumnVal)
+		logutil.BgLogger().Warn(str)
 		if idxColumnVal.Kind() == types.KindMysqlTime {
 			t := idxColumnVal.GetMysqlTime()
 			if t.Type() == mysql.TypeTimestamp && sysZone != time.UTC {
@@ -1102,6 +1109,8 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 					return nil, errors.Trace(err)
 				}
 				idxColumnVal.SetMysqlTime(t)
+				str = fmt.Sprintf("xxxIdx 33 -------------------------------- idxVal:%v", idxColumnVal)
+				logutil.BgLogger().Warn(str)
 			}
 		}
 		idxVal[j] = idxColumnVal
@@ -1129,9 +1138,11 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	return taskRange.endKey.Next()
 }
 
-func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, rawRecord []byte) error {
-	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
+func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
+	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	str := fmt.Sprintf("xxxIdx 00 -------------------------------- sysTZ:%v, utilTZ:%v", sysZone, timeutil.SystemLocation())
+	logutil.BgLogger().Warn(str)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, sysZone, w.rowMap)
 	if err != nil {
 		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", err))
 	}
@@ -1165,7 +1176,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 
 			// Decode one row, generate records of this row.
-			err := w.updateRowDecoder(handle, recordKey, rawRow)
+			err := w.updateRowDecoder(handle, recordKey)
 			if err != nil {
 				return false, err
 			}

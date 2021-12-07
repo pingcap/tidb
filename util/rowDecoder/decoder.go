@@ -15,19 +15,20 @@
 package decoder
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -156,6 +157,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
+		logutil.BgLogger().Warn(fmt.Sprintf("-------------------- col:%v, val:%v", colInfo.Name, val.GetValue()))
 		if ok || dCol.GenExpr != nil || dCol.Col.ChangeStateInfo != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
@@ -185,6 +187,8 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 	sort.Ints(keys)
 	for _, id := range keys {
 		col := rd.colMap[int64(ids[id])]
+		logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 0 --------------------------------- str:%v, val:%v, default:%v, gen expr:%v",
+			col.Col.Name, row[col.Col.ID], col.Col.OriginDefaultValue, col.GenExpr))
 		if col.GenExpr == nil {
 			continue
 		}
@@ -198,16 +202,18 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 			return nil, err
 		}
 
-		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
-			t := val.GetMysqlTime()
-			if t.Type() == mysql.TypeTimestamp {
-				err := t.ConvertTimeZone(sysLoc, time.UTC)
-				if err != nil {
-					return nil, err
-				}
-				val.SetMysqlTime(t)
-			}
-		}
+		// if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
+		// 	t := val.GetMysqlTime()
+		// 	logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 1 --------------------------------- time :%v, tz:%v", t, sysLoc))
+		// 	if t.Type() == mysql.TypeTimestamp {
+		// 		err := t.ConvertTimeZone(sysLoc, time.UTC)
+		// 		logutil.BgLogger().Warn(fmt.Sprintf("xxxEval 2 --------------------------------- time :%v", t))
+		// 		if err != nil {
+		// 			return nil, err
+		// 		}
+		// 		val.SetMysqlTime(t)
+		// 	}
+		// }
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
 
 		row[int64(ids[id])] = val

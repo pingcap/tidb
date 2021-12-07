@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -7594,4 +7595,34 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"  `d` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testDBSuite1) TestGetTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		tzSQL  string
+		tzStr  string
+		tzName string
+		offset int
+		err    error
+	}{
+		{"set time_zone = '+00:00'", "", "UTC", 0, nil},
+		{"set time_zone = '-00:00'", "", "UTC", 0, nil},
+		{"set time_zone = 'UTC'", "UTC", "UTC", 0, nil},
+		{"set time_zone = '+05:00'", "", "UTC", 18000, nil},
+		{"set time_zone = '-08:00'", "", "UTC", -28800, nil},
+		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
+		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, nil},
+		{"set time_zone = 'GMT'", "GMT", "GMT", 0, nil},
+		{"set time_zone = 'EST'", "EST", "EST", 0, nil},
+	}
+	for _, tc := range testCases {
+		tk.MustExec(tc.tzSQL)
+		c.Assert(tk.Se.GetSessionVars().TimeZone.String(), Equals, tc.tzStr, Commentf("sql: %s", tc.tzSQL))
+		tz, offset, err := util.GetTimeZone(tk.Se)
+		c.Assert(tc.err, Equals, err)
+		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s", tc.tzSQL))
+		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
+	}
 }

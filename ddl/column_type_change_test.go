@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -376,7 +377,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
 	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
-	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-11 00:00:00")) // the given number will be left-forward used.
+	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
@@ -2350,4 +2351,39 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 
 	_, err = tk.Exec("insert into t values(null)")
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	str := fmt.Sprintf("tz:%v, ctxTZ:%v", tk.Se.GetSessionVars().TimeZone.String(), tk.Se.GetSessionVars().StmtCtx.TimeZone)
+	logutil.BgLogger().Warn("xxx000============================" + str)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into t values();")
+	logutil.BgLogger().Warn("xxx*************************************** 0")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	logutil.BgLogger().Warn("xxx*************************************** 1")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	logutil.BgLogger().Warn("xxx*************************************** 2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+
+	str = fmt.Sprintf("tz:%v, ctxTZ:%v", tk.Se.GetSessionVars().TimeZone.String(), tk.Se.GetSessionVars().StmtCtx.TimeZone)
+	logutil.BgLogger().Warn("xxx111============================" + str)
+	tk.MustExec("alter table t modify c1 timestamp")
+	tk.MustExec("set @@session.time_zone=UTC")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-09 17:05:08"))
+	tk.MustExec("set @@session.time_zone='Asia/Shanghai'")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into t values();")
+	logutil.BgLogger().Warn("xxx*************************************** 0")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	logutil.BgLogger().Warn("xxx*************************************** 1")
+	tk.MustExec("alter table t modify column c1 bigint;")
+	logutil.BgLogger().Warn("xxx*************************************** 2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
 }

@@ -17,13 +17,16 @@ package util
 import (
 	"context"
 	"encoding/hex"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -193,4 +196,26 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		}
 	}
 	return nil
+}
+
+// GetTimeZone gets the session timezone's name and offset.
+func GetTimeZone(sctx sessionctx.Context) (string, int, error) {
+	sysTZ := sctx.GetSessionVars().Location()
+	timeStr := time.Now().In(sysTZ)
+	tzIdx, tzSign, tzHour, _, tzMinute := types.GetTimezone(timeStr.String())
+
+	tzName := timeStr.Location().String()
+	if tzIdx == -1 {
+		return tzName, 0, nil
+	}
+
+	tzH, err := strconv.Atoi(tzHour)
+	terror.Log(err)
+	tzM, err := strconv.Atoi(tzMinute)
+	terror.Log(err)
+	offset := tzH*60*60 + tzM*60
+	if tzSign == "-" {
+		offset = -offset
+	}
+	return "UTC", offset, nil
 }

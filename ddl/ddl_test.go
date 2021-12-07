@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -239,6 +240,9 @@ func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Jo
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
+		ReorgMeta: &model.DDLReorgMeta{
+			LocationInfo: &model.LocationInfo{Name: timeutil.SystemLocation().String(), Offset: 0},
+		},
 	}
 }
 

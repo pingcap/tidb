@@ -43,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -551,6 +553,20 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
+func (s *testStateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into tt values();")
+
+	sqls := make([]sqlWithErr, 1)
+	sqls[0] = sqlWithErr{"insert into tt values();", nil}
+	modifyColumnSQL := "alter table tt modify column c1 bigint;"
+	expectQuery := &expectQuery{"select c1 from tt", []string{"20200710010508", "20200710010508"}}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
+}
+
 type idxType byte
 
 const (
@@ -884,6 +900,14 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
+
+	sysTZ := s.se.GetSessionVars().StmtCtx.TimeZone
+	n0 := time.Now().In(time.UTC)
+	n := time.Now().In(timeutil.SystemLocation())
+	n1 := time.Now().In(sysTZ)
+	n2 := time.Now().In(se.GetSessionVars().StmtCtx.TimeZone)
+	str := fmt.Sprintf("xxxz---------------------------------time tz:%v, utiltz:%v, systz1:%v, systz2:%v", n0, n, n1, n2)
+	logutil.BgLogger().Warn(str)
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(c, s.store)

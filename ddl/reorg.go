@@ -89,7 +89,10 @@ func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
+	tz := *time.UTC
+	c.GetSessionVars().TimeZone = &tz
+	c.GetSessionVars().StmtCtx.TimeZone = &tz
 	return c
 }
 
@@ -199,7 +202,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      time.Local,
+			LocationInfo:  &model.LocationInfo{Name: time.Local.String(), Offset: 0},
 		}
 	}
 	if w.reorgCtx.doneCh == nil {

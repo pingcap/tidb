@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -607,7 +608,21 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
 			// TODO: skip set the timezone, it will cause data inconsistency when add index, since some reorg place using the timeUtil.SystemLocation() to do the time conversion. (need a more systemic plan)
-			// sessCtx.GetSessionVars().TimeZone = reorgInfo.ReorgMeta.Location
+			*sessCtx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
+			// sessCtx.GetSessionVars().TimeZone = timeutil.SystemLocation()
+			// sessCtx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
+			if reorgInfo.ReorgMeta.LocationInfo != nil {
+				tz, err := reorgInfo.ReorgMeta.LocationInfo.GetLocation()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				*sessCtx.GetSessionVars().TimeZone = *tz
+				// sessCtx.GetSessionVars().StmtCtx.TimeZone = sessCtx.GetSessionVars().TimeZone
+				logutil.BgLogger().Warn("xxxx-------------------------------------****************************************************************",
+					zap.String("stmtC timezone", sessCtx.GetSessionVars().StmtCtx.TimeZone.String()),
+					zap.String("seC timezone", sessCtx.GetSessionVars().TimeZone.String()))
+			}
+
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()

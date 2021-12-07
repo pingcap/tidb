@@ -183,8 +183,10 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 	if tp == mysql.TypeUnspecified {
 		tp = t.Type()
 	}
+	logutil.BgLogger().Warn(fmt.Sprintf("xxxEncodeKeyTime 0 --------------------------------- time :%v, tz :%v", t, sc.TimeZone))
 	if tp == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 		err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+		logutil.BgLogger().Warn(fmt.Sprintf("xxxEncodeKeyTime 1 --------------------------------- time :%v", t))
 		if err != nil {
 			return nil, err
 		}

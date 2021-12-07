@@ -207,7 +207,27 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *time.Location                   `json:"time_location"`
+	LocationInfo  *LocationInfo                    `json:"time_location"`
+}
+
+type LocationInfo struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"`
+	location *time.Location
+}
+
+func (li *LocationInfo) GetLocation() (*time.Location, error) {
+	if li.location != nil {
+		return li.location, nil
+	}
+
+	var err error
+	if li.Offset == 0 {
+		li.location, err = time.LoadLocation(li.Name)
+	} else {
+		li.location = time.FixedZone(li.Name, li.Offset)
+	}
+	return li.location, err
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
