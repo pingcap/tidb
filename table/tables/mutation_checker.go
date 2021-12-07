@@ -15,10 +15,9 @@
 package tables
 
 import (
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/dbterror"
-
 	"github.com/pingcap/errors"
+	logutil2 "github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
@@ -212,9 +212,9 @@ func checkIndexKeys(
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta().Name.O, sessVars.EnableRedactLog)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta().Name.O)
 		} else {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta().Name.O, sessVars.EnableRedactLog)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta().Name.O)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -249,15 +249,11 @@ func checkRowInsertionConsistency(
 			return errors.Trace(err)
 		}
 		if cmp != 0 {
-			if sessVars.EnableRedactLog {
-				logutil.BgLogger().Error("inconsistent row mutation")
-			} else {
-				logutil.BgLogger().Error(
-					"inconsistent row mutation", zap.String("table", tableName),
-					zap.String("decoded datum", decodedDatum.String()),
-					zap.String("input datum", inputDatum.String()),
-				)
-			}
+			logutil.BgLogger().Error(
+				"inconsistent row mutation", zap.String("table", tableName),
+				logutil2.Redact(zap.String("decoded datum", decodedDatum.String())),
+				logutil2.Redact(zap.String("input datum", inputDatum.String())),
+			)
 
 			return ErrInconsistentRowValue.GenWithStackByArgs(tableName, decodedDatum.String(), inputDatum.String())
 		}
@@ -306,7 +302,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
-	tableName string, redactLog bool,
+	tableName string,
 ) error {
 	for i := range indexData {
 		decodedMutationDatum := indexData[i]
@@ -327,18 +323,13 @@ func compareIndexData(
 		}
 
 		if comparison != 0 {
-			if redactLog {
-				logutil.BgLogger().Error("inconsistent index data", zap.String("index", indexInfo.Name.O),
-					zap.String("table", tableName))
-			} else {
-				logutil.BgLogger().Error(
-					"inconsistent index data", zap.String("table", tableName),
-					zap.String("index", indexInfo.Name.O),
-					zap.String("column", cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O),
-					zap.String("decoded datum", decodedMutationDatum.String()),
-					zap.String("expected datum", expectedDatum.String()),
-				)
-			}
+			logutil.BgLogger().Error(
+				"inconsistent index data", zap.String("table", tableName),
+				zap.String("index", indexInfo.Name.O),
+				zap.String("column", cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O),
+				logutil2.Redact(zap.String("decoded datum", decodedMutationDatum.String())),
+				logutil2.Redact(zap.String("expected datum", expectedDatum.String())),
+			)
 			return ErrInconsistentIndexedValue.GenWithStackByArgs(
 				tableName, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
