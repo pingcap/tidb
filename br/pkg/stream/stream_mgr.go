@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ func BuildObserveDataRanges(
 				continue
 			}
 
-			log.Warn("", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
+			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
 			tableRanges, err := buildObserveTableKeyRanges(tableInfo)
 			if err != nil {
 				return nil, errors.Trace(err)

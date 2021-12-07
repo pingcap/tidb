@@ -155,7 +155,7 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
-	FilterStr          []string      `json:"-" toml:"-"`
+	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
 	TableFilter        filter.Filter `json:"-" toml:"-"`
 	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup

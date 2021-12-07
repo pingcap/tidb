@@ -269,7 +269,7 @@ func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange,
 
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
 	sort.Slice(rs, func(i, j int) bool {
-		return bytes.Compare(rs[i].StartKey, rs[j].EndKey) < 0
+		return bytes.Compare(rs[i].StartKey, rs[j].StartKey) < 0
 	})
 
 	return rs, nil
@@ -331,11 +331,11 @@ func RunStreamStart(
 	}
 
 	// nothing to backup
-	if ranges == nil || len(ranges) <= 0 {
+	if len(ranges) == 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
-		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
+		log.Warn("Nothing to observe, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
-		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to backup")
+		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to observe")
 	}
 
 	ti := stream.TaskInfo{
