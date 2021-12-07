@@ -72,8 +72,8 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
-	for len(leafPlan.Children()) > 0 {
-		leafPlan = leafPlan.Children()[0]
+	for leafPlan.ChildrenCount() > 0 {
+		leafPlan = leafPlan.GetChild(0)
 	}
 
 	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)

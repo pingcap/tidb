@@ -43,8 +43,8 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 		return p, false, nil
 	}
 
-	outerPlan := p.children[1^innerChildIdx]
-	innerPlan := p.children[innerChildIdx]
+	outerPlan := p.GetChild(1 ^ innerChildIdx)
+	innerPlan := p.GetChild(innerChildIdx)
 	outerUniqueIDs := set.NewInt64Set()
 	for _, outerCol := range outerPlan.Schema().Columns {
 		outerUniqueIDs.Insert(outerCol.UniqueID)
@@ -215,8 +215,8 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		aggCols = newCols
 	}
 
-	for i, child := range p.Children() {
-		newChild, err := o.doOptimize(child, aggCols, parentCols)
+	for i := 0; i < p.ChildrenCount(); i++ {
+		newChild, err := o.doOptimize(p.GetChild(i), aggCols, parentCols)
 		if err != nil {
 			return nil, err
 		}
