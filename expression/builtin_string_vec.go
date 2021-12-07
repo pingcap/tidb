@@ -2278,7 +2278,6 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
-				result.AppendNull()
 				continue
 			}
 			bigints = append(bigints, bufint[j][i])
