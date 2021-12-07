@@ -262,17 +262,19 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
+	failpoint.Inject("issue30289", func(val failpoint.Value) {
+		if val.(bool) {
+			err = errors.Errorf("issue30289 build return error")
+			e.buildFinished <- errors.Trace(err)
+			return
+		}
+	})
 	for {
 		if e.finished.Load().(bool) {
 			return
 		}
 		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 		err = Next(ctx, e.buildSideExec, chk)
-		failpoint.Inject("issue30289", func(val failpoint.Value) {
-			if val.(bool) {
-				err = errors.Errorf("issue30289 build return error")
-			}
-		})
 		if err != nil {
 			e.buildFinished <- errors.Trace(err)
 			return
