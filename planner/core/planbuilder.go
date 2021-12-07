@@ -4062,10 +4062,17 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 		if trace.TracePlanTarget != "" && trace.TracePlanTarget != TracePlanTargetEstimation {
 			return nil, errors.New("trace plan target should only be 'estimation'")
 		}
-		schema := newColumnsWithNames(1)
-		schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
-		p.SetSchema(schema.col2Schema())
-		p.names = schema.names
+		if trace.TracePlanTarget == TracePlanTargetEstimation {
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		} else {
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		}
 		return p, nil
 	}
 	switch trace.Format {

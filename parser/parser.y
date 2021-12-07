@@ -4551,12 +4551,12 @@ TraceStmt:
 |   "TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
     {
         $$ = &ast.TraceStmt{
-    		Stmt:      $3,
+    		Stmt:      $6,
     		TracePlan: true,
-    		TracePlanTarget: $4,
+    		TracePlanTarget: $5,
     	}
     	startOffset := parser.startOffset(&yyS[yypt])
-    	$3.SetText(string(parser.src[startOffset:]))
+    	$6.SetText(string(parser.src[startOffset:]))
     }
 
 ExplainSym:
