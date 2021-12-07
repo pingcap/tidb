@@ -5510,8 +5510,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDate(c *C) {
 		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "date", "0000-00-00", 0},
+		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
@@ -5528,8 +5527,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDatetime(c *C) {
 		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -5546,8 +5544,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToTimestamp(c *C) {
 		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5698,6 +5695,30 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
+}
+
+func (s *testSerialDBSuite) TestForbitCacheTableForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` cache", one))
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
+		}
+		sysTables = sysTables[:0]
+	}
 }
 
 func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
@@ -6456,14 +6477,6 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 	} else {
 		c.Assert(tb.Meta().Lock, IsNil)
 	}
-}
-
-func checkTableCacheStatus(c *C, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testGetTableByName(c, se, dbName, tableName)
-	dom := domain.GetDomain(se)
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().TableCacheStatusType, Equals, status)
 }
 
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
