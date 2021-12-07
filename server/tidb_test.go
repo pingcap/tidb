@@ -76,7 +76,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -242,7 +241,6 @@ func TestStatusPort(t *testing.T) {
 	defer cleanup()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -273,7 +271,6 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -329,7 +326,6 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -887,7 +883,6 @@ func TestSystemTimeZone(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -1216,7 +1211,6 @@ func TestGracefulShutdown(t *testing.T) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -1248,7 +1242,8 @@ func TestGracefulShutdown(t *testing.T) {
 
 	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
-	require.Regexp(t, ".*connect: connection refused", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "connect: connection refused$", err.Error())
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
@@ -1566,7 +1561,7 @@ func TestTopSQLAgent(t *testing.T) {
 		for _, r := range records {
 			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			require.True(t, exist)
-			require.Regexp(t, "select.*from.*join.*", sqlMeta.NormalizedSql)
+			require.Regexp(t, "^select.*from.*join", sqlMeta.NormalizedSql)
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
@@ -1574,7 +1569,7 @@ func TestTopSQLAgent(t *testing.T) {
 			require.True(t, exist)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
-			require.Regexp(t, ".*Join.*Select.*", plan)
+			require.Regexp(t, "Join.*Select", plan)
 		}
 	}
 	runWorkload := func(start, end int) context.CancelFunc {
