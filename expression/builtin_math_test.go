@@ -1020,8 +1020,10 @@ func TestTan(t *testing.T) {
 			require.NoError(t, err)
 			if c.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
-			} else {
+			} else if c.expected == 0 {
 				require.Equal(t, c.expected, d.GetFloat64())
+			} else {
+				require.InEpsilon(t, c.expected, d.GetFloat64(), 1E-15)
 			}
 		}
 	}
