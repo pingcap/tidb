@@ -205,3 +205,38 @@ func (s *testSuite1) TestIndexMergeWithPreparedStmt(c *C) {
 	indexMergeLine = res.Rows()[1][0].(string)
 	c.Assert(re.MatchString(indexMergeLine), IsTrue)
 }
+
+func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2), key(c3));")
+
+	insertStr := "insert into t1 values(0, 0, 0)"
+	rowNum := 1000
+	for i := 0; i < rowNum; i++ {
+		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
+	}
+	insertStr += ";"
+	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
+
+	tk.MustExec(insertStr)
+
+	oriMaxUsage := memTracker.MaxConsumed()
+
+	// We select all rows in t1, so the mem usage is more clear.
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+
+	newMaxUsage := memTracker.MaxConsumed()
+	c.Assert(newMaxUsage, Greater, oriMaxUsage)
+
+	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+	c.Assert(len(res.Rows()), Equals, 4)
+	// Parse "xxx KB" and check it's greater than 0.
+	memStr := res.Rows()[0][7].(string)
+	re, err := regexp.Compile("[0-9]+ KB")
+	c.Assert(err, IsNil)
+	c.Assert(re.MatchString(memStr), IsTrue)
+	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
+	c.Assert(err, IsNil)
+	c.Assert(bytes, Greater, 0.0)
+}
