@@ -937,7 +937,7 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 				EndKey:   hisHotRegion.EndKey},
 		},
 	}
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, tables)
+	tableInfos := tikvHelper.ParseRegionsTableInfos(regionsInfo, tables)
 
 	// Ignore row without corresponding schema.
 	if tableInfos == nil {

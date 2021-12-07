@@ -669,6 +669,15 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 	}
 }
 
+// GetRegionsTableInfo returns a map maps region id to its tables or indices.
+// Assuming tables or indices key ranges never intersect.
+// Regions key ranges can intersect.
+func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
+	tables := h.GetTablesInfoWithKeyRange(schemas)
+	tableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
+	return tableInfos
+}
+
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
 func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
@@ -690,10 +699,8 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 	return tables
 }
 
-// GetRegionsTableInfo returns a map maps region id to its tables or indices.
-// Assuming tables or indices key ranges never intersect.
-// Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+// ParseRegionsTableInfos parse the tables or indices in regions according to key range.
+func (h *Helper) ParseRegionsTableInfos(regionsInfo *RegionsInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo.Regions))
 
 	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
