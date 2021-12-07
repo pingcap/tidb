@@ -57,6 +57,7 @@ var (
 	_ functionClass = &vitessHashFunctionClass{}
 	_ functionClass = &uuidToBinFunctionClass{}
 	_ functionClass = &binToUUIDFunctionClass{}
+	_ functionClass = &isUUIDFunctionClass{}
 )
 
 var (
@@ -78,6 +79,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
+	_ builtinFunc = &builtinIsUUIDSig{}
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
 	_ builtinFunc = &builtinUUIDToBinSig{}
@@ -860,6 +862,47 @@ type isUsedLockFunctionClass struct {
 
 func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
+}
+
+type isUUIDFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 1
+	sig := &builtinIsUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsUUID)
+	return sig, nil
+}
+
+type builtinIsUUIDSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIsUUIDSig) Clone() builtinFunc {
+	newSig := &builtinIsUUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinIsUUIDSig.
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_is-uuid
+func (b *builtinIsUUIDSig) evalInt(row chunk.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, isNull, err
+	}
+	if _, err = uuid.Parse(val); err != nil {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type masterPosWaitFunctionClass struct {
