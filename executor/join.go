@@ -214,9 +214,13 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 		if !hasWaitedForBuild {
+			failpoint.Inject("issue30289", func(val failpoint.Value) {
+				if val.(bool) {
+					probeSideResult.Reset()
+				}
+			})
 			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
 				e.finished.Store(true)
-				return
 			}
 			emptyBuild, buildErr := e.wait4BuildSide()
 			if buildErr != nil {
@@ -264,6 +268,11 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 		}
 		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 		err = Next(ctx, e.buildSideExec, chk)
+		failpoint.Inject("issue30289", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("issue30289 build return error")
+			}
+		})
 		if err != nil {
 			e.buildFinished <- errors.Trace(err)
 			return
