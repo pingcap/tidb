@@ -6579,7 +6579,7 @@ func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
-func (s *testSuite) TestIssue20071(c *C) {
+func (s *testIntegrationSuite) TestIssue20071(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists table_30_utf8_4")
 	tk.MustExec("drop table if exists t")
@@ -6592,7 +6592,7 @@ func (s *testSuite) TestIssue20071(c *C) {
 	tk.MustExec("select a from table_30_utf8_4 order by a")
 }
 
-func (s *testSuite) TestVirtualGeneratedColumnAndLimit(c *C) {
+func (s *testIntegrationSuite) TestVirtualGeneratedColumnAndLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int as (a + 1));")
@@ -7915,7 +7915,7 @@ func (s *testIntegrationSuite) TestIssue11333(c *C) {
 	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 }
 
-func (s *testSuite) TestIssue12206(c *C) {
+func (s *testIntegrationSuite) TestIssue12206(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t12206;")
