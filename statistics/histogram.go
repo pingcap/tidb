@@ -1071,14 +1071,15 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
+
 	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
-func (c *Column) IsHistNeeded() bool {
-	return !c.NotAccurate() && c.Histogram.NDV > 0 && c.notNullCount() == 0
+func (c *Column) IsHistNeeded(collPseudo bool) bool {
+	return (!collPseudo || !c.NotAccurate()) && c.Histogram.NDV > 0 && c.notNullCount() == 0
 }
 
 func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {

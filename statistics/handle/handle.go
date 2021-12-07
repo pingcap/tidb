@@ -109,10 +109,8 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
 
-	// SubCtxs holds all sessions used by sub stats load workers
-	SubCtxs []sessionctx.Context
-	// HistogramNeeded buffers the histogram needs from optimizer/statistics and is consumed by stats worker.
-	HistogramNeeded NeededColumnsCh
+	// statsLoad is used to load stats concurrently
+	StatsLoad StatsLoad
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
@@ -199,8 +197,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		feedback:         statistics.NewQueryFeedbackMap(),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
-		SubCtxs:          make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency),
-		HistogramNeeded:  NeededColumnsCh{ColumnsCh: make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize), TimeoutColumnsCh: make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)},
 	}
 	handle.lease.Store(lease)
 	handle.pool = pool
@@ -208,6 +204,9 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
+	handle.StatsLoad.NeededColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
+	handle.StatsLoad.TimeoutColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err

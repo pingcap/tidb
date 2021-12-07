@@ -1269,7 +1269,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
-		statsHandle.SubCtxs[i] = ctx
+		statsHandle.StatsLoad.SubCtxs[i] = ctx
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
 	}

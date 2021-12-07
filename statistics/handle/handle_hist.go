@@ -43,15 +43,17 @@ func (h *Handle) GenHistMissingColumns(neededColumns map[model.TableColumnID]str
 		if !ok {
 			continue
 		}
-		if colHist.IsHistNeeded() {
+		if colHist.IsHistNeeded(tbl.Pseudo) {
 			missingColumns = append(missingColumns, col)
 		}
 	}
 	return missingColumns
 }
 
-type NeededColumnsCh struct {
-	ColumnsCh        chan *NeededColumnTask
+type StatsLoad struct {
+	sync.Mutex
+	SubCtxs          []sessionctx.Context
+	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
 }
 
@@ -66,7 +68,7 @@ type NeededColumnTask struct {
 func (h *Handle) AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, timeout time.Duration) {
 	toTimout := time.Now().Local().Add(timeout)
 	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, Wg: wg}
-	h.HistogramNeeded.ColumnsCh <- colTask
+	h.StatsLoad.NeededColumnsCh <- colTask
 }
 
 var ErrExit = errors.New("Stop loading since domain is closed.")
@@ -146,7 +148,7 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	}
 	hist, err := h.readStatsForOne(col, c, reader)
 	if err != nil {
-		h.HistogramNeeded.ColumnsCh <- task
+		h.StatsLoad.NeededColumnsCh <- task
 		return err
 	}
 	if hist != nil && h.updateCachedColumn(col, hist) {
@@ -198,19 +200,20 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	for {
 		to.Reset(timeout)
 		select { // select ColumnsCh firstly since the priority
-		case task, ok := <-h.HistogramNeeded.ColumnsCh:
+		case task, ok := <-h.StatsLoad.NeededColumnsCh:
 			if !ok {
 				return nil, errors.New("drainColTask: cannot read from a closed ColumnsCh, maybe the chan is closed.")
 			}
 			if time.Now().After(task.ToTimeout) {
-				h.HistogramNeeded.TimeoutColumnsCh <- task
+				h.StatsLoad.NeededColumnsCh <- task
 				continue
 			}
 			return task, nil
 		case <-to.C():
 			to.SetRead()
+			to.Reset(timeout)
 			select { // select TimeoutColumnsCh if there's no task from ColumnsCh currently
-			case task, ok := <-h.HistogramNeeded.TimeoutColumnsCh:
+			case task, ok := <-h.StatsLoad.TimeoutColumnsCh:
 				if !ok {
 					return nil, errors.New("drainColTask: cannot read from a closed TimeoutColumnsCh, maybe the chan is closed.")
 				}
@@ -218,9 +221,9 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			case <-to.C():
 				to.SetRead()
 				continue
+			case <-exit:
+				return nil, ErrExit
 			}
-		case <-exit:
-			return nil, ErrExit
 		case <-exit:
 			return nil, ErrExit
 		}
@@ -229,8 +232,8 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 
 // updateCachedColumn updates the column hist to global statsCache.
 func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics.Column) (updated bool) {
-	h.statsCache.Lock()
-	defer h.statsCache.Unlock()
+	h.StatsLoad.Lock()
+	defer h.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load().(statsCache)

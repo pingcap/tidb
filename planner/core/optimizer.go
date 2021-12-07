@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"math"
+	"sync"
 	"time"
 )
 
@@ -322,9 +323,21 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmtCtx.StatsLoad.NeededColumns = missingColumns
 		wg := stmtCtx.StatsLoad.Wg
+		if wg == nil {
+			wg = &sync.WaitGroup{}
+			stmtCtx.StatsLoad.Wg = wg
+		}
 		wg.Add(len(missingColumns))
-		waitTime := mathutil.Min(int(syncWait), int(stmtCtx.MaxExecutionTime*1000))
-		var timeout = time.Duration(waitTime)
+		hintMaxExecutionTime := stmtCtx.MaxExecutionTime
+		if hintMaxExecutionTime == 0 {
+			hintMaxExecutionTime = math.MaxInt
+		}
+		sessMaxExecutionTime := sctx.GetSessionVars().MaxExecutionTime
+		if sessMaxExecutionTime == 0 {
+			sessMaxExecutionTime = math.MaxInt
+		}
+		waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
+		var timeout = time.Duration(waitTime) * time.Millisecond
 		for _, col := range missingColumns {
 			statsHandle.AppendNeededColumn(col, wg, timeout)
 		}
@@ -335,18 +348,25 @@ func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, err
 	return true, nil
 }
 
-// collectNeededColumns to align with predicate-column collection
+// collectNeededColumns simple implementation, TODO align with yifan
 func collectNeededColumns(plan LogicalPlan) map[model.TableColumnID]struct{} {
-	var neededColumns map[model.TableColumnID]struct{}
-	switch x := plan.(type) {
-	case *LogicalSelection:
-		exprs := x.Conditions
-		cols := make([]*expression.Column, 0, len(exprs))
-		cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
-		// TODO
-	default:
-	}
+	neededColumns := map[model.TableColumnID]struct{}{}
+	collectColumnsFromPlan(plan, neededColumns)
 	return neededColumns
+}
+
+func collectColumnsFromPlan(plan LogicalPlan, neededColumns map[model.TableColumnID]struct{}) {
+	for _, child := range plan.Children() {
+		collectColumnsFromPlan(child, neededColumns)
+	}
+	switch x := plan.(type) {
+	case *DataSource:
+		tblID := x.TableInfo().ID
+		for _, col := range x.Schema().Columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			neededColumns[tblColID] = struct{}{}
+		}
+	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
