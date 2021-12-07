@@ -90,8 +90,8 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 		return res, isNull, err
 	}
 	tp := b.args[0].GetType()
-	enc := charset.NewEncoding(tp.Charset)
-	res, err = enc.EncodeString(val)
+	enc := charset.FindEncoding(tp.Charset)
+	res, _, err = enc.EncodeString(nil, val)
 	return res, false, err
 }
 
@@ -109,7 +109,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	enc := charset.NewEncoding(b.args[0].GetType().Charset)
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
 	var encodedBuf []byte
 	for i := 0; i < n; i++ {
@@ -117,7 +117,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		strBytes, err := enc.Encode(encodedBuf, buf.GetBytes(i))
+		strBytes, _, err := enc.Encode(encodedBuf, buf.GetBytes(i))
 		if err != nil {
 			return err
 		}
@@ -213,10 +213,10 @@ func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, e
 			return s, nil
 		}
 	} else {
-		enc := charset.NewEncoding(b.tp.Charset)
+		enc := charset.FindEncoding(b.tp.Charset)
 		var buf []byte
 		transferString = func(s []byte) ([]byte, error) {
-			str, err := enc.Decode(buf, s)
+			str, _, err := enc.Decode(buf, s)
 			if err != nil {
 				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
 			}
@@ -256,26 +256,80 @@ func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.
 	return FoldConstant(res)
 }
 
+type funcProp int8
+
+const (
+	funcPropNone funcProp = iota
+	funcPropBinAware
+	funcPropAuto
+)
+
+// convertActionMap collects from https://dev.mysql.com/doc/refman/8.0/en/string-functions.html.
+var convertActionMap = map[funcProp][]string{
+	funcPropNone: {
+		/* arguments are numbers */ ast.Bin, ast.CharFunc,
+		/* not binary aware */ ast.CharLength, ast.CharacterLength, ast.Elt,
+	},
+	funcPropBinAware: {
+		// The arguments of these functions are wrapped with to_binary().
+		// For compatibility reason, legacy charsets arguments are not wrapped.
+		// Legacy charsets: utf8mb4, utf8, latin1, ascii, binary.
+		ast.ASCII, ast.BitLength, ast.Field,
+		ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
+		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress,
+	},
+	funcPropAuto: {
+		// The arguments of these functions are wrapped with to_binary()/from_binary() according to
+		// the evaluated result charset and the argument charset.
+		// For binary argument && string result, wrap it with from_binary().
+		// For string argument && binary result, wrap it with to_binary().
+		ast.Concat, ast.ConcatWS, ast.ExportSet,
+	},
+}
+
+var convertFuncsMap = map[string]funcProp{}
+
+func init() {
+	for k, fns := range convertActionMap {
+		for _, f := range fns {
+			convertFuncsMap[f] = k
+		}
+	}
+}
+
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
 func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
-	switch funcName {
-	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce,
-		ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace,
-		ast.Substring, ast.Mid, ast.Translate, ast.InsertFunc, ast.Lpad, ast.Rpad, ast.Elt, ast.ExportSet, ast.MakeSet,
-		ast.FindInSet, ast.Regexp, ast.Field, ast.Locate, ast.Instr, ast.Position, ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ,
-		ast.NE, ast.NullEQ, ast.Strcmp, ast.If, ast.Ifnull, ast.Like, ast.In, ast.DateFormat, ast.TimeFormat:
-		if ec.Charset == charset.CharsetBin && expr.GetType().Charset != charset.CharsetBin {
+	argChs, dstChs := expr.GetType().Charset, ec.Charset
+	switch convertFuncsMap[funcName] {
+	case funcPropNone:
+		return expr
+	case funcPropBinAware:
+		if isLegacyCharset(argChs) {
+			return expr
+		}
+		return BuildToBinaryFunction(ctx, expr)
+	case funcPropAuto:
+		if argChs != charset.CharsetBin && dstChs == charset.CharsetBin {
+			if isLegacyCharset(argChs) {
+				return expr
+			}
 			return BuildToBinaryFunction(ctx, expr)
-		} else if ec.Charset != charset.CharsetBin && expr.GetType().Charset == charset.CharsetBin {
+		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin {
+			if isLegacyCharset(dstChs) {
+				return expr
+			}
 			ft := expr.GetType().Clone()
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)
 		}
-	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesEncrypt, ast.AesDecrypt, ast.Decode, ast.Encode,
-		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
-		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
-			return BuildToBinaryFunction(ctx, expr)
-		}
 	}
 	return expr
+}
+
+func isLegacyCharset(chs string) bool {
+	switch chs {
+	case charset.CharsetUTF8, charset.CharsetUTF8MB4, charset.CharsetASCII, charset.CharsetLatin1, charset.CharsetBin:
+		return true
+	}
+	return false
 }

@@ -25,7 +25,7 @@ import (
 
 func TestEncoding(t *testing.T) {
 	t.Parallel()
-	enc := charset.NewEncoding(charset.CharsetGBK)
+	enc := charset.FindEncoding(charset.CharsetGBK)
 	require.Equal(t, charset.CharsetGBK, enc.Name())
 
 	txt := []byte("一二三四")

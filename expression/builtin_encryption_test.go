@@ -93,7 +93,7 @@ func TestSQLEncode(t *testing.T) {
 		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		if test.origin != nil {
-			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
+			result, _, err := charset.FindEncoding(test.chs).EncodeString(nil, test.origin.(string))
 			require.NoError(t, err)
 			require.Equal(t, types.NewCollationStringDatum(result, test.chs), d)
 		} else {
@@ -166,7 +166,7 @@ func TestAESEncrypt(t *testing.T) {
 	testAmbiguousInput(t, ctx, ast.AesEncrypt)
 
 	// Test GBK String
-	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	gbkStr, _, _ := charset.FindEncoding("gbk").EncodeString(nil, "你好")
 	gbkTests := []struct {
 		mode   string
 		chs    string
@@ -235,7 +235,7 @@ func TestAESDecrypt(t *testing.T) {
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
 
 	// Test GBK String
-	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	gbkStr, _, _ := charset.FindEncoding("gbk").EncodeString(nil, "你好")
 	gbkTests := []struct {
 		mode   string
 		chs    string

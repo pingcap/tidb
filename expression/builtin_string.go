@@ -705,7 +705,7 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLowerSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Lower)
 	} else {
-		sig = &builtinLowerUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
+		sig = &builtinLowerUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
 	}
 	return sig, nil
@@ -713,15 +713,11 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinLowerUTF8Sig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinLowerUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -732,8 +728,8 @@ func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-
-	return b.encoding.ToLower(d), false, nil
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -904,7 +900,7 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinUpperSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
+		sig = &builtinUpperUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -912,15 +908,11 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinUpperUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -931,8 +923,8 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-
-	return b.encoding.ToUpper(d), false, nil
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1144,36 +1136,20 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	argTp, resultTp := b.args[0].GetType(), b.tp
 	if types.IsBinaryStr(argTp) {
 		// Convert charset to utf8. If it meets error, NULL is returned.
-		enc := charset.NewEncoding(resultTp.Charset)
-		utf8Expr, err := enc.DecodeString(expr)
+		enc := charset.FindEncoding(resultTp.Charset)
+		utf8Expr, _, err := enc.DecodeString(nil, expr)
 		return utf8Expr, err != nil, nil
-	}
-	if types.IsBinaryStr(resultTp) {
+	} else if types.IsBinaryStr(resultTp) {
 		// Convert charset from utf8. If it meets error, NULL is returned.
-		enc := charset.NewEncoding(argTp.Charset)
-		expr, err = enc.EncodeString(expr)
+		enc := charset.FindEncoding(argTp.Charset)
+		expr, _, err = enc.EncodeString(nil, expr)
 		return expr, false, err
 	}
-	if v := makeStringValidator(b.tp.Charset); v != nil {
-		result, _ := v.Truncate(expr, charset.TruncateStrategyReplace)
-		return result, false, nil
+	enc := charset.FindEncoding(resultTp.Charset)
+	if result, _, ok := enc.Validate(nil, hack.Slice(expr)); !ok {
+		return string(result), true, nil
 	}
 	return expr, false, nil
-}
-
-func makeStringValidator(chs string) charset.StringValidator {
-	switch chs {
-	case charset.CharsetASCII:
-		return charset.StringValidatorASCII{}
-	case charset.CharsetUTF8:
-		return charset.StringValidatorUTF8{IsUTF8MB4: false}
-	case charset.CharsetUTF8MB4:
-		return charset.StringValidatorUTF8{IsUTF8MB4: true}
-	case charset.CharsetLatin1, charset.CharsetBinary:
-		return nil
-	default:
-		return charset.StringValidatorOther{Charset: chs}
-	}
 }
 
 type substringFunctionClass struct {
@@ -2339,12 +2315,7 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	argTp := b.args[0].GetType()
-	dBytes, err := charset.NewEncoding(argTp.Charset).Encode(nil, hack.Slice(val))
-	if err != nil {
-		return 0, isNull, err
-	}
-	return int64(len(dBytes) * 8), false, nil
+	return int64(len(val) * 8), false, nil
 }
 
 type charFunctionClass struct {
@@ -2433,7 +2404,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	dBytes := b.convertToBytes(bigints)
-	resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+	resultBytes, _, err := charset.FindEncoding(b.tp.Charset).Decode(nil, dBytes)
 	if err != nil {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return "", true, nil
@@ -2905,43 +2876,19 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	charSet := b.args[0].GetType().Charset
-	ord, err := chooseOrdFunc(charSet)
+	strBytes := hack.Slice(str)
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
+	encoded, _, err := enc.Encode(nil, strBytes[:w])
 	if err != nil {
-		return 0, false, err
+		// Fallback to the first byte.
+		return calcOrd(strBytes[:1]), false, nil
 	}
-
-	enc := charset.NewEncoding(charSet)
-	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
-	if err != nil {
-		return 0, false, err
-	}
-	return ord(leftMost), false, nil
+	// Only the first character is considered.
+	return calcOrd(encoded[:len(enc.Peek(encoded))]), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
-	// use utf8 by default
-	if charSet == "" {
-		charSet = charset.CharsetUTF8
-	}
-	desc, err := charset.GetCharsetInfo(charSet)
-	if err != nil {
-		return nil, err
-	}
-	if desc.Maxlen == 1 {
-		return ordSingleByte, nil
-	}
-	return ordOthers, nil
-}
-
-func ordSingleByte(src []byte) int64 {
-	if len(src) == 0 {
-		return 0
-	}
-	return int64(src[0])
-}
-
-func ordOthers(leftMost []byte) int64 {
+func calcOrd(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {

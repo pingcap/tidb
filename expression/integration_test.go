@@ -802,7 +802,6 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 }
 
 func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
-	c.Skip("it has been broken. Please fix it as soon as possible.")
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1233,6 +1232,23 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+}
+
+func (s *testIntegrationSuite) TestInvalidStrings(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Test convert invalid string.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a binary(5));")
+	tk.MustExec("insert into t values (0x1e240), ('ABCDE');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select convert(t.a using utf8) from t;").Check(testkit.Rows("<nil>", "ABCDE"))
+	tk.MustQuery("select convert(0x1e240 using utf8);").Check(testkit.Rows("<nil>"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select convert(t.a using utf8) from t;").Check(testkit.Rows("<nil>", "ABCDE"))
+	tk.MustQuery("select convert(0x1e240 using utf8);").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite2) TestEncryptionBuiltin(c *C) {
@@ -4847,7 +4863,6 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
-	c.Skip("it has been broken. Please fix it as soon as possible.")
 	// for issue #4954
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)

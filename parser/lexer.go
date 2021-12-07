@@ -40,7 +40,7 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	encoding *charset.Encoding
+	encoding charset.Encoding
 
 	errs         []error
 	warns        []error
@@ -146,7 +146,7 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	utf8Lit, err := s.encoding.DecodeString(sql)
+	utf8Lit, _, err := s.encoding.DecodeString(nil, sql)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()

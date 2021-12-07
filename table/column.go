@@ -20,12 +20,12 @@ package table
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -170,7 +170,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) error {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str []byte, i int) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	var strval strings.Builder
 	for j := 0; j < 6; j++ {
@@ -310,50 +310,60 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		return casted, err
 	}
 
-	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
-		truncateTrailingSpaces(&casted)
-	}
-
-	if v := makeStringValidator(ctx, col); v != nil {
-		str := casted.GetString()
-		strategy := charset.TruncateStrategyReplace
-		if val.Collation() == charset.CollationBin {
-			strategy = charset.TruncateStrategyTrim
-		}
-		if newStr, invalidPos := v.Truncate(str, strategy); invalidPos >= 0 {
-			casted = types.NewStringDatum(newStr)
-			err = handleWrongCharsetValue(ctx, col, str, invalidPos)
-		}
-	}
+	err = validateStringDatum(ctx, &val, &casted, col)
 	if forceIgnoreTruncate {
 		err = nil
 	}
 	return casted, err
 }
 
-func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
-	switch col.Charset {
-	case charset.CharsetASCII:
-		if ctx.GetSessionVars().SkipASCIICheck {
-			return nil
-		}
-		return charset.StringValidatorASCII{}
-	case charset.CharsetUTF8:
-		if ctx.GetSessionVars().SkipUTF8Check {
-			return nil
-		}
-		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
-		return charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
-	case charset.CharsetUTF8MB4:
-		if ctx.GetSessionVars().SkipUTF8Check {
-			return nil
-		}
-		return charset.StringValidatorUTF8{IsUTF8MB4: true}
-	case charset.CharsetLatin1, charset.CharsetBinary:
+func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
+	if !types.IsString(col.Tp) {
 		return nil
-	default:
-		return charset.StringValidatorOther{Charset: col.Charset}
 	}
+	if !types.IsBinaryStr(&col.FieldType) {
+		truncateTrailingSpaces(casted)
+	}
+	// Skip utf8 check if possible.
+	if mysql.IsUTF8Charset(col.Charset) && ctx.GetSessionVars().SkipUTF8Check {
+		return nil
+	}
+	// Skip ascii check if possible.
+	if col.Charset == charset.CharsetASCII && ctx.GetSessionVars().SkipASCIICheck {
+		return nil
+	}
+	// Handle string in other charsets.
+	enc := charset.FindEncoding(col.Charset)
+	if _, ok := enc.(*charset.EncodingUTF8MB3); ok && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
+		enc = charset.EncodingUTF8MB3StrictImpl
+	}
+	if origin.Collation() == charset.CharsetBin {
+		// Convert to corresponding charset from binary to utf8.
+		src := casted.GetBytes()
+		encBytes, nSrc, err := enc.Decode(nil, src)
+		if err != nil {
+			// Remove the trailing invalid characters.
+			var err1 error
+			encBytes, _, err1 = enc.Decode(encBytes, src[:nSrc])
+			if err1 != nil {
+				logutil.BgLogger().Info("validateStringDatum.Decode failed",
+					zap.String("charset", col.Charset),
+					zap.Binary("src", src),
+					zap.Int("invalid bytes position", nSrc))
+			}
+			casted.SetBytes(encBytes)
+			return handleWrongCharsetValue(ctx, col, src, nSrc)
+		}
+		casted.SetBytes(encBytes)
+		return nil
+	}
+	// Check if the string is valid in the given column charset.
+	str := casted.GetBytes()
+	if ret, invalidPos, ok := enc.Validate(nil, str); !ok {
+		casted.SetBytes(ret)
+		return handleWrongCharsetValue(ctx, col, str, invalidPos)
+	}
+	return nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
