@@ -132,6 +132,12 @@ func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
 	if n.TracePlan {
 		ctx.WriteKeyWord("PLAN ")
+		if n.TracePlanTarget != "" {
+			ctx.WriteKeyWord("TARGET")
+			ctx.WritePlain(" = ")
+			ctx.WriteString(n.TracePlanTarget)
+			ctx.WritePlain(" ")
+		}
 	} else if n.Format != "row" {
 		ctx.WriteKeyWord("FORMAT")
 		ctx.WritePlain(" = ")
