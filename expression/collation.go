@@ -242,7 +242,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return ec, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1:]...)
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil

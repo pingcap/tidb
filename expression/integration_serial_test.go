@@ -17,6 +17,7 @@ package expression_test
 import (
 	"context"
 	"fmt"
+	mysql "github.com/pingcap/tidb/errno"
 	"math"
 	"strings"
 	"testing"
@@ -1496,6 +1497,16 @@ func TestIssue26662(t *testing.T) {
 	tk.MustExec("set names utf8;")
 	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
 		Check(testkit.Rows())
+}
+
+func TestIssue30245(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
