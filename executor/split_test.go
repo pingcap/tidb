@@ -37,8 +37,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Commentf(format string, args ...interface{})string{
-	return fmt.Sprintf(format,args)
+func Commentf(format string, args ...interface{}) string {
+	return fmt.Sprintf(format, args)
 }
 
 func TestLongestCommonPrefixLen(t *testing.T) {
@@ -59,7 +59,7 @@ func TestLongestCommonPrefixLen(t *testing.T) {
 
 	for _, ca := range cases {
 		re := longestCommonPrefixLen([]byte(ca.s1), []byte(ca.s2))
-		assert.Equal(t, ca.l,re)
+		assert.Equal(t, ca.l, re)
 	}
 }
 
@@ -81,9 +81,9 @@ func TestGetStepValue(t *testing.T) {
 
 	for _, ca := range cases {
 		l := longestCommonPrefixLen(ca.lower, ca.upper)
-		assert.Equal(t, ca.l,l)
+		assert.Equal(t, ca.l, l)
 		v0 := getStepValue(ca.lower[l:], ca.upper[l:], 1)
-		assert.Equal(t, v0,ca.v)
+		assert.Equal(t, v0, ca.v)
 	}
 }
 
@@ -140,7 +140,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err := e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	assert.Nil(t, err)
-	assert.Equal(t, len(valueList),e.num+1)
+	assert.Equal(t, len(valueList), e.num+1)
 
 	cases := []struct {
 		value        int
@@ -170,13 +170,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		assert.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		assert.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
@@ -196,7 +196,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	assert.Nil(t, err)
-	assert.Equal(t, len(valueList),e.num+1)
+	assert.Equal(t, len(valueList), e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -218,13 +218,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		assert.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		assert.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 
 	// Test for timestamp index.
@@ -248,7 +248,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	assert.Nil(t, err)
-	assert.Equal(t, len(valueList),e.num+1)
+	assert.Equal(t, len(valueList), e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -276,13 +276,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		assert.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		assert.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 
@@ -328,7 +328,7 @@ func TestSplitTable(t *testing.T) {
 	}
 	valueList, err := e.getSplitTableKeys()
 	assert.Nil(t, err)
-	assert.Equal(t, len(valueList),e.num-1)
+	assert.Equal(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        int
@@ -358,7 +358,7 @@ func TestSplitTable(t *testing.T) {
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
 		assert.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		assert.Equal(t, idx,ca.lessEqualIdx,Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 
@@ -419,7 +419,7 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 	valueList, err := e.getSplitTableKeys()
 	assert.Nil(t, err)
-	assert.Equal(t, len(valueList),e.num-1)
+	assert.Equal(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        []types.Datum
@@ -452,7 +452,7 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		assert.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		assert.Equal(t, idx,ca.lessEqualIdx, Commentf("%#v", ca))
+		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
 	}
 }
 
