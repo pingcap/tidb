@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -94,6 +95,7 @@ type executorBuilder struct {
 	readReplicaScope string
 	inUpdateStmt     bool
 	inDeleteStmt     bool
+	inInsertStmt     bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -795,6 +797,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	b.inInsertStmt = true
 	if v.SelectPlan != nil {
 		// Try to update the forUpdateTS for insert/replace into select statements.
 		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
@@ -1055,6 +1058,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
+	}
+
+	us.collators = make([]collate.Collator, 0, len(us.columns))
+	for _, tp := range retTypes(us) {
+		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
 	}
 
 	switch x := reader.(type) {
@@ -1418,6 +1426,12 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+		e.numWorkers = 0
+	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e

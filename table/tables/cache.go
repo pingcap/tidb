@@ -189,10 +189,12 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
+	start := time.Now()
 	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.AddRecord(ctx, r, opts...)
 }
 
@@ -203,10 +205,12 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
+	start := time.Now()
 	err = c.handle.LockForWrite(ctx, c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
@@ -217,10 +221,12 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
+	start := time.Now()
 	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
