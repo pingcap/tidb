@@ -5004,12 +5004,11 @@ func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
 		if expr.Name == nil {
 			// col = DEFAULT
 			return true
-		} else {
-			refIdx, err := expression.FindFieldName(names, expr.Name)
-			if refIdx == 0 && err == nil {
-				// col = DEFAULT(col)
-				return true
-			}
+		}
+		refIdx, err := expression.FindFieldName(names, expr.Name)
+		if refIdx == 0 && err == nil {
+			// col = DEFAULT(col)
+			return true
 		}
 	}
 	return false
