@@ -893,8 +893,15 @@ func TestInsertSetWithDefault(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows(
 		"1 2021-11-22 08:35:32",
 		"2 2021-11-22 08:35:32"))
-	// TODO: Add test case with ON DUPLICATE KEY UPDATE t = default(another_column)
-	// Both for SET and VALUES
+	tk.MustExec(`DROP TABLE t1`)
+	tk.MustExec(`CREATE TABLE t1 (a int default 1 PRIMARY KEY, b int default 2)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (2,2), (3,3)`)
+	tk.MustExec(`INSERT INTO t1 VALUES (3,2) ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustExec(`INSERT INTO t1 SET a = 2, b = 3 ON DUPLICATE KEY UPDATE b = DEFAULT(a)`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows(
+		"2 1",
+		"3 1"))
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {

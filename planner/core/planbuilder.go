@@ -3133,7 +3133,6 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 			}
 			return nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
 		}
-		// TODO: Check if really needed?!
 		defaultExpr := extractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
