@@ -109,13 +109,6 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-upload-coverage:
-ifneq ($(CODECOV_TOKEN), "")
-	curl -LO ${FILE_SERVER_URL}/download/cicd/ci-tools/codecov
-	chmod +x codecov
-	./codecov -t ${CODECOV_TOKEN}
-endif
-
 devgotest: failpoint-enable
 # grep regex: Filter out all tidb logs starting with:
 # - '[20' (like [2021/09/15 ...] [INFO]..)
@@ -330,7 +323,7 @@ br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
 br_unit_test_in_verify_ci: tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
