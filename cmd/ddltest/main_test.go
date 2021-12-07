@@ -12,33 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filesort
+package ddltest
 
 import (
-	"math/rand"
+	"fmt"
+	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/types"
+	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
-}
-
-func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []types.Datum, handle int64) {
-	key = make([]types.Datum, keySize)
-	for i := range key {
-		key[i] = types.NewDatum(r.Int())
+	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
+	if err != nil {
+		fmt.Fprint(os.Stderr, err.Error())
+		os.Exit(1)
 	}
-
-	val = make([]types.Datum, valSize)
-	for j := range val {
-		val[j] = types.NewDatum(r.Int())
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 	}
-
-	handle = r.Int63()
-	return
+	goleak.VerifyTestMain(m, opts...)
 }

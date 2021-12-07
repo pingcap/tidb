@@ -71,6 +71,18 @@ func TestGetTimeValue(t *testing.T) {
 	timeValue = v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
+	// trigger the stmt context cache.
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "0")
+	require.NoError(t, err)
+
+	v1, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	v2, err := GetTimeCurrentTimestamp(ctx, mysql.TypeTimestamp, types.MinFsp)
+	require.NoError(t, err)
+
+	require.Equal(t, v1, v2)
+
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "1234")
 	require.NoError(t, err)
 
