@@ -1028,7 +1028,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	logutil.SlowQueryLogger.Warn(slowLog)
 	if costTime >= threshold {
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
