@@ -936,10 +936,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
-	//tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	// Is the above OK? default(b) can be calculated... Just not explicitly defined.
 	tk.MustExec("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);")
-	//tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c)")
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
