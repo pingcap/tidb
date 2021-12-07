@@ -5,7 +5,6 @@ codecov:
 coverage:
   precision: 4
   round: down
-  range: "65...90"
 
   status:
     project: 
@@ -25,9 +24,11 @@ parsers:
       macro: no
 
 comment:
-  layout: "header, diff"
+  layout: "reach, diff, flags, files"
   behavior: default
   require_changes: no
+  require_head: no     # default yes
+  require_base: no     # default yes
 
 ignore:
   - "LICENSES"
