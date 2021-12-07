@@ -696,6 +696,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	return krs, nil
 }
 
+// EncodeIndexKey gets encoded keys containing low and high
 func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 	if err != nil {
