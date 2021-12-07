@@ -1481,6 +1481,11 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
+		coll, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
+		er.err = err
+		if er.err != nil {
+			return
+		}
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
 			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
@@ -1488,6 +1493,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 				er.err = err
 				return
 			}
+			expr.SetCharsetAndCollation(coll.Charset, coll.Collation)
 			eqFunctions = append(eqFunctions, expr)
 		}
 		function = expression.ComposeDNFCondition(er.sctx, eqFunctions...)
