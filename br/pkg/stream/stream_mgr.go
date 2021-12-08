@@ -30,28 +30,19 @@ import (
 
 var metaPrefix = []byte("m")
 
-// appendTableObserveRanges specifies building key ranges [t{tableID}{low}, t{tableID}{high}] corresponding to `tblIDS`
-func appendTableObserveRanges(tblIDs []int64) ([]kv.KeyRange, error) {
+// appendTableObserveRanges specifies building key ranges corresponding to `tblIDS`
+func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tblIDs))
-	rangers := ranger.FullNotNullRange()
-
-	for _, ran := range rangers {
-		low, high, err := distsql.EncodeIndexKey(nil, ran)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, tid := range tblIDs {
-			startKey := tablecodec.EncodeTablePrefixSeekKey(tid, low)
-			endKey := tablecodec.EncodeTablePrefixSeekKey(tid, high)
-			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
-		}
+	for _, tid := range tblIDs {
+		startKey := tablecodec.EncodeTablePrefix(tid)
+		endKey := startKey.PrefixNext()
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
-	return krs, nil
+	return krs
 }
 
 // buildObserveTableKeyRanges specifies building key ranges to observe data KV that belongs to `table`
-func buildObserveTableKeyRanges(table *model.TableInfo) ([]kv.KeyRange, error) {
+func buildObserveTableKeyRanges(table *model.TableInfo) []kv.KeyRange {
 	pis := table.GetPartitionInfo()
 	if pis == nil {
 		// Short path, no partition.
@@ -103,10 +94,7 @@ func BuildObserveDataRanges(
 			}
 
 			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
-			tableRanges, err := buildObserveTableKeyRanges(tableInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			tableRanges := buildObserveTableKeyRanges(tableInfo)
 			ranges = append(ranges, tableRanges...)
 		}
 	}
