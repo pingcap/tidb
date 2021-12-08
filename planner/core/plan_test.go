@@ -654,51 +654,30 @@ func TestCopPaging(t *testing.T) {
 	tk.MustExec("set session tidb_enable_paging = 1")
 	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
 	defer tk.MustExec("drop table t")
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("analyze table t")
 
-	// limit 1 in 100 should go paging
+	// limit 1000 should go paging
 	for i := 0; i < 1; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 1").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:1",
-			"└─IndexLookUp 1.00 root  paging:true",
-			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
-			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
-			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
-	}
-	// limit 19 is still under the threshold 0.2, it should go paging
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 19").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:19",
-			"└─IndexLookUp 1.00 root  paging:true",
-			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
-			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
-			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 1000").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:1000",
+			"└─IndexLookUp 4.00 root  paging:true",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
 
-	// limit 21 exceeds the threshold, it should not go paging
+	// limit 1001 exceeds the threshold, it should not go paging
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 21").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:21",
-			"└─IndexLookUp 1.00 root  ",
-			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
-			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
-			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// limit 100 certainly not go paging.
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 100").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:100",
-			"└─IndexLookUp 1.00 root  ",
-			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
-			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
-			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 1001").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:1001",
+			"└─IndexLookUp 4.00 root  ",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
 }

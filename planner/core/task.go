@@ -54,7 +54,7 @@ const (
 	// pagingGrowingSum = (pagingSize ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
 	pagingGrowingSum float64 = 16320
 	// if the desired rows are below the threshold, use paging
-	pagingThreshold float64 = 0.2
+	pagingThreshold uint64 = 1000
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -101,7 +101,7 @@ type copTask struct {
 	// For table partition.
 	partitionInfo PartitionInfo
 
-	expectCnt float64
+	expectCnt uint64
 }
 
 func (t *copTask) invalid() bool {
@@ -930,24 +930,23 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	idxCst := indexRows * sessVars.CPUFactor
 	// if the expectCnt is below the paging threshold, using paging API, recalculate cost.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 {
-		if sourceRows := extractRows(t.indexPlan); t.expectCnt < sourceRows*pagingThreshold {
-			seekCnt := float64(1)
-			if t.expectCnt > pagingGrowingSum {
-				seekCnt += float64(int(8 + (t.expectCnt-pagingGrowingSum)/maxPagingSize))
-			} else if t.expectCnt > minPagingSize {
-				seekCnt += float64(int(math.Log((pagingSizeGrow-1)*t.expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
-			}
-			indexSelectivity := float64(1)
-			sourceRows := extractRows(t.indexPlan)
-			if sourceRows > indexRows {
-				indexSelectivity = indexRows / sourceRows
-			}
-			pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + t.expectCnt*sessVars.CPUFactor
-			pagingCst *= indexSelectivity
-			idxCst = pagingCst
-			p.Paging = true
+	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= pagingThreshold {
+		seekCnt := float64(1)
+		expectCnt := float64(t.expectCnt)
+		if expectCnt > pagingGrowingSum {
+			seekCnt += float64(int(8 + (expectCnt-pagingGrowingSum)/maxPagingSize))
+		} else if expectCnt > minPagingSize {
+			seekCnt += float64(int(math.Log((pagingSizeGrow-1)*expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
 		}
+		indexSelectivity := float64(1)
+		sourceRows := extractRows(t.indexPlan)
+		if sourceRows > indexRows {
+			indexSelectivity = indexRows / sourceRows
+		}
+		pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + expectCnt*sessVars.CPUFactor
+		pagingCst *= indexSelectivity
+		idxCst = pagingCst
+		p.Paging = true
 	}
 	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
@@ -1189,7 +1188,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 			pushedDownLimit.cost = cop.cost()
 		}
-		cop.expectCnt = float64(p.Count)
+		cop.expectCnt = p.Count
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
 	} else if mpp, ok := t.(*mppTask); ok {
