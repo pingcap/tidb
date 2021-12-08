@@ -121,8 +121,10 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 			return nil
 		}
 		succ = true
-		if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-			return errors.Trace(err)
+		if ts > lease { // Note the check, don't decrease lease value!
+			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		return nil
