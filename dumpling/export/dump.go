@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"math/big"
 	"sort"
 	"strconv"
@@ -17,7 +16,7 @@ import (
 	"time"
 
 	// import mysql driver
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
@@ -31,6 +30,9 @@ import (
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -49,9 +51,10 @@ type Dumper struct {
 	extStore storage.ExternalStorage
 	dbHandle *sql.DB
 
-	tidbPDClientForGC         pd.Client
-	selectTiDBTableRegionFunc func(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
-	totalTables               int64
+	tidbPDClientForGC             pd.Client
+	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
+	totalTables                   int64
+	charsetAndDefaultCollationMap map[string]string
 }
 
 // NewDumper returns a new Dumper
@@ -149,6 +152,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
 		tctx.L().Info("get global metadata failed", zap.Error(err))
+	}
+
+	//init charset and default collation map
+	d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
+	if err != nil {
+		return err
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
@@ -320,7 +329,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		for _, policy := range policyNames {
 			createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
 			task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
@@ -331,11 +340,17 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		}
 	}
 
+	parser1 := parser.New()
 	for dbName, tables := range allTables {
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
 			if err != nil {
-				return err
+				return errors.Trace(err)
+			}
+			// adjust db collation
+			createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
 			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
@@ -349,7 +364,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 				zap.String("table", table.Name))
 			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 
 			if !conf.NoSchemas {
@@ -360,6 +375,12 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 						return tctx.Err()
 					}
 				} else {
+					// adjust table collation
+					newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					meta.(*tableMeta).showCreateTable = newCreateSQL
 					task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
@@ -370,13 +391,99 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if table.Type == TableTypeBase {
 				err = d.dumpTableData(tctx, metaConn, meta, taskChan)
 				if err != nil {
-					return err
+					return errors.Trace(err)
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// adjustDatabaseCollation adjusts db collation and return new create sql and collation
+func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		tctx.L().Warn("parse create database error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, nil
+	}
+	createStmt, ok := stmt.(*ast.CreateDatabaseStmt)
+	if !ok {
+		return originSQL, nil
+	}
+	var charset string
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.DatabaseOptionCollate {
+			return originSQL, nil
+		}
+		if createOption.Tp == ast.DatabaseOptionCharset {
+			charset = createOption.Value
+		}
+	}
+	// get db collation
+	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+	if !ok {
+		tctx.L().Warn("not found database charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		return originSQL, nil
+	}
+	// add collation
+	createStmt.Options = append(createStmt.Options, &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: collation})
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
+		In:    bf,
+	})
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return bf.String(), nil
+}
+
+// adjustTableCollation adjusts table collation
+func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, nil
+	}
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return originSQL, nil
+	}
+	var charset string
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.TableOptionCollate {
+			return originSQL, nil
+		}
+		if createOption.Tp == ast.TableOptionCharset {
+			charset = createOption.StrValue
+		}
+	}
+
+	// get db collation
+	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+	if !ok {
+		tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		return originSQL, nil
+	}
+
+	// add collation
+	createStmt.Options = append(createStmt.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: collation})
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
+		In:    bf,
+	})
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return bf.String(), nil
 }
 
 func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
@@ -913,7 +1020,20 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
-	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, getListTableTypeByConf(conf), tableTypes...)
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		tctx.L().Warn("dumpling tableType `sequence` is unsupported for now")
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
 	if err != nil {
 		return err
 	}
