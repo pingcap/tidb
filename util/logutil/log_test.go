@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestZapLoggerWithKeys(t *testing.T) {
@@ -115,24 +116,16 @@ func TestGrpcLoggerCreation(t *testing.T) {
 }
 
 func TestSlowQueryLoggerCreation(t *testing.T) {
-	level := "warn"
-	slowQueryFn := "slow-query.log"
-	fileConf := FileLogConfig{
-		log.FileLogConfig{
-			Filename:   slowQueryFn,
-			MaxSize:    10,
-			MaxDays:    10,
-			MaxBackups: 10,
-		},
-	}
-	conf := NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
-	_, prop, slowQueryConf, err := newSlowQueryLogger(conf)
+	level := "Error"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	_, prop, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
-	require.Equal(t, prop.Level.String(), conf.Level)
-	// make sure SlowQuery.MaxDays/MaxSize/MaxBackups are same with top config.
-	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+	// slow query logger doesn't use the level of the global log config, and the
+	// level should be less than WarnLevel which is used by it to log slow query.
+	require.NotEqual(t, conf.Level, prop.Level.String())
+	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
