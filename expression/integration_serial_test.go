@@ -17,12 +17,12 @@ package expression_test
 import (
 	"context"
 	"fmt"
-	mysql "github.com/pingcap/tidb/errno"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -1507,6 +1507,8 @@ func TestIssue30245(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end", mysql.ErrCantAggregate3collations)
 }
 
 func TestCollationForBinaryLiteral(t *testing.T) {
