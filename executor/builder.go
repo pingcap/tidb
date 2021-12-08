@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"fmt"
 	"bytes"
 	"context"
 	"math"
@@ -636,7 +637,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:             v.Lock,
 		tblID2Handle:     v.TblID2Handle,
-		partitionedTable: v.PartitionedTable,
+		// partitionedTable: v.PartitionedTable,
 	}
 
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
@@ -652,14 +653,41 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		}
 	}
 
-	if len(e.partitionedTable) > 0 {
-		schema := v.Schema()
-		e.tblID2PIDColumnIndex = make(map[int64]int)
-		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
-			col := v.ExtraPIDInfo.Columns[i]
-			tblID := v.ExtraPIDInfo.TblIDs[i]
-			offset := schema.ColumnIndex(col)
-			e.tblID2PIDColumnIndex[tblID] = offset
+	if len(v.PartitionedTable) > 0 {
+		e.partitionedTable = make(map[int64]table.PartitionedTable)
+		e.tblID2PtColsOffsets = make(map[int64][]int)
+
+		for _, pt := range v.PartitionedTable {
+			tblInfo := pt.Meta()
+			e.partitionedTable[tblInfo.ID] = pt
+			dbInfo, ok := is.SchemaByTable(tblInfo)
+			if !ok {
+				b.err = errors.Trace(errors.Errorf("Cannot get schema info for table %s", tblInfo.Name.O))
+				return nil
+			}
+
+			cols := pt.VisibleCols()
+			offsets := make([]int, 0, len(cols))
+			for _, colInfo := range cols {
+				colName := fmt.Sprintf("%s.%s.%s", dbInfo.Name.L, tblInfo.Name.L, colInfo.Name.L)
+				fmt.Println("matching partition column:", colName)
+				fmt.Println("len of schema ==", len(e.schema.Columns))
+
+				match := false
+				for i, col := range e.schema.Columns {
+					fmt.Println("schema column ==", col.OrigName)
+					if col.OrigName == colName {
+						match = true
+						offsets = append(offsets, i)
+						break
+					}
+				}
+				if !match {
+					b.err = errors.Trace(errors.Errorf("Table %s column %s cannot find data with select result", tblInfo.Name.O, colInfo.Name.L))
+					return nil
+				}
+			}
+			e.tblID2PtColsOffsets[tblInfo.ID] = offsets
 		}
 	}
 	return e

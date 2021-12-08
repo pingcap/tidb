@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"context"
 	"math"
 
@@ -400,6 +401,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if err != nil {
 			return nil, err
 		}
+		fmt.Printf("The Plan is %s after using rule %s\n", ToString(logic), rule.name())
 	}
 	opt.recordFinalLogicalPlan(logic)
 	return logic, err

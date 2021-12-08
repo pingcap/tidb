@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"context"
 	"math"
 
@@ -129,6 +130,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			join := &apply.LogicalJoin
 			join.self = join
 			p = join
+			fmt.Println("no corrated ... simplify to join ..", ToString(p), p.Schema().Columns)
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.

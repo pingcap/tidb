@@ -893,14 +893,22 @@ type SelectLockExec struct {
 	tblID2Handle map[int64][]plannercore.HandleCols
 
 	// All the partition tables in the children of this executor.
-	partitionedTable []table.PartitionedTable
+	partitionedTable map[int64]table.PartitionedTable
 
-	// When SelectLock work on the partition table, we need the partition ID
-	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
-	// extra column in the chunk row.
-	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
-	// of multiple tables, so the map struct is used.
-	tblID2PIDColumnIndex map[int64]int
+	// When SelectLock work on the partition table, we need the partition ID instead
+	// of table ID to calculate the lock KV.
+	//
+	// To get the partition ID, we keep the partition columns not pruned and use those columns
+	// to locate the partition (by partition pruning again), and finally get the physicalID.
+	//
+	//     tid => partition column offets
+	//     partition column offsets + chunk row => partition columns
+	//     table.GetPartitionByRow(partition columns) => partition
+	//     pid = partition.GetPhysicalID()
+	//
+	// tblID2PColsOffsets stores tableID => offsets of the partition columns in the chunk row.
+	// The children executor may involve join of multiple tables, so the map struct is used.
+	tblID2PtColsOffsets map[int64][]int
 }
 
 // Open implements the Executor Open interface.
@@ -926,12 +934,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
-				if len(e.partitionedTable) > 0 {
-					// Replace the table ID with partition ID.
-					// The partition ID is returned as an extra column from the table reader.
-					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
-						physicalID = row.GetInt64(offset)
+
+				// If the table is a partitioned table, replace the table ID with partition ID.
+				if pt, ok := e.partitionedTable[id]; ok {
+					ptRowData, err := e.constructPartitionTableRow(row, id)
+					if err != nil {
+						return err
 					}
+
+					p, err := pt.GetPartitionByRow(e.ctx, ptRowData)
+					if err != nil {
+						return err
+					}
+
+					physicalID = p.GetPhysicalID()
 				}
 
 				for _, col := range cols {
@@ -965,6 +981,26 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+}
+
+func (e *SelectLockExec) constructPartitionTableRow(row chunk.Row, id int64) ([]types.Datum, error) {
+	rowDatums := row.GetDatumRow(e.base().retFieldTypes)
+	numDatums := len(rowDatums)
+	if len(e.schema.Columns) != numDatums {
+		return nil, errors.Trace(errors.Errorf("Columns length not match row fields length"))
+	}
+	proj, ok := e.tblID2PtColsOffsets[id]
+	if !ok {
+		return nil, errors.Trace(errors.Errorf("Cannot get column maps"))
+	}
+	ret := make([]types.Datum, 0, numDatums)
+	for _, idx := range proj {
+		if idx >= numDatums {
+			return nil, errors.Trace(errors.Errorf("Column maps index is overflow!"))
+		}
+		ret = append(ret, rowDatums[idx])
+	}
+	return ret, nil
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {

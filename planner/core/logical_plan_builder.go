@@ -3628,6 +3628,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+		fmt.Println("after build where expression plan === ", ToString(p), p.Schema().Columns)
 	}
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
@@ -3683,6 +3684,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
+
+	fmt.Println("after build projeciton, the plan is ", ToString(p), "and schema is ", p.Schema().Columns)
 
 	if sel.Having != nil {
 		b.curClause = havingClause
