@@ -1476,7 +1476,7 @@ func TestChar(t *testing.T) {
 	ctx.GetSessionVars().StrictSQLMode = true
 	run(-1, nil, 1, 123456, "utf8")
 	ctx.GetSessionVars().StrictSQLMode = false
-	run(-2, "?", 1, 123456, "utf8")
+	run(-2, string([]byte{1, 63, 64}), 1, 123456, "utf8")
 }
 
 func TestCharLength(t *testing.T) {
