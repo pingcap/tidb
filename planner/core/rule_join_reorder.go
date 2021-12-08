@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -212,12 +213,16 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		action := fmt.Sprintf("join order become %v from origin %v", tracer.final, tracer.initial)
 		reason := func() string {
 			buffer := bytes.NewBufferString("join cost during reorder[")
-			i := 0
-			for join, cost := range tracer.cost {
+			var joins []string
+			for join := range tracer.cost {
+				joins = append(joins, join)
+			}
+			sort.Strings(joins)
+			for i, join := range joins {
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, cost))
+				buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
 				i++
 			}
 			buffer.WriteString("]")
