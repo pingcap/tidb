@@ -155,6 +155,12 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
+	} else if resultFieldType.Tp == mysql.TypeDatetime {
+		maxDecimal := mathutil.Max(lhs.Decimal, rhs.Decimal)
+		resultFieldType.Flen = mysql.MaxDatetimeWidthNoFsp + mathutil.Max(lhs.Decimal, rhs.Decimal)
+		if maxDecimal > 0 { //addiional '.' between time and fracs
+			resultFieldType.Flen += 1
+		}
 	}
 	return resultFieldType, nil
 }
