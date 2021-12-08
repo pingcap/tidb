@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -194,6 +193,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
 
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
@@ -253,13 +253,9 @@ func buildSum(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
+			retTp:   aggFuncDesc.RetTp,
 		},
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -287,16 +283,8 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
-	frac := base.args[0].GetType().Decimal
-	if len(base.args) == 2 {
-		frac = base.args[1].GetType().Decimal
-	}
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -340,13 +328,8 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
+		retTp:   aggFuncDesc.RetTp,
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString
@@ -392,15 +375,10 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
+			retTp:   aggFuncDesc.RetTp,
 		},
 		isMax: isMax,
 	}
-	frac := base.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	base.frac = mathutil.Min(frac, mysql.MaxDecimalScale)
-
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString
