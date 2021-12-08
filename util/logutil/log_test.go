@@ -139,8 +139,7 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 	}
 	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
 	slowQueryConf := newSlowQueryLogConfig(conf)
-	// newSlowQueryLogConfig() is called by newSlowQueryLogger(),
-	// so the SlowQuery.MaxDays/MaxSize/MaxBackups are same with global config.
+	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
 	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
 }
 
