@@ -285,6 +285,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+		ft := args[0].GetType().Clone()
+		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
+		bf.args[0] = BuildFromBinaryFunction(ctx, args[0], ft)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil

@@ -1398,6 +1398,37 @@ func TestWrapWithCastAsDuration(t *testing.T) {
 	}
 }
 
+func TestWrapWithCastAsString(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
+	cases := []struct {
+		expr Expression
+		err  bool
+		ret  string
+	}{
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 1), Value: types.NewBinaryLiteralDatum([]byte{0x91})},
+			true,
+			"",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 1), Value: types.NewBinaryLiteralDatum([]byte{0x61})},
+			false,
+			"a",
+		},
+	}
+	for _, c := range cases {
+		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
+		res, _, err := expr.EvalString(ctx, chunk.Row{})
+		if c.err {
+			require.Error(t, err)
+		} else {
+			require.Equal(t, c.ret, res)
+		}
+	}
+}
+
 func TestWrapWithCastAsJSON(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
