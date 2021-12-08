@@ -106,7 +106,7 @@ func InitLogger(cfg *LogConfig) error {
 	log.ReplaceGlobals(gl, props)
 
 	// init dedicated logger for slow query log
-	SlowQueryLogger, _, _, err = newSlowQueryLogger(cfg)
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -157,7 +157,7 @@ func ReplaceLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
-	SlowQueryLogger, _, _, err = newSlowQueryLogger(cfg)
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
