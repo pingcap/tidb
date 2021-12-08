@@ -1,3 +1,4 @@
+set @@sql_mode = '';
 -- test for builtin function hex(), length(), ascii(), octet_length()
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
