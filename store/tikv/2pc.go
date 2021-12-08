@@ -341,7 +341,16 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		} else {
 			value = it.Value()
 			if len(value) > 0 {
-				if tablecodec.IsUntouchedIndexKValue(key, value) {
+				isUntouchedValue := tablecodec.IsUntouchedIndexKValue(key, value)
+				if isUntouchedValue {
+					if flags.HasPresumeKeyNotExists() {
+						logutil.BgLogger().Error("unexpected path the untouched key value with PresumeKeyNotExists flag",
+							zap.Stringer("key", key), zap.Stringer("value", kv.Key(value)),
+							zap.Uint16("flags", uint16(flags)), zap.Stack("stack"))
+						return errors.Errorf(
+							"unexpected path the untouched key=%s value=%s contains PresumeKeyNotExists flag keyFlags=%v",
+							key.String(), kv.Key(value).String(), flags)
+					}
 					if !flags.HasLocked() {
 						continue
 					}
