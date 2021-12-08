@@ -189,6 +189,7 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	options.Region, err = flags.GetString(s3RegionOption)
 	if err != nil {
 		return errors.Trace(err)
