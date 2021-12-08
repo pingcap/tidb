@@ -1,8 +1,12 @@
-comment:
-  layout: "reach, diff, flags, files"
-  behavior: default
-  require_changes: no
-  require_head: no     # default yes
-  require_base: no     # default yes
-
-
+coverage:
+  status:
+    project:
+      default:
+        # basic
+        target: auto
+        threshold: 3%
+    patch:
+      default:
+        # basic
+        target: auto
+        threshold: 3%
