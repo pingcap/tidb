@@ -205,12 +205,12 @@ func (s *streamStartMgr) checkStartTS(ctx context.Context) error {
 
 	if currentTS <= s.Cfg.startTS || s.Cfg.endTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"invalid timestamps, startTS %llu should be smaller than currentTS %llu",
+			"invalid timestamps, startTS %d should be smaller than currentTS %d",
 			s.Cfg.startTS, currentTS)
 	}
 	if s.Cfg.endTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"invalid timestamps, endTS %llu should be larger than currentTS %llu",
+			"invalid timestamps, endTS %d should be larger than currentTS %d",
 			s.Cfg.endTS, currentTS)
 	}
 
