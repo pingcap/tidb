@@ -2811,23 +2811,29 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
 	e.innerCtx.keyColIDs = innerKeyColIDs
+	e.innerCtx.keyCollators = keyCollators
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
+	hashCollators := make([]collate.Collator, 0, len(v.InnerHashKeys))
 	for i := 0; i < len(v.OuterHashKeys); i++ {
 		outerHashCols[i] = v.OuterHashKeys[i].Index
 	}
 	for i := 0; i < len(v.InnerHashKeys); i++ {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
+		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.Collate))
 	}
 	e.outerCtx.hashCols = outerHashCols
 	e.innerCtx.hashCols = innerHashCols
+	e.innerCtx.hashCollators = hashCollators
 
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
@@ -2879,8 +2885,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
 	}
 	executorCounterIndexLookUpJoin.Inc()
 
@@ -2899,6 +2907,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			rowTypes:                innerTypes,
 			joinKeys:                v.InnerJoinKeys,
 			keyCols:                 innerKeyCols,
+			keyCollators:            keyCollators,
 			compareFuncs:            v.CompareFuncs,
 			colLens:                 v.IdxColLens,
 			desc:                    v.Desc,
