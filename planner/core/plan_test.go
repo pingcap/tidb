@@ -669,10 +669,10 @@ func TestCopPaging(t *testing.T) {
 			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
 			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
 	}
-	// limit 64 with paging has only 1 seek cost, less than non-paging
+	// limit 19 is still under the threshold 0.2, it should go paging
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 64").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:64",
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 19").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:19",
 			"└─IndexLookUp 1.00 root  paging:true",
 			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
 			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
@@ -680,21 +680,21 @@ func TestCopPaging(t *testing.T) {
 			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
 	}
 
-	// limit 65 with paging has 2 seek cost, also less than non-paging (SeekFactor + 65 * CPUFactor < 100 * CPUFactor)
+	// limit 21 exceeds the threshold, it should not go paging
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 65").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:65",
-			"└─IndexLookUp 1.00 root  paging:true",
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 21").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:21",
+			"└─IndexLookUp 1.00 root  ",
 			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
 			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
 			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
 			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
 	}
 
-	// limit 94 with paging has 2 seek cost, but more than non-paging (SeekFactor + 94 * CPUFactor < 100 * CPUFactor)
+	// limit 100 certainly not go paging.
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 94").Check(kit.Rows(
-			"Limit 1.00 root  offset:0, count:94",
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 100").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:100",
 			"└─IndexLookUp 1.00 root  ",
 			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
 			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",

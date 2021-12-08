@@ -53,6 +53,8 @@ const (
 	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
 	// pagingGrowingSum = (pagingSize ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
 	pagingGrowingSum float64 = 16320
+	// if the desired rows are below the threshold, use paging
+	pagingThreshold float64 = 0.2
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -926,23 +928,23 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	indexRows := t.indexPlan.statsInfo().RowCount
 	idxCst := indexRows * sessVars.CPUFactor
-	// try paging API.
+	// if the expectCnt is below the paging threshold, using paging API, recalculate cost.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 {
-		seekCnt := float64(1)
-		if t.expectCnt > pagingGrowingSum {
-			seekCnt += float64(int(9 + (t.expectCnt-pagingGrowingSum)/maxPagingSize))
-		} else if t.expectCnt > minPagingSize {
-			seekCnt += float64(int(1 + math.Log((pagingSizeGrow-1)*t.expectCnt/minPagingSize)/math.Log(pagingSizeGrow)))
-		}
-		indexSelectivity := float64(1)
-		sourceRows := extractRows(t.indexPlan)
-		if sourceRows > indexRows {
-			indexSelectivity = indexRows / sourceRows
-		}
-		pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + t.expectCnt*sessVars.CPUFactor
-		pagingCst *= indexSelectivity
-		if pagingCst < idxCst {
+		if sourceRows := extractRows(t.indexPlan); t.expectCnt < sourceRows*pagingThreshold {
+			seekCnt := float64(1)
+			if t.expectCnt > pagingGrowingSum {
+				seekCnt += float64(int(8 + (t.expectCnt-pagingGrowingSum)/maxPagingSize))
+			} else if t.expectCnt > minPagingSize {
+				seekCnt += float64(int(math.Log((pagingSizeGrow-1)*t.expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
+			}
+			indexSelectivity := float64(1)
+			sourceRows := extractRows(t.indexPlan)
+			if sourceRows > indexRows {
+				indexSelectivity = indexRows / sourceRows
+			}
+			pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + t.expectCnt*sessVars.CPUFactor
+			pagingCst *= indexSelectivity
 			idxCst = pagingCst
 			p.Paging = true
 		}
