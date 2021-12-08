@@ -39,6 +39,7 @@ type StatsLoad struct {
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
+	workingColMap    map[model.TableColumnID]struct{}
 }
 
 // NeededColumnTask represents one needed column with expire time.
@@ -125,7 +126,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 			case ErrExit:
 				return nil
 			default:
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 		}
@@ -162,6 +163,10 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 		return err0
 	}
 	col := task.TableColumnID
+	// to avoid duplicated handling in concurrent scenario
+	if !h.setWorking(col) {
+		return nil
+	}
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.tables[col.TableID]
 	if !ok {
@@ -173,14 +178,17 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 		task.Wg.Done()
 		return nil
 	}
+	t := time.Now()
 	hist, err := h.readStatsForOne(col, c, reader)
 	if err != nil {
 		h.StatsLoad.NeededColumnsCh <- task
 		return err
 	}
+	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if hist != nil && h.updateCachedColumn(col, hist) {
 		task.Wg.Done()
 	}
+	h.finishWorking(col)
 	return nil
 }
 
@@ -275,4 +283,24 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
 	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
+}
+
+func (h *Handle) setWorking(col model.TableColumnID) bool {
+	h.StatsLoad.Lock()
+	defer h.StatsLoad.Unlock()
+	if h.StatsLoad.workingColMap == nil {
+		h.StatsLoad.workingColMap = map[model.TableColumnID]struct{}{}
+	}
+	if _, ok := h.StatsLoad.workingColMap[col]; ok {
+		return false
+	} else {
+		h.StatsLoad.workingColMap[col] = struct{}{}
+		return true
+	}
+}
+
+func (h *Handle) finishWorking(col model.TableColumnID) {
+	h.StatsLoad.Lock()
+	defer h.StatsLoad.Unlock()
+	delete(h.StatsLoad.workingColMap, col)
 }

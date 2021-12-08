@@ -119,4 +119,13 @@ var (
 			Help:      "Bucketed histogram of latency time (ms) of sync load.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
+
+	ReadStatsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "read_stats_latency_millis",
+			Help:      "Bucketed histogram of latency time (ms) of stats read during sync-load.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
+		})
 )

@@ -100,6 +100,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(SyncLoadCounter)
 	prometheus.MustRegister(SyncLoadTimeoutCounter)
 	prometheus.MustRegister(SyncLoadHistogram)
+	prometheus.MustRegister(ReadStatsHistogram)
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(LoadPrivilegeCounter)
