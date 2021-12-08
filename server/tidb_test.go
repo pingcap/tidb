@@ -76,7 +76,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	require.NoError(t, err)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -121,7 +120,7 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 
 	// Initialize global variable for top-sql test.
 	db, err := sql.Open("mysql", ts.getDSN())
-	require.NoErrorf(t, err, "Error connecting")
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -242,7 +241,6 @@ func TestStatusPort(t *testing.T) {
 	defer cleanup()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -273,7 +271,6 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -329,7 +326,6 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -453,15 +449,17 @@ func TestSocket(t *testing.T) {
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	// a fake server client, config is override, just used to run tests
-	cli := newTestServerClient()
-	cli.runTestRegression(t, func(config *mysql.Config) {
+	confFunc := func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
-	}, "SocketRegression")
+	}
+	// a fake server client, config is override, just used to run tests
+	cli := newTestServerClient()
+	cli.waitUntilCustomServerCanConnect(confFunc)
+	cli.runTestRegression(t, confFunc, "SocketRegression")
 }
 
 func TestSocketAndIp(t *testing.T) {
@@ -498,9 +496,9 @@ func TestSocketAndIp(t *testing.T) {
 			config.User = "root"
 		},
 			func(dbt *testkit.DBTestKit) {
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'%'")
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
 			})
 	}()
 	cli.runTests(t, func(config *mysql.Config) {
@@ -598,8 +596,8 @@ func TestSocketAndIp(t *testing.T) {
 			cli.checkRows(t, rows, "root@localhost")
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.MustQuery("CREATE USER user1@localhost")
-			dbt.MustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+			dbt.MustExec("CREATE USER user1@localhost")
+			dbt.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
 		})
 	// Test with Network interface connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
@@ -610,8 +608,10 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.checkRows(t, rows, "user1@127.0.0.1")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+			require.NoError(t, rows.Close())
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
@@ -623,8 +623,10 @@ func TestSocketAndIp(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "user1@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+			require.NoError(t, rows.Close())
 		})
 
 }
@@ -666,9 +668,9 @@ func TestOnlySocket(t *testing.T) {
 			config.Addr = socketFile
 		},
 			func(dbt *testkit.DBTestKit) {
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'%'")
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
-				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.MustExec("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
 			})
 	}()
 	cli.runTests(t, func(config *mysql.Config) {
@@ -680,10 +682,12 @@ func TestOnlySocket(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "root@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.MustQuery("CREATE USER user1@'%'")
-			dbt.MustQuery("GRANT SELECT ON test.* TO user1@'%'")
+			require.NoError(t, rows.Close())
+			dbt.MustExec("CREATE USER user1@'%'")
+			dbt.MustExec("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
@@ -712,8 +716,10 @@ func TestOnlySocket(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "user1@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			require.NoError(t, rows.Close())
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
@@ -727,10 +733,12 @@ func TestOnlySocket(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.checkRows(t, rows, "root@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.MustQuery("CREATE USER user1@127.0.0.1")
-			dbt.MustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+			require.NoError(t, rows.Close())
+			dbt.MustExec("CREATE USER user1@127.0.0.1")
+			dbt.MustExec("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
@@ -742,8 +750,10 @@ func TestOnlySocket(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "user1@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			require.NoError(t, rows.Close())
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
@@ -756,10 +766,12 @@ func TestOnlySocket(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "root@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.MustQuery("CREATE USER user1@localhost")
-			dbt.MustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+			require.NoError(t, rows.Close())
+			dbt.MustExec("CREATE USER user1@localhost")
+			dbt.MustExec("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(t, func(config *mysql.Config) {
@@ -771,8 +783,10 @@ func TestOnlySocket(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "user1@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+			require.NoError(t, rows.Close())
 		})
 
 }
@@ -887,7 +901,6 @@ func TestSystemTimeZone(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, ts.store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -1216,7 +1229,6 @@ func TestGracefulShutdown(t *testing.T) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -1287,7 +1299,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	defer cleanup()
 
 	db, err := sql.Open("mysql", ts.getDSN())
-	require.NoErrorf(t, err, "Error connecting")
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -1345,8 +1357,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			dbt := testkit.NewDBTestKit(t, db)
 			if strings.HasPrefix(sqlStr, "select") {
 				rows := dbt.MustQuery(sqlStr)
-				for rows.Next() {
-				}
+				require.NoError(t, rows.Close())
 			} else {
 				// Ignore error here since the error may be write conflict.
 				db.Exec(sqlStr)
@@ -1417,11 +1428,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := stmt.Query(args...)
 				require.NoError(t, err)
-				for rows.Next() {
-				}
+				require.NoError(t, rows.Close())
 			} else {
 				// Ignore error here since the error may be write conflict.
-				stmt.Exec(args...)
+				_, err = stmt.Exec(args...)
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -1478,11 +1489,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := db.Query(sqlBuf.String())
 				require.NoErrorf(t, err, "%v", sqlBuf.String())
-				for rows.Next() {
-				}
+				require.NoError(t, rows.Close())
 			} else {
 				// Ignore error here since the error may be write conflict.
-				db.Exec(sqlBuf.String())
+				_, err = db.Exec(sqlBuf.String())
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -1585,8 +1596,7 @@ func TestTopSQLAgent(t *testing.T) {
 			go ts.loopExec(ctx, t, func(db *sql.DB) {
 				dbt := testkit.NewDBTestKit(t, db)
 				rows := dbt.MustQuery(query)
-				for rows.Next() {
-				}
+				require.NoError(t, rows.Close())
 			})
 		}
 		return cancel
@@ -1723,8 +1733,10 @@ func TestLocalhostClientMapping(t *testing.T) {
 	dbt := testkit.NewDBTestKit(t, db)
 	rows := dbt.MustQuery("select user()")
 	cli.checkRows(t, rows, "root@localhost")
+	require.NoError(t, rows.Close())
 	rows = dbt.MustQuery("show grants")
 	cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+	require.NoError(t, rows.Close())
 
 	dbt.MustExec("CREATE USER 'localhostuser'@'localhost'")
 	dbt.MustExec("CREATE USER 'localhostuser'@'%'")
@@ -1746,8 +1758,10 @@ func TestLocalhostClientMapping(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report localhostuser@localhost also for 127.0.0.1)
 			cli.checkRows(t, rows, "localhostuser@127.0.0.1")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'localhost'\nGRANT SELECT,UPDATE ON test.* TO 'localhostuser'@'localhost'")
+			require.NoError(t, rows.Close())
 		})
 
 	dbt.MustExec("DROP USER IF EXISTS 'localhostuser'@'localhost'")
@@ -1763,12 +1777,14 @@ func TestLocalhostClientMapping(t *testing.T) {
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("select user()")
 			cli.checkRows(t, rows, "localhostuser@localhost")
+			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
 			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'%'\nGRANT SELECT ON test.* TO 'localhostuser'@'%'")
+			require.NoError(t, rows.Close())
 		})
 
 	// Test if only localhost exists
-	dbt.MustQuery("DROP USER 'localhostuser'@'%'")
+	dbt.MustExec("DROP USER 'localhostuser'@'%'")
 	dbSocket, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "localhostuser"
 		config.Net = "unix"

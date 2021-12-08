@@ -25,6 +25,6 @@ file_should_exist "$DUMPLING_OUTPUT_DIR/x1-placement-policy-create.sql"
 diff "$DUMPLING_BASE_NAME/result/x-placement-policy-create.sql" "$DUMPLING_OUTPUT_DIR/x-placement-policy-create.sql"
 diff "$DUMPLING_BASE_NAME/result/x1-placement-policy-create.sql" "$DUMPLING_OUTPUT_DIR/x1-placement-policy-create.sql"
 
-run_sql "drop database if exists policy"
 run_sql "drop placement policy if exists x"
 run_sql "drop placement policy if exists x1"
+run_sql "drop database if exists policy"
