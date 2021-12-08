@@ -2191,13 +2191,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
 	// if fetchedRows is not enough, getting data from recordSet.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
 		// NOTE: chunk should not be allocated from the allocator
 		// the allocator will reset every statement
 		// but it maybe stored in the result set among statements
 		// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
-		req := rs.NewChunk(nil)
 		// Here server.tidbResultSet implements Next method.
+		req.Reset()
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}
