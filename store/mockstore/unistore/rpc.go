@@ -32,11 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -48,46 +44,6 @@ import (
 
 // For gofail injection.
 var undeterminedErr = terror.ErrResultUndetermined
-
-type TestGenConfig struct {
-	TableOfInterest []int64
-	store           kv.Storage
-	dom             *domain.Domain
-}
-
-// Init initializes the configuration with core facilities. Must call before calling other functions.
-func (c *TestGenConfig) Init(store kv.Storage, dom *domain.Domain) error {
-	c.store = store
-	c.dom = dom
-	return nil
-}
-
-// AddTable adds a table into the table of interest. Table data is dumped at the same time. All DAG Reqeusts on this table will be recorded for replaying with the dumped data.
-func (c *TestGenConfig) AddTable(dbName, tblName string) error {
-	tbl, err := c.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	fmt.Println(tbl.Meta().ID)
-	c.TableOfInterest = append(c.TableOfInterest, tbl.Meta().ID)
-	regions, err := mockstorage.GetMockedRegionInfo(c.store, tbl.Meta())
-	if err != nil {
-		return err
-	}
-	fmt.Println("regions", len(regions))
-
-	for region := range regions {
-		fmt.Println(region)
-	}
-
-	return nil
-}
-
-func (c *TestGenConfig) IsTableInterested(tid int64) bool {
-	for _, v := range c.TableOfInterest {
-		if tid == v {
-			return true
-		}
-	}
-	return false
-}
 
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
