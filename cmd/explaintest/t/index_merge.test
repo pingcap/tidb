@@ -128,9 +128,9 @@ explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 < 10 order by 1;
 
 --echo ///// MEMORY Table
-explain select /*+ use_index_merge(t_alias) */ count(1) from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1;
+explain select count(c1) from (select /*+ use_index_merge(t_alias) */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 show warnings;
-select /*+ use_index_merge(t_alias) */ count(1) from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1;
+select count(c1) from (select /*+ use_index_merge(t_alias) */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 
 --echo ///// Limit
 drop table if exists t1;
