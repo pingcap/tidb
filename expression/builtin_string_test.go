@@ -1456,19 +1456,27 @@ func TestChar(t *testing.T) {
 		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
 		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
 	}
-	for i, v := range tbl {
+	run := func(i int, result interface{}, warnCnt int, dts ...interface{}) {
 		fc := funcs[ast.CharFunc]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, v.charset)))
-		require.NoError(t, err)
-		require.NotNil(t, f)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
+		require.NoError(t, err, i)
+		require.NotNil(t, f, i)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(v.result), r)
-		if v.warnings != 0 {
+		require.NoError(t, err, i)
+		trequire.DatumEqual(t, types.NewDatum(result), r, i)
+		if warnCnt != 0 {
 			warnings := ctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
-			require.Equal(t, v.warnings, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
+			require.Equal(t, warnCnt, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
 		}
 	}
+	for i, v := range tbl {
+		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
+	}
+	// char() returns null only when the sql_mode is strict.
+	ctx.GetSessionVars().StrictSQLMode = true
+	run(-1, nil, 1, 123456, "utf8")
+	ctx.GetSessionVars().StrictSQLMode = false
+	run(-2, "?", 1, 123456, "utf8")
 }
 
 func TestCharLength(t *testing.T) {

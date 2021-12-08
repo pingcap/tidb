@@ -2409,7 +2409,9 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	resultBytes, _, err := charset.FindEncoding(b.tp.Charset).Decode(nil, dBytes)
 	if err != nil {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return "", true, nil
+		if b.ctx.GetSessionVars().StrictSQLMode {
+			return "", true, nil
+		}
 	}
 	return string(resultBytes), false, nil
 }

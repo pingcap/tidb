@@ -2274,6 +2274,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	}
 	var resultBytes []byte
 	enc := charset.FindEncoding(b.tp.Charset)
+	hasStrictMode := b.ctx.GetSessionVars().StrictSQLMode
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2287,8 +2288,10 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		resultBytes, _, err := enc.Decode(resultBytes, dBytes)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			result.AppendNull()
-			continue
+			if hasStrictMode {
+				result.AppendNull()
+				continue
+			}
 		}
 		result.AppendString(string(resultBytes))
 	}
