@@ -28,17 +28,8 @@ import (
 var _pool = buffer.NewPool()
 
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
-
-	// copy the global log config to slow log config
-	// if the filename of slow log config is empty, slow log will behave the same as global log.
-	sqConfig := cfg.Config
-	if len(cfg.SlowQueryFile) != 0 {
-		sqConfig.File = cfg.File
-		sqConfig.File.Filename = cfg.SlowQueryFile
-	}
-
 	// create the slow query logger
-	sqLogger, prop, err := log.InitLogger(&sqConfig)
+	sqLogger, prop, err := log.InitLogger(newSlowQueryLogConfig(cfg))
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -51,6 +42,20 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 	prop.Core = newCore
 
 	return sqLogger, prop, nil
+}
+
+func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {
+	// copy the global log config to slow log config
+	// if the filename of slow log config is empty, slow log will behave the same as global log.
+	sqConfig := cfg.Config
+	// level of the global log config doesn't affect the slow query logger which determines whether to
+	// log by execution duration.
+	sqConfig.Level = LogConfig{}.Level
+	if len(cfg.SlowQueryFile) != 0 {
+		sqConfig.File = cfg.File
+		sqConfig.File.Filename = cfg.SlowQueryFile
+	}
+	return &sqConfig
 }
 
 type slowLogEncoder struct{}
