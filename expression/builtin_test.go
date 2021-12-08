@@ -191,3 +191,11 @@ var (
 	// MySQL varchar.
 	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
 )
+
+func getInt8Con() Expression {
+	return int8Con.Clone()
+}
+
+func getVarcharCon() Expression {
+	return varcharCon.Clone()
+}
