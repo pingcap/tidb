@@ -42,11 +42,17 @@ func NewDigest(b []byte) *Digest {
 
 // String returns the digest hex string.
 func (d *Digest) String() string {
+	if d == nil {
+		return ""
+	}
 	return d.str
 }
 
 // Bytes returns the digest byte slice.
 func (d *Digest) Bytes() []byte {
+	if d == nil {
+		return nil
+	}
 	return d.b
 }
 

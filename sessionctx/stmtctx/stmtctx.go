@@ -276,6 +276,9 @@ func (sc *StatementContext) SQLDigest() (normalized string, sqlDigest *parser.Di
 
 // InitSQLDigest sets the normalized and digest for sql.
 func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Digest) {
+	if digest == nil {
+		return
+	}
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
 	})
