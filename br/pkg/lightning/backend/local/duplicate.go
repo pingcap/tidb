@@ -49,6 +49,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const maxDupCollectAttemptTimes = 5
+
 type pendingIndexHandles struct {
 	// all 4 slices should have exactly the same length.
 	// we use a struct-of-arrays instead of array-of-structs
@@ -694,6 +696,72 @@ func (m *DuplicateManager) splitKeyRangeByRegions(
 	return regions, keyRanges, nil
 }
 
+func (m *DuplicateManager) processRemoteDupTaskOnce(
+	ctx context.Context,
+	task dupTask,
+	logger log.Logger,
+	importClientFactory ImportClientFactory,
+	regionPool *utils.WorkerPool,
+	remainKeyRanges *pendingKeyRanges,
+) (madeProgress bool, err error) {
+	var (
+		regions   []*restore.RegionInfo
+		keyRanges []tidbkv.KeyRange
+	)
+	for _, kr := range remainKeyRanges.list() {
+		subRegions, subKeyRanges, err := m.splitKeyRangeByRegions(ctx, kr)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		regions = append(regions, subRegions...)
+		keyRanges = append(keyRanges, subKeyRanges...)
+	}
+
+	var metErr common.OnceError
+	wg := &sync.WaitGroup{}
+	atomicMadeProgress := atomic.NewBool(false)
+	for i := 0; i < len(regions); i++ {
+		region := regions[i]
+		kr := keyRanges[i]
+
+		wg.Add(1)
+		regionPool.Apply(func() {
+			defer wg.Done()
+
+			logger := logger.With(
+				zap.Uint64("regionID", region.Region.Id),
+				logutil.Key("dupDetectStartKey", kr.StartKey),
+				logutil.Key("dupDetectEndKey", kr.EndKey),
+			)
+			err := func() error {
+				stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory)
+				if err != nil {
+					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
+				}
+				if task.indexInfo == nil {
+					err = m.RecordDataConflictError(ctx, stream)
+				} else {
+					err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo)
+				}
+				if err != nil {
+					return errors.Annotatef(err, "failed to record conflict errors")
+				}
+				return nil
+			}()
+			if err != nil {
+				logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
+				metErr.Set(err)
+			} else {
+				logger.Debug("[detect-dupe] collect duplicate rows from region completed")
+				remainKeyRanges.finish(kr)
+				atomicMadeProgress.Store(true)
+			}
+		})
+	}
+	wg.Wait()
+	return atomicMadeProgress.Load(), errors.Trace(metErr.Get())
+}
+
 // processRemoteDupTask processes a remoteDupTask. A task contains a key range.
 // A key range is associated with multiple regions. processRemoteDupTask tries
 // to collect duplicates from each region.
@@ -704,64 +772,31 @@ func (m *DuplicateManager) processRemoteDupTask(
 	importClientFactory ImportClientFactory,
 	regionPool *utils.WorkerPool,
 ) error {
+	remainAttempts := maxDupCollectAttemptTimes
 	remainKeyRanges := newPendingKeyRanges(task.KeyRange)
-	err := common.Retry("process remote dup task", logger, func() error {
-		var (
-			regions   []*restore.RegionInfo
-			keyRanges []tidbkv.KeyRange
-		)
-		for _, kr := range remainKeyRanges.list() {
-			subRegions, subKeyRanges, err := m.splitKeyRangeByRegions(ctx, kr)
-			if err != nil {
+	for {
+		madeProgress, err := m.processRemoteDupTaskOnce(ctx, task, logger, importClientFactory, regionPool, remainKeyRanges)
+		if err == nil {
+			if !remainKeyRanges.empty() {
+				remainKeyRanges.list()
+				logger.Panic("[detect-dupe] there are still some key ranges that haven't been processed, which is unexpected",
+					zap.Any("remainKeyRanges", remainKeyRanges.list()))
+			}
+			return nil
+		}
+		if log.IsContextCanceledError(err) {
+			return errors.Trace(err)
+		}
+		if !madeProgress {
+			remainAttempts--
+			if remainAttempts <= 0 {
+				logger.Error("[detect-dupe] all attempts to process the remote dupTask have failed", log.ShortError(err))
 				return errors.Trace(err)
 			}
-			regions = append(regions, subRegions...)
-			keyRanges = append(keyRanges, subKeyRanges...)
 		}
-
-		var metErr common.OnceError
-		wg := &sync.WaitGroup{}
-		for i := 0; i < len(regions); i++ {
-			region := regions[i]
-			kr := keyRanges[i]
-
-			wg.Add(1)
-			regionPool.Apply(func() {
-				defer wg.Done()
-
-				logger := logger.With(
-					zap.Uint64("regionID", region.Region.Id),
-					logutil.Key("dupDetectStartKey", kr.StartKey),
-					logutil.Key("dupDetectEndKey", kr.EndKey),
-				)
-				err := common.Retry("collect remote duplicate by region", logger, func() error {
-					stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory)
-					if err != nil {
-						return errors.Annotatef(err, "failed to create remote duplicate kv stream")
-					}
-					if task.indexInfo == nil {
-						err = m.RecordDataConflictError(ctx, stream)
-					} else {
-						err = m.RecordIndexConflictError(ctx, stream, task.tableID, task.indexInfo)
-					}
-					if err != nil {
-						return errors.Annotatef(err, "failed to record conflict errors")
-					}
-					return nil
-				})
-				if err != nil {
-					logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
-					metErr.Set(err)
-				} else {
-					logger.Debug("[detect-dupe] collect duplicate rows from region completed")
-					remainKeyRanges.finish(kr)
-				}
-			})
-		}
-		wg.Wait()
-		return metErr.Get()
-	})
-	return errors.Trace(err)
+		logger.Warn("[detect-dupe] process remote dupTask encounters error, retrying",
+			log.ShortError(err), zap.Int("remainAttempts", remainAttempts))
+	}
 }
 
 // CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
