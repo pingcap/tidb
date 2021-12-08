@@ -396,7 +396,7 @@ func TestUpdateScanningHandles(t *testing.T) {
 // See https://github.com/pingcap/tidb/issues/19136
 func TestForApplyAndUnionScan(t *testing.T) {
 	t.Parallel()
-	
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
