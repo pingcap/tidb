@@ -925,8 +925,6 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// (indexRows / batchSize) * batchSize * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	indexRows := t.indexPlan.statsInfo().RowCount
-	tableRows := t.tablePlan.statsInfo().RowCount
-	selectivity := tableRows / indexRows
 	idxCst := indexRows * sessVars.CPUFactor
 	// try paging API.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
@@ -965,6 +963,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
 	// ordered results. Note that row count of these two sorts can be different, if there are
 	// operators above table scan.
+	tableRows := t.tablePlan.statsInfo().RowCount
+	selectivity := tableRows / indexRows
 	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
 	if t.keepOrder && batchSize > 2 {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
