@@ -5105,8 +5105,8 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustExec("DROP TABLE t2")
 	tk.MustExec("create table t2(a int default 9, b int as (1 + default(a)));")
 	tk.MustExec("insert into t2 values(1, default);")
-	tk.MustExec("insert into t2 values(2, default(b));")
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10", "2 10"))
+	tk.MustExec("insert into t2 values(2, default(b))")
+	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
 
 	// Use `DEFAULT()` with subquery, issue #13390
 	tk.MustExec("create table t3(f1 int default 11);")
