@@ -8122,15 +8122,7 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
 	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// check the first 5 actions is rate limit.
-	for i := 0; i < 5; i++ {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefRateLimitPriority))
-		action = action.GetFallback()
-	}
-	for action.GetFallback() != nil {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefSpillPriority))
-		action = action.GetFallback()
-	}
+	// All actions are finished and removed.
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
 
