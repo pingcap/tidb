@@ -669,6 +669,18 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 	}
 }
 
+// FilterMemDBs filter memory databases in the input schemas.
+func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
+	for _, dbInfo := range oldSchemas {
+		if util.IsMemDB(dbInfo.Name.L) {
+			continue
+		} else {
+			schemas = append(schemas, dbInfo)
+		}
+	}
+	return
+}
+
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.

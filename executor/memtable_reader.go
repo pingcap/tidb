@@ -765,19 +765,19 @@ type HistoryHotRegions struct {
 // HistoryHotRegion records each hot region's statistics.
 // it's the response of PD.
 type HistoryHotRegion struct {
-	UpdateTime    int64   `json:"update_time,omitempty"`
-	RegionID      uint64  `json:"region_id,omitempty"`
-	StoreID       uint64  `json:"store_id,omitempty"`
-	PeerID        uint64  `json:"peer_id,omitempty"`
-	IsLearner     bool    `json:"is_learner,omitempty"`
-	IsLeader      bool    `json:"is_leader,omitempty"`
-	HotRegionType string  `json:"hot_region_type,omitempty"`
-	HotDegree     int64   `json:"hot_degree,omitempty"`
-	FlowBytes     float64 `json:"flow_bytes,omitempty"`
-	KeyRate       float64 `json:"key_rate,omitempty"`
-	QueryRate     float64 `json:"query_rate,omitempty"`
-	StartKey      string  `json:"start_key,omitempty"`
-	EndKey        string  `json:"end_key,omitempty"`
+	UpdateTime    int64   `json:"update_time"`
+	RegionID      uint64  `json:"region_id"`
+	StoreID       uint64  `json:"store_id"`
+	PeerID        uint64  `json:"peer_id"`
+	IsLearner     bool    `json:"is_learner"`
+	IsLeader      bool    `json:"is_leader"`
+	HotRegionType string  `json:"hot_region_type"`
+	HotDegree     int64   `json:"hot_degree"`
+	FlowBytes     float64 `json:"flow_bytes"`
+	KeyRate       float64 `json:"key_rate"`
+	QueryRate     float64 `json:"query_rate"`
+	StartKey      string  `json:"start_key"`
+	EndKey        string  `json:"end_key"`
 }
 
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
@@ -901,7 +901,8 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	tables := tikvHelper.GetTablesInfoWithKeyRange(allSchemas)
+	schemas := tikvHelper.FilterMemDBs(allSchemas)
+	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
 		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)
