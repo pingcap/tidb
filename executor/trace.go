@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -124,10 +125,16 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	} else {
 		traceResult = stmtCtx.LogicalOptimizeTrace
 	}
-	res, err := json.Marshal(traceResult)
+
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(traceResult)
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	res := []byte(writer.String())
 
 	if dumpToFile {
 		zf, fileName, err := generateOptimizerTraceFile()
