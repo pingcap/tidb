@@ -180,7 +180,6 @@ func TestInitialHandshake(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -489,7 +488,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -911,8 +909,6 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -923,6 +919,12 @@ func TestHandleAuthPlugin(t *testing.T) {
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
 	ctx := context.Background()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER unativepassword")
+	defer func() {
+		tk.MustExec("DROP USER unativepassword")
+	}()
 
 	// 5.7 or newer client trying to authenticate with mysql_native_password
 	cc := &clientConn{
@@ -935,6 +937,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -955,6 +958,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -976,6 +980,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41,
@@ -998,6 +1003,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1005,7 +1011,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
+	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
@@ -1020,6 +1026,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1027,7 +1034,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
+	require.Equal(t, []byte(mysql.AuthNativePassword), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
@@ -1041,6 +1048,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41,
@@ -1064,6 +1072,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1071,7 +1080,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthCachingSha2Password))
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
@@ -1086,6 +1095,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1093,7 +1103,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthCachingSha2Password))
+	require.Equal(t, []byte(mysql.AuthCachingSha2Password), resp.Auth)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// MySQL 5.1 or older client, without authplugin support
@@ -1107,6 +1117,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 		server: srv,
+		user:   "unativepassword",
 	}
 	resp = handshakeResponse41{
 		Capability: mysql.ClientProtocol41,
@@ -1117,14 +1128,10 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 
