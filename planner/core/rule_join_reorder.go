@@ -60,20 +60,21 @@ type jrNode struct {
 }
 
 func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	origin := opt.traceJoinReorder(p)
-	p, err := s.optimizeRecursive(p.SCtx(), p)
-	now := opt.traceJoinReorder(p)
-	appendJoinReorderTraceStep(origin, now, opt)
+	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
+	tracer.traceJoinReorder(p)
+	p, err := s.optimizeRecursive(p.SCtx(), p, tracer)
+	tracer.traceJoinReorder(p)
+	appendJoinReorderTraceStep(tracer, p, opt)
 	return p, err
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
-			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
 			if err != nil {
 				return nil, err
 			}
@@ -88,13 +89,13 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
 			}
-			p, err = groupSolver.solve(curJoinGroup)
+			p, err = groupSolver.solve(curJoinGroup, tracer)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
+			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), tracer)
 		}
 		if err != nil {
 			return nil, err
@@ -122,7 +123,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := s.optimizeRecursive(ctx, child)
+		newChild, err := s.optimizeRecursive(ctx, child, tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -203,24 +204,27 @@ func (*joinReOrderSolver) name() string {
 	return "join_reorder"
 }
 
-func appendJoinReorderTraceStep(origin, now *tracing.LogicalPlanTrace, opt *logicalOptimizeOp) {
-	if origin == nil || now == nil {
+func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt *logicalOptimizeOp) {
+	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
-	foldOriginOrder := joinOrderToString(origin)
-	foldNowOrder := joinOrderToString(now)
-	if foldOriginOrder != foldNowOrder {
-		action := fmt.Sprintf("join order become %v from origin %v", foldNowOrder, foldOriginOrder)
-		reason := "new join order is better than origin join order"
-		opt.appendStepToCurrent(now.ID, now.TP, reason, action)
+	if tracer.final != tracer.initial {
+		action := fmt.Sprintf("join order become %v from origin %v", tracer.final, tracer.initial)
+		reason := func() string {
+			buffer := bytes.NewBufferString("join cost during reorder[")
+			i := 0
+			for join, cost := range tracer.cost {
+				if i > 0 {
+					buffer.WriteString(",")
+				}
+				buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, cost))
+				i++
+			}
+			buffer.WriteString("]")
+			return buffer.String()
+		}()
+		opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 	}
-}
-
-func (op *logicalOptimizeOp) traceJoinReorder(p LogicalPlan) *tracing.LogicalPlanTrace {
-	if op.tracer == nil {
-		return nil
-	}
-	return extractJoinAndDataSource(p.buildLogicalPlanTrace(p))
 }
 
 // joinOrderToString let Join(DataSource, DataSource) become '(t1*t2)'
@@ -244,7 +248,7 @@ func joinOrderToString(t *tracing.LogicalPlanTrace) string {
 // extractJoinAndDataSource will only keep join and dataSource operator and remove other operators.
 // For example: Proj->Join->(Proj->DataSource, DataSource) will become Join->(DataSource, DataSource)
 func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanTrace {
-	root := findRootJoin(t)
+	root := findRoot(t)
 	if root == nil {
 		return nil
 	}
@@ -275,12 +279,37 @@ func simplify(node *tracing.LogicalPlanTrace) {
 	}
 }
 
-func findRootJoin(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanTrace {
-	if t.TP == plancodec.TypeJoin {
+func findRoot(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanTrace {
+	if t.TP == plancodec.TypeJoin || t.TP == plancodec.TypeDataSource {
 		return t
 	}
 	if len(t.Children) < 1 {
 		return nil
 	}
-	return findRootJoin(t.Children[0])
+	return findRoot(t.Children[0])
+}
+
+type joinReorderTrace struct {
+	opt     *logicalOptimizeOp
+	initial string
+	final   string
+	cost    map[string]float64
+}
+
+func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
+	if t == nil || t.opt == nil || t.opt.tracer == nil {
+		return
+	}
+	if len(t.initial) > 0 {
+		t.final = joinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+		return
+	}
+	t.initial = joinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+}
+
+func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
+	if t == nil || t.opt == nil || t.opt.tracer == nil {
+		return
+	}
+	t.cost[joinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))] = cost
 }

@@ -93,7 +93,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "join order become (((t1*t2)*(t3*t4))*t5) from origin ((((t1*t2)*t3)*t4)*t5)",
-					assertReason: "new join order is better than origin join order",
+					assertReason: "join cost during reorder[[t5, cost:10000],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000]]",
 				},
 			},
 		},
