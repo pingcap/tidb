@@ -46,6 +46,15 @@ var (
 	_ task = &mppTask{}
 )
 
+const (
+	minPagingSize  float64 = 64
+	maxPagingSize  float64 = 8192
+	pagingSizeGrow float64 = 2
+	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
+	// pagingGrowingSum = (pagingSize ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
+	pagingGrowingSum float64 = 16320
+)
+
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type task interface {
@@ -919,40 +928,25 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	tableRows := t.tablePlan.statsInfo().RowCount
 	selectivity := tableRows / indexRows
 	idxCst := indexRows * sessVars.CPUFactor
-	// try paging API
+	// try paging API.
+	// paging API reduces the count of index and table rows, however introduces more seek cost.
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 {
-		//expectIndexRows := t.expectCnt / selectivity
-		rpcCnt := float64(1)
-		if t.expectCnt > 16320 {
-			rpcCnt = float64(int(9 + (t.expectCnt-16320)/64))
-		} else if t.expectCnt > 64 {
-			rpcCnt = float64(int(1 + math.Log(t.expectCnt/64)/math.Log(2)))
+		seekCnt := float64(1)
+		if t.expectCnt > pagingGrowingSum {
+			seekCnt += float64(int(9 + (t.expectCnt-pagingGrowingSum)/maxPagingSize))
+		} else if t.expectCnt > minPagingSize {
+			seekCnt += float64(int(1 + math.Log((pagingSizeGrow-1)*t.expectCnt/minPagingSize)/math.Log(pagingSizeGrow)))
 		}
-		scanCst := t.expectCnt * sessVars.CPUFactor
-		var extractRows func(p PhysicalPlan) float64
-		extractRows = func(p PhysicalPlan) float64 {
-			f := float64(0)
-			for _, c := range t.indexPlan.Children() {
-				if len(c.Children()) != 0 {
-					f += extractRows(c)
-				} else {
-					f += c.statsInfo().RowCount
-				}
-			}
-			return f
+		indexSelectivity := float64(1)
+		sourceRows := extractRows(t.indexPlan)
+		if sourceRows > indexRows {
+			indexSelectivity = indexRows / sourceRows
 		}
-		cmpRate := float64(1)
-		if sourceRows := extractRows(t.indexPlan); sourceRows > scanCst {
-			cmpRate = indexRows / sourceRows
-		}
-		pagingCst := (rpcCnt-1)*sessVars.CPUFactor*40 + t.expectCnt*sessVars.CPUFactor
-		pagingCst *= cmpRate
+		pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + t.expectCnt*sessVars.CPUFactor
+		pagingCst *= indexSelectivity
 		if pagingCst < idxCst {
 			idxCst = pagingCst
 			p.Paging = true
-			if p, ok := t.indexPlan.(*PhysicalIndexScan); ok {
-				p.Paging = true
-			}
 		}
 	}
 	newTask.cst += idxCst
@@ -988,6 +982,18 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.p = p
 	}
 	return newTask
+}
+
+func extractRows(p PhysicalPlan) float64 {
+	f := float64(0)
+	for _, c := range p.Children() {
+		if len(c.Children()) != 0 {
+			f += extractRows(c)
+		} else {
+			f += c.statsInfo().RowCount
+		}
+	}
+	return f
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {

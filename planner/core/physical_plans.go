@@ -322,14 +322,6 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ExplainNormalizedInfo() string {
-	if p.Paging {
-		return "paging: true"
-	}
-	return "paging: false"
-}
-
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer

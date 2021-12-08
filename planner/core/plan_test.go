@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	kit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -638,4 +640,65 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 	}
 	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
 	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
+}
+
+func TestCopPaging(t *testing.T) {
+	t.Parallel()
+
+	store, clean := kit.CreateMockStore(t)
+	defer clean()
+
+	tk := kit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set session tidb_enable_paging = 1")
+	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
+	defer tk.MustExec("drop table t")
+	for i := 0; i < 200; i++ {
+		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
+	}
+	tk.MustExec("analyze table t")
+
+	// limit 1 in 100 should go paging
+	for i := 0; i < 1; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 1").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:1",
+			"└─IndexLookUp 1.00 root  paging:true",
+			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
+			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
+			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+	}
+	// limit 64 with paging has only 1 seek cost, less than non-paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 64").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:64",
+			"└─IndexLookUp 1.00 root  paging:true",
+			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
+			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
+			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// limit 65 with paging has 2 seek cost, also less than non-paging (SeekFactor + 65 * CPUFactor < 100 * CPUFactor)
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 65").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:65",
+			"└─IndexLookUp 1.00 root  paging:true",
+			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
+			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
+			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+	}
+
+	// limit 94 with paging has 2 seek cost, but more than non-paging (SeekFactor + 94 * CPUFactor < 100 * CPUFactor)
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 99 and c1 >= 0 and c1 <= 99 and c2 in (2, 4, 6, 8) order by c1 limit 94").Check(kit.Rows(
+			"Limit 1.00 root  offset:0, count:94",
+			"└─IndexLookUp 1.00 root  ",
+			"  ├─Selection(Build) 50.00 cop[tikv]  le(test.t.id, 99)",
+			"  │ └─IndexRangeScan 100.00 cop[tikv] table:t, index:i(c1) range:[0,99], keep order:true",
+			"  └─Selection(Probe) 1.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 50.00 cop[tikv] table:t keep order:false"))
+	}
 }
