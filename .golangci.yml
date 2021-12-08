@@ -1,31 +1,34 @@
-header:
-  license:
-    spdx-id: Apache-2.0
-    copyright-owner: PingCAP, Inc.
-  paths-ignore:
-    - 'docs/'
-    - 'br/'
-    - '.gitignore'
-    - '.gitattributes'
-    - '.golangci.yml'
-    - '.golangci_br.yml'
-    - 'LICENSES/'
-    - '**/*.md'
-    - '**/*.json'
-    - '**/*.pem'
-    - '**/*.crt'
-    - '**/*.test'
-    - '**/*.result'
-    - '**/*.example'
-    - '.codecov.yml'
-    - 'errors.toml'
-    - 'Jenkinsfile'
-    - '.editorconfig'
-    - 'hooks/pre-commit'
-    - '**/go.mod'
-    - '**/go.sum'
-    - 'LICENSE'
-    - '.github/'
-    - 'parser/'
-    - 'dumpling/'
-  comment: on-failure
+run:
+  timeout: 7m
+linters:
+  disable-all: true
+  enable:
+    - misspell
+    - ineffassign
+    - typecheck
+    - varcheck
+    - unused
+    - structcheck
+    - deadcode
+    - gosimple
+    - goimports
+    - errcheck
+    - staticcheck
+    - stylecheck
+    - gosec
+    - bodyclose
+linters-settings:
+  staticcheck:
+    checks: ["S1002","S1004","S1007","S1009","S1010","S1012","S1019","S1020","S1021","S1024","S1030","SA2*","SA3*","SA4009","SA5*","SA6000","SA6001","SA6005", "-SA2002"]
+  stylecheck:
+    checks: ["-ST1003"]
+  gosec:
+    excludes:
+      - G601
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - rowserrcheck
