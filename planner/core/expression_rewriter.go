@@ -1488,7 +1488,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
-			if er.ctxStack[i].GetType().EvalType() == types.ETString {
+			if er.ctxStack[i].GetType().EvalType() == types.ETString && l == 1 {
 				tp := er.ctxStack[i].GetType().Clone()
 				tp.Charset, tp.Collate = coll.Charset, coll.Collation
 				er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
