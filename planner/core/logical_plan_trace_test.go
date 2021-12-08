@@ -87,13 +87,24 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagJoinReOrder},
+			assertRuleName: "join_reorder",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "join order becomes [((t1*t2)*(t3*t4)),((t5*t6)*(t7*t8))] from original [(((t1*t2)*t3)*t4),(((t5*t6)*t7)*t8)]",
+					assertReason: "join cost during reorder: [[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000],[t5, cost:10000],[t6, cost:10000],[t7, cost:10000],[t8, cost:10000]]",
+				},
+			},
+		},
+		{
 			sql:            "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
 			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "join order become (((t1*t2)*(t3*t4))*t5) from origin ((((t1*t2)*t3)*t4)*t5)",
-					assertReason: "join cost during reorder[[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000],[t5, cost:10000]]",
+					assertAction: "join order becomes (((t1*t2)*(t3*t4))*t5) from original ((((t1*t2)*t3)*t4)*t5)",
+					assertReason: "join cost during reorder: [[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000],[t5, cost:10000]]",
 				},
 			},
 		},
@@ -176,8 +187,6 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		}
 		p, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		_, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue)
 		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
 		c.Assert(otrace, NotNil)
 		assert := false
