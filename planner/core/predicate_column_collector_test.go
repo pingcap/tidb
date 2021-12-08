@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"sort"
 	"testing"
 
@@ -25,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
