@@ -187,7 +187,7 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 // FindZoneTransition check for one Time Zone transition within +/- 4h
 // Currently the needed functions are not exported, if gotime.Location.lookup would be exported
 // then it would be easy to use that directly
-func FindZoneTransition(tIn gotime.Time, loc *gotime.Location) (gotime.Time, error) {
+func FindZoneTransition(tIn gotime.Time) (gotime.Time, error) {
 	// Check most common case first, DST transition on full hour.
 	// round truncates away from zero!
 	t2 := tIn.Round(gotime.Hour).Add(-1 * gotime.Hour)
@@ -230,7 +230,7 @@ func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 		return tm, nil
 	}
 
-	tAdj, err2 := FindZoneTransition(tm, loc)
+	tAdj, err2 := FindZoneTransition(tm)
 	if err2 == nil {
 		return tAdj, nil
 	}
