@@ -76,6 +76,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
+	NoZeroDate             bool
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
