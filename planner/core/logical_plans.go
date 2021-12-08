@@ -17,15 +17,17 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -145,10 +147,22 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
-	redundantSchema *expression.Schema
-	redundantNames  types.NameSlice
+	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
+	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
+	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
+	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
+	// those columns, so we put the "redundant" columns here to make them be able to be found.
+	//
+	// For example:
+	// create table t1(a int, b int); create table t2(a int, b int);
+	// select * from t1 join t2 using (b);
+	// schema of the Join will be [t1.b, t1.a, t2.a]; fullSchema will be [t1.a, t1.b, t2.a, t2.b].
+	//
+	// We record all columns and keep them ordered is for correctly handling SQLs like
+	// select t1.*, t2.* from t1 join t2 using (b);
+	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
+	fullSchema *expression.Schema
+	fullNames  types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
@@ -177,7 +191,7 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 // the join keys of EqualConditions
 func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.MPPPartitionColumn) {
 	for _, expr := range p.EqualConditions {
-		_, coll := expr.CharsetAndCollation(p.ctx)
+		_, coll := expr.CharsetAndCollation()
 		collateID := property.GetCollateIDByNameForPartition(coll)
 		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
 		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
@@ -388,10 +402,9 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
-			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(coll),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
 			})
 		}
 	}
@@ -514,6 +527,9 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable kv.MemBuffer
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -828,7 +844,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = 1
 		return nil
 	}
-	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, sc, pkCol.RetType)
+	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType)
 	if err != nil {
 		return err
 	}
@@ -1084,6 +1100,68 @@ type LogicalWindow struct {
 	Frame           *WindowFrame
 }
 
+// EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
+func (p *LogicalWindow) EqualPartitionBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
+		return false
+	}
+	partitionByColsMap := make(map[int64]struct{})
+	for _, item := range p.PartitionBy {
+		partitionByColsMap[item.Col.UniqueID] = struct{}{}
+	}
+	for _, item := range newWindow.PartitionBy {
+		if _, ok := partitionByColsMap[item.Col.UniqueID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
+func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if len(p.OrderBy) != len(newWindow.OrderBy) {
+		return false
+	}
+	for i, item := range p.OrderBy {
+		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
+			item.Desc != newWindow.OrderBy[i].Desc {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualFrame checks whether two LogicalWindow.Frames are equal.
+func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if (p.Frame == nil && newWindow.Frame != nil) ||
+		(p.Frame != nil && newWindow.Frame == nil) {
+		return false
+	}
+	if p.Frame == nil && newWindow.Frame == nil {
+		return true
+	}
+	if p.Frame.Type != newWindow.Frame.Type ||
+		p.Frame.Start.Type != newWindow.Frame.Start.Type ||
+		p.Frame.Start.UnBounded != newWindow.Frame.Start.UnBounded ||
+		p.Frame.Start.Num != newWindow.Frame.Start.Num ||
+		p.Frame.End.Type != newWindow.Frame.End.Type ||
+		p.Frame.End.UnBounded != newWindow.Frame.End.UnBounded ||
+		p.Frame.End.Num != newWindow.Frame.End.Num {
+		return false
+	}
+	for i, expr := range p.Frame.Start.CalcFuncs {
+		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
+			return false
+		}
+	}
+	for i, expr := range p.Frame.End.CalcFuncs {
+		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
@@ -1169,6 +1247,7 @@ type ShowContents struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    string
 	Table     *ast.TableName  // Used for showing columns.
+	Partition model.CIStr     // Use for showing partition
 	Column    *ast.ColumnName // Used for `desc table column`.
 	IndexName model.CIStr
 	Flag      int                  // Some flag parsed from sql, such as FULL.

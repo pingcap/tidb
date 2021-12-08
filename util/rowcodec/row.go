@@ -18,7 +18,7 @@ import (
 	"encoding/binary"
 )
 
-// row is the struct type used to access the a row.
+// row is the struct type used to access a row.
 type row struct {
 	// small:  colID []byte, offsets []uint16, optimized for most cases.
 	// large:  colID []uint32, offsets []uint32.

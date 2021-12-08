@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -203,8 +203,8 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 		for i, hd := range missHd {
 			fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.HandleEncode(hd), r.decodeRowMvccData)))
 		}
-		for i, rowIdx := range missRowIdx {
-			fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.IndexEncode(&rowIdx), r.decodeIndexMvccData)))
+		for i := range missRowIdx {
+			fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.IndexEncode(&missRowIdx[i]), r.decodeIndexMvccData)))
 		}
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
 	}

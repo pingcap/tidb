@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -58,7 +58,7 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
-	// GetClient gets a kv.Client.
+	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
@@ -89,6 +89,9 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
 
+	// GetSnapshotWithTS returns a snapshot with start ts
+	GetSnapshotWithTS(ts uint64) kv.Snapshot
+
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
@@ -113,7 +116,7 @@ type Context interface {
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
 	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableID releases table locks in the session lock map by table ID.
+	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
 	ReleaseTableLockByTableIDs(tableIDs []int64)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)

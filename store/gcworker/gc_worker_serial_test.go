@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -117,12 +118,9 @@ func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
 		}),
 	}
 
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t, opts...)
-	s.tikvStore = s.store.(tikv.Storage)
-
-	s.tikvStore.GetOracle().Close()
 	s.oracle = &oracles.MockOracle{}
-	s.tikvStore.SetOracle(s.oracle)
+	s.store, s.dom, clean = testkit.CreateMockStoreWithOracle(t, s.oracle, opts...)
+	s.tikvStore = s.store.(tikv.Storage)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	require.NoError(t, err)
@@ -1652,15 +1650,36 @@ func TestGCPlacementRules(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(10)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"))
 	}()
 
-	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
-	pid, err := s.gcWorker.doGCPlacementRules(dr)
-	require.Equal(t, int64(1), pid)
+	bundleID := "TiDB_DDL_10"
+	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{
+		PrimaryRegion: "r1",
+		Regions:       "r1, r2",
+	})
 	require.NoError(t, err)
+	bundle.ID = bundleID
+
+	// prepare bundle before gc
+	require.NoError(t, infosync.PutRuleBundles(context.Background(), []*placement.Bundle{bundle}))
+	got, err := infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.False(t, got.IsEmpty())
+
+	// do gc
+	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
+	err = s.gcWorker.doGCPlacementRules(dr)
+	require.NoError(t, err)
+
+	// check bundle deleted after gc
+	got, err = infosync.GetRuleBundle(context.Background(), bundleID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.True(t, got.IsEmpty())
 }
 
 func TestGCLabelRules(t *testing.T) {

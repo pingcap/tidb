@@ -18,8 +18,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,22 +29,24 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -86,10 +90,9 @@ var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
-var _ = Suite(&testClusteredSuite{})
-var _ = SerialSuites(&testClusteredSerialSuite{})
 var _ = SerialSuites(&testTxnStateSerialSuite{})
 var _ = SerialSuites(&testStatisticsSuite{})
+var _ = SerialSuites(&testTiDBAsLibrary{})
 
 type testSessionSuiteBase struct {
 	cluster testutils.Cluster
@@ -123,6 +126,8 @@ type testBackupRestoreSuite struct {
 type testStatisticsSuite struct {
 	testSessionSuiteBase
 }
+
+type testTiDBAsLibrary struct{}
 
 func clearStorage(store kv.Storage) error {
 	txn, err := store.Begin()
@@ -685,6 +690,59 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+
+	// Set the global var to a non canonical form of the value
+	// i.e. implying that it was set from an earlier version of TiDB.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF")
+}
+
+func (s *testSessionSuite) TestMatchIdentity(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("CREATE USER `useridentity`@`%`")
+	tk.MustExec("CREATE USER `useridentity`@`localhost`")
+	tk.MustExec("CREATE USER `useridentity`@`192.168.1.1`")
+	tk.MustExec("CREATE USER `useridentity`@`example.com`")
+
+	// The MySQL matching rule is most specific to least specific.
+	// So if I log in from 192.168.1.1 I should match that entry always.
+	identity, err := tk.Se.MatchIdentity("useridentity", "192.168.1.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "192.168.1.1")
+
+	// If I log in from localhost, I should match localhost
+	identity, err = tk.Se.MatchIdentity("useridentity", "localhost")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// If I log in from 192.168.1.2 I should match wildcard.
+	identity, err = tk.Se.MatchIdentity("useridentity", "192.168.1.2")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "%")
+
+	identity, err = tk.Se.MatchIdentity("useridentity", "127.0.0.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// This uses the lookup of example.com to get an IP address.
+	// We then login with that IP address, but expect it to match the example.com
+	// entry in the privileges table (by reverse lookup).
+	ips, err := net.LookupHost("example.com")
+	c.Assert(err, IsNil)
+	identity, err = tk.Se.MatchIdentity("useridentity", ips[0])
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	// FIXME: we *should* match example.com instead
+	// as long as skip-name-resolve is not set (DEFAULT)
+	c.Assert(identity.Hostname, Equals, "%")
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -801,7 +859,6 @@ func (s *testSessionSuite) TestRetryUnion(c *C) {
 
 func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -845,7 +902,6 @@ func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 
 func (s *testSessionSuite) TestRetryLocalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -1526,7 +1582,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
@@ -2156,6 +2212,22 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	tk2.MustExec("commit")
 }
 
+func (s *testSchemaSerialSuite) TestValidationRecursion(c *C) {
+	// We have to expect that validation functions will call GlobalVarsAccessor.GetGlobalSysVar().
+	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
+	// function because it might cause infinite recursion.
+	// See: https://github.com/pingcap/tidb/issues/30255
+	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
+	}}
+	variable.RegisterSysVar(&sv)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	val, err := sv.Validate(tk.Se.GetSessionVars(), "test2", variable.ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "test")
+}
+
 func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -2206,7 +2278,6 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec(`create table normal_table (id int, c int);`)
 	defer tk.MustExec(`drop table if exists normal_table`)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
 	tk.MustExec(`create global temporary table temp_table (id int primary key, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
@@ -2432,7 +2503,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	var numChunks int
 	for {
@@ -2469,7 +2540,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2503,7 +2574,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2538,7 +2609,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
@@ -2570,7 +2641,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
@@ -2590,7 +2661,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
@@ -2614,7 +2685,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2634,7 +2705,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	count = 0
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2851,6 +2922,17 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`CREATE USER 'abcddfjakldfjaldddds'@'%' identified by ''`)
 	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%'`)
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
+}
+
+func (s *testSessionSuite2) TestHostLengthMax(c *C) {
+	host1 := strings.Repeat("a", 65)
+	host2 := strings.Repeat("a", 256)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
+
+	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
@@ -3240,8 +3322,8 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	err = tkUser.ExecToErr("create view v_version29_c as select * from t;")
 	c.Assert(err, NotNil)
 
-	tkRoot.MustExec(`grant show view on v_version29 to 'u_version29'@'%'`)
-	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Show View"))
+	tkRoot.MustExec(`grant show view, select on v_version29 to 'u_version29'@'%'`)
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Select,Show View"))
 
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	tkUser.MustQuery("show create view v_version29;")
@@ -3790,14 +3872,21 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_heap_table_size;").Check(testkit.Rows("16777216"))
 
+	tk.Se.GetSessionVars().SetSystemVar("tmp_table_size", "16777216")
+	tk.MustQuery("SELECT /*+ SET_VAR(tmp_table_size=16384) */ @@tmp_table_size;").Check(testkit.Rows("16384"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.MustQuery("SELECT @@tmp_table_size;").Check(testkit.Rows("16777216"))
+
 	tk.Se.GetSessionVars().SetSystemVar("div_precision_increment", "4")
 	tk.MustQuery("SELECT /*+ SET_VAR(div_precision_increment=0) */ @@div_precision_increment;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "OFF")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "ON")
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "OFF")
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
 	tk.Se.GetSessionVars().SetSystemVar("sort_buffer_size", "262144")
@@ -3911,35 +4000,6 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
-// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
-func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("set @@global.tidb_redact_log=0")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.tidb_redact_log=1")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_slow_log_masking=0")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_redact_log=0")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_redact_log=1")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_slow_log_masking=0")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
-}
-
 func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	// use isolated store, because in below failpoint we will cancel its context
@@ -3957,7 +4017,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -4017,11 +4077,15 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.7")
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
-	err := tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=1.1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '1.1'")
-	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
-	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1.1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=-1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+
+	err := tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
 	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
@@ -4275,14 +4339,15 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
 	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
 
-	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'")
+	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gc_run_interval value: '9m'"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 10m0s"))
 
 	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '700000000000ns'") // specified in ns, also valid
 
-	_, err = tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
+	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'") // wrong format
-
 }
 
 func (s *testSessionSerialSuite) TestGlobalVarCollationServer(c *C) {
@@ -4357,7 +4422,6 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 
 func (s *testSessionSuite3) TestGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows")
 	tk.MustExec("begin")
 	tk.MustExec("insert into g_tmp values (3, 3, 3)")
@@ -4750,79 +4814,48 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 }
 
 func (s *testSessionSuite) TestTMPTableSize(c *C) {
-	// Test the @@tmp_table_size system variable.
+	// Test the @@tidb_tmp_table_max_size system variable.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=on")
-	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
-	tk.MustExec("set tidb_enable_noop_functions=on")
-	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
+	tk.MustExec("create global temporary table t (c1 int, c2 mediumtext) on commit delete rows")
+	tk.MustExec("create temporary table tl (c1 int, c2 mediumtext)")
 
-	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
-	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
+	tk.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTmpTableMaxSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTiDBTmpTableMaxSize))
 
-	// Min value 1024, so the result is change to 1024, with a warning.
-	tk.MustExec("set @@global.tmp_table_size = 123")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
+	// Min value 1M, so the result is change to 1M, with a warning.
+	tk.MustExec("set @@global.tidb_tmp_table_max_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tmp_table_max_size value: '123'"))
 
-	// Change the session scope value.
-	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	// Change the session scope value to 2M.
+	tk.MustExec("set @@session.tidb_tmp_table_max_size = 2097152")
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
 
-	// Check in another sessin, change session scope value does not affect the global scope.
+	// Check in another session, change session scope value does not affect the global scope.
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+	tk1.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(1 << 20)))
 
-	// The value is now 1024, check the error when table size exceed it.
-	tk.MustExec("set @@session.tmp_table_size = 1024")
+	// The value is now 1M, check the error when table size exceed it.
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_tmp_table_max_size = %d", 1<<20))
 	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
 
 	// Check local temporary table
 	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
 
 	// Check local temporary table with some data in session
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
 	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
-}
-
-func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
-	// Test the @@tidb_enable_global_temporary_table system variable.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
-	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
-
-	// variable 'tidb_enable_global_temporary_table' is turned off by default
-	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
-	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
-
-	// cannot create global temporary table when 'tidb_enable_global_temporary_table' is off
-	tk.MustGetErrMsg(
-		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
-		"global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table",
-	)
-	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows())
-
-	// you can create global temporary table when 'tidb_enable_global_temporary_table' is on
-	tk.MustExec("set tidb_enable_global_temporary_table=on")
-	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
-	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
-	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
-	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
 }
 
 func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
@@ -5013,7 +5046,6 @@ func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 (u, v) values(11, 101)")
@@ -5075,7 +5107,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5117,7 +5148,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5160,7 +5190,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *
 
 func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5192,7 +5221,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
@@ -5285,7 +5313,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5324,7 +5351,6 @@ func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5364,7 +5390,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values" +
@@ -5456,7 +5481,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
 
@@ -5642,4 +5666,220 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustExec("delete from tmp1")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
+}
+
+func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
+	tbl, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().TempTableType, Equals, model.TempTableLocal)
+	tblID := tbl.Meta().ID
+
+	// prepare a kv pair for temporary table
+	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
+	err = tk.Se.GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
+	c.Assert(err, IsNil)
+
+	initTxnFuncs := []func() error{
+		func() error {
+			tk.Se.PrepareTSFuture(context.Background())
+			return nil
+		},
+		func() error {
+			return tk.Se.NewTxn(context.Background())
+		},
+		func() error {
+			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)
+		},
+		func() error {
+			return tk.Se.InitTxnWithStartTS(0)
+		},
+	}
+
+	for _, initFunc := range initTxnFuncs {
+		err := initFunc()
+		c.Assert(err, IsNil)
+
+		txn, err := tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+
+		val, err := txn.Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		val, err = txn.GetSnapshot().Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		tk.Se.RollbackTxn(context.Background())
+	}
+
+	// Also check GetSnapshotWithTS
+	snap := tk.Se.GetSnapshotWithTS(0)
+	val, err := snap.Get(context.Background(), k)
+	c.Assert(err, IsNil)
+	c.Assert(val, BytesEquals, []byte("v1"))
+}
+
+func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
+	initAndCloseTiDB := func() {
+		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+		c.Assert(err, IsNil)
+		defer store.Close()
+
+		dom, err := session.BootstrapSession(store)
+		//nolint:staticcheck
+		defer dom.Close()
+		c.Assert(err, IsNil)
+	}
+
+	runtime.GC()
+	memStat := runtime.MemStats{}
+	runtime.ReadMemStats(&memStat)
+	oldHeapInUse := memStat.HeapInuse
+
+	for i := 0; i < 20; i++ {
+		initAndCloseTiDB()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&memStat)
+	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(300*units.MiB))
+}
+
+func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
+	c.Assert(err, NotNil)
+	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
+}
+
+func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("create database t123")
+	time.Sleep(time.Second)
+	ts := time.Now().Format("2006-1-2 15:04:05")
+	time.Sleep(time.Second)
+	tk.MustExec("drop database t123")
+	err := tk.ExecToErr("use t123")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*Unknown database.*")
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", ts))
+	tk.MustExec("use t123")
+	// update any session variable and assert whether infoschema is changed
+	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
+	tk.MustExec("use t123")
+}
+
+func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 0.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0.5"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1.5"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -0.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = off;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop sequence if exists s1")
+	tk.MustExec("drop view if exists v1")
+
+	// prepare
+	tk.MustExec("create table t1 (a int)")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create view v1 as select 1")
+	defer tk.MustExec("drop view if exists v1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+
+	tk.MustExec("create sequence s1")
+	defer tk.MustExec("drop sequence if exists s1")
+	tk.MustQuery("show create sequence s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create table s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// temp table
+	tk.MustExec("create temporary table t1 (ct1 int)")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TEMPORARY TABLE `t1` (\n" +
+			"  `ct1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create temporary table v1 (cv1 int)")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.Rows(
+		"v1 CREATE TEMPORARY TABLE `v1` (\n" +
+			"  `cv1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create temporary table s1 (cs1 int)")
+	tk.MustQuery("show create sequence s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create table s1").Check(testkit.Rows(
+		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
+			"  `cs1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// drop
+	tk.MustExec("drop view v1")
+	err := tk.ExecToErr("show create view v1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+	tk.MustQuery("show create table v1").Check(testkit.Rows(
+		"v1 CREATE TEMPORARY TABLE `v1` (\n" +
+			"  `cv1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop sequence s1")
+	err = tk.ExecToErr("show create sequence s1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.s1' doesn't exist")
+	tk.MustQuery("show create table s1").Check(testkit.Rows(
+		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
+			"  `cs1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

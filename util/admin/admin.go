@@ -23,13 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -118,10 +118,16 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
+		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
 		return job.SchemaState == model.StateNone
 	}
 	return true
+}
+
+// MayNeedBackfill returns whether the action type may need to backfill the data.
+func MayNeedBackfill(tp model.ActionType) bool {
+	return tp == model.ActionAddIndex || tp == model.ActionAddPrimaryKey || tp == model.ActionModifyColumn
 }
 
 // CancelJobs cancels the DDL jobs.
@@ -173,7 +179,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+			if MayNeedBackfill(job.Type) {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
@@ -379,17 +385,17 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			},
 			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
-				var idx table.Index
+				var matchingIdx table.Index
 				for _, v := range t.Indices() {
 					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
-						idx = v
+						matchingIdx = v
 						break
 					}
 				}
-				if idx == nil {
+				if matchingIdx == nil {
 					return nil
 				}
-				k, _, err := idx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}

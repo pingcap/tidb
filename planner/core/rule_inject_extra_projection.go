@@ -15,10 +15,10 @@
 package core
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -106,7 +106,6 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 // since the types of the args are already the expected.
 func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
 	for i := range aggFuncs {
-		aggFuncs[i].WrapCastAsDecimalForAggArgs(sctx)
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			aggFuncs[i].WrapCastForAggArgs(sctx)
 		}

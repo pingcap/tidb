@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -1108,7 +1108,15 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	if c.tp.Tp == mysql.TypeDatetime {
+		fsp := c.tp.Flen - mysql.MaxDatetimeWidthNoFsp
+		if fsp > 0 {
+			fsp--
+		}
+		bf.setDecimalAndFlenForDatetime(fsp)
+	} else {
+		bf.setDecimalAndFlenForDate()
+	}
 	sig = &builtinGetTimeVarSig{bf}
 	return sig, nil
 }
