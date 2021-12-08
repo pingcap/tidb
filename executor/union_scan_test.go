@@ -24,10 +24,8 @@ import (
 
 func TestDirtyTransaction(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -157,10 +155,8 @@ func TestDirtyTransaction(t *testing.T) {
 
 func TestUnionScanWithCastCondition(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")
@@ -175,10 +171,8 @@ func TestUnionScanWithCastCondition(t *testing.T) {
 
 func TestUnionScanForMemBufferReader(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -316,10 +310,8 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 
 func TestForUpdateUntouchedIndex(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -359,10 +351,8 @@ func TestForUpdateUntouchedIndex(t *testing.T) {
 
 func TestUpdateScanningHandles(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -396,10 +386,8 @@ func TestUpdateScanningHandles(t *testing.T) {
 // See https://github.com/pingcap/tidb/issues/19136
 func TestForApplyAndUnionScan(t *testing.T) {
 	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
