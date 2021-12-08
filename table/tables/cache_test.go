@@ -18,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -358,7 +361,7 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustExec("insert into bp_cache_tmp1 values(2, 12, 102)")
 	tk.MustExec("insert into bp_cache_tmp1 values(3, 13, 103)")
 	tk.MustExec("insert into bp_cache_tmp1 values(4, 14, 104)")
-
+	tk.MustExec("alter table bp_cache_tmp1 cache")
 	// check point get out transaction
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
@@ -388,4 +391,51 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
+}
+
+func TestRenewLease(t *testing.T) {
+	// Test RenewLeaseForRead
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	tk.MustExec("create table cache_renew_t (id int)")
+	tk.MustExec("alter table cache_renew_t cache")
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	require.NoError(t, err)
+	var i int
+	tk.MustExec("select * from cache_renew_t")
+	_, oldLease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
+	for i = 0; i < 20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		tk.MustExec("select * from cache_renew_t")
+		_, lease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
+		if lease != oldLease {
+			break
+		}
+	}
+	require.True(t, i < 20)
+}
+
+func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	tk.MustExec("drop table if exists wait_tb1")
+	tk.MustExec("create table wait_tb1(id int)")
+	tk.MustExec("alter table wait_tb1 cache")
+	tk.MustExec("select *from wait_tb1")
+	var i int
+	for i = 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk.HasPlan("select *from wait_tb1", "UnionScan") {
+			break
+		}
+	}
+	require.True(t, i < 10)
+	tk.MustExec("insert into wait_tb1 values(1)")
+	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
 }

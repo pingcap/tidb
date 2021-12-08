@@ -26,8 +26,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
+	TestingT(t)
+}
 
 func kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
@@ -574,7 +581,7 @@ func TestUnaryOp(t *testing.T) {
 		require.NoError(t, err)
 
 		expect := types.NewDatum(tt.result)
-		ret, err := result.CompareDatum(ctx.GetSessionVars().StmtCtx, &expect)
+		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, ret, Commentf("%v %s", tt.arg, tt.op))
 	}

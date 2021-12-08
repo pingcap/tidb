@@ -1049,6 +1049,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)

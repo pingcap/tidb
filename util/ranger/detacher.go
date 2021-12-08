@@ -98,7 +98,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -109,7 +109,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffset(dnfItem, cols)
+			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
 				return -1
 			}
@@ -129,7 +129,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1
@@ -151,7 +151,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					return -1
 				}
 				for i, col := range cols {
@@ -216,7 +216,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		sameLens, allPoints := true, true
 		numCols := int(0)
 		for j, ran := range res.Ranges {
-			if !ran.IsPoint(sctx.GetSessionVars().StmtCtx) {
+			if !ran.IsPoint(sctx) {
 				allPoints = false
 				break
 			}
@@ -448,7 +448,8 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 		if !left.start || right.start || left.excl || right.excl {
 			return nil
 		}
-		cmp, err := left.value.CompareDatum(sc, &right.value)
+		// Since the point's collations are equal to the column's collation, we can use any of them.
+		cmp, err := left.value.Compare(sc, &right.value, collate.GetCollator(left.value.Collation()))
 		if err != nil || cmp != 0 {
 			return nil
 		}
@@ -517,7 +518,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(cond, cols)
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
@@ -610,13 +611,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) ([]*Range, []expression.Expression, []*valueInfo, bool, error) {
-	sc := d.sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		checkerCol:    d.cols[0],
 		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
 		length:        d.lengths[0],
 	}
-	rb := builder{sc: sc}
+	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges []*Range
@@ -666,7 +666,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item)
-			ranges, err := points2Ranges(sc, points, newTpSlice[0])
+			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}
@@ -693,7 +693,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	if hasPrefix(d.lengths) {
 		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
 	}
-	totalRanges, err := UnionRanges(sc, totalRanges, d.mergeConsecutive)
+	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}
@@ -716,7 +716,8 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil
 	}
-	cmp, err := lhs.value.CompareDatum(sc, rhs.value)
+	// binary collator may not the best choice, but it can make sure the result is correct.
+	cmp, err := lhs.value.Compare(sc, rhs.value, collate.GetBinaryCollator())
 	if err != nil {
 		return false, err
 	}
