@@ -17,13 +17,17 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
@@ -32,6 +36,22 @@ type mockStorage struct {
 	*copr.Store
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
+}
+
+func GetMockedRegionInfo(store kv.Storage, tblInfo *model.TableInfo) ([]*pd.Region, error) {
+	mockedStore, ok := store.(*mockStorage)
+	if !ok {
+		return nil, fmt.Errorf("the store is not a mockStorage")
+	}
+	pdClient := mockedStore.GetPDClient()
+	start, end := tablecodec.GetTableHandleKeyRange(tblInfo.ID)
+	ctx := context.Background()
+	regions, err := pdClient.ScanRegions(ctx, start, end, -1)
+	if err != nil {
+		return nil, err
+	}
+	kvClient := mockedStore.GetTiKVClient()
+
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.

@@ -6,7 +6,6 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
@@ -22,6 +21,7 @@ func TestCopGen(t *testing.T) {
 	config := &unistore.TestGenConfig{}
 
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithTestGen(config))
+	config.Init(store, dom)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -33,10 +33,8 @@ func TestCopGen(t *testing.T) {
 	fmt.Println("run select")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	err := config.AddTable("test", "t")
 	require.NoError(t, err)
-	fmt.Println(tbl.Meta().ID)
-	config.TableOfInterest = append(config.TableOfInterest, tbl.Meta().ID)
 
 	fmt.Println("")
 	fmt.Println("")
