@@ -111,6 +111,7 @@ func TestBinaryLiteral(t *testing.T) {
 		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
+		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
@@ -151,6 +152,7 @@ func TestBinaryLiteral(t *testing.T) {
 		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
+		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
