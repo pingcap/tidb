@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -191,7 +190,6 @@ func main() {
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
-	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -215,11 +213,6 @@ func main() {
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
-}
-
-func exit() {
-	syncLog()
-	os.Exit(0)
 }
 
 func syncLog() {
@@ -261,7 +254,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				exit()
+				os.Exit(1)
 			}
 			cpu = append(cpu, c)
 		}
@@ -269,16 +262,10 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		exit()
+		os.Exit(1)
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-}
-
-func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
-	d := parseDuration(c.Performance.MemProfileInterval)
-	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {

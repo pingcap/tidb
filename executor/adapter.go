@@ -939,7 +939,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := cfg.Log.EnableSlowLog
+	enable := cfg.Log.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
 	force := level <= zapcore.DebugLevel || trace.IsEnabled()
 	if (!enable || costTime < threshold) && !force {
@@ -1014,6 +1014,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		ResultRows:        GetResultRowsCount(a.Ctx, a.Plan),
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
+		IsWriteCacheTable: sessVars.StmtCtx.WaitLockLeaseTime > 0,
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1021,13 +1022,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
+	slowLog := sessVars.SlowLogFormat(slowItems)
 	if trace.IsEnabled() {
-		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
+		trace.Log(a.GoCtx, "details", slowLog)
 	}
-	if costTime < threshold {
-		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
-	} else {
-		logutil.SlowQueryLogger.Warn(sessVars.SlowLogFormat(slowItems))
+	logutil.SlowQueryLogger.Warn(slowLog)
+	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
@@ -1083,7 +1083,7 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	planTree, _ := getEncodedPlan(sctx, p, false, nil)
+	planTree, _ := getEncodedPlan(sctx, p, false)
 	if len(planTree) == 0 {
 		return planTree
 	}
@@ -1103,7 +1103,7 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan, hintStr string) {
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
 	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
@@ -1161,7 +1161,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
-		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL, a.StmtNode)
+		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
@@ -1192,6 +1192,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	}
+	if stmtCtx.WaitLockLeaseTime > 0 {
+		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
 	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
