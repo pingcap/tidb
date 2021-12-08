@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): [morgo](http://github.com/morgo)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXX
+- Discussion PR: https://github.com/pingcap/tidb/pull/30558
 - Tracking Issue: https://github.com/pingcap/tidb/issues/30366
 
 ## Table of Contents
