@@ -23,32 +23,16 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
-// GenHistMissingColumns generates hist-missing columns based on neededColumns and statsCache.
-func (h *Handle) GenHistMissingColumns(neededColumns map[model.TableColumnID]struct{}) []model.TableColumnID {
-	statsCache := h.statsCache.Load().(statsCache)
-	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
-	for col := range neededColumns {
-		tbl, ok := statsCache.tables[col.TableID]
-		if !ok {
-			continue
-		}
-		colHist, ok := tbl.Columns[col.ColumnID]
-		if !ok {
-			continue
-		}
-		if colHist.IsHistNeeded(tbl.Pseudo) {
-			missingColumns = append(missingColumns, col)
-		}
-	}
-	return missingColumns
-}
+// TODO load idx histograms by need
 
 type StatsLoad struct {
 	sync.Mutex
@@ -64,8 +48,51 @@ type NeededColumnTask struct {
 	Wg            *sync.WaitGroup
 }
 
-// AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
-func (h *Handle) AppendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, timeout time.Duration) {
+// SyncLoad sync waits loading of neededColumns and return false if timeout
+func (h *Handle) SyncLoad(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) bool {
+	missingColumns := h.genHistMissingColumns(neededColumns)
+	if len(missingColumns) <= 0 {
+		return true
+	}
+	sc.StatsLoad.NeededColumns = missingColumns
+	sc.StatsLoad.Wg = &sync.WaitGroup{}
+	sc.StatsLoad.Wg.Add(len(missingColumns))
+	for _, col := range missingColumns {
+		h.appendNeededColumn(col, sc.StatsLoad.Wg, timeout)
+	}
+	metrics.SyncLoadCounter.Inc()
+	t := time.Now()
+	if util.WaitTimeout(sc.StatsLoad.Wg, timeout) {
+		metrics.SyncLoadTimeoutCounter.Inc()
+		return false
+	} else {
+		metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
+		return true
+	}
+}
+
+// genHistMissingColumns generates hist-missing columns based on neededColumns and statsCache.
+func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []model.TableColumnID {
+	statsCache := h.statsCache.Load().(statsCache)
+	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
+	for _, col := range neededColumns {
+		tbl, ok := statsCache.tables[col.TableID]
+		if !ok {
+			continue
+		}
+		colHist, ok := tbl.Columns[col.ColumnID]
+		if !ok {
+			continue
+		}
+		if colHist.IsHistNeeded(tbl.Pseudo) {
+			missingColumns = append(missingColumns, col)
+		}
+	}
+	return missingColumns
+}
+
+// appendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
+func (h *Handle) appendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, timeout time.Duration) {
 	toTimout := time.Now().Local().Add(timeout)
 	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, Wg: wg}
 	h.StatsLoad.NeededColumnsCh <- colTask

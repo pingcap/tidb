@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,13 +33,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"math"
-	"sync"
 	"time"
 )
 
@@ -281,12 +278,14 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
-	ok, err := SyncLoadNeededColumns(logic, sctx)
-	if !ok || err != nil {
+	ok := SyncLoadNeededColumns(logic, sctx)
+	if !ok {
+		err0 := errors.New("Timeout when sync-load histograms for needed columns.")
 		if config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err0)
 			sctx.GetSessionVars().StmtCtx.StatsLoad.Fallback = true
 		} else {
-			return nil, 0, err
+			return nil, 0, err0
 		}
 	}
 	logic, err = logicalOptimize(ctx, flagAfterStats, logic)
@@ -309,70 +308,28 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 }
 
 // SyncLoadNeededColumns sends column-hist request and sync-wait until timeout
-func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) (bool, error) {
+func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) bool {
 	if sctx.GetSessionVars().InRestrictedSQL {
-		return true, nil
+		return true
 	}
 	syncWait := config.GetGlobalConfig().Stats.SyncLoadWait
 	if syncWait <= 0 {
-		return true, nil
+		return true
 	}
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	neededColumns := collectNeededColumns(plan)
-	missingColumns := statsHandle.GenHistMissingColumns(neededColumns)
-	if len(missingColumns) > 0 {
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmtCtx.StatsLoad.NeededColumns = missingColumns
-		wg := stmtCtx.StatsLoad.Wg
-		if wg == nil {
-			wg = &sync.WaitGroup{}
-			stmtCtx.StatsLoad.Wg = wg
-		}
-		wg.Add(len(missingColumns))
-		hintMaxExecutionTime := stmtCtx.MaxExecutionTime
-		if hintMaxExecutionTime == 0 {
-			hintMaxExecutionTime = math.MaxInt
-		}
-		sessMaxExecutionTime := sctx.GetSessionVars().MaxExecutionTime
-		if sessMaxExecutionTime == 0 {
-			sessMaxExecutionTime = math.MaxInt
-		}
-		waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
-		var timeout = time.Duration(waitTime) * time.Millisecond
-		for _, col := range missingColumns {
-			statsHandle.AppendNeededColumn(col, wg, timeout)
-		}
-		metrics.SyncLoadCounter.Inc()
-		t := time.Now()
-		if util.WaitTimeout(wg, timeout) {
-			metrics.SyncLoadTimeoutCounter.Inc()
-			return false, errors.New("Fail to load stats for columns, timeout.")
-		} else {
-			metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
-		}
+	neededColumns := CollectHistColumns(plan)
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	hintMaxExecutionTime := stmtCtx.MaxExecutionTime
+	if hintMaxExecutionTime == 0 {
+		hintMaxExecutionTime = math.MaxInt
 	}
-	return true, nil
-}
-
-// collectNeededColumns simple implementation, TODO align with yifan
-func collectNeededColumns(plan LogicalPlan) map[model.TableColumnID]struct{} {
-	neededColumns := map[model.TableColumnID]struct{}{}
-	collectColumnsFromPlan(plan, neededColumns)
-	return neededColumns
-}
-
-func collectColumnsFromPlan(plan LogicalPlan, neededColumns map[model.TableColumnID]struct{}) {
-	for _, child := range plan.Children() {
-		collectColumnsFromPlan(child, neededColumns)
+	sessMaxExecutionTime := sctx.GetSessionVars().MaxExecutionTime
+	if sessMaxExecutionTime == 0 {
+		sessMaxExecutionTime = math.MaxInt
 	}
-	switch x := plan.(type) {
-	case *DataSource:
-		tblID := x.TableInfo().ID
-		for _, col := range x.Schema().Columns {
-			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
-			neededColumns[tblColID] = struct{}{}
-		}
-	}
+	waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
+	var timeout = time.Duration(waitTime) * time.Millisecond
+	stmtCtx.StatsLoad.Timeout = timeout
+	return domain.GetDomain(sctx).StatsHandle().SyncLoad(stmtCtx, neededColumns, timeout)
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.

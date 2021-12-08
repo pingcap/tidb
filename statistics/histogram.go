@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -1071,8 +1072,11 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-
 	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+		if len(sc.StatsLoad.NeededColumns) > 0 {
+			logutil.BgLogger().Warn("Hist for column %v should already be loaded as sync but not found.",
+				zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
+		}
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)

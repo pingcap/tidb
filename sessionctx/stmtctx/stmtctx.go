@@ -205,7 +205,9 @@ type StatementContext struct {
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 
 	StatsLoad struct {
-		// NeededColumnMap stores the columns whose stats are needed for planner.
+		// Timeout to wait for sync-load
+		Timeout time.Duration
+		// NeededColumns stores the columns whose stats are needed for planner.
 		NeededColumns []model.TableColumnID
 		// Wg is the wait group waiting for all need columns to be loaded.
 		Wg *sync.WaitGroup
