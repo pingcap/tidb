@@ -332,6 +332,9 @@ func (t *Tracker) Consume(bytes int64) {
 	tryAction := func(mu *actionMu, tracker *Tracker) {
 		mu.Lock()
 		defer mu.Unlock()
+		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
+			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
+		}
 		if mu.actionOnExceed != nil {
 			mu.actionOnExceed.Action(tracker)
 		}
