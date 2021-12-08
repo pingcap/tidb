@@ -1481,19 +1481,14 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
-		coll, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
-		er.err = err
+		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
+		coll := er.deriveCollationForIn(l, lLen, stkLen, args)
 		if er.err != nil {
 			return
 		}
+		er.castCollationForIn(l, lLen, stkLen, coll)
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
-			if er.ctxStack[i].GetType().EvalType() == types.ETString && l == 1 {
-				tp := er.ctxStack[i].GetType().Clone()
-				tp.Charset, tp.Collate = coll.Charset, coll.Collation
-				er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
-				er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
-			}
 			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
 			if err != nil {
 				er.err = err
@@ -1513,6 +1508,58 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+// deriveCollationForIn derive collation for in expression.
+func (er *expressionRewriter) deriveCollationForIn(l int, lLen int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
+	coll := make([]*expression.ExprCollation, 0, l)
+	if l == 1 {
+		// a in (x, y, z) => coll[0]
+		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
+		er.err = err
+		if er.err != nil {
+			return nil
+		}
+		coll = append(coll, coll2)
+	} else {
+		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
+		for i := 0; i < lLen; i++ {
+			args := make([]expression.Expression, 0, lLen)
+			for j := stkLen - lLen - 1; j < stkLen; j++ {
+				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
+				args = append(args, rowFunc.GetArgs()[i])
+			}
+			coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
+			er.err = err
+			if er.err != nil {
+				return nil
+			}
+			coll = append(coll, coll2)
+		}
+	}
+	return coll
+}
+
+func (er *expressionRewriter) castCollationForIn(l int, lLen int, stkLen int, coll []*expression.ExprCollation) {
+	for i := stkLen - lLen; i < stkLen; i++ {
+		if l == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
+			tp := er.ctxStack[i].GetType().Clone()
+			tp.Charset, tp.Collate = coll[0].Charset, coll[0].Collation
+			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
+			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
+		} else {
+			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
+			for j := 0; j < lLen; j++ {
+				if er.ctxStack[i].GetType().EvalType() != types.ETString {
+					continue
+				}
+				tp := rowFunc.GetArgs()[j].GetType().Clone()
+				tp.Charset, tp.Collate = coll[j].Charset, coll[j].Collation
+				rowFunc.GetArgs()[j] = expression.BuildCastFunction(er.sctx, rowFunc.GetArgs()[j], tp)
+				rowFunc.GetArgs()[j].SetCoercibility(expression.CoercibilityExplicit)
+			}
+		}
+	}
 }
 
 func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
