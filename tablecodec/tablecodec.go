@@ -934,7 +934,7 @@ func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
 	return key
 }
 
-// EncodeTablePrefixSeekKey encodes the table prefix
+// EncodeTablePrefix encodes the table prefix to generate a key
 func EncodeTablePrefix(tableID int64) kv.Key {
 	key := make([]byte, 0, tablePrefixLength+idLen)
 	key = append(key, tablePrefix...)
@@ -951,7 +951,7 @@ func EncodeTablePrefixSeekKey(tableID int64, encodecValue []byte) kv.Key {
 	return key
 }
 
-// appendTablePrefix appends table prefix "t[tableID]".
+// appendTablePrefix appends table prefix "t[tableID]" into buf.
 func appendTablePrefix(buf []byte, tableID int64) []byte {
 	buf = append(buf, tablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
