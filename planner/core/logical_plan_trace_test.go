@@ -87,6 +87,39 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from pt1 where ptn > 100;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has no available partition table after partition pruning",
+					assertAction: "Datasource[1] becomes TableDual[5]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn in (10,20);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn < 4;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one available partiton table[p1] after partition pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
 			sql:            "select min(distinct a) from t group by a",
 			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
 			assertRuleName: "aggregation_eliminate",

@@ -432,3 +432,39 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 	return is
 }
+
+func MockPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:       41,
+			Name:     model.NewCIStr("p1"),
+			LessThan: []string{"16"},
+		},
+		{
+			ID:       42,
+			Name:     model.NewCIStr("p2"),
+			LessThan: []string{"32"},
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt1")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}

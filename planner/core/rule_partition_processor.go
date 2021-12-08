@@ -1609,7 +1609,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 				}
 				buffer.WriteString(fmt.Sprintf("%s", u.Name))
 			}
-			buffer.WriteString("]")
+			buffer.WriteString("] after partition pruning")
 			return buffer.String()
 		}()
 	}
