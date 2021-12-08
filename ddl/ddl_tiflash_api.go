@@ -66,6 +66,34 @@ type PollTiFlashReplicaStatusBackoff struct {
 	Threshold int
 }
 
+type PollTiFlashBackoffContext struct {
+	MinTick  int
+	MaxTick  int
+	Capacity int
+	Backoffs map[int64]*PollTiFlashReplicaStatusBackoff
+}
+
+func (b *PollTiFlashBackoffContext) Get(index int64) (*PollTiFlashReplicaStatusBackoff, bool) {
+	res, ok := b.Backoffs[index]
+	return res, ok
+}
+
+func (b *PollTiFlashBackoffContext) Set(index int64, bo *PollTiFlashReplicaStatusBackoff) bool {
+	if b.Len() < b.Capacity {
+		b.Backoffs[index] = bo
+		return true
+	}
+	return false
+}
+
+func (b *PollTiFlashBackoffContext) Remove(index int64) {
+	delete(b.Backoffs, index)
+}
+
+func (b *PollTiFlashBackoffContext) Len() int {
+	return len(b.Backoffs)
+}
+
 var (
 	// PollTiFlashInterval is the interval between every PollTiFlashReplicaStatus call.
 	PollTiFlashInterval = 2 * time.Second
@@ -75,10 +103,11 @@ var (
 	// Set to be true, when last TiFlash pd rule fails.
 	ReschePullTiFlash = uint32(0)
 	// PollTiFlashReplicaStatusBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashReplicaStatusBackoffMaxTick = 10
+	PollTiFlashReplicaStatusBackoffMaxTick int = 10
 	// PollTiFlashReplicaStatusBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashReplicaStatusBackoffMinTick  = 2
-	pollTiFlashReplicaStatusBackoffCapacity = 1000
+	PollTiFlashReplicaStatusBackoffMinTick int = 2
+	// PollTiFlashReplicaStatusBackoffCapacity is the cache size of backoff struct.
+	PollTiFlashReplicaStatusBackoffCapacity int = 1000
 )
 
 // NewPollTiFlashReplicaStatusBackoff create an instance with the smallest interval.
@@ -86,6 +115,15 @@ func NewPollTiFlashReplicaStatusBackoff() PollTiFlashReplicaStatusBackoff {
 	return PollTiFlashReplicaStatusBackoff{
 		Counter:   1,
 		Threshold: PollTiFlashReplicaStatusBackoffMinTick,
+	}
+}
+
+func NewPollTiFlashBackoffContext(MinTick, MaxTick, Capacity int) PollTiFlashBackoffContext {
+	return PollTiFlashBackoffContext{
+		MinTick:  MinTick,
+		MaxTick:  MaxTick,
+		Capacity: Capacity,
+		Backoffs: make(map[int64]*PollTiFlashReplicaStatusBackoff),
 	}
 }
 
@@ -253,7 +291,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, backoffs *map[int64]*PollTiFlashReplicaStatusBackoff) (bool, error) {
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, backoffs *PollTiFlashBackoffContext) (bool, error) {
 	allReplicaReady := true
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
@@ -318,7 +356,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			available = val.(bool)
 		})
 		if !available {
-			bo, ok := (*backoffs)[tb.ID]
+			bo, ok := backoffs.Get(tb.ID)
 			if !ok {
 				// Small table may be already ready at first check later.
 				// so we omit assigning into `backoffs` map for the first time.
@@ -357,18 +395,17 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 			})
 
 			if !avail {
-				bo, ok := (*backoffs)[tb.ID]
+				bo, ok := backoffs.Get(tb.ID)
 				if ok {
-					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
 					bo.Backoff()
 				} else {
 					// If the table is not available at first check, it should be added into `backoffs`
-					if len(*backoffs) < pollTiFlashReplicaStatusBackoffCapacity {
-						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
-						newBackoff := NewPollTiFlashReplicaStatusBackoff()
-						(*backoffs)[tb.ID] = &newBackoff
+					newBackoff := NewPollTiFlashReplicaStatusBackoff()
+					if backoffs.Set(tb.ID, &newBackoff) {
+						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
 					} else {
-						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
+						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
 					}
 				}
 				err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
@@ -376,8 +413,8 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool, ba
 					return false, errors.Trace(err)
 				}
 			} else {
-				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Int("region need", regionCount))
-				delete(*backoffs, tb.ID)
+				log.Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Uint64("region need", regionCount))
+				backoffs.Remove(tb.ID)
 				err = infosync.DeleteTiFlashTableSyncProgress(tb.ID)
 				if err != nil {
 					return false, errors.Trace(err)

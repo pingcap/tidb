@@ -420,7 +420,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return
 		}
 		iterTimes := 0
-		backoffs := make(map[int64]*PollTiFlashReplicaStatusBackoff)
+		backoffs := NewPollTiFlashBackoffContext(PollTiFlashReplicaStatusBackoffMinTick, PollTiFlashReplicaStatusBackoffMaxTick, PollTiFlashReplicaStatusBackoffCapacity)
 		for {
 			if d.sessPool == nil {
 				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")

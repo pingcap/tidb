@@ -221,7 +221,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	lessThan := "40"
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	// Should get schema again
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
