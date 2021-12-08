@@ -25,10 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testPartitionSuite struct {
-}
-
 func TestPartitionRangeSplitter(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
 	concurrency := 2
 
