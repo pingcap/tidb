@@ -222,15 +222,6 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(len(dBytes)), false, nil
-		}
-	}
-
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -272,13 +263,6 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	if len(val) == 0 {
 		return 0, false, nil
 	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(dBytes[0]), false, nil
-		}
-	}
 	return int64(val[0]), false, nil
 }
 
@@ -305,7 +289,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -381,7 +365,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -1168,14 +1152,8 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	// if expr is binary string and convert meet error, we should return NULL.
 	if types.IsBinaryStr(b.args[0].GetType()) {
-		target, _, err := transform.String(encoding.NewEncoder(), expr)
-		if err != nil {
-			return "", true, err
-		}
-
-		// we should convert target into utf8 internal.
-		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
-		return exprInternal, false, nil
+		exprInternal, _, err := transform.String(encoding.NewDecoder(), expr)
+		return exprInternal, err != nil, nil
 	}
 	if types.IsBinaryStr(b.tp) {
 		enc := charset.NewEncoding(b.args[0].GetType().Charset)
@@ -1664,7 +1642,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
 		bf.tp.Flen = argFieldTp.Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
+		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1684,15 +1662,11 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -1703,12 +1677,7 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	dBytes := hack.Slice(d)
-	dBytes, err = b.encoding.Encode(nil, dBytes)
-	if err != nil {
-		return d, false, err
-	}
-	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
 }
 
 type builtinHexIntArgSig struct {
@@ -2358,8 +2327,12 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	return int64(len(val) * 8), false, nil
+	argTp := b.args[0].GetType()
+	dBytes, err := charset.NewEncoding(argTp.Charset).Encode(nil, hack.Slice(val))
+	if err != nil {
+		return 0, isNull, err
+	}
+	return int64(len(dBytes) * 8), false, nil
 }
 
 type charFunctionClass struct {
@@ -2920,14 +2893,21 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return 0, false, err
 	}
-	return ord(str), false, nil
+
+	enc := charset.NewEncoding(charSet)
+	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
+	if err != nil {
+		return 0, false, err
+	}
+	return ord(leftMost), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
+func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
 	// use utf8 by default
 	if charSet == "" {
 		charSet = charset.CharsetUTF8
@@ -2939,22 +2919,17 @@ func chooseOrdFunc(charSet string) (func(string) int64, error) {
 	if desc.Maxlen == 1 {
 		return ordSingleByte, nil
 	}
-	return ordUtf8, nil
+	return ordOthers, nil
 }
 
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
+func ordSingleByte(src []byte) int64 {
+	if len(src) == 0 {
 		return 0
 	}
-	return int64(str[0])
+	return int64(src[0])
 }
 
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func ordOthers(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
@@ -3634,11 +3609,6 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	argTp := b.args[0].GetType()
-	str, err = charset.NewEncoding(argTp.Charset).EncodeString(str)
-	if err != nil {
-		return "", false, err
-	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
 		return "", true, nil
@@ -3696,7 +3666,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {

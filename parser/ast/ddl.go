@@ -15,6 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -1435,6 +1436,7 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 type CreatePlacementPolicyStmt struct {
 	ddlNode
 
+	OrReplace        bool
 	IfNotExists      bool
 	PolicyName       model.CIStr
 	PlacementOptions []*PlacementOption
@@ -1442,7 +1444,11 @@ type CreatePlacementPolicyStmt struct {
 
 // Restore implements Node interface.
 func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	ctx.WriteKeyWord("PLACEMENT POLICY ")
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
@@ -1684,7 +1690,9 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		ctx.WriteKeyWord("IF EXISTS ")
+		ctx.WriteWithSpecialComments("", func() {
+			ctx.WriteKeyWord("IF EXISTS ")
+		})
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")

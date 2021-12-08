@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -438,7 +439,7 @@ func TestLeft(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Left].getFunction(ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Left].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -489,7 +490,7 @@ func TestRight(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Right].getFunction(ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Right].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -628,7 +629,7 @@ func TestLower(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -687,7 +688,7 @@ func TestUpper(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -1337,10 +1338,10 @@ func TestHexFunc(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{int8Con})
+	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{getInt8Con()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{varcharCon})
+	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 }
 
@@ -1390,16 +1391,24 @@ func TestBitLength(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
+		chs      string
 		expected int64
 		isNil    bool
 		getErr   bool
 	}{
-		{"hi", 16, false, false},
-		{"你好", 48, false, false},
-		{"", 0, false, false},
+		{"hi", "", 16, false, false},
+		{"你好", "", 48, false, false},
+		{"", "", 0, false, false},
+		{"abc", "gbk", 24, false, false},
+		{"一二三", "gbk", 48, false, false},
+		{"一二三", "", 72, false, false},
+		{"一二三!", "gbk", 56, false, false},
+		{"一二三!", "", 80, false, false},
 	}
 
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
@@ -2221,28 +2230,37 @@ func TestInsert(t *testing.T) {
 }
 
 func TestOrd(t *testing.T) {
-	t.Parallel()
+	// TODO: Remove this and enable test parallel after new charset enabled
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected int64
+		chs      string
 		isNil    bool
 		getErr   bool
 	}{
-		{"2", 50, false, false},
-		{2, 50, false, false},
-		{"23", 50, false, false},
-		{23, 50, false, false},
-		{2.3, 50, false, false},
-		{nil, 0, true, false},
-		{"", 0, false, false},
-		{"你好", 14990752, false, false},
-		{"にほん", 14909867, false, false},
-		{"한국", 15570332, false, false},
-		{"👍", 4036989325, false, false},
-		{"א", 55184, false, false},
+		{"2", 50, "", false, false},
+		{2, 50, "", false, false},
+		{"23", 50, "", false, false},
+		{23, 50, "", false, false},
+		{2.3, 50, "", false, false},
+		{nil, 0, "", true, false},
+		{"", 0, "", false, false},
+		{"你好", 14990752, "", false, false},
+		{"にほん", 14909867, "", false, false},
+		{"한국", 15570332, "", false, false},
+		{"👍", 4036989325, "", false, false},
+		{"א", 55184, "", false, false},
+		{"abc", 97, "gbk", false, false},
+		{"一二三", 53947, "gbk", false, false},
+		{"àáèé", 43172, "gbk", false, false},
+		{"数据库", 51965, "gbk", false, false},
 	}
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 

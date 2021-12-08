@@ -110,12 +110,12 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, pkLenAppendToKey int) error {
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
 	idxLen, err := indexColumnsLen(columns, idxColumns)
 	if err != nil {
 		return err
 	}
-	if idxLen+pkLenAppendToKey > config.GetGlobalConfig().MaxIndexLength {
+	if idxLen > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
@@ -371,7 +371,7 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 		return nil, nil
 	}
 
-	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, model.NewCIStr(""), false)
+	err = modifyColsFromNull2NotNull(w, dbInfo, tblInfo, nullCols, &model.ColumnInfo{Name: model.NewCIStr("")}, false)
 	if err == nil {
 		return nil, nil
 	}

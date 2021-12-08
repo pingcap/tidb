@@ -180,8 +180,7 @@ func TestWriteTime(t *testing.T) {
 }
 
 func BenchmarkCount(b *testing.B) {
-	s := testSuite{}
-	s.SetUpSuite(nil)
+	ctx := mock.NewContext()
 
 	rowNum := 50000
 	tests := []aggTest{
@@ -195,7 +194,7 @@ func BenchmarkCount(b *testing.B) {
 		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, rowNum, 0, rowNum),
 	}
 	for _, test := range tests {
-		s.benchmarkAggFunc(b, test)
+		benchmarkAggFunc(b, ctx, test)
 	}
 
 	tests2 := []multiArgsAggTest{
@@ -209,7 +208,7 @@ func BenchmarkCount(b *testing.B) {
 		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, rowNum, 0, rowNum),
 	}
 	for _, test := range tests2 {
-		s.benchmarkMultiArgsAggFunc(b, test)
+		benchmarkMultiArgsAggFunc(b, ctx, test)
 	}
 
 	tests3 := []multiArgsAggTest{
@@ -223,6 +222,6 @@ func BenchmarkCount(b *testing.B) {
 		buildMultiArgsAggTester(ast.AggFuncApproxCountDistinct, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, rowNum, 0, rowNum),
 	}
 	for _, test := range tests3 {
-		s.benchmarkMultiArgsAggFunc(b, test)
+		benchmarkMultiArgsAggFunc(b, ctx, test)
 	}
 }
