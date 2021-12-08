@@ -274,10 +274,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		if taskCfg.TiDB.Security == nil {
 			return
 		}
-		taskCfg.TiDB.Security.CAPath = ""
-		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-			log.L().Warn("failed to deregister TLS config", log.ShortError(err))
-		}
+		taskCfg.TiDB.Security.DeregisterMySQL()
 	}()
 
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
