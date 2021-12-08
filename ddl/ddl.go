@@ -22,9 +22,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/util/gcutil"
 	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/gcutil"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
