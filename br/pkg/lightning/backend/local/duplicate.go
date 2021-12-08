@@ -258,16 +258,23 @@ func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo)
 	return keyRanges, nil
 }
 
+// DupKVStream is a streaming interface for collecting duplicate key-value pairs.
 type DupKVStream interface {
+	// Next returns the next key-value pair or any error it encountered.
+	// At the end of the stream, the error is io.EOF.
 	Next() (key, val []byte, err error)
+	// Close closes the stream.
 	Close() error
 }
 
+// LocalDupKVStream implements the interface of DupKVStream.
+// It collects duplicate key-value pairs from a pebble.DB.
 //goland:noinspection GoNameStartsWithPackageName
 type LocalDupKVStream struct {
 	iter pkgkv.Iter
 }
 
+// NewLocalDupKVStream creates a new LocalDupKVStream with the given duplicate db and key range.
 func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter KeyAdapter, keyRange tidbkv.KeyRange) *LocalDupKVStream {
 	opts := &pebble.IterOptions{
 		LowerBound: keyRange.StartKey,
@@ -296,6 +303,8 @@ func (s *LocalDupKVStream) Close() error {
 	return s.iter.Close()
 }
 
+// RemoteDupKVStream implements the interface of DupKVStream.
+// It collects duplicate key-value pairs from a TiKV region.
 type RemoteDupKVStream struct {
 	cli    import_sstpb.ImportSST_DuplicateDetectClient
 	kvs    []*import_sstpb.KvPair
@@ -330,6 +339,7 @@ func getDupDetectClient(
 	return importClient.DuplicateDetect(ctx, req)
 }
 
+// NewRemoteDupKVStream creates a new RemoteDupKVStream.
 func NewRemoteDupKVStream(
 	ctx context.Context,
 	region *restore.RegionInfo,
@@ -380,6 +390,8 @@ func (s *RemoteDupKVStream) Close() error {
 	return nil
 }
 
+// DuplicateManager provides methods to collect and decode duplicated KV pairs into row data. The results
+// are stored into the errorMgr.
 type DuplicateManager struct {
 	tbl               table.Table
 	tableName         string
@@ -392,6 +404,7 @@ type DuplicateManager struct {
 	hasDupe           *atomic.Bool
 }
 
+// NewDuplicateManager creates a new DuplicateManager.
 func NewDuplicateManager(
 	tbl table.Table,
 	tableName string,
@@ -420,6 +433,7 @@ func NewDuplicateManager(
 	}, nil
 }
 
+// RecordDataConflictError records data conflicts to errorMgr. The key received from stream must be a row key.
 func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream DupKVStream) error {
 	defer stream.Close()
 	var dataConflictInfos []errormanager.DataConflictInfo
@@ -483,6 +497,7 @@ func (m *DuplicateManager) saveIndexHandles(ctx context.Context, handles pending
 	return errors.Trace(err)
 }
 
+// RecordIndexConflictError records index conflicts to errorMgr. The key received from stream must be an index key.
 func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
 	defer stream.Close()
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
@@ -605,6 +620,7 @@ func (m *DuplicateManager) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter KeyAd
 	return newTasks, nil
 }
 
+// CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter KeyAdapter) error {
 	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter)
 	if err != nil {
@@ -748,6 +764,7 @@ func (m *DuplicateManager) processRemoteDupTask(
 	return errors.Trace(err)
 }
 
+// CollectDuplicateRowsFromTiKV collects duplicates from the remote TiKV and records all duplicate row info into errorMgr.
 func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, importClientFactory ImportClientFactory) error {
 	tasks, err := m.buildDupTasks()
 	if err != nil {
