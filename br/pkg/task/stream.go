@@ -262,11 +262,7 @@ func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange,
 		return nil, errors.Trace(err)
 	}
 
-	mRange, err := stream.BuildObserveMetaRange()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	mRange := stream.BuildObserveMetaRange()
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
 	sort.Slice(rs, func(i, j int) bool {
 		return bytes.Compare(rs[i].StartKey, rs[j].StartKey) < 0
@@ -350,9 +346,7 @@ func RunStreamStart(
 		Pausing: false,
 	}
 
-	cli := stream.MetaDataClient{
-		streamMgr.mgr.GetDomain().GetEtcdClient(),
-	}
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	if err := cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
@@ -384,10 +378,7 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := stream.MetaDataClient{
-		streamMgr.mgr.GetDomain().GetEtcdClient(),
-	}
-
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {
@@ -426,9 +417,7 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := stream.MetaDataClient{
-		streamMgr.mgr.GetDomain().GetEtcdClient(),
-	}
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {
@@ -467,9 +456,7 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := stream.MetaDataClient{
-		streamMgr.mgr.GetDomain().GetEtcdClient(),
-	}
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	_, err = cli.GetTask(ctx, cfg.taskName)
 	if err != nil {

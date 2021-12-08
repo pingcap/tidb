@@ -21,6 +21,10 @@ type MetaDataClient struct {
 	*clientv3.Client
 }
 
+func NewMetaDataClient(c *clientv3.Client) *MetaDataClient {
+	return &MetaDataClient{c}
+}
+
 // PutTask put a task to the metadata storage.
 func (c *MetaDataClient) PutTask(ctx context.Context, task TaskInfo) error {
 	data, err := task.PBInfo.Marshal()

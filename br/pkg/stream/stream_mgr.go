@@ -18,13 +18,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -103,17 +101,11 @@ func BuildObserveDataRanges(
 }
 
 // BuildObserveDataRanges specifies build key ranges to observe meta KV(contains all of metas)
-func BuildObserveMetaRange() (*kv.KeyRange, error) {
-	rangers := ranger.FullNotNullRange()
-	low, high, err := distsql.EncodeIndexKey(nil, rangers[0])
-	if err != nil {
-		return nil, err
-	}
+func BuildObserveMetaRange() *kv.KeyRange {
+	var startKey []byte
+	startKey = append(startKey, metaPrefix...)
+	sk := kv.Key(startKey)
+	ek := sk.PrefixNext()
 
-	startKey := make([]byte, 0, len(metaPrefix)+len(low))
-	startKey = append(append(startKey, metaPrefix...), low...)
-
-	endKey := make([]byte, 0, len(metaPrefix)+len(high))
-	endKey = append(append(endKey, metaPrefix...), high...)
-	return &kv.KeyRange{StartKey: startKey, EndKey: endKey}, nil
+	return &kv.KeyRange{StartKey: sk, EndKey: ek}
 }
