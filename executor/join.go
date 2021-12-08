@@ -158,6 +158,11 @@ func (e *HashJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
+	failpoint.Inject("mockHashJoinExecOpenError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mockHashJoinExecOpenError"))
+		}
+	})
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}

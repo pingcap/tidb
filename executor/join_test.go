@@ -2679,3 +2679,21 @@ func (s *testSuiteJoinSerial) TestIssue30211(c *C) {
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
 	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
 }
+
+func (s *testSuiteJoinSerial) TestHashJoinExecOpenError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("insert into t1 values(1);")
+	tk.MustExec("insert into t2 values(1);")
+	fpName := "github.com/pingcap/tidb/executor/mockHashJoinExecOpenError"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	err := tk.ExecToErr("select * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "mockHashJoinExecOpenError"), IsTrue)
+}
