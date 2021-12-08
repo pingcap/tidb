@@ -261,12 +261,12 @@ func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) *tracing.LogicalPlanT
 	return root
 }
 
-// simplify only keeps Proj and DataSource operators, and discard other operators.
+// simplify only keeps Join and DataSource operators, and discard other operators.
 func simplify(node *tracing.LogicalPlanTrace) {
 	if len(node.Children) < 1 {
 		return
 	}
-	for valid := true; !valid; {
+	for valid := false; !valid; {
 		valid = true
 		newChildren := make([]*tracing.LogicalPlanTrace, 0)
 		for _, child := range node.Children {
