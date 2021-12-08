@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 const (
@@ -417,30 +416,10 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path               *util.AccessPath
-	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
-	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
-	isMatchProp        bool
-}
-
-// compareColumnSet will compares the two set. The last return value is used to indicate
-// if they are comparable, it is false when both two sets have columns that do not occur in the other.
-// When the second return value is true, the value of first:
-// (1) -1 means that `l` is a strict subset of `r`;
-// (2) 0 means that `l` equals to `r`;
-// (3) 1 means that `l` is a strict superset of `r`.
-func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
-	lLen, rLen := l.Len(), r.Len()
-	if lLen < rLen {
-		// -1 is meaningful only when l.SubsetOf(r) is true.
-		return -1, l.SubsetOf(r)
-	}
-	if lLen == rLen {
-		// 0 is meaningful only when l.SubsetOf(r) is true.
-		return 0, l.SubsetOf(r)
-	}
-	// 1 is meaningful only when r.SubsetOf(l) is true.
-	return 1, r.SubsetOf(l)
+	path              *util.AccessPath
+	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
+	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
+	isMatchProp       bool
 }
 
 func compareBool(l, r bool) int {
@@ -456,21 +435,21 @@ func compareBool(l, r bool) int {
 func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
 	if result == 0 && !lhs.path.IsSingleScan {
-		// if both lhs and rhs need to access table after IndexScan, we use the set of columns that occurred in IndexFilters
+		// if both lhs and rhs need to access table after IndexScan, we utilize the set of columns that occurred in AccessConds and IndexFilters
 		// to compare how many table rows will be accessed.
-		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
+		return util.CompareCol2Len(lhs.indexCondsColMap, rhs.indexCondsColMap)
 	}
 	return result, true
 }
 
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
-// (2): whether or not it matches the physical property
-// (3): does it require a double scan.
+// (2): does it require a double scan,
+// (3): whether or not it matches the physical property.
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	setsResult, comparable := compareColumnSet(lhs.accessCondsColSet, rhs.accessCondsColSet)
+	accessResult, comparable := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable {
 		return 0
 	}
@@ -479,11 +458,11 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 		return 0
 	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
-	sum := setsResult + scanResult + matchResult
-	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
+	sum := accessResult + scanResult + matchResult
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
 		return 1
 	}
-	if setsResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
 		return -1
 	}
 	return 0
@@ -543,15 +522,15 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, nil, nil)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
+	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 
@@ -803,7 +782,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 {
+			// We should uncache the tableDual plan.
+			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+				ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			cntPlan += 1
@@ -860,7 +843,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx) {
+				if !ran.IsPointNonNullable(ds.ctx) {
+					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
 					allRangeIsPoint = false
 					break
 				}
