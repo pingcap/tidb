@@ -316,7 +316,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 				continue
 			}
 			enc := charset.FindEncoding(ec.Charset)
-			if _, _, ok := enc.Validate(nil, hack.Slice(str)); !ok {
+			if _, ok := enc.Validate(hack.Slice(str)); !ok {
 				return false
 			}
 		} else {

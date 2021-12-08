@@ -30,31 +30,27 @@ type EncodingBase struct {
 }
 
 // Validate checks whether bytes are valid in current charset.
-func (b EncodingBase) Validate(dest, src []byte) (result []byte, nSrc int, ok bool) {
-	if len(src) == 0 {
-		return src, 0, true
-	}
+func (b EncodingBase) Validate(src []byte) (nSrc int, ok bool) {
 	var buf [4]byte
 	transformer := b.enc.NewEncoder()
-	// First check tries to avoid unnecessary memory allocation.
-	invalidPos := -1
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(EncodingUTF8Impl.Peek(src[i:]))
 		_, _, err := transformer.Transform(buf[:], src[i:i+w], true)
 		if err != nil {
-			invalidPos = i
-			break
+			return i, false
 		}
 	}
-	if invalidPos == -1 {
-		// First check passed.
-		return src, len(src), true
-	}
+	return len(src), true
+}
+
+// ReplaceIllegal replaces the invalid chars in current charset to '?'.
+func (b EncodingBase) ReplaceIllegal(dest, src []byte) []byte {
 	if len(dest) < len(src) {
 		dest = make([]byte, 0, len(src))
 	}
 	dest = dest[:0]
-	// Second check replaces invalid chars with '?'.
+	transformer := b.enc.NewEncoder()
+	var buf [4]byte
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(EncodingUTF8Impl.Peek(src[i:]))
 		_, _, err := transformer.Transform(buf[:], src[i:i+w], true)
@@ -64,7 +60,7 @@ func (b EncodingBase) Validate(dest, src []byte) (result []byte, nSrc int, ok bo
 		}
 		dest = append(dest, src[i:i+w]...)
 	}
-	return dest, invalidPos, false
+	return dest
 }
 
 func (b EncodingBase) transform(transformer transform.Transformer, dest, src []byte,

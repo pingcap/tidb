@@ -689,8 +689,12 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetBytes(i)
-		encBuf, _, _ := enc.Validate(encBuf, exprI)
-		result.AppendBytes(encBuf)
+		if _, ok := enc.Validate(exprI); !ok {
+			encBuf = enc.ReplaceIllegal(encBuf, exprI)
+			result.AppendBytes(encBuf)
+		} else {
+			result.AppendBytes(exprI)
+		}
 	}
 	return nil
 }

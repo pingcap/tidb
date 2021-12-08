@@ -26,9 +26,9 @@ import (
 
 var encodingMap = map[string]Encoding{
 	CharsetUTF8MB4: EncodingUTF8Impl,
-	CharsetUTF8:    EncodingUTF8MB3Impl,
+	CharsetUTF8:    EncodingUTF8Impl,
 	CharsetGBK:     EncodingGBKImpl,
-	CharsetLatin1:  EncodingLatin1LegacyImpl,
+	CharsetLatin1:  EncodingLatin1Impl,
 	CharsetBin:     EncodingBinImpl,
 	CharsetASCII:   EncodingASCIIImpl,
 }

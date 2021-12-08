@@ -21,9 +21,6 @@ import (
 // EncodingUTF8Impl is the instance of EncodingUTF8.
 var EncodingUTF8Impl = &EncodingUTF8{}
 
-// EncodingUTF8MB3Impl is the instance of EncodingUTF8MB3.
-var EncodingUTF8MB3Impl = &EncodingUTF8MB3{}
-
 // EncodingUTF8MB3StrictImpl is the instance of EncodingUTF8MB3Strict.
 var EncodingUTF8MB3StrictImpl = &EncodingUTF8MB3Strict{}
 
@@ -66,70 +63,22 @@ func (e *EncodingUTF8) EncodeString(_ []byte, src string) (result string, nSrc i
 
 // Decode implements Encoding interface.
 func (e *EncodingUTF8) Decode(dest, src []byte) ([]byte, int, error) {
-	result, nSrc, ok := e.Validate(dest, src)
-	if !ok {
-		return result, nSrc, generateEncodingErr(e.Name(), src[nSrc:])
-	}
-	return src, len(src), nil
+	return decode(dest, src, e.Name(), true)
 }
 
 // DecodeString implements Encoding interface.
 func (e *EncodingUTF8) DecodeString(dest []byte, src string) (string, int, error) {
-	srcBytes := Slice(src)
-	result, nSrc, ok := e.Validate(dest, srcBytes)
-	if !ok {
-		return string(result), nSrc, generateEncodingErr(e.Name(), srcBytes[nSrc:])
-	}
-	return src, len(src), nil
+	return decodeString(dest, src, e.Name(), true)
+}
+
+// replaceIllegal replaces all the illegal UTF8 characters.
+func (e *EncodingUTF8) ReplaceIllegal(dest, src []byte) []byte {
+	return replaceIllegal(dest, src, true)
 }
 
 // Validate implements Encoding interface.
-func (e *EncodingUTF8) Validate(dest, src []byte) ([]byte, int, bool) {
-	ret, nSrc, ok := e.validateUTF8(dest, src, true, true)
-	if !ok {
-		return ret, nSrc, false
-	}
-	return ret, nSrc, true
-}
-
-// validateUTF8 considers the mb3 case.
-func (e *EncodingUTF8) validateUTF8(dest, src []byte, isUTF8MB4, checkMB4Value bool) ([]byte, int, bool) {
-	if len(src) == 0 {
-		return src, 0, true
-	}
-	if isUTF8MB4 && utf8.Valid(src) {
-		// Quick check passed.
-		return src, len(src), true
-	}
-	doMB4CharCheck := !isUTF8MB4 && checkMB4Value
-	// The first check.
-	invalidPos := -1
-	for i, w := 0, 0; i < len(src); i += w {
-		var rv rune
-		rv, w = utf8.DecodeRune(src[i:])
-		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
-			invalidPos = i
-			break
-		}
-	}
-	if invalidPos == -1 {
-		return src, len(src), true
-	}
-	// The second check replaces invalid characters.
-	if len(dest) < len(src) {
-		dest = make([]byte, 0, len(src))
-	}
-	dest = dest[:0]
-	for i, w := 0, 0; i < len(src); i += w {
-		var rv rune
-		rv, w = utf8.DecodeRune(src[i:])
-		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
-			dest = append(dest, '?')
-			continue
-		}
-		dest = append(dest, src[i:i+w]...)
-	}
-	return dest, invalidPos, false
+func (e *EncodingUTF8) Validate(src []byte) (int, bool) {
+	return validate(src, true)
 }
 
 // ToUpper implements Encoding interface.
@@ -142,66 +91,84 @@ func (e *EncodingUTF8) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 
-// EncodingUTF8MB3 is the utf8 charset.
-type EncodingUTF8MB3 struct {
-	EncodingUTF8
-}
-
-// Name implements Encoding interface.
-func (e *EncodingUTF8MB3) Name() string {
-	return CharsetUTF8
-}
-
-// Validate implements Encoding interface.
-func (e *EncodingUTF8MB3) Validate(dest, src []byte) ([]byte, int, bool) {
-	return e.validateUTF8(dest, src, false, false)
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingUTF8MB3) Decode(dest, src []byte) ([]byte, int, error) {
-	result, nSrc, ok := e.Validate(dest, src)
-	if !ok {
-		return result, nSrc, generateEncodingErr(e.Name(), src[nSrc:])
-	}
-	return src, len(src), nil
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingUTF8MB3) DecodeString(dest []byte, src string) (string, int, error) {
-	srcBytes := Slice(src)
-	result, nSrc, ok := e.Validate(dest, srcBytes)
-	if !ok {
-		return string(result), nSrc, generateEncodingErr(e.Name(), srcBytes[nSrc:])
-	}
-	return src, len(src), nil
-}
-
 // EncodingUTF8MB3Strict is the strict mode of EncodingUTF8MB3.
 // MB4 characters are considered invalid.
 type EncodingUTF8MB3Strict struct {
-	EncodingUTF8MB3
+	EncodingUTF8
 }
 
 // Validate implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Validate(dest, src []byte) ([]byte, int, bool) {
-	return e.validateUTF8(dest, src, false, true)
+func (e *EncodingUTF8MB3Strict) Validate(src []byte) (int, bool) {
+	return validate(src, false)
+}
+
+// ReplaceIllegal replaces all the illegal UTF8 characters.
+func (e *EncodingUTF8MB3Strict) ReplaceIllegal(dest, src []byte) []byte {
+	return replaceIllegal(dest, src, false)
 }
 
 // Decode implements Encoding interface.
 func (e *EncodingUTF8MB3Strict) Decode(dest, src []byte) ([]byte, int, error) {
-	result, nSrc, ok := e.Validate(dest, src)
-	if !ok {
-		return result, nSrc, generateEncodingErr(e.Name(), src[nSrc:])
-	}
-	return src, len(src), nil
+	return decode(dest, src, e.Name(), false)
 }
 
 // DecodeString implements Encoding interface.
 func (e *EncodingUTF8MB3Strict) DecodeString(dest []byte, src string) (string, int, error) {
+	return decodeString(dest, src, e.Name(), false)
+}
+
+func decodeString(dest []byte, src string, name string, mb4IsLegal bool) (string, int, error) {
 	srcBytes := Slice(src)
-	result, nSrc, ok := e.Validate(dest, srcBytes)
+	nSrc, ok := validate(srcBytes, mb4IsLegal)
 	if !ok {
-		return string(result), nSrc, generateEncodingErr(e.Name(), srcBytes[nSrc:])
+		ret := replaceIllegal(dest, srcBytes, mb4IsLegal)
+		err := generateEncodingErr(name, srcBytes[nSrc:])
+		return string(ret), nSrc, err
 	}
 	return src, len(src), nil
+}
+
+func decode(dest, src []byte, name string, mb4IsLegal bool) ([]byte, int, error) {
+	nSrc, ok := validate(src, mb4IsLegal)
+	if !ok {
+		ret := replaceIllegal(dest, src, mb4IsLegal)
+		err := generateEncodingErr(name, src[nSrc:])
+		return ret, nSrc, err
+	}
+	return src, len(src), nil
+}
+
+func validate(src []byte, mb4IsLegal bool) (int, bool) {
+	if len(src) == 0 {
+		return 0, true
+	}
+	if mb4IsLegal && utf8.Valid(src) {
+		// Quick check passed.
+		return len(src), true
+	}
+	for i, w := 0, 0; i < len(src); i += w {
+		var rv rune
+		rv, w = utf8.DecodeRune(src[i:])
+		if (rv == utf8.RuneError && w == 1) || (w > 3 && !mb4IsLegal) {
+			return i, false
+		}
+	}
+	return len(src), true
+}
+
+func replaceIllegal(dest, src []byte, mb4IsLegal bool) []byte {
+	if len(dest) < len(src) {
+		dest = make([]byte, 0, len(src))
+	}
+	dest = dest[:0]
+	for i, w := 0, 0; i < len(src); i += w {
+		var rv rune
+		rv, w = utf8.DecodeRune(src[i:])
+		if (rv == utf8.RuneError && w == 1) || (w > 3 && !mb4IsLegal) {
+			dest = append(dest, '?')
+			continue
+		}
+		dest = append(dest, src[i:i+w]...)
+	}
+	return dest
 }

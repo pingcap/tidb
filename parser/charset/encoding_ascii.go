@@ -53,18 +53,18 @@ func (e *EncodingASCII) Peek(src []byte) []byte {
 	return src[:1]
 }
 
-func (e *EncodingASCII) Validate(dest, src []byte) (result []byte, nSrc int, ok bool) {
-	invalidPos := -1
+// Validate implements Encoding interface.
+func (e *EncodingASCII) Validate(src []byte) (nSrc int, ok bool) {
 	for i := 0; i < len(src); i++ {
 		if src[i] > go_unicode.MaxASCII {
-			invalidPos = i
-			break
+			return i, false
 		}
 	}
-	if invalidPos == -1 {
-		// Quick check passed.
-		return src, len(src), true
-	}
+	return len(src), true
+}
+
+// ReplaceIllegal implements Encoding interface.
+func (e *EncodingASCII) ReplaceIllegal(dest, src []byte) (result []byte) {
 	if len(dest) < len(src) {
 		dest = make([]byte, 0, len(src))
 	}
@@ -78,7 +78,7 @@ func (e *EncodingASCII) Validate(dest, src []byte) (result []byte, nSrc int, ok 
 		}
 		dest = append(dest, src[i:i+w]...)
 	}
-	return dest, invalidPos, false
+	return dest
 }
 
 // Encode implements Encoding interface.
@@ -95,20 +95,25 @@ func (e *EncodingASCII) EncodeString(dest []byte, src string) (result string, nS
 
 // Decode implements Encoding interface.
 func (e *EncodingASCII) Decode(dest, src []byte) ([]byte, int, error) {
-	result, nSrc, ok := e.Validate(dest, src)
+	nSrc, ok := e.Validate(src)
 	var err error
 	if !ok {
+		ret := e.ReplaceIllegal(dest, src)
 		err = generateEncodingErr(e.Name(), src[nSrc:])
+		return ret, nSrc, err
 	}
-	return result, nSrc, err
+	return src, len(src), nil
 }
 
 // DecodeString implements Encoding interface.
 func (e *EncodingASCII) DecodeString(dest []byte, src string) (string, int, error) {
 	srcBytes := Slice(src)
-	result, nSrc, ok := e.Validate(dest, srcBytes)
-	if ok {
-		return src, len(src), nil
+	nSrc, ok := e.Validate(srcBytes)
+	var err error
+	if !ok {
+		ret := e.ReplaceIllegal(dest, srcBytes)
+		err = generateEncodingErr(e.Name(), srcBytes[nSrc:])
+		return string(ret), nSrc, err
 	}
-	return string(result), nSrc, generateEncodingErr(e.Name(), srcBytes[nSrc:])
+	return src, len(src), nil
 }

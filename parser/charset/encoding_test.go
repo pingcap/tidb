@@ -138,9 +138,11 @@ func TestEncodingValidate(t *testing.T) {
 		if tc.chs == charset.CharsetUTF8 {
 			enc = charset.EncodingUTF8MB3StrictImpl
 		}
-		encBuf, nSrc, ok = enc.Validate(encBuf, []byte(tc.str))
-		require.Equal(t, tc.expected, string(encBuf), msg)
+		strBytes := []byte(tc.str)
+		nSrc, ok = enc.Validate(strBytes)
 		require.Equal(t, tc.nSrc, nSrc, msg)
 		require.Equal(t, tc.ok, ok, msg)
+		encBuf = enc.ReplaceIllegal(encBuf, strBytes)
+		require.Equal(t, tc.expected, string(encBuf), msg)
 	}
 }

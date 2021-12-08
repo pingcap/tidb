@@ -14,9 +14,8 @@
 package charset
 
 import (
-	"strings"
-
 	"golang.org/x/text/encoding"
+	"strings"
 )
 
 // EncodingBinImpl is the instance of EncodingBin.
@@ -53,8 +52,13 @@ func (e *EncodingBin) Peek(src []byte) []byte {
 }
 
 // Validate implements Encoding interface.
-func (e *EncodingBin) Validate(_, src []byte) (result []byte, nSrc int, ok bool) {
-	return src, len(src), true
+func (e *EncodingBin) Validate(src []byte) (nSrc int, ok bool) {
+	return len(src), true
+}
+
+// ReplaceIllegal implements Encoding interface.
+func (e *EncodingBin) ReplaceIllegal(_, src []byte) (result []byte) {
+	return src
 }
 
 // Encode implements Encoding interface.

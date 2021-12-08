@@ -21,9 +21,9 @@ import (
 // Make sure all of them implement Encoding interface.
 var (
 	_ Encoding = &EncodingUTF8{}
+	_ Encoding = &EncodingUTF8MB3Strict{}
 	_ Encoding = &EncodingASCII{}
 	_ Encoding = &EncodingLatin1{}
-	_ Encoding = &EncodingLatin1Legacy{}
 	_ Encoding = &EncodingBin{}
 	_ Encoding = &EncodingGBK{}
 )
@@ -36,9 +36,9 @@ type Encoding interface {
 	// Peek returns a next char byte slice.
 	Peek(src []byte) []byte
 	// Validate checks whether a utf-8 string is valid in current charset.
-	// It returns src if the string is valid, or replace the invalid character with '?' in utf-8.
-	// The first nSrc bytes are processed in src.
-	Validate(dest, src []byte) (result []byte, nSrc int, ok bool)
+	Validate(src []byte) (nSrc int, ok bool)
+	// ReplaceIllegal replaces the invalid chars in current charset to '?'.
+	ReplaceIllegal(dest, src []byte) (result []byte)
 	// Encode converts bytes from utf-8 charset to current charset.
 	// Invalid characters are replaced with '?' in the result.
 	// The first nSrc bytes are processed in src.

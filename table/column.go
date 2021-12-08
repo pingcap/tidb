@@ -336,7 +336,7 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	}
 	// Handle string in other charsets.
 	enc := charset.FindEncoding(col.Charset)
-	if _, ok := enc.(*charset.EncodingUTF8MB3); ok && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
+	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
 		// Use a strict mode implementation. 4 bytes characters are invalid.
 		enc = charset.EncodingUTF8MB3StrictImpl
 	}
@@ -357,8 +357,9 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
-	if ret, invalidPos, ok := enc.Validate(nil, str); !ok {
-		casted.SetBytesAsString(ret, charset.CharsetUTF8MB4, 0)
+	if invalidPos, ok := enc.Validate(str); !ok {
+		replace := enc.ReplaceIllegal(nil, str)
+		casted.SetBytesAsString(replace, charset.CharsetUTF8MB4, 0)
 		return handleWrongCharsetValue(ctx, col, str, invalidPos)
 	}
 	return nil
