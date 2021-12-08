@@ -3,19 +3,6 @@ run:
 linters:
   disable-all: true
   enable:
-    - misspell
-    - ineffassign
-    - typecheck
-    - varcheck
-    - unused
-    - structcheck
-    - deadcode
-    - gosimple
-    - goimports
-    - errcheck
-    - staticcheck
-    - stylecheck
-    - gosec
     - bodyclose
 linters-settings:
   staticcheck:
