@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
@@ -1672,10 +1673,11 @@ func TestAccessCommittedLocks(t *testing.T) {
 	}
 }
 
-func (s *testMvccSuite) TestAssertion(c *C) {
-	store, err := NewTestStore("TestAssertion", "TestAssertion", c)
-	c.Assert(err, IsNil)
-	defer CleanTestStore(store)
+func TestAssertion(t *testing.T) {
+	t.Parallel()
+
+	store, close := NewTestStore("TestAssertion", "TestAssertion", t)
+	defer close()
 
 	// Prepare
 	MustPrewriteOptimistic([]byte("k1"), []byte("k1"), []byte("v1"), 1, 100, 0, store)
@@ -1686,19 +1688,19 @@ func (s *testMvccSuite) TestAssertion(c *C) {
 	MustCommit([]byte("k3"), 1, 2, store)
 
 	checkAssertionFailedError := func(err error, disable bool, startTs uint64, key []byte, assertion kvrpcpb.Assertion, existingStartTs uint64, existingCommitTs uint64) {
-		c.Logf("Check error: %+q", err)
+		t.Logf("Check error: %+q", err)
 		if disable {
-			c.Assert(err, IsNil)
+			require.Nil(t, err)
 			return
 		}
-		c.Assert(err, NotNil)
+		require.NotNil(t, err)
 		e, ok := errors.Cause(err).(*ErrAssertionFailed)
-		c.Assert(ok, IsTrue)
-		c.Assert(e.StartTS, Equals, startTs)
-		c.Assert(e.Key, DeepEquals, key)
-		c.Assert(e.Assertion, Equals, assertion)
-		c.Assert(e.ExistingStartTS, Equals, existingStartTs)
-		c.Assert(e.ExistingCommitTS, Equals, existingCommitTs)
+		require.True(t, ok)
+		require.Equal(t, startTs, e.StartTS)
+		require.Equal(t, key, e.Key)
+		require.Equal(t, assertion, e.Assertion)
+		require.Equal(t, existingStartTs, e.ExistingStartTS)
+		require.Equal(t, existingCommitTs, e.ExistingCommitTS)
 	}
 
 	for _, disable := range []bool{false, true} {
@@ -1707,7 +1709,7 @@ func (s *testMvccSuite) TestAssertion(c *C) {
 			level = kvrpcpb.AssertionLevel_Off
 		}
 		// Test with optimistic transaction
-		err = PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 10, 100, 0, false, nil,
+		err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 10, 100, 0, false, nil,
 			kvrpcpb.Assertion_NotExist, level, store)
 		checkAssertionFailedError(err, disable, 10, []byte("k1"), kvrpcpb.Assertion_NotExist, 1, 2)
 		err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 10, 100, 0, false, nil,
@@ -1746,28 +1748,28 @@ func (s *testMvccSuite) TestAssertion(c *C) {
 
 	// Test assertion passes
 	// Test with optimistic transaction
-	err = PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 20, 100, 0, false, nil,
+	err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 20, 100, 0, false, nil,
 		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 20, 100, 0, false, nil,
 		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	// Test with pessimistic transaction
 	MustAcquirePessimisticLock([]byte("k2"), []byte("k2"), 20, 10, store)
 	err = PrewritePessimisticWithAssertion([]byte("k2"), []byte("k2"), []byte("v2"), 20, 100, []bool{true}, 10,
 		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	MustAcquirePessimisticLock([]byte("k22"), []byte("k22"), 20, 10, store)
 	err = PrewritePessimisticWithAssertion([]byte("k22"), []byte("k22"), []byte("v22"), 20, 100, []bool{true}, 10,
 		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	// Test with pessimistic transaction (non-pessimistic-lock)
 	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k3"), []byte("v3"), 20, 100, []bool{false}, 10,
 		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 20, 100, []bool{false}, 10,
 		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 }
