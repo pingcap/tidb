@@ -577,7 +577,7 @@ func (sec *Security) RegisterMySQL() error {
 
 // DeregisterMySQL deregisters the TLS config with security.TLSConfigName
 func (sec *Security) DeregisterMySQL() {
-	if sec == nil {
+	if sec == nil || len(sec.CAPath) == 0 {
 		return
 	}
 	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
