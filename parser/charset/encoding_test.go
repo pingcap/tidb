@@ -32,14 +32,14 @@ func TestEncoding(t *testing.T) {
 	e, _ := charset.Lookup("gbk")
 	gbkEncodedTxt, _, err := transform.Bytes(e.NewEncoder(), txt)
 	require.NoError(t, err)
-	result, _, err := enc.Decode(nil, gbkEncodedTxt)
+	result, err := charset.ToUTF8(enc, gbkEncodedTxt)
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
-	gbkEncodedTxt2, _, err := enc.Encode(nil, txt)
+	gbkEncodedTxt2, err := charset.FromUTF8(enc, txt)
 	require.NoError(t, err)
 	require.Equal(t, gbkEncodedTxt2, gbkEncodedTxt)
-	result, _, err = enc.Decode(nil, gbkEncodedTxt2)
+	result, err = charset.ToUTF8(enc, gbkEncodedTxt2)
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
@@ -59,13 +59,13 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, _, err = enc.Decode(nil, []byte(tc.utf8Str))
+		result, err := charset.ToUTF8String(enc, tc.utf8Str)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, string(result), cmt)
+		require.Equal(t, tc.result, result, cmt)
 	}
 
 	utf8Cases := []struct {
@@ -79,13 +79,13 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, _, err = enc.Encode(nil, []byte(tc.utf8Str))
+		result, err := charset.FromUTF8String(enc, tc.utf8Str)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, string(result), cmt)
+		require.Equal(t, tc.result, result, cmt)
 	}
 }
 
@@ -127,11 +127,6 @@ func TestEncodingValidate(t *testing.T) {
 		{charset.CharsetGBK, "中文À中文", "中文?中文", 6, false},
 		{charset.CharsetGBK, "asdfÀ", "asdf?", 4, false},
 	}
-	var (
-		encBuf []byte
-		nSrc   int
-		ok     bool
-	)
 	for _, tc := range testCases {
 		msg := fmt.Sprintf("%v", tc)
 		enc := charset.FindEncoding(tc.chs)
@@ -139,10 +134,9 @@ func TestEncodingValidate(t *testing.T) {
 			enc = charset.EncodingUTF8MB3StrictImpl
 		}
 		strBytes := []byte(tc.str)
-		nSrc, ok = enc.Validate(strBytes)
-		require.Equal(t, tc.nSrc, nSrc, msg)
+		ok := charset.IsValid(enc, strBytes)
 		require.Equal(t, tc.ok, ok, msg)
-		encBuf = enc.ReplaceIllegal(encBuf, strBytes)
-		require.Equal(t, tc.expected, string(encBuf), msg)
+		replace := charset.ReplaceIllegal(enc, strBytes)
+		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }

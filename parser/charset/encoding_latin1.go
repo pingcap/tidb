@@ -13,9 +13,15 @@
 
 package charset
 
+import "golang.org/x/text/encoding"
+
 // EncodingLatin1Impl is the instance of EncodingLatin1.
 // TiDB uses utf8 implementation for latin1 charset because of the backward compatibility.
-var EncodingLatin1Impl Encoding = &EncodingLatin1{}
+var EncodingLatin1Impl = &EncodingLatin1{EncodingUTF8{EncodingBase{enc: encoding.Nop}}}
+
+func init() {
+	EncodingLatin1Impl.self = EncodingLatin1Impl
+}
 
 // EncodingLatin1 compatibles with latin1 in old version TiDB.
 type EncodingLatin1 struct {
@@ -40,12 +46,6 @@ func (e *EncodingLatin1) ReplaceIllegal(_, src []byte) []byte {
 	return src
 }
 
-// Decode implements Encoding interface.
-func (e *EncodingLatin1) Decode(_, src []byte) (result []byte, nSrc int, err error) {
-	return src, len(src), nil
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingLatin1) DecodeString(_ []byte, src string) (result string, nSrc int, err error) {
-	return src, len(src), nil
+func (e *EncodingLatin1) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+	return src, nil
 }

@@ -16,8 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"unicode/utf8"
-
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -91,7 +89,7 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 	}
 	tp := b.args[0].GetType()
 	enc := charset.FindEncoding(tp.Charset)
-	res, _, err = enc.EncodeString(nil, val)
+	res, err = charset.FromUTF8String(enc, val)
 	return res, false, err
 }
 
@@ -117,11 +115,11 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		strBytes, _, err := enc.Encode(encodedBuf, buf.GetBytes(i))
+		encodedBuf, err = charset.FromUTF8Buf(enc, buf.GetBytes(i), encodedBuf)
 		if err != nil {
 			return err
 		}
-		result.AppendBytes(strBytes)
+		result.AppendBytes(encodedBuf)
 	}
 	return nil
 }
@@ -168,9 +166,13 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 	if isNull || err != nil {
 		return val, isNull, err
 	}
-	transferString := b.getTransferFunc()
-	tBytes, err := transferString([]byte(val))
-	return string(tBytes), false, err
+	enc := charset.FindEncoding(b.tp.Charset)
+	res, err = charset.ToUTF8String(enc, val)
+	if err != nil {
+		strHex := fmt.Sprintf("%X", val)
+		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
+	}
+	return res, false, err
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -187,43 +189,23 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	transferString := b.getTransferFunc()
+	enc := charset.FindEncoding(b.tp.Charset)
+	var encBuf []byte
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str, err := transferString(buf.GetBytes(i))
+		str := buf.GetBytes(i)
+		encBuf, err = charset.ToUTF8Buf(enc, str, encBuf)
 		if err != nil {
-			return err
+			strHex := fmt.Sprintf("%X", str)
+			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 		}
-		result.AppendBytes(str)
+		result.AppendBytes(encBuf)
 	}
 	return nil
-}
-
-func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, error) {
-	var transferString func([]byte) ([]byte, error)
-	if b.tp.Charset == charset.CharsetUTF8MB4 || b.tp.Charset == charset.CharsetUTF8 {
-		transferString = func(s []byte) ([]byte, error) {
-			if !utf8.Valid(s) {
-				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
-			}
-			return s, nil
-		}
-	} else {
-		enc := charset.FindEncoding(b.tp.Charset)
-		var buf []byte
-		transferString = func(s []byte) ([]byte, error) {
-			str, _, err := enc.Decode(buf, s)
-			if err != nil {
-				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
-			}
-			return str, nil
-		}
-	}
-	return transferString
 }
 
 // BuildToBinaryFunction builds to_binary function.
@@ -332,9 +314,6 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			}
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin {
-			if ctx.GetSessionVars().SkipUTF8Check && isLegacyCharset(dstChs) {
-				return expr
-			}
 			ft := expr.GetType().Clone()
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)

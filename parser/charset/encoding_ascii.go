@@ -14,30 +14,21 @@
 package charset
 
 import (
-	"strings"
 	go_unicode "unicode"
 
 	"golang.org/x/text/encoding"
 )
 
-// EncodingASCIIImpl is the instance of EncodingASCII.
-var EncodingASCIIImpl = &EncodingASCII{
-	EncodingBase{enc: encoding.Nop},
+// EncodingASCIIImpl is the instance of EncodingASCII
+var EncodingASCIIImpl = &EncodingASCII{EncodingBase{enc: encoding.Nop}}
+
+func init() {
+	EncodingASCIIImpl.self = EncodingASCIIImpl
 }
 
 // EncodingASCII is the ASCII encoding.
 type EncodingASCII struct {
 	EncodingBase
-}
-
-// ToUpper implements Encoding interface.
-func (e *EncodingASCII) ToUpper(src string) string {
-	return strings.ToUpper(src)
-}
-
-// ToLower implements Encoding interface.
-func (e *EncodingASCII) ToLower(src string) string {
-	return strings.ToLower(src)
 }
 
 // Name implements Encoding interface.
@@ -53,67 +44,27 @@ func (e *EncodingASCII) Peek(src []byte) []byte {
 	return src[:1]
 }
 
-// Validate implements Encoding interface.
-func (e *EncodingASCII) Validate(src []byte) (nSrc int, ok bool) {
-	for i := 0; i < len(src); i++ {
-		if src[i] > go_unicode.MaxASCII {
-			return i, false
-		}
+func (e *EncodingASCII) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+	if op == OpToUTF8 {
+		// ASCII is a subset of utf-8.
+		return src, nil
 	}
-	return len(src), true
+	if IsValid(e, src) {
+		return src, nil
+	}
+	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
 }
 
-// ReplaceIllegal implements Encoding interface.
-func (e *EncodingASCII) ReplaceIllegal(dest, src []byte) (result []byte) {
-	if len(dest) < len(src) {
-		dest = make([]byte, 0, len(src))
-	}
-	dest = dest[:0]
+func (e *EncodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		w = 1
+		ok := true
 		if src[i] > go_unicode.MaxASCII {
 			w = len(EncodingUTF8Impl.Peek(src[i:]))
-			dest = append(dest, '?')
-			continue
+			ok = false
 		}
-		dest = append(dest, src[i:i+w]...)
+		if !fn(src[i:i+w], src[i:i+w], ok) {
+			return
+		}
 	}
-	return dest
-}
-
-// Encode implements Encoding interface.
-func (e *EncodingASCII) Encode(dest, src []byte) (result []byte, nSrc int, err error) {
-	return e.transform(e.enc.NewEncoder(), dest, src, encodingUTF8Peek, e.Name())
-}
-
-// EncodeString implements Encoding interface.
-func (e *EncodingASCII) EncodeString(dest []byte, src string) (result string, nSrc int, err error) {
-	var r []byte
-	r, nSrc, err = e.transform(e.enc.NewEncoder(), dest, Slice(src), encodingUTF8Peek, e.Name())
-	return string(r), nSrc, err
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingASCII) Decode(dest, src []byte) ([]byte, int, error) {
-	nSrc, ok := e.Validate(src)
-	var err error
-	if !ok {
-		ret := e.ReplaceIllegal(dest, src)
-		err = generateEncodingErr(e.Name(), src[nSrc:])
-		return ret, nSrc, err
-	}
-	return src, len(src), nil
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingASCII) DecodeString(dest []byte, src string) (string, int, error) {
-	srcBytes := Slice(src)
-	nSrc, ok := e.Validate(srcBytes)
-	var err error
-	if !ok {
-		ret := e.ReplaceIllegal(dest, srcBytes)
-		err = generateEncodingErr(e.Name(), srcBytes[nSrc:])
-		return string(ret), nSrc, err
-	}
-	return src, len(src), nil
 }

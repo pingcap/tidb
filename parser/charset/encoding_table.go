@@ -24,15 +24,6 @@ import (
 	"strings"
 )
 
-var encodingMap = map[string]Encoding{
-	CharsetUTF8MB4: EncodingUTF8Impl,
-	CharsetUTF8:    EncodingUTF8Impl,
-	CharsetGBK:     EncodingGBKImpl,
-	CharsetLatin1:  EncodingLatin1Impl,
-	CharsetBin:     EncodingBinImpl,
-	CharsetASCII:   EncodingASCIIImpl,
-}
-
 // Lookup returns the encoding with the specified label, and its canonical
 // name. It returns nil and the empty string if label is not one of the
 // standard encodings for HTML. Matching is case-insensitive and ignores

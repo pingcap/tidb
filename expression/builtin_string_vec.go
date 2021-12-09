@@ -689,9 +689,9 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetBytes(i)
-		if _, ok := enc.Validate(exprI); !ok {
-			encBuf = enc.ReplaceIllegal(encBuf, exprI)
-			result.AppendBytes(encBuf)
+		if !charset.IsValid(enc, exprI) {
+			replace := charset.ReplaceIllegalBuf(enc, exprI, encBuf)
+			result.AppendBytes(replace)
 		} else {
 			result.AppendBytes(exprI)
 		}
@@ -701,13 +701,14 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 
 func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 	argTp, resultTp *types.FieldType) (done bool) {
-	var encodingFn func(dest []byte, src []byte) (result []byte, nSrc int, err error)
+	var enc charset.Encoding
+	var encodingFn func(enc charset.Encoding, src, buf []byte) ([]byte, error)
 	if types.IsBinaryStr(argTp) {
-		enc := charset.FindEncoding(resultTp.Charset)
-		encodingFn = enc.Decode
+		enc = charset.FindEncoding(resultTp.Charset)
+		encodingFn = charset.ToUTF8Buf
 	} else if types.IsBinaryStr(resultTp) {
-		enc := charset.FindEncoding(argTp.Charset)
-		encodingFn = enc.Encode
+		enc = charset.FindEncoding(argTp.Charset)
+		encodingFn = charset.FromUTF8Buf
 	} else {
 		return false
 	}
@@ -717,7 +718,7 @@ func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 			result.AppendNull()
 			continue
 		}
-		encBuf, _, err := encodingFn(encBuf, expr.GetBytes(i))
+		encBuf, err := encodingFn(enc, expr.GetBytes(i), encBuf)
 		if err != nil {
 			result.AppendNull()
 		} else {
@@ -2085,13 +2086,13 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		}
 		strBytes := buf.GetBytes(i)
 		w := len(charset.EncodingUTF8Impl.Peek(strBytes))
-		encoded, _, err := enc.Encode(encBuf[:], strBytes[:w])
+		res, err := charset.FromUTF8Buf(enc, strBytes[:w], encBuf[:])
 		if err != nil {
 			i64s[i] = calcOrd(strBytes[:1])
 			continue
 		}
 		// Only the first character is considered.
-		i64s[i] = calcOrd(encoded[:len(enc.Peek(encoded))])
+		i64s[i] = calcOrd(res[:len(enc.Peek(res))])
 	}
 	return nil
 }
@@ -2288,8 +2289,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			bigints = append(bigints, bufint[j][i])
 		}
 		dBytes := b.convertToBytes(bigints)
-
-		resultBytes, _, err := enc.Decode(resultBytes, dBytes)
+		resultBytes, err := charset.ToUTF8Buf(enc, dBytes, resultBytes)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			if hasStrictMode {

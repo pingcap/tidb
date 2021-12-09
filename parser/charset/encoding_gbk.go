@@ -21,23 +21,15 @@ import (
 )
 
 // EncodingGBKImpl is the instance of EncodingGBK
-var EncodingGBKImpl = &EncodingGBK{
-	EncodingBase{enc: simplifiedchinese.GBK},
+var EncodingGBKImpl = &EncodingGBK{EncodingBase{enc: simplifiedchinese.GBK}}
+
+func init() {
+	EncodingGBKImpl.self = EncodingGBKImpl
 }
 
 // EncodingGBK is GBK encoding.
 type EncodingGBK struct {
 	EncodingBase
-}
-
-// ToUpper implements Encoding interface.
-func (e *EncodingGBK) ToUpper(d string) string {
-	return strings.ToUpperSpecial(GBKCase, d)
-}
-
-// ToLower implements Encoding interface.
-func (e *EncodingGBK) ToLower(d string) string {
-	return strings.ToLowerSpecial(GBKCase, d)
 }
 
 // Name implements Encoding interface.
@@ -58,28 +50,14 @@ func (e *EncodingGBK) Peek(src []byte) []byte {
 	return src
 }
 
-// Encode implements Encoding interface.
-func (e *EncodingGBK) Encode(dest, src []byte) (result []byte, nSrc int, err error) {
-	return e.transform(e.enc.NewEncoder(), dest, src, encodingUTF8Peek, e.Name())
+// ToUpper implements Encoding interface.
+func (e *EncodingGBK) ToUpper(d string) string {
+	return strings.ToUpperSpecial(GBKCase, d)
 }
 
-// EncodeString implements Encoding interface.
-func (e *EncodingGBK) EncodeString(dest []byte, src string) (result string, nSrc int, err error) {
-	var r []byte
-	r, nSrc, err = e.transform(e.enc.NewEncoder(), dest, Slice(src), encodingUTF8Peek, e.Name())
-	return string(r), nSrc, err
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingGBK) Decode(dest, src []byte) (result []byte, nSrc int, err error) {
-	return e.transform(e.enc.NewDecoder(), dest, src, e.Peek, e.Name())
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingGBK) DecodeString(dest []byte, src string) (result string, nSrc int, err error) {
-	var r []byte
-	r, nSrc, err = e.transform(e.enc.NewDecoder(), dest, Slice(src), e.Peek, e.Name())
-	return string(r), nSrc, err
+// ToLower implements Encoding interface.
+func (e *EncodingGBK) ToLower(d string) string {
+	return strings.ToLowerSpecial(GBKCase, d)
 }
 
 // GBKCase follows https://dev.mysql.com/worklog/task/?id=4583.

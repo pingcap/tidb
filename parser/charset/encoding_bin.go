@@ -15,27 +15,18 @@ package charset
 
 import (
 	"golang.org/x/text/encoding"
-	"strings"
 )
 
 // EncodingBinImpl is the instance of EncodingBin.
-var EncodingBinImpl = &EncodingBin{
-	EncodingBase{enc: encoding.Nop},
+var EncodingBinImpl = &EncodingBin{EncodingBase{enc: encoding.Nop}}
+
+func init() {
+	EncodingBinImpl.self = EncodingBinImpl
 }
 
 // EncodingBin is the binary encoding.
 type EncodingBin struct {
 	EncodingBase
-}
-
-// ToUpper implements Encoding interface.
-func (e *EncodingBin) ToUpper(src string) string {
-	return strings.ToUpper(src)
-}
-
-// ToLower implements Encoding interface.
-func (e *EncodingBin) ToLower(src string) string {
-	return strings.ToLower(src)
 }
 
 // Name implements Encoding interface.
@@ -51,32 +42,15 @@ func (e *EncodingBin) Peek(src []byte) []byte {
 	return src[:1]
 }
 
-// Validate implements Encoding interface.
-func (e *EncodingBin) Validate(src []byte) (nSrc int, ok bool) {
-	return len(src), true
+// Foreach implements Encoding interface.
+func (e *EncodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+	for i := 0; i < len(src); i++ {
+		if !fn(src[i:i+1], src[i:i+1], true) {
+			return
+		}
+	}
 }
 
-// ReplaceIllegal implements Encoding interface.
-func (e *EncodingBin) ReplaceIllegal(_, src []byte) (result []byte) {
-	return src
-}
-
-// Encode implements Encoding interface.
-func (e *EncodingBin) Encode(_, src []byte) (result []byte, nSrc int, err error) {
-	return src, len(src), nil
-}
-
-// EncodeString implements Encoding interface.
-func (e *EncodingBin) EncodeString(_ []byte, src string) (result string, nSrc int, err error) {
-	return src, len(src), nil
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingBin) Decode(_, src []byte) (result []byte, nSrc int, err error) {
-	return src, len(src), nil
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingBin) DecodeString(_ []byte, src string) (result string, nSrc int, err error) {
-	return src, len(src), nil
+func (e *EncodingBin) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+	return src, nil
 }

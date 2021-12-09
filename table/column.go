@@ -343,13 +343,10 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	// from_binary: convert the binary to utf8.
 	if origin.Collation() == charset.CharsetBin {
 		src := casted.GetBytes()
-		encBytes, nSrc, err := enc.Decode(nil, src)
+		encBytes, err := charset.ToUTF8(enc, src)
 		if err != nil {
-			var err1 error
-			// Remove the trailing invalid characters.
-			encBytes, _, err1 = enc.Decode(encBytes, src[:nSrc])
-			skipErr(err1)
 			casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
+			nSrc := charset.ToUTF8CountValidBytes(enc, src)
 			return handleWrongCharsetValue(ctx, col, src, nSrc)
 		}
 		casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
@@ -357,15 +354,14 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
-	if invalidPos, ok := enc.Validate(str); !ok {
-		replace := enc.ReplaceIllegal(nil, str)
+	if !charset.IsValid(enc, str) {
+		replace := charset.ReplaceIllegal(enc, str)
 		casted.SetBytesAsString(replace, charset.CharsetUTF8MB4, 0)
-		return handleWrongCharsetValue(ctx, col, str, invalidPos)
+		nSrc := charset.FromUTF8CountValidBytes(enc, str)
+		return handleWrongCharsetValue(ctx, col, str, nSrc)
 	}
 	return nil
 }
-
-func skipErr(_ error) {}
 
 // ColDesc describes column information like MySQL desc and show columns do.
 type ColDesc struct {

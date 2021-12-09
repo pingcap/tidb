@@ -14,26 +14,37 @@
 package charset
 
 import (
-	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/encoding"
 )
 
 // EncodingUTF8Impl is the instance of EncodingUTF8.
-var EncodingUTF8Impl = &EncodingUTF8{}
+var EncodingUTF8Impl = &EncodingUTF8{EncodingBase{enc: encoding.Nop}}
 
 // EncodingUTF8MB3StrictImpl is the instance of EncodingUTF8MB3Strict.
-var EncodingUTF8MB3StrictImpl = &EncodingUTF8MB3Strict{}
+var EncodingUTF8MB3StrictImpl = &EncodingUTF8MB3Strict{
+	EncodingUTF8{
+		EncodingBase{
+			enc: encoding.Nop,
+		},
+	},
+}
+
+func init() {
+	EncodingUTF8Impl.self = EncodingUTF8Impl
+	EncodingUTF8MB3StrictImpl.self = EncodingUTF8MB3StrictImpl
+}
 
 // EncodingUTF8 is TiDB's default encoding.
-type EncodingUTF8 struct{}
+type EncodingUTF8 struct {
+	EncodingBase
+}
 
 // Name implements Encoding interface.
 func (e *EncodingUTF8) Name() string {
 	return CharsetUTF8MB4
 }
-
-// encodingUTF8Peek is used to check function identity.
-var encodingUTF8Peek = EncodingUTF8Impl.Peek
 
 // Peek implements Encoding interface.
 func (e *EncodingUTF8) Peek(src []byte) []byte {
@@ -51,44 +62,24 @@ func (e *EncodingUTF8) Peek(src []byte) []byte {
 	return src[:nextLen]
 }
 
-// Encode implements Encoding interface.
-func (e *EncodingUTF8) Encode(_, src []byte) ([]byte, int, error) {
-	return src, len(src), nil
+// Transform implements Encoding interface.
+func (e *EncodingUTF8) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+	if IsValid(e, src) {
+		return src, nil
+	}
+	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
 }
 
-// EncodeString implements Encoding interface.
-func (e *EncodingUTF8) EncodeString(_ []byte, src string) (result string, nSrc int, err error) {
-	return src, len(src), nil
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingUTF8) Decode(dest, src []byte) ([]byte, int, error) {
-	return decode(dest, src, e.Name(), true)
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingUTF8) DecodeString(dest []byte, src string) (string, int, error) {
-	return decodeString(dest, src, e.Name(), true)
-}
-
-// replaceIllegal replaces all the illegal UTF8 characters.
-func (e *EncodingUTF8) ReplaceIllegal(dest, src []byte) []byte {
-	return replaceIllegal(dest, src, true)
-}
-
-// Validate implements Encoding interface.
-func (e *EncodingUTF8) Validate(src []byte) (int, bool) {
-	return validate(src, true)
-}
-
-// ToUpper implements Encoding interface.
-func (e *EncodingUTF8) ToUpper(src string) string {
-	return strings.ToUpper(src)
-}
-
-// ToLower implements Encoding interface.
-func (e *EncodingUTF8) ToLower(src string) string {
-	return strings.ToLower(src)
+// Foreach implements Encoding interface.
+func (e *EncodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+	var rv rune
+	for i, w := 0, 0; i < len(src); i += w {
+		rv, w = utf8.DecodeRune(src[i:])
+		meetErr := rv == utf8.RuneError && w == 1
+		if !fn(src[i:i+w], src[i:i+w], !meetErr) {
+			return
+		}
+	}
 }
 
 // EncodingUTF8MB3Strict is the strict mode of EncodingUTF8MB3.
@@ -97,78 +88,22 @@ type EncodingUTF8MB3Strict struct {
 	EncodingUTF8
 }
 
-// Validate implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Validate(src []byte) (int, bool) {
-	return validate(src, false)
-}
-
-// ReplaceIllegal replaces all the illegal UTF8 characters.
-func (e *EncodingUTF8MB3Strict) ReplaceIllegal(dest, src []byte) []byte {
-	return replaceIllegal(dest, src, false)
-}
-
-// Decode implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Decode(dest, src []byte) ([]byte, int, error) {
-	return decode(dest, src, e.Name(), false)
-}
-
-// DecodeString implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) DecodeString(dest []byte, src string) (string, int, error) {
-	return decodeString(dest, src, e.Name(), false)
-}
-
-func decodeString(dest []byte, src string, name string, mb4IsLegal bool) (string, int, error) {
-	srcBytes := Slice(src)
-	nSrc, ok := validate(srcBytes, mb4IsLegal)
-	if !ok {
-		ret := replaceIllegal(dest, srcBytes, mb4IsLegal)
-		err := generateEncodingErr(name, srcBytes[nSrc:])
-		return string(ret), nSrc, err
-	}
-	return src, len(src), nil
-}
-
-func decode(dest, src []byte, name string, mb4IsLegal bool) ([]byte, int, error) {
-	nSrc, ok := validate(src, mb4IsLegal)
-	if !ok {
-		ret := replaceIllegal(dest, src, mb4IsLegal)
-		err := generateEncodingErr(name, src[nSrc:])
-		return ret, nSrc, err
-	}
-	return src, len(src), nil
-}
-
-func validate(src []byte, mb4IsLegal bool) (int, bool) {
-	if len(src) == 0 {
-		return 0, true
-	}
-	if mb4IsLegal && utf8.Valid(src) {
-		// Quick check passed.
-		return len(src), true
-	}
+// Foreach implements Encoding interface.
+func (e *EncodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRune(src[i:])
-		if (rv == utf8.RuneError && w == 1) || (w > 3 && !mb4IsLegal) {
-			return i, false
+		meetErr := (rv == utf8.RuneError && w == 1) || w > 3
+		if !fn(src[i:i+w], src[i:i+w], !meetErr) {
+			return
 		}
 	}
-	return len(src), true
 }
 
-func replaceIllegal(dest, src []byte, mb4IsLegal bool) []byte {
-	if len(dest) < len(src) {
-		dest = make([]byte, 0, len(src))
+// Transform implements Encoding interface.
+func (e *EncodingUTF8MB3Strict) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+	if IsValid(e, src) {
+		return src, nil
 	}
-	dest = dest[:0]
-	for i, w := 0, 0; i < len(src); i += w {
-		var rv rune
-		rv, w = utf8.DecodeRune(src[i:])
-		if (rv == utf8.RuneError && w == 1) || (w > 3 && !mb4IsLegal) {
-			dest = append(dest, '?')
-			continue
-		}
-		dest = append(dest, src[i:i+w]...)
-	}
-	return dest
+	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
 }

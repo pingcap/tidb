@@ -20,81 +20,73 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
+	"reflect"
+	"strings"
+	"unsafe"
 )
 
 var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 // EncodingBase defines some generic functions.
 type EncodingBase struct {
-	enc encoding.Encoding
+	enc  encoding.Encoding
+	self Encoding
 }
 
-// Validate checks whether bytes are valid in current charset.
-func (b EncodingBase) Validate(src []byte) (nSrc int, ok bool) {
-	var buf [4]byte
-	transformer := b.enc.NewEncoder()
-	for i, w := 0, 0; i < len(src); i += w {
-		w = len(EncodingUTF8Impl.Peek(src[i:]))
-		_, _, err := transformer.Transform(buf[:], src[i:i+w], true)
-		if err != nil {
-			return i, false
-		}
-	}
-	return len(src), true
+func (b EncodingBase) ToUpper(src string) string {
+	return strings.ToUpper(src)
 }
 
-// ReplaceIllegal replaces the invalid chars in current charset to '?'.
-func (b EncodingBase) ReplaceIllegal(dest, src []byte) []byte {
-	if len(dest) < len(src) {
-		dest = make([]byte, 0, len(src))
+func (b EncodingBase) ToLower(src string) string {
+	return strings.ToLower(src)
+}
+
+func (b EncodingBase) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) (result []byte, err error) {
+	if dest == nil {
+		dest = make([]byte, len(src))
 	}
 	dest = dest[:0]
-	transformer := b.enc.NewEncoder()
-	var buf [4]byte
-	for i, w := 0, 0; i < len(src); i += w {
-		w = len(EncodingUTF8Impl.Peek(src[i:]))
-		_, _, err := transformer.Transform(buf[:], src[i:i+w], true)
-		if err != nil {
-			dest = append(dest, '?')
-			continue
+	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
+		if !ok {
+			if err == nil {
+				err = generateEncodingErr(b.self.Name(), from)
+			}
+			switch opt {
+			case TruncateOptTrim:
+				return false
+			case TruncateOptReplace:
+				dest = append(dest, '?')
+				return true
+			}
 		}
-		dest = append(dest, src[i:i+w]...)
-	}
-	return dest
+		switch cOpt {
+		case CollectOptFrom:
+			dest = append(dest, from...)
+		case CollectOptTo:
+			dest = append(dest, to...)
+		}
+		return true
+	})
+	return dest, err
 }
 
-func (b EncodingBase) transform(transformer transform.Transformer, dest, src []byte,
-	peek func([]byte) []byte, name string) ([]byte, int, error) {
-	if len(src) == 0 {
-		return src, 0, nil
+func (b EncodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+	var tfm transform.Transformer
+	var peek func([]byte) []byte
+	if op == OpFromUTF8 {
+		tfm = b.enc.NewEncoder()
+		peek = EncodingUTF8Impl.Peek
+	} else {
+		tfm = b.enc.NewDecoder()
+		peek = b.self.Peek
 	}
-	isDecoding := &peek != &encodingUTF8Peek
-	if len(dest) < len(src) {
-		dest = make([]byte, len(src)*2)
-	}
-	var destOffset, srcOffset int
-	var encodingErr error
-	var consumed int
-	for {
-		srcNextLen := len(peek(src[srcOffset:]))
-		nDest, nSrc, err := transformer.Transform(dest[destOffset:], src[srcOffset:srcOffset+srcNextLen], false)
-		if err == transform.ErrShortDst {
-			newDest := make([]byte, len(dest)*2)
-			copy(newDest, dest)
-			dest = newDest
-		} else if err != nil || (isDecoding && beginWithReplacementChar(dest[destOffset:destOffset+nDest])) {
-			if encodingErr == nil {
-				encodingErr = generateEncodingErr(name, src[srcOffset:srcOffset+srcNextLen])
-				consumed = srcOffset
-			}
-			dest[destOffset] = byte('?')
-			nDest, nSrc = 1, srcNextLen // skip the source bytes that cannot be decoded normally.
-		}
-		destOffset += nDest
-		srcOffset += nSrc
-		// The source bytes are exhausted.
-		if srcOffset >= len(src) {
-			return dest[:destOffset], consumed, encodingErr
+	var buf [4]byte
+	for i, w := 0, 0; i < len(src); i += w {
+		w = len(peek(src[i:]))
+		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
+		meetErr := err != nil || (op == OpToUTF8 && beginWithReplacementChar(buf[:nDst]))
+		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
+			return
 		}
 	}
 }
@@ -110,5 +102,16 @@ func beginWithReplacementChar(dst []byte) bool {
 // generateEncodingErr generates an invalid string in charset error.
 func generateEncodingErr(name string, invalidBytes []byte) error {
 	arg := fmt.Sprintf("%X", invalidBytes)
-	return errInvalidCharacterString.GenWithStackByArgs(name, arg)
+	return errInvalidCharacterString.FastGenByArgs(name, arg)
+}
+
+// Slice converts string to slice without copy.
+// Use at your own risk.
+func Slice(s string) (b []byte) {
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }

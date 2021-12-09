@@ -1139,19 +1139,18 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if types.IsBinaryStr(argTp) {
 		// Convert charset binary -> utf8. If it meets error, NULL is returned.
 		enc := charset.FindEncoding(resultTp.Charset)
-		utf8Expr, _, err := enc.DecodeString(nil, expr)
-		return utf8Expr, err != nil, nil
+		expr, err = charset.ToUTF8StringReplace(enc, expr)
+		return expr, err != nil, nil
 	} else if types.IsBinaryStr(resultTp) {
 		// Convert charset utf8 -> binary.
 		enc := charset.FindEncoding(argTp.Charset)
-		expr, _, err = enc.EncodeString(nil, expr)
+		expr, err = charset.FromUTF8StringReplace(enc, expr)
 		return expr, false, err
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
-	exprBytes := hack.Slice(expr)
-	if _, ok := enc.Validate(exprBytes); !ok {
-		replace := enc.ReplaceIllegal(nil, exprBytes)
-		return string(replace), false, nil
+	if !charset.IsValidString(enc, expr) {
+		replace := charset.ReplaceIllegalString(enc, expr)
+		return replace, false, nil
 	}
 	return expr, false, nil
 }
@@ -2408,14 +2407,15 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	dBytes := b.convertToBytes(bigints)
-	resultBytes, _, err := charset.FindEncoding(b.tp.Charset).Decode(nil, dBytes)
+	enc := charset.FindEncoding(b.tp.Charset)
+	res, err := charset.ToUTF8(enc, dBytes)
 	if err != nil {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		if b.ctx.GetSessionVars().StrictSQLMode {
 			return "", true, nil
 		}
 	}
-	return string(resultBytes), false, nil
+	return string(res), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -2885,13 +2885,13 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	strBytes := hack.Slice(str)
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
-	encoded, _, err := enc.Encode(nil, strBytes[:w])
+	res, err := charset.FromUTF8(enc, strBytes[:w])
 	if err != nil {
 		// Fallback to the first byte.
 		return calcOrd(strBytes[:1]), false, nil
 	}
 	// Only the first character is considered.
-	return calcOrd(encoded[:len(enc.Peek(encoded))]), false, nil
+	return calcOrd(res[:len(enc.Peek(res))]), false, nil
 }
 
 func calcOrd(leftMost []byte) int64 {
