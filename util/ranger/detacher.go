@@ -533,7 +533,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond))
+		_, col := cond.CharsetAndCollation()
+		points[offset] = rb.intersection(points[offset], rb.build(cond), collate.GetCollator(col))
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
