@@ -63,11 +63,11 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		failpoint.Inject("mockCommitErrorInNewTxn", func(val failpoint.Value) {
 			if v := val.(string); len(v) > 0 {
 				switch v {
-				case "once":
+				case "retry_once":
 					if i == 0 {
 						err = ErrTxnRetryable
 					}
-				case "everytime":
+				case "no_retry":
 					failpoint.Return(errors.New("mock commit error"))
 				}
 			}

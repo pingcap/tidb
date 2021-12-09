@@ -7311,7 +7311,7 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("everytime")`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`), IsNil)
 			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
 			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
 		}
@@ -7325,7 +7325,7 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("once")`), IsNil)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`), IsNil)
 			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
 			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
 		}
