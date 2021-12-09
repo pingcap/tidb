@@ -328,8 +328,6 @@ func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *PollTiFl
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *PollTiFlashContext) (bool, error) {
 	allReplicaReady := true
 	defer func(){
-		pollTiFlashContext.UpdateTiFlashStoreCounter += 1
-		pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick
 		pollTiFlashContext.HandlePdCounter += 1
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick
 	}()
@@ -346,7 +344,12 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick == 0
 	if updateTiFlash {
 		if err := updateTiFlashStores(tikvHelper, pollTiFlashContext); err != nil {
+			// If we failed to get from pd, retry everytime.
+			pollTiFlashContext.UpdateTiFlashStoreCounter = 0
 			return false, errors.Trace(err)
+		}else{
+			pollTiFlashContext.UpdateTiFlashStoreCounter += 1
+			pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick
 		}
 	}
 
