@@ -78,7 +78,7 @@ func (s *sampleItemSorter) Len() int {
 
 func (s *sampleItemSorter) Less(i, j int) bool {
 	var cmp int
-	cmp, s.err = s.items[i].Value.CompareDatum(s.sc, &s.items[j].Value)
+	cmp, s.err = s.items[i].Value.Compare(s.sc, &s.items[j].Value, collate.GetBinaryCollator())
 	if s.err != nil {
 		return true
 	}
