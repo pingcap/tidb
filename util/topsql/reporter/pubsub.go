@@ -16,7 +16,6 @@ package reporter
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/util"
@@ -32,18 +31,15 @@ import (
 // for registering an associated DataSink to the reporter. Then the reporter sends
 // data to the client periodically.
 type TopSQLPubSubService struct {
-	decodePlan             planBinaryDecodeFunc
-	dataSinkRegisterHandle DataSinkRegisterHandle
+	dataSinkRegHandle DataSinkRegHandle
 }
 
 // NewTopSQLPubSubService creates a new TopSQLPubSubService.
 func NewTopSQLPubSubService(
-	decodePlan planBinaryDecodeFunc,
-	dataSinkRegisterHandle DataSinkRegisterHandle,
+	dataSinkRegHandle DataSinkRegHandle,
 ) *TopSQLPubSubService {
 	return &TopSQLPubSubService{
-		decodePlan:             decodePlan,
-		dataSinkRegisterHandle: dataSinkRegisterHandle,
+		dataSinkRegHandle: dataSinkRegHandle,
 	}
 }
 
@@ -55,9 +51,9 @@ func (t *TopSQLPubSubService) Subscribe(
 	_ *tipb.TopSQLSubRequest,
 	stream tipb.TopSQLPubSub_SubscribeServer,
 ) error {
-	sc := newPubSubDataSink(stream, t.decodePlan)
+	sc := newPubSubDataSink(stream)
 
-	if err := t.dataSinkRegisterHandle.Register(sc); err != nil {
+	if err := t.dataSinkRegHandle.Register(sc); err != nil {
 		return err
 	}
 
@@ -69,20 +65,15 @@ type pubSubDataSink struct {
 	stream     tipb.TopSQLPubSub_SubscribeServer
 	sendTaskCh chan sendTask
 	isDown     *atomic.Bool
-
-	decodePlan planBinaryDecodeFunc
 }
 
 func newPubSubDataSink(
 	stream tipb.TopSQLPubSub_SubscribeServer,
-	decodePlan planBinaryDecodeFunc,
 ) *pubSubDataSink {
 	return &pubSubDataSink{
 		stream:     stream,
 		sendTaskCh: make(chan sendTask),
 		isDown:     atomic.NewBool(false),
-
-		decodePlan: decodePlan,
 	}
 }
 
@@ -123,23 +114,21 @@ func (s *pubSubDataSink) run() {
 
 		var err error
 		doneCh := make(chan struct{})
-		go func(task sendTask) {
-			util.WithRecovery(func() {
-				defer func() {
-					doneCh <- struct{}{}
-				}()
-				err = s.doSend(ctx, task.data)
-				if err != nil {
-					reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-				} else {
-					reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
-				}
-			}, nil)
-		}(task)
+		go util.WithRecovery(func() {
+			defer func() {
+				doneCh <- struct{}{}
+				cancel()
+			}()
+			err = s.doSend(ctx, task.data)
+			if err != nil {
+				reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			} else {
+				reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			}
+		}, nil)
 
 		select {
 		case <-doneCh:
-			cancel()
 			if err != nil {
 				logutil.BgLogger().Warn(
 					"[top-sql] pubsub data sink failed to send data to subscriber",
@@ -148,7 +137,6 @@ func (s *pubSubDataSink) run() {
 				return
 			}
 		case <-ctx.Done():
-			cancel()
 			logutil.BgLogger().Warn(
 				"[top-sql] pubsub data sink failed to send data to subscriber due to timeout",
 				zap.Duration("timeout", task.timeout),
@@ -159,16 +147,20 @@ func (s *pubSubDataSink) run() {
 }
 
 func (s *pubSubDataSink) doSend(ctx context.Context, data reportData) error {
-	if err := s.sendCPUTime(ctx, data.collectedData); err != nil {
+	if err := s.sendCPUTime(ctx, data.cpuTimeRecords); err != nil {
 		return err
 	}
-	if err := s.sendSQLMeta(ctx, data.normalizedSQLMap); err != nil {
+	if err := s.sendSQLMeta(ctx, data.sqlMetas); err != nil {
 		return err
 	}
-	return s.sendPlanMeta(ctx, data.normalizedPlanMap)
+	return s.sendPlanMeta(ctx, data.planMetas)
 }
 
-func (s *pubSubDataSink) sendCPUTime(ctx context.Context, data []*dataPoints) (err error) {
+func (s *pubSubDataSink) sendCPUTime(ctx context.Context, records []*tipb.CPUTimeRecord) (err error) {
+	if len(records) == 0 {
+		return
+	}
+
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -180,16 +172,11 @@ func (s *pubSubDataSink) sendCPUTime(ctx context.Context, data []*dataPoints) (e
 		}
 	}()
 
-	r := &tipb.TopSQLSubResponse{}
-	record := &tipb.CPUTimeRecord{}
-	r.RespOneof = &tipb.TopSQLSubResponse_Record{Record: record}
+	cpuRecord := &tipb.TopSQLSubResponse_Record{}
+	r := &tipb.TopSQLSubResponse{RespOneof: cpuRecord}
 
-	for i := range data {
-		point := data[i]
-		record.SqlDigest = point.SQLDigest
-		record.PlanDigest = point.PlanDigest
-		record.RecordListCpuTimeMs = point.CPUTimeMsList
-		record.RecordListTimestampSec = point.TimestampList
+	for i := range records {
+		cpuRecord.Record = records[i]
 		if err = s.stream.Send(r); err != nil {
 			return
 		}
@@ -206,7 +193,11 @@ func (s *pubSubDataSink) sendCPUTime(ctx context.Context, data []*dataPoints) (e
 	return
 }
 
-func (s *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetaMap *sync.Map) (err error) {
+func (s *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetas []*tipb.SQLMeta) (err error) {
+	if len(sqlMetas) == 0 {
+		return
+	}
+
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -218,37 +209,32 @@ func (s *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetaMap *sync.Map) 
 		}
 	}()
 
-	r := &tipb.TopSQLSubResponse{}
-	sqlMeta := &tipb.SQLMeta{}
-	r.RespOneof = &tipb.TopSQLSubResponse_SqlMeta{SqlMeta: sqlMeta}
+	sqlMeta := &tipb.TopSQLSubResponse_SqlMeta{}
+	r := &tipb.TopSQLSubResponse{RespOneof: sqlMeta}
 
-	sqlMetaMap.Range(func(key, value interface{}) bool {
-		meta := value.(SQLMeta)
-		sqlMeta.SqlDigest = []byte(key.(string))
-		sqlMeta.NormalizedSql = meta.normalizedSQL
-		sqlMeta.IsInternalSql = meta.isInternal
+	for i := range sqlMetas {
+		sqlMeta.SqlMeta = sqlMetas[i]
 		if err = s.stream.Send(r); err != nil {
-			return false
+			return
 		}
 		sentCount += 1
 
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
-			return false
+			return
 		default:
 		}
-
-		return true
-	})
-	if err != nil {
-		return err
 	}
 
 	return
 }
 
-func (s *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetaMap *sync.Map) (err error) {
+func (s *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetas []*tipb.PlanMeta) (err error) {
+	if len(planMetas) == 0 {
+		return
+	}
+
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -260,34 +246,22 @@ func (s *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetaMap *sync.Map
 		}
 	}()
 
-	r := &tipb.TopSQLSubResponse{}
-	planMeta := &tipb.PlanMeta{}
-	r.RespOneof = &tipb.TopSQLSubResponse_PlanMeta{PlanMeta: planMeta}
-	planMetaMap.Range(func(key, value interface{}) bool {
-		planDecoded, err1 := s.decodePlan(value.(string))
-		if err1 != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err1))
-			return true
-		}
+	planMeta := &tipb.TopSQLSubResponse_PlanMeta{}
+	r := &tipb.TopSQLSubResponse{RespOneof: planMeta}
 
-		planMeta.PlanDigest = []byte(key.(string))
-		planMeta.NormalizedPlan = planDecoded
+	for i := range planMetas {
+		planMeta.PlanMeta = planMetas[i]
 		if err = s.stream.Send(r); err != nil {
-			return false
+			return
 		}
 		sentCount += 1
 
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
-			return false
+			return
 		default:
 		}
-
-		return true
-	})
-	if err != nil {
-		return err
 	}
 
 	return

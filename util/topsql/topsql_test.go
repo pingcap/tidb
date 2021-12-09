@@ -120,9 +120,12 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	dataSink := reporter.NewSingleTargetDataSink(mockPlanBinaryDecoderFunc)
-	report := reporter.NewRemoteTopSQLReporter(dataSink)
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
+
+	dataSink := reporter.NewSingleTargetDataSink()
+	err = report.DataSinkRegHandle().Register(dataSink)
+	require.NoError(t, err)
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
@@ -185,10 +188,10 @@ func TestTopSQLPubSub(t *testing.T) {
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 
-	report := reporter.NewRemoteTopSQLReporter()
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
 
-	pubsub := reporter.NewTopSQLPubSubService(mockPlanBinaryDecoderFunc, report.DataSinkRegisterHandle())
+	pubsub := reporter.NewTopSQLPubSubService(report.DataSinkRegHandle())
 	server, err := mockServer.StartMockPubSubServer(pubsub)
 	require.NoError(t, err)
 	defer server.Stop()
@@ -295,9 +298,9 @@ func TestTopSQLPubSub(t *testing.T) {
 }
 
 func TestTopSQLPubSubReporterStopBeforePubSub(t *testing.T) {
-	report := reporter.NewRemoteTopSQLReporter()
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 
-	pubsub := reporter.NewTopSQLPubSubService(mockPlanBinaryDecoderFunc, report.DataSinkRegisterHandle())
+	pubsub := reporter.NewTopSQLPubSubService(report.DataSinkRegHandle())
 	server, err := mockServer.StartMockPubSubServer(pubsub)
 	defer server.Stop()
 	require.NoError(t, err)

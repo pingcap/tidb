@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -50,12 +51,12 @@ type TopSQLReporter interface {
 	tracecpu.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
-	DataSinkRegisterHandle() DataSinkRegisterHandle
+	DataSinkRegHandle() DataSinkRegHandle
 	Close()
 }
 
-// DataSinkRegisterHandle registers DataSink
-type DataSinkRegisterHandle interface {
+// DataSinkRegHandle registers DataSink
+type DataSinkRegHandle interface {
 	Register(dataSink DataSink) error
 }
 
@@ -139,6 +140,9 @@ type RemoteTopSQLReporter struct {
 	normalizedPlanMap atomic.Value // sync.Map
 	planMapLength     atomic2.Int64
 
+	// calling decodePlan this can take a while, so should not block critical paths
+	decodePlan planBinaryDecodeFunc
+
 	collectCPUDataChan      chan cpuData
 	reportCollectedDataChan chan collectedData
 }
@@ -150,14 +154,17 @@ type SQLMeta struct {
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
-func NewRemoteTopSQLReporter(dataSinks ...DataSink) *RemoteTopSQLReporter {
+//
+// planBinaryDecodeFunc is a decoding function which will be called asynchronously to decode the plan binary to string
+func NewRemoteTopSQLReporter(planBinaryDecodeFunc planBinaryDecodeFunc) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:    ctx,
 		cancel: cancel,
 
-		dataSinks:     dataSinks,
 		dataSinkRegCh: make(chan DataSink),
+
+		decodePlan: planBinaryDecodeFunc,
 
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
@@ -243,9 +250,9 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}
 }
 
-// DataSinkRegisterHandle returns a DataSinkRegisterHandle for DataSink registration.
-func (tsr *RemoteTopSQLReporter) DataSinkRegisterHandle() DataSinkRegisterHandle {
-	return &RemoteDataSinkRegisterHandle{registerCh: tsr.dataSinkRegCh}
+// DataSinkRegHandle returns a DataSinkRegHandle for DataSink registration.
+func (tsr *RemoteTopSQLReporter) DataSinkRegHandle() DataSinkRegHandle {
+	return &RemoteDataSinkRegHandle{registerCh: tsr.dataSinkRegCh}
 }
 
 // Close uses to close and release the reporter resource.
@@ -523,29 +530,14 @@ type collectedData struct {
 
 // reportData contains data that reporter sends to the agent
 type reportData struct {
-	// collectedData contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
-	collectedData     []*dataPoints
-	normalizedSQLMap  *sync.Map
-	normalizedPlanMap *sync.Map
+	// cpuTimeRecords contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
+	cpuTimeRecords []*tipb.CPUTimeRecord
+	sqlMetas       []*tipb.SQLMeta
+	planMetas      []*tipb.PlanMeta
 }
 
 func (d *reportData) hasData() bool {
-	if len(d.collectedData) > 0 {
-		return true
-	}
-	cnt := 0
-	d.normalizedSQLMap.Range(func(key, value interface{}) bool {
-		cnt++
-		return false
-	})
-	if cnt > 0 {
-		return true
-	}
-	d.normalizedPlanMap.Range(func(key, value interface{}) bool {
-		cnt++
-		return false
-	})
-	return cnt > 0
+	return len(d.cpuTimeRecords) != 0 || len(d.sqlMetas) != 0 || len(d.planMetas) != 0
 }
 
 // reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
@@ -570,10 +562,19 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 // getReportData gets reportData from the collectedData.
 // This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
 func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportData {
+	records, sqlMap, planMap := getTopN(collected)
+	return buildReportData(records, sqlMap, planMap, tsr.decodePlan)
+}
+
+func getTopN(collected collectedData) (records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map) {
 	// Fetch TopN dataPoints.
 	others := collected.records[keyOthers]
 	delete(collected.records, keyOthers)
-	records := make([]*dataPoints, 0, len(collected.records))
+
+	records = make([]*dataPoints, 0, len(collected.records))
+	sqlMap = collected.normalizedSQLMap
+	planMap = collected.normalizedPlanMap
+
 	for _, v := range collected.records {
 		records = append(records, v)
 	}
@@ -596,11 +597,43 @@ func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportDa
 		records = append(records, others)
 	}
 
-	return reportData{
-		collectedData:     records,
-		normalizedSQLMap:  collected.normalizedSQLMap,
-		normalizedPlanMap: collected.normalizedPlanMap,
+	return
+}
+
+func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res reportData) {
+	for _, record := range records {
+		res.cpuTimeRecords = append(res.cpuTimeRecords, &tipb.CPUTimeRecord{
+			RecordListTimestampSec: record.TimestampList,
+			RecordListCpuTimeMs:    record.CPUTimeMsList,
+			SqlDigest:              record.SQLDigest,
+			PlanDigest:             record.PlanDigest,
+		})
 	}
+
+	sqlMap.Range(func(key, value interface{}) bool {
+		meta := value.(SQLMeta)
+		res.sqlMetas = append(res.sqlMetas, &tipb.SQLMeta{
+			SqlDigest:     []byte(key.(string)),
+			NormalizedSql: meta.normalizedSQL,
+			IsInternalSql: meta.isInternal,
+		})
+		return true
+	})
+
+	planMap.Range(func(key, value interface{}) bool {
+		planDecoded, errDecode := decodePlan(value.(string))
+		if errDecode != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+			return true
+		}
+		res.planMetas = append(res.planMetas, &tipb.PlanMeta{
+			PlanDigest:     []byte(key.(string)),
+			NormalizedPlan: planDecoded,
+		})
+		return true
+	})
+
+	return
 }
 
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
@@ -625,15 +658,15 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	}
 }
 
-var _ DataSinkRegisterHandle = &RemoteDataSinkRegisterHandle{}
+var _ DataSinkRegHandle = &RemoteDataSinkRegHandle{}
 
-// RemoteDataSinkRegisterHandle is used to receive DataSink registrations.
-type RemoteDataSinkRegisterHandle struct {
+// RemoteDataSinkRegHandle is used to receive DataSink registrations.
+type RemoteDataSinkRegHandle struct {
 	registerCh chan DataSink
 }
 
-// Register implements DataSinkRegisterHandle interface.
-func (r *RemoteDataSinkRegisterHandle) Register(dataSink DataSink) (err error) {
+// Register implements DataSinkRegHandle interface.
+func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("registration channel is closed")

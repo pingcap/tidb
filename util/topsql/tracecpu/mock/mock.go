@@ -171,8 +171,8 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
-// DataSinkRegisterHandle implements the interface.
-func (c *TopSQLCollector) DataSinkRegisterHandle() reporter.DataSinkRegisterHandle {
+// DataSinkRegHandle implements the interface.
+func (c *TopSQLCollector) DataSinkRegHandle() reporter.DataSinkRegHandle {
 	return nil
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -47,14 +48,17 @@ var (
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	rc := reporter.NewSingleTargetDataSink(plancodec.DecodeNormalizedPlan)
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
-	dataSinkRegHandle := globalTopSQLReport.DataSinkRegisterHandle()
-	pubsub := reporter.NewTopSQLPubSubService(plancodec.DecodeNormalizedPlan, dataSinkRegHandle)
-	globalTopSQLPubSubService = pubsub
+	// register single target datasink to reporter
+	singleTargetDataSink := reporter.NewSingleTargetDataSink()
+	err := globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
+	terror.MustNil(err)
+
+	globalTopSQLPubSubService = reporter.NewTopSQLPubSubService(globalTopSQLReport.DataSinkRegHandle())
 
 	if len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0 {
 		variable.TopSQLVariable.InstanceEnable.Store(true)
