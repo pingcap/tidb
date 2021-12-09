@@ -260,7 +260,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile durations of distsql execution(second)",
 	},
 	"tidb_distsql_qps": {
-		PromQL:  "sum(rate(tidb_distsql_handle_query_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION]))",
+		PromQL:  "sum(rate(tidb_distsql_handle_query_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (copr_type)",
 		Labels:  []string{"instance", "type"},
 		Comment: "distsql query handling durations per second",
 	},

@@ -928,8 +928,11 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	indexRows := t.indexPlan.statsInfo().RowCount
 	idxCst := indexRows * sessVars.CPUFactor
-	// if the expectCnt is below the paging threshold, using paging API, recalculate cost.
+	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
+	if ctx.GetSessionVars().EnablePaging {
+		logutil.BgLogger().Info("MYLOG try paging", zap.Uint64("expectCnt", t.expectCnt))
+	}
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= pagingThreshold {
 		seekCnt := float64(1)
 		expectCnt := float64(t.expectCnt)
@@ -946,7 +949,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		}
 		pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + expectCnt*sessVars.CPUFactor
 		pagingCst *= indexSelectivity
-		idxCst = pagingCst
+		idxCst = math.Min(idxCst, pagingCst)
 		p.Paging = true
 	}
 	newTask.cst += idxCst

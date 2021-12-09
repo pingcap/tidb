@@ -680,4 +680,15 @@ func TestCopPaging(t *testing.T) {
 			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
 			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
+
+	// limit 1000 should go paging
+	for i := 0; i < 1; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 255 and c1 >= 0 and c1 <= 255 and c2 in (2, 4, 6, 8) order by c1 limit 1000").Check(kit.Rows(
+			"Limit 0.25 root  offset:0, count:1000",
+			"└─IndexLookUp 0.25 root  paging:true",
+			"  ├─Selection(Build) 64.00 cop[tikv]  le(test.t.id, 255)",
+			"  │ └─IndexRangeScan 256.00 cop[tikv] table:t, index:i(c1) range:[0,255], keep order:true",
+			"  └─Selection(Probe) 0.25 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 64.00 cop[tikv] table:t keep order:false"))
+	}
 }
