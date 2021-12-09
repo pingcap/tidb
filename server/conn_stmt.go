@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -127,7 +126,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
-	if variable.TopSQLInstanceEnabled() {
+	if topsql.InstanceEnabled() {
 		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
@@ -273,7 +272,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
-	if variable.TopSQLInstanceEnabled() {
+	if topsql.InstanceEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)

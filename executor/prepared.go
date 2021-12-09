@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -194,7 +193,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
-	if variable.TopSQLInstanceEnabled() {
+	if topsql.InstanceEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 

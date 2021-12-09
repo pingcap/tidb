@@ -314,7 +314,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !variable.TopSQLInstanceEnabled() {
+	if a.Plan == nil || !topsql.InstanceEnabled() {
 		return ctx
 	}
 	vars := a.Ctx.GetSessionVars()

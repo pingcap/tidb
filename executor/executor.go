@@ -1730,7 +1730,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if variable.TopSQLInstanceEnabled() && prepareStmt.SQLDigest != nil {
+		if topsql.InstanceEnabled() && prepareStmt.SQLDigest != nil {
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 	}
@@ -1910,7 +1910,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && variable.TopSQLInstanceEnabled() {
+	if snapshot != nil && topsql.InstanceEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
 }

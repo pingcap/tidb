@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -57,9 +56,12 @@ func SetupTopSQL() {
 	err := globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
 	terror.MustNil(err)
 
-	if len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0 {
-		variable.TopSQLVariable.InstanceEnable.Store(true)
-	}
+	enable := len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0
+	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enable)
+}
+
+func InstanceEnabled() bool {
+	return tracecpu.GlobalSQLCPUProfiler.GetTopSQLEnabled()
 }
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.

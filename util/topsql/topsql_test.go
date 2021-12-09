@@ -39,8 +39,8 @@ type collectorWrapper struct {
 }
 
 func TestTopSQLCPUProfile(t *testing.T) {
-	variable.TopSQLVariable.InstanceEnable.Store(true)
-	defer variable.TopSQLVariable.InstanceEnable.Store(false)
+	setTopSQLEnable(true)
+	defer setTopSQLEnable(false)
 
 	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
@@ -90,21 +90,21 @@ func TestTopSQLCPUProfile(t *testing.T) {
 
 func TestIsEnabled(t *testing.T) {
 	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 
 	setTopSQLEnable(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 	setTopSQLEnable(false)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 	err = tracecpu.StopCPUProfile()
 	require.NoError(t, err)
 
 	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 	setTopSQLEnable(true)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
@@ -358,7 +358,7 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 }
 
 func setTopSQLEnable(enabled bool) {
-	variable.TopSQLVariable.InstanceEnable.Store(enabled)
+	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {

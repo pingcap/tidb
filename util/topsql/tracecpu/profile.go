@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -70,7 +71,9 @@ type sqlCPUProfiler struct {
 		sync.Mutex
 		ept *exportProfileTask
 	}
-	collector atomic.Value
+
+	topSQLEnabled atomic2.Bool
+	collector     atomic.Value
 }
 
 var (
@@ -107,10 +110,18 @@ func (sp *sqlCPUProfiler) GetCollector() Collector {
 	return c
 }
 
+func (sp *sqlCPUProfiler) SetTopSQLEnabled(v bool) {
+	sp.topSQLEnabled.Store(v)
+}
+
+func (sp *sqlCPUProfiler) GetTopSQLEnabled() bool {
+	return sp.topSQLEnabled.Load()
+}
+
 func (sp *sqlCPUProfiler) startCPUProfileWorker() {
 	defer util.Recover("top-sql", "profileWorker", nil, false)
 	for {
-		if sp.IsEnabled() {
+		if sp.ShouldProfile() {
 			sp.doCPUProfile()
 		} else {
 			time.Sleep(time.Second)
@@ -278,16 +289,16 @@ func (sp *sqlCPUProfiler) hasExportProfileTask() bool {
 	return has
 }
 
-// IsEnabled return true if it is(should be) enabled. It exports for tests.
-func (sp *sqlCPUProfiler) IsEnabled() bool {
-	return variable.TopSQLInstanceEnabled() || sp.hasExportProfileTask()
+// ShouldProfile return true if it's required to profile. It exports for tests.
+func (sp *sqlCPUProfiler) ShouldProfile() bool {
+	return sp.topSQLEnabled.Load() || sp.hasExportProfileTask()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.
 // Because the GlobalSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if GlobalSQLCPUProfiler.IsEnabled() {
+	if GlobalSQLCPUProfiler.ShouldProfile() {
 		return GlobalSQLCPUProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)

@@ -17,7 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"strconv"
+    "strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -477,7 +477,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 }
 
 func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
-	if !variable.TopSQLInstanceEnabled() || job == nil {
+	if !topsql.InstanceEnabled() || job == nil {
 		return
 	}
 

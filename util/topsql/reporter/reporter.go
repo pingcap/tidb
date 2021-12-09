@@ -402,7 +402,7 @@ out:
 		}
 	}
 	runningCnt := len(tsr.dataSinks) - pendingCnt
-	variable.TopSQLVariable.InstanceEnable.Store(runningCnt > 0)
+	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(runningCnt > 0)
 }
 
 func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
