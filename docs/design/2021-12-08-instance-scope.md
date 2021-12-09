@@ -158,6 +158,8 @@ max_connections = 1234
 tidb_general_log = "/path/to/file"
 ```
 
+The default will be that we map variables as read-only, so we don't need to think about the specific cases (i.e. you can't easily change the socket or port). This helps us achieve completeness first, and then we can then evaluate which ones can be made dynamic.
+
 ### Stage 3: Refactoring
 
 The use of a `GetGlobal()` and `SetGlobal()` func for each instance scoped system variable is not ideal. It is possible to refactor the system variable framework so that instance scope is stored in a map, and the values are updated automatically by `SET GLOBAL` on an instance scoped variable. On startup, as the configuration file is parsed it will update the values in the map. This seems like a better approach than the current use of Setters/Getters, and because there is a prescribed way of doing it we can correctly handle the data races that are common with our current incorrect usage of calling `config.GetGlobalConfig()`.
