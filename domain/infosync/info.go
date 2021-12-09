@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -333,6 +332,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 		})
 		if err == nil {
+			defer res.Body.Close()
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
@@ -344,7 +344,6 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 					bodyBytes = nil
 				}
 			}
-			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
 	}
@@ -694,6 +693,8 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
+
 	var metricStorage metricStorage
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&metricStorage)
