@@ -30,12 +30,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/ddl/placement"
-
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -899,7 +897,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 
@@ -931,12 +929,12 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return errors.New("DeletePlacementRule returns error")
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 	return nil
@@ -959,12 +957,12 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return errors.New("SetPlacementRule returns error")
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 	return nil
@@ -988,13 +986,13 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New("GetGroupRules returns error")
 	}
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 
@@ -1042,7 +1040,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 	if err != nil {
@@ -1076,7 +1074,7 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			log.Error("err", zap.Error(err))
+			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
 
