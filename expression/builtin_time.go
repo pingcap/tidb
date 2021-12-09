@@ -4856,7 +4856,7 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 	}
 
 	tz := ctx.GetSessionVars().Location()
-	t, err := val.GoTime(tz)
+	t, err := val.AdjustedGoTime(tz)
 	if err != nil {
 		return 0, false, nil
 	}
