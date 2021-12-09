@@ -2270,7 +2270,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
-					defer r.Body.Close()
+					defer terror.Call(r.Body.Close)
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
