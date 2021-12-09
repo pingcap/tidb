@@ -654,9 +654,8 @@ type builtinMaxMinCmpStringAsTimeSig struct {
 func newBuiltinMaxMinCmpStringAsTimeSig(temporalType byte) builtinMaxMinCmpStringAsTimeSig {
 	if temporalType == mysql.TypeDate {
 		return builtinMaxMinCmpStringAsTimeSig{types.ParseDate}
-	} else {
-		return builtinMaxMinCmpStringAsTimeSig{types.ParseDatetime}
 	}
+	return builtinMaxMinCmpStringAsTimeSig{types.ParseDatetime}
 }
 
 type builtinGreatestCmpStringAsTimeSig struct {
