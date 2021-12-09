@@ -3824,6 +3824,11 @@ func (s *testIntegrationSuite) TestGreatestTimeType(c *C) {
 
 		tk.MustQuery("select greatest(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
 		tk.MustQuery("select least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;").Check(testkit.Rows("1999-10-10 10:10:10"))
+
+		tk.MustQuery("SELECT GREATEST(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
+		tk.MustQuery("SELECT LEAST(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2001-01-01"))
+		tk.MustQuery("SELECT GREATEST(c_d, 20010101, 20040404, 20030303) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("SELECT LEAST(c_d, 20010101, 20040404, 20030303) from t1;").Check(testkit.Rows("2001-01-01"))
 	}
 }
 
