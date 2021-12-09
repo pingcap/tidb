@@ -3978,6 +3978,8 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1 1"))
 	result = tk.MustQuery(`select INTERVAL(100, NULL, NULL, NULL, NULL, NULL, 100);`)
 	result.Check(testkit.Rows("6"))
+	result = tk.MustQuery(`SELECT INTERVAL(0,(1*5)/2) + INTERVAL(5,4,3);`)
+	result.Check(testkit.Rows("2"))
 
 	// for greatest
 	result = tk.MustQuery(`select greatest(1, 2, 3), greatest("a", "b", "c"), greatest(1.1, 1.2, 1.3), greatest("123a", 1, 2)`)
@@ -9363,6 +9365,25 @@ func (s *testIntegrationSuite) TestIssue30101(c *C) {
 	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
 	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
 	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
+}
+
+func (s *testIntegrationSuite) TestIssue28739(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`USE test`)
+	tk.MustExec("SET time_zone = 'Europe/Vilnius'")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00')").Check(testkit.Rows("1585443600"))
+	tk.MustQuery("SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))").Check(testkit.Rows("2020-03-29 04:00:00"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`CREATE TABLE t (dt DATETIME NULL)`)
+	defer tk.MustExec(`DROP TABLE t`)
+	// Test the vector implememtation
+	tk.MustExec(`INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL)`)
+	tk.MustQuery(`SELECT dt, UNIX_TIMESTAMP(dt) FROM t`).Sort().Check(testkit.Rows(
+		"2020-03-29 03:45:00 1585443600",
+		"2020-10-04 02:15:00 1601766900",
+		"2021-03-28 02:30:00 1616891400",
+		"2021-10-31 02:30:00 1635636600",
+		"<nil> <nil>"))
 }
 
 func (s *testIntegrationSuite) TestIssue30326(c *C) {
