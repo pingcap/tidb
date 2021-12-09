@@ -405,15 +405,15 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
 			available = val.(bool)
 		})
-		//pollTiFlashContext.mu.Lock()
-		//if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok && a {
-		//	// If this table is available, but have not be `UpdateTableReplicaInfo`-ed, reckon it available.
-		//	// So we will not add duplicate job.
-		//	log.Info("TiFlash replica is pending, reckon it available", zap.Int64("tableID", tb.ID))
-		//	available = true
-		//}
-		//pollTiFlashContext.mu.Unlock()
-		if !available {
+		duplicate := false
+		pollTiFlashContext.mu.Lock()
+		if _, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
+			// If there are already pending job, we shall finish it first.
+			log.Info("TiFlash replica is pending, wait for it", zap.Int64("tableID", tb.ID))
+			duplicate = true
+		}
+		pollTiFlashContext.mu.Unlock()
+		if !available && !duplicate {
 			bo, ok := pollTiFlashContext.BackoffContext.Get(tb.ID)
 			if !ok {
 				// Small table may be already ready at first check later.

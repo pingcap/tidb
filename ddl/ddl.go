@@ -442,6 +442,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 						log.Info("Quit consumer")
 						return
 					case <-time.After(100*time.Millisecond):
+						log.Info("Sleep consumer")
 					}
 				}
 			}
