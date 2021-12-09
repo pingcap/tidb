@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 	timeutil.SetSystemTZ("system")
 
 	testDataMap.LoadTestSuiteData("testdata", "flag_simplify")
+	testDataMap.LoadTestSuiteData("testdata", "expression_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
@@ -75,4 +76,8 @@ func createContext(t *testing.T) *mock.Context {
 
 func GetFlagSimplifyData() testdata.TestData {
 	return testDataMap["flag_simplify"]
+}
+
+func GetExpressionSuiteData() testdata.TestData {
+	return testDataMap["expression_suite"]
 }

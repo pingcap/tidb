@@ -1118,6 +1118,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
 		saveCpCh:      saveCpCh,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
+	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates()
 
 	start := time.Now()
