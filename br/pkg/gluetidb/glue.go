@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -259,7 +260,15 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+	if preallocIds, ok := ctx.Value(utils.TableIDs{}).(map[int64]struct{}); ok {
+		if _, ok := preallocIds[table.ID]; ok {
+			log.Info("reusing table id", zap.Int64("table-id", table.ID))
+			return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, false)
+		}
+	} else {
+		log.Warn("failed to get prealloc table ids", zap.Any("value", ctx.Value(utils.TableIDs{})))
+	}
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
 }
 
 // Close implements glue.Session.
