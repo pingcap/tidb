@@ -23,18 +23,18 @@ Currently, TiDB has two primary methods of configuration:
 
 Both the **semantics** and **naming conventions** differ between these two methods:
 
-1. Configuration file settings only apply to a single TiDB server instance. Making changes to settings managed by the configuration file requires restarting TiDB server.
+1. Configuration file settings only apply to a single TiDB server instance. Making changes to settings managed by the configuration file requires restarting the TiDB server.
 2. System variables _natively_ manage settings that have _session_ (connection) or _global_ (cluster-wide) scope. However, some _session_ scoped variables are used to allow instance configuration. This is not a feature that is natively supported, and the usage is often confusing.
-3. The configuration file uses a heirachy of sections such as `[performance]` or `[experimental]`.
-4. System variables use are flat naming convention (but often use a prefix of `tidb_feature_XXX`). Thus mapping between the two is not straight forward.
+3. The configuration file uses a hierarchy of sections such as `[performance]` or `[experimental]`.
+4. System variables use a flat naming convention (but often use a prefix of `tidb_feature_XXX`). Thus mapping between the two is not straight forward.
 
-This proposal introduces _native_ support for `INSTANCE` scoped variables, such that system variables offer the superset of functionality of configuration files. It does this using a much simplified implementation from earlier proposals: an individual system variable **must not** permit both `GLOBAL` and `INSTANCE` scope. Implementing with this restriction is key to this proposal; since it avoids a confusing set of precedence rules which are hard to understand. For alternative proposals see "investigation and alternatives".
+This proposal introduces _native_ support for `INSTANCE` scoped variables, such that system variables offer the superset of functionality of configuration files. It does this using a much simplified implementation from earlier proposals: an individual system variable **must not** permit both `GLOBAL` and `INSTANCE` scope. Implementing this restriction is key to this proposal; since it avoids a confusing set of precedence rules which are hard to understand. For alternative proposals see "investigation and alternatives".
 
 ## Motivation or Background
 
 The motivation for this proposal is ease of use and maintainability:
 
-1. It's not clear if each setting should be a configuration file setting or a system variable (we usually chose system variable, but there is no clear rule). After this proposal is implemented, we can make every setting available as a system variable (even if read-only).
+1. It's not clear if each setting should be a configuration file setting or a system variable (we usually choose system variables, but there is no clear rule). After this proposal is implemented, we can make every setting available as a system variable (even if read-only).
 2. We are being asked to make additional configuration file settings dynamically configuration (via a system variable). When we do this, the naming is inconsistent. After this proposal is implemented, we can allow the `.toml` file to support an `[instance]` section where the flat named for system variables can be used. This makes it identical to how system variables are configured in MySQL.
 3. The current system is hard for users. It's hard to explain the two systems, and hard to explain the differences between them. Often "INSTANCE" scoped system variables are incorrectly documented as `SESSION`, since it's not a native behavior. Explaining how `SESSION` scope is hijacked is difficult for MySQL users to understand, because usually changes in a different session should not affect your session.
 
@@ -83,7 +83,7 @@ From a sysvar framework perspective the changes required are quite minimal. A ne
 +       if scope == ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 ```
 
-The session package handles loading/saving GLOBAL variable values. It will need minor changes to make Instance Scope a noop operation (since persistence is not supported, and in the initial implementation a `GetGlobal()` function will be used to retrieve the instance value:
+The session package handles loading/saving `GLOBAL` variable values. It will need minor changes to make `INSTANCE` Scope a noop operation (since persistence is not supported, and in the initial implementation a `GetGlobal()` function will be used to retrieve the instance value:
 
 ```
 +++ b/session/session.go
@@ -168,13 +168,13 @@ Thus, the source of truth for instance scoped variables moves from the `config` 
 
 ## Impacts & Risks
 
-Biggest risk is that we can not agree on a reduced scope of implementation and the project extends to cover increased scope. Configuration management is a classic example of a [bikeshed problem](https://en.wikipedia.org/wiki/Law_of_triviality), and we will likely need to make some tradeoffs to get anywhere.
+The biggest risk is that we can not agree on a reduced scope of implementation and the project extends to cover increased scope. Configuration management is a classic example of a [bikeshed problem](https://en.wikipedia.org/wiki/Law_of_triviality), and we will likely need to make some tradeoffs to get anywhere.
 
 Many of the alternatives are difficult to implement because they break compatibility (we need to live with `GLOBAL` means cluster `GLOBAL`, and there is no `SET CLUSTER`) or they break rolling upgrade scenarios because we currently have no specific rules of the minimum version of TiDB which can be upgraded from.
 
 ## Investigation & Alternatives
 
-- There is no equiverlant functionality to reference in MySQL since it does not have the native concept of a cluster.
+- There is no equivalent functionality to reference in MySQL since it does not have the native concept of a cluster.
 - An [earlier proposal](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit) for `INSTANCE` scope, with rules for precedence (same author)
 - CockroachDB has cluster level settings and node-level settings. Most settings are cluster level, and [node-level](https://www.cockroachlabs.com/docs/v21.2/cockroach-start) needs to be parsed as arguments when starting the server.
 
@@ -201,7 +201,7 @@ func main() {
 }
 ```
 
-Output:
+**Output:**
 
 ```
 tidb_store_limit
@@ -216,7 +216,7 @@ tidb_stmt_summary_history_size
 
 The following suggestions are provided (to be discussed):
 
-- `tidb_store_limit`: Suggestion is to convert to global only ([issue #30515](https://github.com/pingcap/tidb/issues/30515))
+- `tidb_store_limit`: Suggestion is to convert to global only (Currently does not work correctly, see [issue #30515](https://github.com/pingcap/tidb/issues/30515))
 - `tidb_stmt_summary_XXX`: Suggestion is to convert to global only.
 - `tidb_enable_stmt_summary`: Convert to instance scope only.
 - `tidb_capture_plan_baselines`: Convert to global scope only. 
