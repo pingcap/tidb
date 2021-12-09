@@ -933,13 +933,14 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= pagingThreshold {
 		seekCnt := float64(1)
 		expectCnt := float64(t.expectCnt)
+		sourceRows := extractRows(t.indexPlan)
+		expectCnt = math.Min(expectCnt, sourceRows)
 		if expectCnt > pagingGrowingSum {
 			seekCnt += float64(int(8 + (expectCnt-pagingGrowingSum)/maxPagingSize))
 		} else if expectCnt > minPagingSize {
 			seekCnt += float64(int(math.Log((pagingSizeGrow-1)*expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
 		}
 		indexSelectivity := float64(1)
-		sourceRows := extractRows(t.indexPlan)
 		if sourceRows > indexRows {
 			indexSelectivity = indexRows / sourceRows
 		}
