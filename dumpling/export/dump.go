@@ -344,6 +344,128 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// adjustDatabaseCollation adjusts db collation and return new create sql and collation
+func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		tctx.L().Warn("parse create database error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, nil
+	}
+	createStmt, ok := stmt.(*ast.CreateDatabaseStmt)
+	if !ok {
+		return originSQL, nil
+	}
+	var charset string
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.DatabaseOptionCollate {
+			return originSQL, nil
+		}
+		if createOption.Tp == ast.DatabaseOptionCharset {
+			charset = createOption.Value
+		}
+	}
+	// get db collation
+	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+	if !ok {
+		tctx.L().Warn("not found database charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+		return originSQL, nil
+	}
+	// add collation
+	createStmt.Options = append(createStmt.Options, &ast.DatabaseOption{Tp: ast.DatabaseOptionCollate, Value: collation})
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
+		In:    bf,
+	})
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return bf.String(), nil
+}
+
+// adjustTableCollation adjusts table collation
+func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	stmt, err := parser.ParseOneStmt(originSQL, "", "")
+	if err != nil {
+		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
+		return originSQL, nil
+	}
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return originSQL, nil
+	}
+	var charset string
+	var collation string
+	for _, createOption := range createStmt.Options {
+		// already have 'Collation'
+		if createOption.Tp == ast.TableOptionCollate {
+			collation = createOption.StrValue
+			break
+		}
+		if createOption.Tp == ast.TableOptionCharset {
+			charset = createOption.StrValue
+		}
+	}
+
+	if collation == "" && charset != "" {
+		// get db collation
+		collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+		if !ok {
+			tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+			return originSQL, nil
+		}
+
+		// add collation
+		createStmt.Options = append(createStmt.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: collation})
+	}
+
+	// adjust columns collation
+	adjustColumnsCollation(tctx, createStmt, charsetAndDefaultCollationMap)
+
+	// rewrite sql
+	var b []byte
+	bf := bytes.NewBuffer(b)
+	err = createStmt.Restore(&format.RestoreCtx{
+		Flags: format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment,
+		In:    bf,
+	})
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return bf.String(), nil
+}
+
+// adjustColumnsCollation adds column's collation.
+func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableStmt, charsetAndDefaultCollationMap map[string]string) {
+	for _, col := range createStmt.Cols {
+		for _, options := range col.Options {
+			// already have 'Collation'
+			if options.Tp == ast.ColumnOptionCollate {
+				continue
+			}
+		}
+		fieldType := col.Tp
+		if fieldType.Collate != "" {
+			continue
+		}
+		if fieldType.Charset != "" {
+			// just have charset
+			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.Charset)]
+			if !ok {
+				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.Charset)))
+				continue
+			}
+			fieldType.Collate = collation
+		}
+	}
+}
+
+>>>>>>> 9f744cdf8... dumpling: fix default column collation with upstream when dump table (#30531)
 func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	if conf.NoData {
