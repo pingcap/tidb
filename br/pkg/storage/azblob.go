@@ -312,7 +312,6 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 	if err != nil {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
 	}
-	fmt.Printf("%+v\n", *resp)
 	n, err = resp.Body(azblob.RetryReaderOptions{}).Read(p)
 	if err != nil && err != io.EOF {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
