@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
@@ -121,7 +122,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			return point, errors.Trace(err)
 		}
 	}
-	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
+	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.Collate))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
