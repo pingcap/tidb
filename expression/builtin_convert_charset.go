@@ -66,8 +66,8 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 			return nil, err
 		}
 		bf.tp = args[0].GetType().Clone()
-		// adjust enum type
-		if bf.tp.Tp == mysql.TypeEnum && !mysql.HasEnumSetAsIntFlag(bf.tp.Flag) {
+		// adjust enum/set type
+		if bf.tp.Tp == mysql.TypeEnum || bf.tp.Tp == mysql.TypeSet {
 			bf.tp = types.NewFieldType(mysql.TypeString)
 		}
 		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
