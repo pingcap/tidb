@@ -471,6 +471,9 @@ type SessionVars struct {
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
+	// TxnManager is used to manage txn context in session
+	TxnManager interface{}
+
 	// KVVars is the variables for KV storage.
 	KVVars *tikvstore.Variables
 

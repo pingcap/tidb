@@ -163,7 +163,8 @@ func TestPrepared(t *testing.T) {
 		require.Equal(t, query, stmt.OriginText())
 
 		// Check that rebuild plan works.
-		tk.Session().PrepareTxnCtx(ctx)
+		err = tk.Session().PrepareTxnCtx(ctx)
+		require.NoError(t, err)
 		_, err = stmt.RebuildPlan(ctx)
 		require.NoError(t, err)
 		rs, err = stmt.Exec(ctx)
