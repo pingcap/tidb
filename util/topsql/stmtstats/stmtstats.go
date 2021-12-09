@@ -116,7 +116,14 @@ type StatementStatsMap map[string]map[int64]*StatementStatsItem
 
 // Merge merges other into StatementStatsMap.
 // Values with the same SQLDigest and same timestamp will be merged.
+//
+// After executing Merge, some pointers in other may be referenced
+// by m. So after calling Merge, it is best not to continue to use
+// other unless you understand what you are doing.
 func (m StatementStatsMap) Merge(other StatementStatsMap) {
+	if m == nil || other == nil {
+		return
+	}
 	for newSQL, newTsItem := range other {
 		tsItem, ok := m[newSQL]
 		if !ok {
@@ -124,7 +131,12 @@ func (m StatementStatsMap) Merge(other StatementStatsMap) {
 			continue
 		}
 		for ts, newItem := range newTsItem {
-			tsItem[ts].Merge(newItem)
+			item, ok := tsItem[ts]
+			if !ok {
+				tsItem[ts] = newItem
+				continue
+			}
+			item.Merge(newItem)
 		}
 	}
 }
@@ -151,13 +163,22 @@ func NewStatementStatsItem() *StatementStatsItem {
 }
 
 // Merge merges other into StatementStatsItem.
+//
+// After executing Merge, some pointers in other may be referenced
+// by i. So after calling Merge, it is best not to continue to use
+// other unless you understand what you are doing.
+//
 // If you add additional indicators, you need to add their merge code here.
 func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
-	i.ExecCount += other.ExecCount
-	if i.KvStatsItem == nil && other.KvStatsItem != nil {
-		i.KvStatsItem = NewKvStatementStatsItem()
+	if i == nil || other == nil {
+		return
 	}
-	i.KvStatsItem.Merge(other.KvStatsItem)
+	i.ExecCount += other.ExecCount
+	if i.KvStatsItem == nil {
+		i.KvStatsItem = other.KvStatsItem
+	} else {
+		i.KvStatsItem.Merge(other.KvStatsItem)
+	}
 }
 
 // KvStatementStatsItem is part of StatementStatsItem, it only contains
@@ -175,12 +196,21 @@ func NewKvStatementStatsItem() *KvStatementStatsItem {
 }
 
 // Merge merges other into KvStatementStatsItem.
+//
+// After executing Merge, some pointers in other may be referenced
+// by i. So after calling Merge, it is best not to continue to use
+// other unless you understand what you are doing.
+//
 // If you add additional indicators, you need to add their merge code here.
 func (i *KvStatementStatsItem) Merge(other *KvStatementStatsItem) {
-	if i.KvExecCount == nil && other.KvExecCount != nil {
-		i.KvExecCount = map[string]uint64{}
+	if i == nil || other == nil {
+		return
 	}
-	for target, count := range other.KvExecCount {
-		i.KvExecCount[target] += count
+	if i.KvExecCount == nil {
+		i.KvExecCount = other.KvExecCount
+	} else {
+		for target, count := range other.KvExecCount {
+			i.KvExecCount[target] += count
+		}
 	}
 }

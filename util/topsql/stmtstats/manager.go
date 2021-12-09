@@ -15,8 +15,6 @@
 package stmtstats
 
 import (
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -89,9 +87,8 @@ func (m *statementStatsManager) upload() {
 	m.data = StatementStatsMap{}
 
 	// TODO(mornyx): upload data. Here is a bridge connecting the stmtstats module
-	//               with the existing top-sql cpu reporter.
-	b, _ := json.MarshalIndent(data, "", "  ")
-	fmt.Println(">>>>>", string(b))
+	//               with the existing top-sql cpu reporter. We will provide this
+	//               part after the pub/sub code of top-sql is merged into master.
 	_ = data
 }
 
