@@ -194,16 +194,15 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, join
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
+			tracer.appendLogicalJoinCost(join, curCost)
 			if bestPlan[nodeBitmap] == nil {
 				bestPlan[nodeBitmap] = &jrNode{
 					p:       join,
 					cumCost: curCost,
 				}
-				tracer.appendLogicalJoinCost(join, curCost)
 			} else if bestPlan[nodeBitmap].cumCost > curCost {
 				bestPlan[nodeBitmap].p = join
 				bestPlan[nodeBitmap].cumCost = curCost
-				tracer.appendLogicalJoinCost(join, curCost)
 			}
 		}
 	}

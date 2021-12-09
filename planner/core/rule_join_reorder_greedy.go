@@ -88,6 +88,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
+			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
 				bestCost = curCost
 				bestJoin = newJoin
@@ -103,7 +104,6 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		tracer.appendLogicalJoinCost(bestJoin, bestCost)
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
 	}

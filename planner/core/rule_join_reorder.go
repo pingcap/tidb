@@ -333,5 +333,6 @@ func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64)
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
-	t.cost[allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))] = cost
+	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))
+	t.cost[joinMapKey] = cost
 }
