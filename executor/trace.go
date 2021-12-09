@@ -84,6 +84,9 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}()
 
 	if e.optimizerTrace {
+		if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
+			return e.nextOptimizerCEPlanTrace(ctx, e.ctx, req)
+		}
 		return e.nextOptimizerPlanTrace(ctx, e.ctx, req)
 	}
 
@@ -95,23 +98,12 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 }
 
-func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
 	stmtCtx := se.GetSessionVars().StmtCtx
-
-	var option *bool
-	var dumpToFile bool
-	if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
-		option = &stmtCtx.EnableOptimizerCETrace
-		dumpToFile = false
-	} else {
-		option = &stmtCtx.EnableOptimizeTrace
-		dumpToFile = true
-	}
-
-	origin := *option
-	*option = true
+	origin := stmtCtx.EnableOptimizerCETrace
+	stmtCtx.EnableOptimizerCETrace = true
 	defer func() {
-		*option = origin
+		stmtCtx.EnableOptimizerCETrace = origin
 	}()
 
 	_, _, err := core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
@@ -119,51 +111,67 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 		return err
 	}
 
-	var traceResult interface{}
-	if e.optimizerTraceTarget == core.TracePlanTargetEstimation {
-		traceResult = stmtCtx.OptimizerCETrace
-	} else {
-		traceResult = stmtCtx.LogicalOptimizeTrace
+	writer := strings.Builder{}
+	jsonEncoder := json.NewEncoder(&writer)
+	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
+	jsonEncoder.SetEscapeHTML(false)
+	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	res := []byte(writer.String())
+
+	req.AppendBytes(0, res)
+	e.exhausted = true
+	return nil
+}
+
+func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
+	zf, fileName, err := generateOptimizerTraceFile()
+	if err != nil {
+		return err
+	}
+	zw := zip.NewWriter(zf)
+	defer func() {
+		err := zw.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
+		}
+		err = zf.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
+		}
+	}()
+	traceZW, err := zw.Create("trace.json")
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	stmtCtx := se.GetSessionVars().StmtCtx
+	origin := stmtCtx.EnableOptimizeTrace
+	stmtCtx.EnableOptimizeTrace = true
+	defer func() {
+		stmtCtx.EnableOptimizeTrace = origin
+	}()
+	_, _, err = core.OptimizeAstNode(ctx, se, e.stmtNode, se.GetInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return err
 	}
 
 	writer := strings.Builder{}
 	jsonEncoder := json.NewEncoder(&writer)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(traceResult)
+	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.LogicalOptimizeTrace)
 	if err != nil {
 		return errors.AddStack(err)
 	}
 	res := []byte(writer.String())
 
-	if dumpToFile {
-		zf, fileName, err := generateOptimizerTraceFile()
-		if err != nil {
-			return err
-		}
-		zw := zip.NewWriter(zf)
-		defer func() {
-			err := zw.Close()
-			if err != nil {
-				logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
-			}
-			err = zf.Close()
-			if err != nil {
-				logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
-			}
-		}()
-		traceZW, err := zw.Create("trace.json")
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		_, err = traceZW.Write(res)
-		if err != nil {
-			return errors.AddStack(err)
-		}
-		req.AppendString(0, fileName)
-	} else {
-		req.AppendBytes(0, res)
+	_, err = traceZW.Write(res)
+	if err != nil {
+		return errors.AddStack(err)
 	}
+	req.AppendString(0, fileName)
 	e.exhausted = true
 	return nil
 }
