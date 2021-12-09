@@ -25,13 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/parser/model"
-
-	"github.com/pingcap/tidb/ddl/placement"
-
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
