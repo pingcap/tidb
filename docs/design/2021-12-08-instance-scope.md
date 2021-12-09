@@ -219,6 +219,6 @@ The following suggestions are provided (to be discussed):
 - `tidb_store_limit`: Suggestion is to convert to global only ([issue #30515](https://github.com/pingcap/tidb/issues/30515))
 - `tidb_stmt_summary_XXX`: Suggestion is to convert to global only.
 - `tidb_enable_stmt_summary`: Convert to instance scope only.
-- `tidb_capture_plan_baselines`: Convert to instance scope only. 
+- `tidb_capture_plan_baselines`: Convert to global scope only. 
 
 Thus, turning on statement summary is a per-server decision, but the configuration for statement summary is a per-cluster decision.
