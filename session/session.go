@@ -565,12 +565,11 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
 	sessVars := s.sessionVars
-	stmtCtx := sessVars.StmtCtx
 
 	// Note: ignore auto-commit transactions because auto-commit transactions don't write untouched index mutations
 	// into the mem buffer, which invalidates the check.
-	if !s.isInternal() && (stmtCtx.InInsertStmt || stmtCtx.InDeleteStmt || stmtCtx.InUpdateStmt) &&
-		sessVars.EnableMutationChecker && sessVars.InTxn() {
+	// Only applies to user DML transactions.
+	if sessVars.ConnectionID != 0 && sessVars.EnableMutationChecker && sessVars.TxnCtx.IsExplicit {
 		if err := tables.CheckTxnConsistency(txn); err != nil {
 			return errors.Trace(err)
 		}
