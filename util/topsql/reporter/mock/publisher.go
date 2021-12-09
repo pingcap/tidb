@@ -24,15 +24,15 @@ import (
 	"google.golang.org/grpc"
 )
 
-type mockPublisherServer struct {
+type mockPubSubServer struct {
 	addr       string
 	grpcServer *grpc.Server
 }
 
-// StartMockPublisherServer starts the mock publisher server.
-func StartMockPublisherServer(
+// StartMockPubSubServer starts the mock publisher server.
+func StartMockPubSubServer(
 	service tipb.TopSQLPubSubServer,
-) (*mockPublisherServer, error) {
+) (*mockPubSubServer, error) {
 	addr := "127.0.0.1:0"
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -44,21 +44,21 @@ func StartMockPublisherServer(
 	go func() {
 		err := server.Serve(lis)
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] mock publisher server serve failed", zap.Error(err))
+			logutil.BgLogger().Warn("[top-sql] mock pubsub server serve failed", zap.Error(err))
 		}
 	}()
 
-	return &mockPublisherServer{
+	return &mockPubSubServer{
 		addr:       fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
 		grpcServer: server,
 	}, nil
 }
 
-func (svr *mockPublisherServer) Address() string {
+func (svr *mockPubSubServer) Address() string {
 	return svr.addr
 }
 
-func (svr *mockPublisherServer) Stop() {
+func (svr *mockPubSubServer) Stop() {
 	if svr.grpcServer != nil {
 		svr.grpcServer.Stop()
 	}

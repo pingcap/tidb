@@ -47,14 +47,14 @@ var (
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	rc := reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan)
-	cr := reporter.NewReportClientRegistry()
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(cr, rc)
+	rc := reporter.NewSingleTargetDataSink(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
-	publisher := reporter.NewTopSQLPublisher(plancodec.DecodeNormalizedPlan, cr)
-	globalTopSQLPubSubService = publisher
+	dataSinkRegHandle := globalTopSQLReport.DataSinkRegisterHandle()
+	pubsub := reporter.NewTopSQLPubSubService(plancodec.DecodeNormalizedPlan, dataSinkRegHandle)
+	globalTopSQLPubSubService = pubsub
 
 	if len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0 {
 		variable.TopSQLVariable.InstanceEnable.Store(true)

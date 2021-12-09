@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -47,6 +48,8 @@ func NewTopSQLCollector() *TopSQLCollector {
 		sqlStatsMap: make(map[string]*tracecpu.SQLCPUTimeRecord),
 	}
 }
+
+var _ reporter.TopSQLReporter = &TopSQLCollector{}
 
 // Collect uses for testing.
 func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) {
@@ -166,6 +169,11 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 			time.Sleep(time.Millisecond * 10)
 		}
 	}
+}
+
+// DataSinkRegisterHandle implements the interface.
+func (c *TopSQLCollector) DataSinkRegisterHandle() reporter.DataSinkRegisterHandle {
+	return nil
 }
 
 // Close implements the interface.

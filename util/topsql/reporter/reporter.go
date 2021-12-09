@@ -17,6 +17,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -49,7 +50,13 @@ type TopSQLReporter interface {
 	tracecpu.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
+	DataSinkRegisterHandle() DataSinkRegisterHandle
 	Close()
+}
+
+// DataSinkRegisterHandle registers DataSink
+type DataSinkRegisterHandle interface {
+	Register(dataSink DataSink) error
 }
 
 type cpuData struct {
@@ -120,14 +127,14 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	clients        []ReportClient
-	clientRegistry *ReportClientRegistry
+	dataSinks     []DataSink
+	dataSinkRegCh chan DataSink
 
-	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
+	// normalizedSQLMap is a map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
 
-	// normalizedPlanMap is an map, whose keys are plan digest strings and values are normalized plans **in binary**.
+	// normalizedPlanMap is a map, whose keys are plan digest strings and values are normalized plans **in binary**.
 	// The normalized plans in binary can be decoded to string using the `planBinaryDecoder`.
 	normalizedPlanMap atomic.Value // sync.Map
 	planMapLength     atomic2.Int64
@@ -143,17 +150,14 @@ type SQLMeta struct {
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
-//
-// planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
-// MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(clientRegistry *ReportClientRegistry, clients ...ReportClient) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(dataSinks ...DataSink) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:    ctx,
 		cancel: cancel,
 
-		clients:        clients,
-		clientRegistry: clientRegistry,
+		dataSinks:     dataSinks,
+		dataSinkRegCh: make(chan DataSink),
 
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
@@ -239,13 +243,19 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}
 }
 
+// DataSinkRegisterHandle returns a DataSinkRegisterHandle for DataSink registration.
+func (tsr *RemoteTopSQLReporter) DataSinkRegisterHandle() DataSinkRegisterHandle {
+	return &RemoteDataSinkRegisterHandle{registerCh: tsr.dataSinkRegCh}
+}
+
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	for i := range tsr.clients {
-		tsr.clients[i].Close()
+	for i := range tsr.dataSinks {
+		tsr.dataSinks[i].Close()
 	}
-	tsr.clients = nil
+	close(tsr.dataSinkRegCh)
+	tsr.dataSinks = nil
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -331,7 +341,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	for {
-		tsr.handleClientRegistry()
+		tsr.handleDataSinkRegistration()
 
 		select {
 		case data := <-tsr.collectCPUDataChan:
@@ -350,35 +360,41 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
-	tsr.clientRegistry.visitAndClear(func(client ReportClient) {
-		tsr.clients = append(tsr.clients, client)
-	})
+func (tsr *RemoteTopSQLReporter) handleDataSinkRegistration() {
+out:
+	for {
+		select {
+		case dataSink := <-tsr.dataSinkRegCh:
+			tsr.dataSinks = append(tsr.dataSinks, dataSink)
+		default:
+			break out
+		}
+	}
 
-	// Remove all down clients
+	// Remove all down dataSinks
 	idx := 0
-	for _, client := range tsr.clients {
-		if client.IsDown() {
-			client.Close()
+	for _, dataSink := range tsr.dataSinks {
+		if dataSink.IsDown() {
+			dataSink.Close()
 			continue
 		}
-		tsr.clients[idx] = client
+		tsr.dataSinks[idx] = dataSink
 		idx++
 	}
-	tsr.clients = tsr.clients[:idx]
+	tsr.dataSinks = tsr.dataSinks[:idx]
 
-	if len(tsr.clients) > 256 {
-		logutil.BgLogger().Warn("[top-sql] too many clients, keep 10 first", zap.Int("count", len(tsr.clients)))
-		tsr.clients = tsr.clients[:10]
+	if len(tsr.dataSinks) > 10 {
+		logutil.BgLogger().Warn("[top-sql] too many datasinks, keep 10 first", zap.Int("count", len(tsr.dataSinks)))
+		tsr.dataSinks = tsr.dataSinks[:10]
 	}
 
 	pendingCnt := 0
-	for _, client := range tsr.clients {
-		if client.IsPending() {
+	for _, dataSink := range tsr.dataSinks {
+		if dataSink.IsPaused() {
 			pendingCnt += 1
 		}
 	}
-	runningCnt := len(tsr.clients) - pendingCnt
+	runningCnt := len(tsr.dataSinks) - pendingCnt
 	variable.TopSQLVariable.InstanceEnable.Store(runningCnt > 0)
 }
 
@@ -604,7 +620,26 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		}
 	})
 
-	for i := range tsr.clients {
-		tsr.clients[i].Send(data, timeout)
+	for i := range tsr.dataSinks {
+		tsr.dataSinks[i].Send(data, timeout)
 	}
+}
+
+var _ DataSinkRegisterHandle = &RemoteDataSinkRegisterHandle{}
+
+// RemoteDataSinkRegisterHandle is used to receive DataSink registrations.
+type RemoteDataSinkRegisterHandle struct {
+	registerCh chan DataSink
+}
+
+// Register implements DataSinkRegisterHandle interface.
+func (r *RemoteDataSinkRegisterHandle) Register(dataSink DataSink) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("registration channel is closed")
+		}
+	}()
+
+	r.registerCh <- dataSink
+	return nil
 }

@@ -29,50 +29,8 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
-// ReportClient sends data to the target server.
-type ReportClient interface {
-	Send(data reportData, timeout time.Duration)
-
-	// IsPending indicates that ReportClient is not expecting to receive records for now and may resume in the future.
-	IsPending() bool
-
-	// IsDown indicates that the client has been down and can be cleared.
-	// Note that: once a ReportClient is down, it cannot go back to be up.
-	IsDown() bool
-
-	Close()
-}
-
-// ReportClientRegistry is used to receive ReportClient registrations.
-type ReportClientRegistry struct {
-	sync.Mutex
-	newClients []ReportClient
-}
-
-// NewReportClientRegistry creates a new ReportClientRegistry.
-func NewReportClientRegistry() *ReportClientRegistry {
-	return &ReportClientRegistry{}
-}
-
-func (r *ReportClientRegistry) visitAndClear(visit func(client ReportClient)) {
-	r.Lock()
-	defer r.Unlock()
-
-	for i := range r.newClients {
-		visit(r.newClients[i])
-	}
-	r.newClients = r.newClients[:0]
-}
-
-func (r *ReportClientRegistry) register(client ReportClient) {
-	r.Lock()
-	defer r.Unlock()
-
-	r.newClients = append(r.newClients, client)
-}
-
-// ConfigAssignedRemoteClient reports data to grpc servers.
-type ConfigAssignedRemoteClient struct {
+// SingleTargetDataSink reports data to grpc servers.
+type SingleTargetDataSink struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
@@ -85,18 +43,20 @@ type sendTask struct {
 	timeout time.Duration
 }
 
-// NewGRPCReportClient returns a new ConfigAssignedRemoteClient
-func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *ConfigAssignedRemoteClient {
-	client := &ConfigAssignedRemoteClient{
+// NewSingleTargetDataSink returns a new SingleTargetDataSink
+//
+// planBinaryDecodeFunc is a decoding function which will be called asynchronously to decode the plan binary to string
+func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataSink {
+	dataSink := &SingleTargetDataSink{
 		decodePlan: decodePlan,
 		sendTaskCh: make(chan sendTask),
 	}
 
-	go util.WithRecovery(client.run, nil)
-	return client
+	go util.WithRecovery(dataSink.run, nil)
+	return dataSink
 }
 
-func (r *ConfigAssignedRemoteClient) run() {
+func (r *SingleTargetDataSink) run() {
 	for task := range r.sendTaskCh {
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 		if targetRPCAddr == "" {
@@ -108,7 +68,7 @@ func (r *ConfigAssignedRemoteClient) run() {
 		err := r.doSend(ctx, targetRPCAddr, task.data)
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] client failed to send data to receiver", zap.Error(err))
+			logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
 			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
 			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
@@ -116,10 +76,10 @@ func (r *ConfigAssignedRemoteClient) run() {
 	}
 }
 
-var _ ReportClient = &ConfigAssignedRemoteClient{}
+var _ DataSink = &SingleTargetDataSink{}
 
-// Send implements the ReportClient interface.
-func (r *ConfigAssignedRemoteClient) Send(data reportData, timeout time.Duration) {
+// Send implements the DataSink interface.
+func (r *SingleTargetDataSink) Send(data reportData, timeout time.Duration) {
 	select {
 	case r.sendTaskCh <- sendTask{data: data, timeout: timeout}:
 		// sent successfully
@@ -130,7 +90,7 @@ func (r *ConfigAssignedRemoteClient) Send(data reportData, timeout time.Duration
 }
 
 // Currently the doSend will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *ConfigAssignedRemoteClient) doSend(ctx context.Context, addr string, data reportData) (err error) {
+func (r *SingleTargetDataSink) doSend(ctx context.Context, addr string, data reportData) (err error) {
 	err = r.tryEstablishConnection(ctx, addr)
 	if err != nil {
 		return
@@ -163,31 +123,31 @@ func (r *ConfigAssignedRemoteClient) doSend(ctx context.Context, addr string, da
 	return
 }
 
-// IsPending implements ReportClient interface.
-func (r *ConfigAssignedRemoteClient) IsPending() bool {
+// IsPaused implements DataSink interface.
+func (r *SingleTargetDataSink) IsPaused() bool {
 	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
 }
 
-// IsDown implements ReportClient interface.
-func (r *ConfigAssignedRemoteClient) IsDown() bool {
+// IsDown implements DataSink interface.
+func (r *SingleTargetDataSink) IsDown() bool {
 	return false
 }
 
 // Close uses to close grpc connection.
-func (r *ConfigAssignedRemoteClient) Close() {
+func (r *SingleTargetDataSink) Close() {
 	close(r.sendTaskCh)
 	if r.conn == nil {
 		return
 	}
 	err := r.conn.Close()
 	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] single target data sink failed to close connection", zap.Error(err))
 	}
 	r.conn = nil
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *ConfigAssignedRemoteClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
+func (r *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -220,7 +180,7 @@ func (r *ConfigAssignedRemoteClient) sendBatchCPUTimeRecord(ctx context.Context,
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *ConfigAssignedRemoteClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+func (r *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
@@ -256,7 +216,7 @@ func (r *ConfigAssignedRemoteClient) sendBatchSQLMeta(ctx context.Context, sqlMa
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (r *ConfigAssignedRemoteClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
+func (r *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
 	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
@@ -295,7 +255,7 @@ func (r *ConfigAssignedRemoteClient) sendBatchPlanMeta(ctx context.Context, plan
 }
 
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
-func (r *ConfigAssignedRemoteClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
+func (r *SingleTargetDataSink) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
 	if r.curRPCAddr == targetRPCAddr && r.conn != nil {
 		// Address is not changed, skip.
 		return nil
@@ -303,7 +263,7 @@ func (r *ConfigAssignedRemoteClient) tryEstablishConnection(ctx context.Context,
 
 	if r.conn != nil {
 		err := r.conn.Close()
-		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] single target data sink failed to close connection", zap.Error(err))
 	}
 
 	r.conn, err = r.dial(ctx, targetRPCAddr)
@@ -314,7 +274,7 @@ func (r *ConfigAssignedRemoteClient) tryEstablishConnection(ctx context.Context,
 	return nil
 }
 
-func (r *ConfigAssignedRemoteClient) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
+func (r *SingleTargetDataSink) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	return grpc.DialContext(

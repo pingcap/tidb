@@ -120,9 +120,8 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	cr := reporter.NewReportClientRegistry()
-	report := reporter.NewRemoteTopSQLReporter(cr, client)
+	dataSink := reporter.NewSingleTargetDataSink(mockPlanBinaryDecoderFunc)
+	report := reporter.NewRemoteTopSQLReporter(dataSink)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
@@ -186,12 +185,11 @@ func TestTopSQLPubSub(t *testing.T) {
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 
-	cr := reporter.NewReportClientRegistry()
-	report := reporter.NewRemoteTopSQLReporter(cr)
+	report := reporter.NewRemoteTopSQLReporter()
 	defer report.Close()
 
-	publisherServer := reporter.NewTopSQLPublisher(mockPlanBinaryDecoderFunc, cr)
-	server, err := mockServer.StartMockPublisherServer(publisherServer)
+	pubsub := reporter.NewTopSQLPubSubService(mockPlanBinaryDecoderFunc, report.DataSinkRegisterHandle())
+	server, err := mockServer.StartMockPubSubServer(pubsub)
 	require.NoError(t, err)
 	defer server.Stop()
 
@@ -294,6 +292,33 @@ func TestTopSQLPubSub(t *testing.T) {
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
 	require.Equal(t, len(checkSQLPlanMap), 2)
+}
+
+func TestTopSQLPubSubReporterStopBeforePubSub(t *testing.T) {
+	report := reporter.NewRemoteTopSQLReporter()
+
+	pubsub := reporter.NewTopSQLPubSubService(mockPlanBinaryDecoderFunc, report.DataSinkRegisterHandle())
+	server, err := mockServer.StartMockPubSubServer(pubsub)
+	defer server.Stop()
+	require.NoError(t, err)
+
+	// close reporter first
+	report.Close()
+
+	// try to subscribe
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
+	conn, err := grpc.Dial(server.Address(), grpc.WithBlock(), grpc.WithInsecure())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := tipb.NewTopSQLPubSubClient(conn)
+	stream, err := client.Subscribe(ctx, &tipb.TopSQLSubRequest{})
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+	require.NotNil(t, err)
 }
 
 func TestMaxSQLAndPlanTest(t *testing.T) {

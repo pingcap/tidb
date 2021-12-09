@@ -26,43 +26,46 @@ import (
 	"go.uber.org/zap"
 )
 
-// TopSQLPublisher implements TopSQLPublisher.
+// TopSQLPubSubService implements tipb.TopSQLPubSubServer.
 //
-// If a client subscribes to TopSQL records, the TopSQLPublisher is responsible for registering them to the reporter.
-// Then the reporter sends data to the client periodically.
-type TopSQLPublisher struct {
-	decodePlan     planBinaryDecodeFunc
-	clientRegistry *ReportClientRegistry
+// If a client subscribes to TopSQL records, the TopSQLPubSubService is responsible
+// for registering an associated DataSink to the reporter. Then the reporter sends
+// data to the client periodically.
+type TopSQLPubSubService struct {
+	decodePlan             planBinaryDecodeFunc
+	dataSinkRegisterHandle DataSinkRegisterHandle
 }
 
-// NewTopSQLPublisher creates a new TopSQLPublisher.
-func NewTopSQLPublisher(
+// NewTopSQLPubSubService creates a new TopSQLPubSubService.
+func NewTopSQLPubSubService(
 	decodePlan planBinaryDecodeFunc,
-	clientRegistry *ReportClientRegistry,
-) *TopSQLPublisher {
-	return &TopSQLPublisher{
-		decodePlan:     decodePlan,
-		clientRegistry: clientRegistry,
+	dataSinkRegisterHandle DataSinkRegisterHandle,
+) *TopSQLPubSubService {
+	return &TopSQLPubSubService{
+		decodePlan:             decodePlan,
+		dataSinkRegisterHandle: dataSinkRegisterHandle,
 	}
 }
 
-var _ tipb.TopSQLPubSubServer = &TopSQLPublisher{}
+var _ tipb.TopSQLPubSubServer = &TopSQLPubSubService{}
 
-// Subscribe registers clients to the reporter and redirects data received from reporter
-// to subscribers associated with those clients.
-func (t *TopSQLPublisher) Subscribe(
+// Subscribe registers dataSinks to the reporter and redirects data received from reporter
+// to subscribers associated with those dataSinks.
+func (t *TopSQLPubSubService) Subscribe(
 	_ *tipb.TopSQLSubRequest,
 	stream tipb.TopSQLPubSub_SubscribeServer,
 ) error {
-	sc := newSubClient(stream, t.decodePlan)
+	sc := newPubSubDataSink(stream, t.decodePlan)
 
-	t.clientRegistry.register(sc)
+	if err := t.dataSinkRegisterHandle.Register(sc); err != nil {
+		return err
+	}
+
 	sc.run()
-
 	return nil
 }
 
-type subClient struct {
+type pubSubDataSink struct {
 	stream     tipb.TopSQLPubSub_SubscribeServer
 	sendTaskCh chan sendTask
 	isDown     *atomic.Bool
@@ -70,11 +73,11 @@ type subClient struct {
 	decodePlan planBinaryDecodeFunc
 }
 
-func newSubClient(
+func newPubSubDataSink(
 	stream tipb.TopSQLPubSub_SubscribeServer,
 	decodePlan planBinaryDecodeFunc,
-) *subClient {
-	return &subClient{
+) *pubSubDataSink {
+	return &pubSubDataSink{
 		stream:     stream,
 		sendTaskCh: make(chan sendTask),
 		isDown:     atomic.NewBool(false),
@@ -83,7 +86,35 @@ func newSubClient(
 	}
 }
 
-func (s *subClient) run() {
+var _ DataSink = &pubSubDataSink{}
+
+func (s *pubSubDataSink) Send(data reportData, timeout time.Duration) {
+	if s.IsDown() {
+		return
+	}
+
+	select {
+	case s.sendTaskCh <- sendTask{data: data, timeout: timeout}:
+		// sent successfully
+	default:
+		ignoreReportChannelFullCounter.Inc()
+		logutil.BgLogger().Warn("[top-sql] report channel is full")
+	}
+}
+
+func (s *pubSubDataSink) IsPaused() bool {
+	return false
+}
+
+func (s *pubSubDataSink) IsDown() bool {
+	return s.isDown.Load()
+}
+
+func (s *pubSubDataSink) Close() {
+	close(s.sendTaskCh)
+}
+
+func (s *pubSubDataSink) run() {
 	defer s.isDown.Store(true)
 
 	for task := range s.sendTaskCh {
@@ -111,7 +142,7 @@ func (s *subClient) run() {
 			cancel()
 			if err != nil {
 				logutil.BgLogger().Warn(
-					"[top-sql] client failed to send data to subscriber",
+					"[top-sql] pubsub data sink failed to send data to subscriber",
 					zap.Error(err),
 				)
 				return
@@ -119,7 +150,7 @@ func (s *subClient) run() {
 		case <-ctx.Done():
 			cancel()
 			logutil.BgLogger().Warn(
-				"[top-sql] client failed to send data to subscriber due to timeout",
+				"[top-sql] pubsub data sink failed to send data to subscriber due to timeout",
 				zap.Duration("timeout", task.timeout),
 			)
 			return
@@ -127,7 +158,7 @@ func (s *subClient) run() {
 	}
 }
 
-func (s *subClient) doSend(ctx context.Context, data reportData) error {
+func (s *pubSubDataSink) doSend(ctx context.Context, data reportData) error {
 	if err := s.sendCPUTime(ctx, data.collectedData); err != nil {
 		return err
 	}
@@ -137,7 +168,7 @@ func (s *subClient) doSend(ctx context.Context, data reportData) error {
 	return s.sendPlanMeta(ctx, data.normalizedPlanMap)
 }
 
-func (s *subClient) sendCPUTime(ctx context.Context, data []*dataPoints) (err error) {
+func (s *pubSubDataSink) sendCPUTime(ctx context.Context, data []*dataPoints) (err error) {
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -175,7 +206,7 @@ func (s *subClient) sendCPUTime(ctx context.Context, data []*dataPoints) (err er
 	return
 }
 
-func (s *subClient) sendSQLMeta(ctx context.Context, sqlMetaMap *sync.Map) (err error) {
+func (s *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetaMap *sync.Map) (err error) {
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -217,7 +248,7 @@ func (s *subClient) sendSQLMeta(ctx context.Context, sqlMetaMap *sync.Map) (err 
 	return
 }
 
-func (s *subClient) sendPlanMeta(ctx context.Context, planMetaMap *sync.Map) (err error) {
+func (s *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetaMap *sync.Map) (err error) {
 	start := time.Now()
 	sentCount := 0
 	defer func() {
@@ -260,32 +291,4 @@ func (s *subClient) sendPlanMeta(ctx context.Context, planMetaMap *sync.Map) (er
 	}
 
 	return
-}
-
-var _ ReportClient = &subClient{}
-
-func (s *subClient) Send(data reportData, timeout time.Duration) {
-	if s.IsDown() {
-		return
-	}
-
-	select {
-	case s.sendTaskCh <- sendTask{data: data, timeout: timeout}:
-		// sent successfully
-	default:
-		ignoreReportChannelFullCounter.Inc()
-		logutil.BgLogger().Warn("[top-sql] report channel is full")
-	}
-}
-
-func (s *subClient) IsPending() bool {
-	return false
-}
-
-func (s *subClient) IsDown() bool {
-	return s.isDown.Load()
-}
-
-func (s *subClient) Close() {
-	close(s.sendTaskCh)
 }
