@@ -126,6 +126,21 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 	// level should be less than WarnLevel which is used by it to log slow query.
 	require.NotEqual(t, conf.Level, prop.Level.String())
 	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+
+	level = "warn"
+	slowQueryFn := "slow-query.log"
+	fileConf := FileLogConfig{
+		log.FileLogConfig{
+			Filename:   slowQueryFn,
+			MaxSize:    10,
+			MaxDays:    10,
+			MaxBackups: 10,
+		},
+	}
+	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
+	slowQueryConf := newSlowQueryLogConfig(conf)
+	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
 }
 
 func TestGlobalLoggerReplace(t *testing.T) {
