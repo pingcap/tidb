@@ -855,6 +855,11 @@ type SessionVars struct {
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// EnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	EnableMPPBalanceWithContinuousRegion bool
+	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
+	EnableMPPBalanceWithContinuousRegionCount int64
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
