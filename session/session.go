@@ -2014,7 +2014,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: is.(infoschema.InfoSchema),
+		InfoSchema: is,
 	}
 	if err = sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider); err != nil {
 		return nil, err
