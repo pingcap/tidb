@@ -49,10 +49,15 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		}
 	}()
 
-	s := grpc.NewServer(grpc.KeepaliveParams(keepalive.ServerParameters{
-		Time:    time.Duration(config.Status.GrpcKeepAliveTime) * time.Second,
-		Timeout: time.Duration(config.Status.GrpcKeepAliveTimeout) * time.Second,
-	}))
+	s := grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    time.Duration(config.Status.GRPCKeepAliveTime) * time.Second,
+			Timeout: time.Duration(config.Status.GRPCKeepAliveTimeout) * time.Second,
+		}),
+		grpc.MaxConcurrentStreams(uint32(config.Status.GRPCConcurrentStreams)),
+		grpc.InitialWindowSize(int32(config.Status.GRPCInitialWindowSize)),
+		grpc.MaxSendMsgSize(config.Status.GRPCMaxSendMsgSize),
+	)
 	rpcSrv := &rpcServer{
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
