@@ -12,16 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package execcount
+package stmtstats
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/atomic"
 )
 
-func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+func Test_statementStatsManager_register_collect(t *testing.T) {
+	m := newStatementStatsManagerManager()
+	stats := &StatementStats{
+		data:   StatementStatsMap{},
+		closed: atomic.NewBool(false),
+	}
+	m.register(stats)
+	stats.AddExecCount("SQL-1", 1001, 1)
+	assert.Empty(t, m.data)
+	m.collect()
+	assert.NotEmpty(t, m.data)
+	assert.Equal(t, uint64(1), m.data["SQL-1"][1001].ExecCount)
 }

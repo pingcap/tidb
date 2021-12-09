@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/topsql/execcount"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -228,12 +228,12 @@ type session struct {
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
-	// execCounter is used to count the number of executions of each SQL in
-	// this session at each point in time. These data will be periodically
-	// taken away by the background goroutine. The background goroutine will
-	// continue to aggregate all the local data in each session, and finally
-	// report them to the remote regularly.
-	execCounter *execcount.ExecCounter
+	// stmtStats is used to count various indicators of each SQL in this session
+	// at each point in time. These data will be periodically taken away by the
+	// background goroutine. The background goroutine will continue to aggregate
+	// all the local data in each session, and finally report them to the remote
+	// regularly.
+	stmtStats *stmtstats.StatementStats
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -553,12 +553,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	if sessVars.ExecCounter != nil {
-		normalized, digest := sessVars.StmtCtx.SQLDigest()
-		if len(normalized) > 0 && digest != nil {
-			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-			s.txn.SetOption(kv.RPCInterceptor, sessVars.ExecCounter.RPCInterceptor(digest.String()))
-		}
+	if sessVars.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		s.txn.SetOption(kv.RPCInterceptor, sessVars.KvExecCounter.RPCInterceptor())
 	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
@@ -1544,7 +1541,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.ExecCounter = s.execCounter
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1553,8 +1549,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
-		if s.execCounter != nil {
-			s.execCounter.Count(digest.String(), 1)
+		if s.stmtStats != nil {
+			s.stmtStats.AddExecCount(digest.String(), s.sessionVars.StartTime.Unix(), 1)
+			s.sessionVars.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest.String())
 		}
 	}
 
@@ -1987,10 +1984,11 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	s.sessionVars.ExecCounter = s.execCounter
 	if variable.TopSQLEnabled() {
-		if s.execCounter != nil {
-			s.execCounter.Count(preparedStmt.SQLDigest.String(), 1)
+		if s.stmtStats != nil {
+			digest := preparedStmt.SQLDigest.String()
+			s.stmtStats.AddExecCount(digest, time.Now().Unix(), 1)
+			s.sessionVars.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest)
 		}
 	}
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
@@ -2232,8 +2230,8 @@ func (s *session) Close() {
 		s.sessionVars.WithdrawAllPreparedStmt()
 	}
 	s.ClearDiskFullOpt()
-	if s.execCounter != nil {
-		s.execCounter.Close()
+	if s.stmtStats != nil {
+		s.stmtStats.Close()
 	}
 }
 
@@ -2647,7 +2645,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		execCounter:          execcount.CreateExecCounter(),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2681,7 +2679,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		execCounter:          execcount.CreateExecCounter(),
+		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,

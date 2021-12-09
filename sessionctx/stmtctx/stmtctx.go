@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
-	"github.com/pingcap/tidb/util/topsql/execcount"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -198,11 +198,11 @@ type StatementContext struct {
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 
-	// ExecCounter is a pointer to the execcount.ExecCounter instance
-	// maintained in the session structure. The life cycle of ExecCounter
-	// is managed by session, and StatementContext maintains only a pointer.
-	// See session.execCounter for more information.
-	ExecCounter *execcount.ExecCounter
+	// KvExecCounter is created from session.stmtStats to count the number
+	// of SQL executions of the kv layer during the current execution of
+	// the statement. Its life cycle is limited to this execution, and a
+	// new KvExecCounter is always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
 }
 
 // StmtHints are SessionVars related sql hints.

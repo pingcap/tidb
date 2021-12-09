@@ -105,3 +105,4 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 
 // TODO(mornyx): remove
 replace github.com/tikv/client-go/v2 => github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211203092316-66444fdde259
+replace github.com/pingcap/tipb => /Users/mornyx/Desktop/repos/tipb

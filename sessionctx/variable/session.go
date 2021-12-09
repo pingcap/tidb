@@ -29,9 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	utilMath "github.com/pingcap/tidb/util/math"
-	"github.com/pingcap/tidb/util/topsql/execcount"
-
 	"github.com/pingcap/errors"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
@@ -49,10 +46,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -964,11 +963,11 @@ type SessionVars struct {
 	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
 	Rng *utilMath.MysqlRng
 
-	// ExecCounter is a pointer to the execcount.ExecCounter instance
-	// maintained in the session structure. The life cycle of ExecCounter
-	// is managed by session, and SessionVars maintains only a pointer.
-	// See session.execCounter for more information.
-	ExecCounter *execcount.ExecCounter
+	// KvExecCounter is created from session.stmtStats to count the number
+	// of SQL executions of the kv layer during the current execution of
+	// the statement. Its life cycle is limited to this execution, and a
+	// new KvExecCounter is always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

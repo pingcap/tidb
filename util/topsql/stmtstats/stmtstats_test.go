@@ -1,0 +1,242 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package stmtstats
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestKvStatementStatsItem_Merge(t *testing.T) {
+	item1 := &KvStatementStatsItem{
+		KvExecCount: map[string]uint64{
+			"127.0.0.1:10001": 1,
+			"127.0.0.1:10002": 2,
+		},
+	}
+	item2 := &KvStatementStatsItem{
+		KvExecCount: map[string]uint64{
+			"127.0.0.1:10002": 2,
+			"127.0.0.1:10003": 3,
+		},
+	}
+	assert.Len(t, item1.KvExecCount, 2)
+	assert.Len(t, item2.KvExecCount, 2)
+	item1.Merge(item2)
+	assert.Len(t, item1.KvExecCount, 3)
+	assert.Len(t, item2.KvExecCount, 2)
+	assert.Equal(t, 1, item1.KvExecCount["127.0.0.1:10001"])
+	assert.Equal(t, 3, item1.KvExecCount["127.0.0.1:10003"])
+	assert.Equal(t, 3, item1.KvExecCount["127.0.0.1:10003"])
+}
+
+func TestStatementsStatsItem_Merge(t *testing.T) {
+	item1 := &StatementStatsItem{
+		ExecCount:   1,
+		KvStatsItem: NewKvStatementStatsItem(),
+	}
+	item2 := &StatementStatsItem{
+		ExecCount:   2,
+		KvStatsItem: NewKvStatementStatsItem(),
+	}
+	item1.Merge(item2)
+	assert.Equal(t, 3, item1.ExecCount)
+}
+
+func TestStatementStatsMap_Merge(t *testing.T) {
+	m1 := StatementStatsMap{
+		"SQL-1": {
+			10001: &StatementStatsItem{
+				ExecCount: 1,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-1": 1,
+						"KV-2": 2,
+					},
+				},
+			},
+			10002: &StatementStatsItem{
+				ExecCount: 2,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-2": 2,
+						"KV-3": 3,
+					},
+				},
+			},
+			10003: &StatementStatsItem{
+				ExecCount: 3,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-3": 3,
+						"KV-4": 4,
+					},
+				},
+			},
+		},
+		"SQL-2": {
+			10001: &StatementStatsItem{
+				ExecCount: 1,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-1": 1,
+						"KV-2": 2,
+					},
+				},
+			},
+			10002: &StatementStatsItem{
+				ExecCount: 2,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-2": 2,
+						"KV-3": 3,
+					},
+				},
+			},
+			10003: &StatementStatsItem{
+				ExecCount: 3,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-3": 3,
+						"KV-4": 4,
+					},
+				},
+			},
+		},
+	}
+	m2 := StatementStatsMap{
+		"SQL-2": {
+			10001: &StatementStatsItem{
+				ExecCount: 1,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-1": 1,
+						"KV-2": 2,
+					},
+				},
+			},
+			10002: &StatementStatsItem{
+				ExecCount: 2,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-2": 2,
+						"KV-3": 3,
+					},
+				},
+			},
+			10003: &StatementStatsItem{
+				ExecCount: 3,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-3": 3,
+						"KV-4": 4,
+					},
+				},
+			},
+		},
+		"SQL-3": {
+			10001: &StatementStatsItem{
+				ExecCount: 1,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-1": 1,
+						"KV-2": 2,
+					},
+				},
+			},
+			10002: &StatementStatsItem{
+				ExecCount: 2,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-2": 2,
+						"KV-3": 3,
+					},
+				},
+			},
+			10003: &StatementStatsItem{
+				ExecCount: 3,
+				KvStatsItem: &KvStatementStatsItem{
+					KvExecCount: map[string]uint64{
+						"KV-3": 3,
+						"KV-4": 4,
+					},
+				},
+			},
+		},
+	}
+	assert.Len(t, m1, 2)
+	assert.Len(t, m2, 2)
+	m1.Merge(m2)
+	assert.Len(t, m1, 3)
+	assert.Len(t, m2, 2)
+	assert.Equal(t, uint64(1), m1["SQL-1"][10001].ExecCount)
+	assert.Equal(t, uint64(2), m1["SQL-1"][10002].ExecCount)
+	assert.Equal(t, uint64(3), m1["SQL-1"][10003].ExecCount)
+	assert.Equal(t, uint64(2), m1["SQL-2"][10001].ExecCount)
+	assert.Equal(t, uint64(4), m1["SQL-2"][10002].ExecCount)
+	assert.Equal(t, uint64(6), m1["SQL-2"][10003].ExecCount)
+	assert.Equal(t, uint64(1), m1["SQL-3"][10001].ExecCount)
+	assert.Equal(t, uint64(2), m1["SQL-3"][10002].ExecCount)
+	assert.Equal(t, uint64(3), m1["SQL-3"][10003].ExecCount)
+	assert.Equal(t, uint64(1), m1["SQL-1"][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1["SQL-1"][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(2), m1["SQL-1"][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(3), m1["SQL-1"][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(3), m1["SQL-1"][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(4), m1["SQL-1"][10003].KvStatsItem.KvExecCount["KV-4"])
+	assert.Equal(t, uint64(2), m1["SQL-2"][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(4), m1["SQL-2"][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(4), m1["SQL-2"][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(6), m1["SQL-2"][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(6), m1["SQL-2"][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(8), m1["SQL-2"][10003].KvStatsItem.KvExecCount["KV-4"])
+	assert.Equal(t, uint64(1), m1["SQL-3"][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1["SQL-3"][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(2), m1["SQL-3"][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(3), m1["SQL-3"][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(3), m1["SQL-3"][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(4), m1["SQL-3"][10003].KvStatsItem.KvExecCount["KV-4"])
+	m1.Merge(nil)
+	assert.Len(t, m1, 3)
+}
+
+func TestCreateStatementStats(t *testing.T) {
+	manager = newStatementStatsManagerManager()
+	stats := CreateStatementStats()
+	assert.NotNil(t, stats)
+	_, ok := manager.statsSet.Load(stats)
+	assert.True(t, ok)
+	assert.False(t, stats.Closed())
+	stats.Close()
+	assert.True(t, stats.Closed())
+}
+
+func TestExecCounter_AddExecCount_Take(t *testing.T) {
+	manager = newStatementStatsManagerManager()
+	stats := CreateStatementStats()
+	m := stats.Take()
+	assert.Len(t, m, 0)
+	stats.AddExecCount("SQL-1", 1001, 1)
+	stats.AddExecCount("SQL-2", 1001, 2)
+	stats.AddExecCount("SQL-3", 1001, 3)
+	m = stats.Take()
+	assert.Len(t, m, 3)
+	assert.Equal(t, 1, m["SQL-1"][1001].ExecCount)
+	assert.Equal(t, 2, m["SQL-2"][1001].ExecCount)
+	assert.Equal(t, 3, m["SQL-3"][1001].ExecCount)
+	m = stats.Take()
+	assert.Len(t, m, 0)
+}

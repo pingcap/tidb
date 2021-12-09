@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/topsql/execcount"
 	"github.com/pingcap/tidb/util/topsql/reporter"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/zap"
 )
@@ -45,7 +45,7 @@ func SetupTopSQL() {
 	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
-	execcount.SetupExecCounter()
+	stmtstats.SetupStatementStatsManager()
 }
 
 // Close uses to close and release the top sql resource.
@@ -53,7 +53,7 @@ func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}
-	execcount.CloseExecCounter()
+	stmtstats.CloseStatementStatsManager()
 }
 
 // AttachSQLInfo attach the sql information info top sql.

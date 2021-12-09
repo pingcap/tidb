@@ -275,12 +275,9 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
 				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-				if e.ctx.GetSessionVars().ExecCounter != nil {
-					normalized, digest := e.ctx.GetSessionVars().StmtCtx.SQLDigest()
-					if len(normalized) > 0 && digest != nil {
-						// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-						txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().ExecCounter.RPCInterceptor(digest.String()))
-					}
+				if e.ctx.GetSessionVars().KvExecCounter != nil {
+					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().KvExecCounter.RPCInterceptor())
 				}
 			}
 		}

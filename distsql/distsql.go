@@ -254,14 +254,11 @@ func init() {
 // BindSQLExecCounterInCtx binds an interceptor for client-go to count the
 // number of SQL executions of each TiKV (if any).
 func BindSQLExecCounterInCtx(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
-	if variable.TopSQLEnabled() && stmtCtx.ExecCounter != nil {
-		normalized, digest := stmtCtx.SQLDigest()
-		if len(normalized) > 0 && digest != nil {
-			// Unlike calling Transaction or Snapshot interface, in distsql package we directly
-			// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
-			// calling SetInterceptor on Transaction or Snapshot.
-			return tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.ExecCounter.RPCInterceptor(digest.String()))
-		}
+	if variable.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
+		// Unlike calling Transaction or Snapshot interface, in distsql package we directly
+		// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
+		// calling SetInterceptor on Transaction or Snapshot.
+		return tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.KvExecCounter.RPCInterceptor())
 	}
 	return ctx
 }

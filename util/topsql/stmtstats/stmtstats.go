@@ -1,0 +1,186 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package stmtstats
+
+import (
+	"sync"
+
+	"go.uber.org/atomic"
+)
+
+// StatementStats is a counter used locally in each session.
+// We can use StatementStats to count data such as "the number of SQL executions",
+// and it is expected that these statistics will eventually be collected and merged
+// in the background.
+type StatementStats struct {
+	mu     sync.Mutex
+	data   StatementStatsMap
+	closed *atomic.Bool
+}
+
+// CreateStatementStats try to create and register an StatementStats.
+// If we are in the initialization phase and have not yet called SetupTopSQL
+// to initialize the top-sql, nothing will happen, and we will get nil. But
+// this scene should never appear, because we always call SetupTopSQL before
+// starting the server, at this moment we cannot receive connections and will
+// not create a valid session. So this case will never happen: "This function
+// returns nil, so this valid session will count nothing".
+func CreateStatementStats() *StatementStats {
+	if manager == nil {
+		return nil
+	}
+	stats := &StatementStats{
+		data:   StatementStatsMap{},
+		closed: atomic.NewBool(false),
+	}
+	manager.register(stats)
+	return stats
+}
+
+// GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
+// for the specified SQLDigest and timestamp if it does not exist before.
+// GetOrCreateStatementStatsItem is just a helper function, not responsible for
+// concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
+func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest string, ts int64) *StatementStatsItem {
+	tsItem, ok := s.data[sqlDigest]
+	if !ok {
+		s.data[sqlDigest] = map[int64]*StatementStatsItem{}
+		tsItem = s.data[sqlDigest]
+	}
+	item, ok := tsItem[ts]
+	if !ok {
+		tsItem[ts] = NewStatementStatsItem()
+		item = tsItem[ts]
+	}
+	return item
+}
+
+// AddExecCount is used to count the number of executions of a certain
+// SQLDigest within a certain timestamp.
+// AddExecCount is thread-safe.
+func (s *StatementStats) AddExecCount(sqlDigest string, ts int64, n uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, ts)
+	item.ExecCount += n
+}
+
+// AddKvExecCount is used to count the number of executions of a certain
+// SQLDigest for a certain target within a certain timestamp。
+// AddKvExecCount is thread-safe.
+func (s *StatementStats) AddKvExecCount(sqlDigest string, ts int64, target string, n uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, ts)
+	item.KvStatsItem.KvExecCount[target] += n
+}
+
+// Take removes all existing StatementStatsMap data from StatementStats.
+// Take is thread-safe.
+func (s *StatementStats) Take() StatementStatsMap {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data := s.data
+	s.data = StatementStatsMap{}
+	return data
+}
+
+// Close marks StatementStats as "closed".
+// The background goroutine will periodically detect whether each
+// StatementStats has been closed, if so, it will be cleaned up.
+func (s *StatementStats) Close() {
+	s.closed.Store(true)
+}
+
+// Closed returns whether the StatementStats has been closed.
+func (s *StatementStats) Closed() bool {
+	return s.closed.Load()
+}
+
+// StatementStatsMap represents Map<SQLDigest, Map<Timestamp, StatementStatsItem>>.
+// We put SQLDigest in front of the two-dimensional map, because SQLDigest
+// is larger than timestamp. This can reduce unnecessary memory usage.
+type StatementStatsMap map[string]map[int64]*StatementStatsItem
+
+// Merge merges other into StatementStatsMap.
+// Values with the same SQLDigest and same timestamp will be merged.
+func (m StatementStatsMap) Merge(other StatementStatsMap) {
+	for newSQL, newTsItem := range other {
+		tsItem, ok := m[newSQL]
+		if !ok {
+			m[newSQL] = newTsItem
+			continue
+		}
+		for ts, newItem := range newTsItem {
+			tsItem[ts].Merge(newItem)
+		}
+	}
+}
+
+// StatementStatsItem represents a set of mergeable statistics.
+// StatementStatsItem is used in a larger data structure to represent
+// the stats of a certain SQLDigest under a certain timestamp.
+// If there are more indicators that need to be added in the future,
+// please add it in StatementStatsItem and implement its aggregation
+// in the Merge method.
+type StatementStatsItem struct {
+	// ExecCount represents the number of SQL executions of TiDB.
+	ExecCount uint64
+
+	// KvStatsItem contains all indicators of kv layer.
+	KvStatsItem *KvStatementStatsItem
+}
+
+// NewStatementStatsItem creates an empty StatementStatsItem.
+func NewStatementStatsItem() *StatementStatsItem {
+	return &StatementStatsItem{
+		KvStatsItem: NewKvStatementStatsItem(),
+	}
+}
+
+// Merge merges other into StatementStatsItem.
+// If you add additional indicators, you need to add their merge code here.
+func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
+	i.ExecCount += other.ExecCount
+	if i.KvStatsItem == nil && other.KvStatsItem != nil {
+		i.KvStatsItem = NewKvStatementStatsItem()
+	}
+	i.KvStatsItem.Merge(other.KvStatsItem)
+}
+
+// KvStatementStatsItem is part of StatementStatsItem, it only contains
+// indicators of kv layer.
+type KvStatementStatsItem struct {
+	// KvExecCount represents the number of SQL executions of TiKV.
+	KvExecCount map[string]uint64
+}
+
+// NewKvStatementStatsItem creates an empty KvStatementStatsItem.
+func NewKvStatementStatsItem() *KvStatementStatsItem {
+	return &KvStatementStatsItem{
+		KvExecCount: map[string]uint64{},
+	}
+}
+
+// Merge merges other into KvStatementStatsItem.
+// If you add additional indicators, you need to add their merge code here.
+func (i *KvStatementStatsItem) Merge(other *KvStatementStatsItem) {
+	if i.KvExecCount == nil && other.KvExecCount != nil {
+		i.KvExecCount = map[string]uint64{}
+	}
+	for target, count := range other.KvExecCount {
+		i.KvExecCount[target] += count
+	}
+}
