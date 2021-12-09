@@ -194,7 +194,7 @@ import (
 
 func main() {
 	for _, v := range variable.GetSysVars() {
-		if v.HasGlobalScope() && v.HasSessionScope() && (v.GetSession != nil || v.SetSession != nil) && (v.SetGlobal != nil || v.SetGlobal != nil) {
+		if v.HasGlobalScope() && v.HasSessionScope() && (v.GetSession != nil || v.SetSession != nil) && (v.GetGlobal != nil || v.SetGlobal != nil) {
 			fmt.Printf("%s\n", v.Name)
 		}
 	}
