@@ -377,20 +377,20 @@ func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	}
 	c.Assert(backoff.Tick(), Equals, true)
 	backoff.Backoff()
-	for i := 0; i < ddl.PollTiFlashReplicaStatusBackoffMaxTick-1; i++ {
+	for i := 0; i < ddl.PollTiFlashBackoffMaxTick-1; i++ {
 		c.Assert(backoff.Tick(), Equals, false)
 	}
 	c.Assert(backoff.Tick(), Equals, true)
 
-	origin := ddl.PollTiFlashReplicaStatusBackoffMinTick
-	ddl.PollTiFlashReplicaStatusBackoffMinTick = 1
+	origin := ddl.PollTiFlashBackoffMinTick
+	ddl.PollTiFlashBackoffMinTick = 1
 	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
 	c.Assert(backoff.Tick(), Equals, true)
 	backoff.Backoff()
 	c.Assert(backoff.Tick(), Equals, false)
 	c.Assert(backoff.Tick(), Equals, true)
 
-	ddl.PollTiFlashReplicaStatusBackoffMinTick = origin
+	ddl.PollTiFlashBackoffMinTick = origin
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

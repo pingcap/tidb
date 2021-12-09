@@ -23,7 +23,6 @@ import (
 	"flag"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/store/helper"
@@ -419,8 +418,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			log.Error("failed to get store for PollTiFlashReplicaStatus")
 			return
 		}
-		iterTimes := 0
-		backoffs := NewPollTiFlashBackoffContext(PollTiFlashReplicaStatusBackoffMinTick, PollTiFlashReplicaStatusBackoffMaxTick, PollTiFlashReplicaStatusBackoffCapacity)
+
+		pollTiflashContext := NewPollTiFlashContext()
+
 		for {
 			if d.sessPool == nil {
 				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
@@ -433,12 +433,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				sctx, err := d.sessPool.get()
 				if err == nil {
 					if d.ownerManager.IsOwner() {
-						handlePd := iterTimes%PullTiFlashPdTick == 0
-						if atomic.CompareAndSwapUint32(&ReschePullTiFlash, 0, 1) {
-							// This is because last pd rule failed.
-							handlePd = true
-						}
-						_, err := d.PollTiFlashReplicaStatus(sctx, handlePd, &backoffs)
+						_, err := d.PollTiFlashReplicaStatus(sctx, pollTiflashContext)
 						if err != nil {
 							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 						}
@@ -457,8 +452,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				return
 			case <-time.After(PollTiFlashInterval):
 			}
-			iterTimes += 1
-			iterTimes %= PullTiFlashPdTick
 		}
 	}()
 
