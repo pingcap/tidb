@@ -653,7 +653,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, re
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
 
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			argTime, err := b.parseTimeFunc(sc, argTimeStr)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
@@ -738,7 +738,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, resul
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
 
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			argTime, err := b.parseTimeFunc(sc, argTimeStr)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
