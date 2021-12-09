@@ -22,11 +22,11 @@ import (
 type DataSink interface {
 	Send(data reportData, timeout time.Duration)
 
-	// IsPaused indicates that DataSink is not expecting to receive records for now
+	// IsPaused indicates that the DataSink is not expecting to receive records for now
 	// and may resume in the future.
 	IsPaused() bool
 
-	// IsDown indicates that the client has been down and can be cleared.
+	// IsDown indicates that the DataSink has been down and can be cleared.
 	// Note that: once a DataSink is down, it cannot go back to be up.
 	IsDown() bool
 

@@ -51,13 +51,13 @@ func (t *TopSQLPubSubService) Subscribe(
 	_ *tipb.TopSQLSubRequest,
 	stream tipb.TopSQLPubSub_SubscribeServer,
 ) error {
-	sc := newPubSubDataSink(stream)
+	ds := newPubSubDataSink(stream)
 
-	if err := t.dataSinkRegHandle.Register(sc); err != nil {
+	if err := t.dataSinkRegHandle.Register(ds); err != nil {
 		return err
 	}
 
-	sc.run()
+	ds.run()
 	return nil
 }
 
@@ -131,14 +131,14 @@ func (s *pubSubDataSink) run() {
 		case <-doneCh:
 			if err != nil {
 				logutil.BgLogger().Warn(
-					"[top-sql] pubsub data sink failed to send data to subscriber",
+					"[top-sql] pubsub datasink failed to send data to subscriber",
 					zap.Error(err),
 				)
 				return
 			}
 		case <-ctx.Done():
 			logutil.BgLogger().Warn(
-				"[top-sql] pubsub data sink failed to send data to subscriber due to timeout",
+				"[top-sql] pubsub datasink failed to send data to subscriber due to timeout",
 				zap.Duration("timeout", task.timeout),
 			)
 			return
