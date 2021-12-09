@@ -69,7 +69,6 @@ func TestStoreGlobalConfig(t *testing.T) {
 	domain.GetGlobalConfigSyncer().SetEtcdClient(cluster.RandClient())
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_enable_top_sql=1;")
 
 	for i := 0; i < 20; i++ {
@@ -86,8 +85,6 @@ func TestStoreGlobalConfig(t *testing.T) {
 		require.Equal(t, len(resp.Kvs), 1)
 		require.Equal(t, resp.Kvs[0].Key, []byte("/global/config/enable_resource_metering"))
 		require.Equal(t, resp.Kvs[0].Value, []byte("true"))
-
-		tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
 		return
 	}
 
