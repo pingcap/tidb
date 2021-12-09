@@ -23,23 +23,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/pingcap/tidb/meta"
-
-	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/placement"
-	"go.uber.org/zap"
-
-	"strings"
-
+	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -50,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
+	"go.uber.org/zap"
 )
 
 // PollTiFlashReplicaStatusContext records status for each TiFlash replica.
@@ -147,12 +144,12 @@ func NewPollTiFlashBackoffContext(MinTick, MaxTick, Capacity int) PollTiFlashBac
 }
 
 // Tick will increase Counter, and check if Threshold meets.
-func (b *PollTiFlashBackoffElement) Tick() bool {
-	if b.Threshold < PollTiFlashBackoffMinTick {
-		b.Threshold = PollTiFlashBackoffMinTick
+func (b *PollTiFlashBackoffElement) Tick(ctx *PollTiFlashBackoffContext) bool {
+	if b.Threshold < ctx.MinTick {
+		b.Threshold = ctx.MinTick
 	}
-	if b.Threshold > PollTiFlashBackoffMaxTick {
-		b.Threshold = PollTiFlashBackoffMaxTick
+	if b.Threshold > ctx.MaxTick {
+		b.Threshold = ctx.MaxTick
 	}
 	defer func() {
 		b.Counter += 1
@@ -161,13 +158,13 @@ func (b *PollTiFlashBackoffElement) Tick() bool {
 	return b.Counter%b.Threshold == 0
 }
 
-// Backoff will increase Threshold
-func (b *PollTiFlashBackoffElement) Backoff() {
-	if b.Threshold < PollTiFlashBackoffMinTick {
-		b.Threshold = PollTiFlashBackoffMinTick
+// Grow will increase Threshold
+func (b *PollTiFlashBackoffElement) Grow(ctx *PollTiFlashBackoffContext) {
+	if b.Threshold < ctx.MinTick {
+		b.Threshold = ctx.MinTick
 	}
-	if b.Threshold > PollTiFlashBackoffMaxTick/2 {
-		b.Threshold = PollTiFlashBackoffMaxTick
+	if b.Threshold > ctx.MaxTick/2 {
+		b.Threshold = ctx.MaxTick
 		return
 	}
 	b.Threshold *= 2
@@ -300,8 +297,8 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 		}
 	}
 	if origin != httpAddr {
-		log.Warn(fmt.Sprintf("Update status addr to %v\n", httpAddr))
-		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
+		log.Warn(fmt.Sprintf("Update status addr to %v", httpAddr))
+		err := ddlutil.PutKVToEtcd(d.ctx, d.etcdCli, 1, key, httpAddr)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -403,7 +400,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				// Small table may be already ready at first check later.
 				// so we omit assigning into `backoffs` map for the first time.
 			} else {
-				if !bo.Tick() {
+				if !bo.Tick(&pollTiFlashContext.BackoffContext) {
 					// Skip
 					log.Info("Escape checking available status", zap.Int64("tableId", tb.ID))
 					continue
@@ -439,13 +436,13 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			if !avail {
 				bo, ok := pollTiFlashContext.BackoffContext.Get(tb.ID)
 				if ok {
-					log.Info("TiFlash replica is not ready, add", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
-					bo.Backoff()
+					log.Info("TiFlash replica is not ready, grow interval", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
+					bo.Grow(&pollTiFlashContext.BackoffContext)
 				} else {
 					// If the table is not available at first check, it should be added into `backoffs`
 					newBackoff := NewPollTiFlashReplicaStatusBackoff()
 					if pollTiFlashContext.BackoffContext.Set(tb.ID, &newBackoff) {
-						log.Info("TiFlash replica is not ready, grow", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
+						log.Info("TiFlash replica is not ready, queuing", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
 					} else {
 						log.Warn("Too many jobs in backoff queue", zap.Int64("tableId", tb.ID), zap.Uint64("region need", regionCount), zap.Uint64("region ready", flashRegionCount))
 					}

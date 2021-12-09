@@ -363,30 +363,32 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 
 // Test when TiFlash Replia is not ready for some period of time.
 func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
+	backoffctx := ddl.NewPollTiFlashBackoffContext(2, 50, 20)
+	ctx := &backoffctx
 	backoff := ddl.NewPollTiFlashReplicaStatusBackoff()
-	c.Assert(backoff.Tick(), Equals, false)
-	c.Assert(backoff.Tick(), Equals, true)
-	backoff.Backoff()
+	c.Assert(backoff.Tick(ctx), Equals, false)
+	c.Assert(backoff.Tick(ctx), Equals, true)
+	backoff.Grow(ctx)
 	for i := 0; i < 3; i++ {
-		c.Assert(backoff.Tick(), Equals, false)
+		c.Assert(backoff.Tick(ctx), Equals, false)
 	}
-	c.Assert(backoff.Tick(), Equals, true)
-	backoff.Backoff()
+	c.Assert(backoff.Tick(ctx), Equals, true)
+	backoff.Grow(ctx)
 	for i := 0; i < 7; i++ {
-		c.Assert(backoff.Tick(), Equals, false)
+		c.Assert(backoff.Tick(ctx), Equals, false)
 	}
-	c.Assert(backoff.Tick(), Equals, true)
-	backoff.Backoff()
-	for i := 0; i < ddl.PollTiFlashBackoffMaxTick-1; i++ {
-		c.Assert(backoff.Tick(), Equals, false)
+	c.Assert(backoff.Tick(ctx), Equals, true)
+	backoff.Grow(ctx)
+	for i := 0; i < 50; i++ {
+		c.Assert(backoff.Tick(ctx), Equals, false)
 	}
-	c.Assert(backoff.Tick(), Equals, true)
+	c.Assert(backoff.Tick(ctx), Equals, true)
 
 	origin := ddl.PollTiFlashBackoffMinTick
 	ddl.PollTiFlashBackoffMinTick = 1
 	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
 	c.Assert(backoff.Tick(), Equals, true)
-	backoff.Backoff()
+	backoff.Grow()
 	c.Assert(backoff.Tick(), Equals, false)
 	c.Assert(backoff.Tick(), Equals, true)
 
