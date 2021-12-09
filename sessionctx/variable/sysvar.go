@@ -1618,10 +1618,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(enabled), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		config.GetGlobalConfig().Log.EnableSlowLog.Store(TiDBOptOn(val))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), nil
+		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))

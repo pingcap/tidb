@@ -32,5 +32,13 @@ func TestMain(m *testing.M) {
 		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	goleak.VerifyTestMain(m)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
+		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }

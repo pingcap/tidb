@@ -1400,8 +1400,6 @@ import (
 %precedence sqlBigResult
 %precedence sqlSmallResult
 %precedence sqlCache sqlNoCache
-%precedence lowerThanIntervalKeyword
-%precedence interval
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
@@ -1454,6 +1452,7 @@ import (
 %precedence lowerThanNot
 %right not not2
 %right collate
+%left interval
 %right encryption
 %left labels
 %precedence quick
@@ -6922,7 +6921,7 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL" %prec lowerThanIntervalKeyword
+|	"INTERVAL"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"

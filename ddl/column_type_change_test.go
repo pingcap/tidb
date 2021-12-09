@@ -2305,3 +2305,49 @@ func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
 	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
 	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
 }
+
+func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Some ddl cases.
+	prepare := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare()
+	tk.MustExec("alter table t modify column a timestamp NOT NULL")
+	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+
+	prepare()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful.
+	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+
+	prepare2 := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a timestamp null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare2()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
+	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+
+	// Some dml cases.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp NOT NULL)")
+	_, err = tk.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+
+	_, err = tk.Exec("insert into t values(null)")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
