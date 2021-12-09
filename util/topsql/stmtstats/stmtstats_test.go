@@ -38,9 +38,9 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 	item1.Merge(item2)
 	assert.Len(t, item1.KvExecCount, 3)
 	assert.Len(t, item2.KvExecCount, 2)
-	assert.Equal(t, 1, item1.KvExecCount["127.0.0.1:10001"])
-	assert.Equal(t, 3, item1.KvExecCount["127.0.0.1:10003"])
-	assert.Equal(t, 3, item1.KvExecCount["127.0.0.1:10003"])
+	assert.Equal(t, uint64(1), item1.KvExecCount["127.0.0.1:10001"])
+	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
+	assert.Equal(t, uint64(3), item1.KvExecCount["127.0.0.1:10003"])
 }
 
 func TestStatementsStatsItem_Merge(t *testing.T) {
@@ -53,7 +53,7 @@ func TestStatementsStatsItem_Merge(t *testing.T) {
 		KvStatsItem: NewKvStatementStatsItem(),
 	}
 	item1.Merge(item2)
-	assert.Equal(t, 3, item1.ExecCount)
+	assert.Equal(t, uint64(3), item1.ExecCount)
 }
 
 func TestStatementStatsMap_Merge(t *testing.T) {
@@ -234,9 +234,9 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats.AddExecCount("SQL-3", 1001, 3)
 	m = stats.Take()
 	assert.Len(t, m, 3)
-	assert.Equal(t, 1, m["SQL-1"][1001].ExecCount)
-	assert.Equal(t, 2, m["SQL-2"][1001].ExecCount)
-	assert.Equal(t, 3, m["SQL-3"][1001].ExecCount)
+	assert.Equal(t, uint64(1), m["SQL-1"][1001].ExecCount)
+	assert.Equal(t, uint64(2), m["SQL-2"][1001].ExecCount)
+	assert.Equal(t, uint64(3), m["SQL-3"][1001].ExecCount)
 	m = stats.Take()
 	assert.Len(t, m, 0)
 }
