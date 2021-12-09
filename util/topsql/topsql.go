@@ -60,6 +60,7 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enable)
 }
 
+// InstanceEnabled is used to check if TopSQL is enabled on the current instance.
 func InstanceEnabled() bool {
 	return tracecpu.GlobalSQLCPUProfiler.GetTopSQLEnabled()
 }

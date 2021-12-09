@@ -823,4 +823,3 @@ type TopSQL struct {
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
 }
-

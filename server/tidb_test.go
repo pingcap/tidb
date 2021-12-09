@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -1315,10 +1314,10 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	variable.TopSQLVariable.InstanceEnable.Store(true)
-	defer variable.TopSQLVariable.InstanceEnable.Store(false)
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(true)
+	defer tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(false)
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
@@ -1327,10 +1326,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	dbt.MustExec("create table t (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
-	})
-	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select

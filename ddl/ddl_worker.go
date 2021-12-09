@@ -17,7 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
-    "strconv"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
