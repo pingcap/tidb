@@ -9111,6 +9111,15 @@ func (s *testIntegrationSuite) TestIssue26958(c *C) {
 		Check(testkit.Rows("3 3", "2 2", "1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue25053(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tbl_0;")
+	tk.MustExec("create table tbl_0 (col_2 int, col_3 varbinary(163));")
+	tk.MustExec("insert into tbl_0 values (1,'o'), (2,'\\x00');")
+	tk.MustQuery("select json_objectagg( col_2, col_3 ) from tbl_0;").Check(testkit.Rows(`{"1": "base64:type15:bw==", "2": "base64:type15:eDAw"}`))
+}
+
 func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
