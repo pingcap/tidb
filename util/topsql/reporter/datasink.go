@@ -20,7 +20,7 @@ import (
 
 // DataSink sends data to the target server.
 type DataSink interface {
-	Send(data reportData, timeout time.Duration)
+	Send(data reportData, deadline time.Time)
 
 	// IsPaused indicates that the DataSink is not expecting to receive records for now
 	// and may resume in the future.

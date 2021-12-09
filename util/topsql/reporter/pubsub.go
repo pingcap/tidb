@@ -79,13 +79,13 @@ func newPubSubDataSink(
 
 var _ DataSink = &pubSubDataSink{}
 
-func (s *pubSubDataSink) Send(data reportData, timeout time.Duration) {
+func (s *pubSubDataSink) Send(data reportData, deadline time.Time) {
 	if s.IsDown() {
 		return
 	}
 
 	select {
-	case s.sendTaskCh <- sendTask{data: data, timeout: timeout}:
+	case s.sendTaskCh <- sendTask{data: data, deadline: deadline}:
 		// sent successfully
 	default:
 		ignoreReportChannelFullCounter.Inc()
@@ -109,7 +109,7 @@ func (s *pubSubDataSink) run() {
 	defer s.isDown.Store(true)
 
 	for task := range s.sendTaskCh {
-		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
+		ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
 		start := time.Now()
 
 		var err error
@@ -139,7 +139,7 @@ func (s *pubSubDataSink) run() {
 		case <-ctx.Done():
 			logutil.BgLogger().Warn(
 				"[top-sql] pubsub datasink failed to send data to subscriber due to timeout",
-				zap.Duration("timeout", task.timeout),
+				zap.Time("deadline", task.deadline),
 			)
 			return
 		}

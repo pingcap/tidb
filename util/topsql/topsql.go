@@ -42,8 +42,7 @@ const (
 )
 
 var (
-	globalTopSQLReport        reporter.TopSQLReporter
-	globalTopSQLPubSubService tipb.TopSQLPubSubServer
+	globalTopSQLReport reporter.TopSQLReporter
 )
 
 // SetupTopSQL sets up the top-sql worker.
@@ -58,8 +57,6 @@ func SetupTopSQL() {
 	err := globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
 	terror.MustNil(err)
 
-	globalTopSQLPubSubService = reporter.NewTopSQLPubSubService(globalTopSQLReport.DataSinkRegHandle())
-
 	if len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0 {
 		variable.TopSQLVariable.InstanceEnable.Store(true)
 	}
@@ -67,8 +64,9 @@ func SetupTopSQL() {
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
 func RegisterPubSubServer(s *grpc.Server) {
-	if globalTopSQLPubSubService != nil {
-		tipb.RegisterTopSQLPubSubServer(s, globalTopSQLPubSubService)
+	if globalTopSQLReport != nil {
+		service := reporter.NewTopSQLPubSubService(globalTopSQLReport.DataSinkRegHandle())
+		tipb.RegisterTopSQLPubSubServer(s, service)
 	}
 }
 

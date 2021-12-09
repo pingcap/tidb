@@ -37,8 +37,8 @@ type SingleTargetDataSink struct {
 }
 
 type sendTask struct {
-	data    reportData
-	timeout time.Duration
+	data     reportData
+	deadline time.Time
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
@@ -59,7 +59,7 @@ func (r *SingleTargetDataSink) run() {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
+		ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
 		start := time.Now()
 		err := r.doSend(ctx, targetRPCAddr, task.data)
 		cancel()
@@ -75,9 +75,9 @@ func (r *SingleTargetDataSink) run() {
 var _ DataSink = &SingleTargetDataSink{}
 
 // Send implements the DataSink interface.
-func (r *SingleTargetDataSink) Send(data reportData, timeout time.Duration) {
+func (r *SingleTargetDataSink) Send(data reportData, deadline time.Time) {
 	select {
-	case r.sendTaskCh <- sendTask{data: data, timeout: timeout}:
+	case r.sendTaskCh <- sendTask{data: data, deadline: deadline}:
 		// sent successfully
 	default:
 		ignoreReportChannelFullCounter.Inc()

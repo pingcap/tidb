@@ -284,8 +284,8 @@ func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, t
 	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
 }
 
-// addEvictedIntoSortedDataPoints adds the evict dataPoints into others.
-// Attention, this function depend on others dataPoints is sorted, and this function will modify the evict dataPoints
+// addEvictedIntoSortedDataPoints adds evicted dataPoints into others.
+// Attention, this function depend on others dataPoints is sorted, and this function will modify evicted dataPoints
 // to make sure it is sorted by timestamp.
 func addEvictedIntoSortedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
 	if others == nil {
@@ -540,6 +540,42 @@ func (d *reportData) hasData() bool {
 	return len(d.cpuTimeRecords) != 0 || len(d.sqlMetas) != 0 || len(d.planMetas) != 0
 }
 
+func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res reportData) {
+	for _, record := range records {
+		res.cpuTimeRecords = append(res.cpuTimeRecords, &tipb.CPUTimeRecord{
+			RecordListTimestampSec: record.TimestampList,
+			RecordListCpuTimeMs:    record.CPUTimeMsList,
+			SqlDigest:              record.SQLDigest,
+			PlanDigest:             record.PlanDigest,
+		})
+	}
+
+	sqlMap.Range(func(key, value interface{}) bool {
+		meta := value.(SQLMeta)
+		res.sqlMetas = append(res.sqlMetas, &tipb.SQLMeta{
+			SqlDigest:     []byte(key.(string)),
+			NormalizedSql: meta.normalizedSQL,
+			IsInternalSql: meta.isInternal,
+		})
+		return true
+	})
+
+	planMap.Range(func(key, value interface{}) bool {
+		planDecoded, errDecode := decodePlan(value.(string))
+		if errDecode != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+			return true
+		}
+		res.planMetas = append(res.planMetas, &tipb.PlanMeta{
+			PlanDigest:     []byte(key.(string)),
+			NormalizedPlan: planDecoded,
+		})
+		return true
+	})
+
+	return
+}
+
 // reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
 	defer util.Recover("top-sql", "reportWorker", nil, false)
@@ -600,42 +636,6 @@ func getTopN(collected collectedData) (records []*dataPoints, sqlMap *sync.Map, 
 	return
 }
 
-func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res reportData) {
-	for _, record := range records {
-		res.cpuTimeRecords = append(res.cpuTimeRecords, &tipb.CPUTimeRecord{
-			RecordListTimestampSec: record.TimestampList,
-			RecordListCpuTimeMs:    record.CPUTimeMsList,
-			SqlDigest:              record.SQLDigest,
-			PlanDigest:             record.PlanDigest,
-		})
-	}
-
-	sqlMap.Range(func(key, value interface{}) bool {
-		meta := value.(SQLMeta)
-		res.sqlMetas = append(res.sqlMetas, &tipb.SQLMeta{
-			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: meta.normalizedSQL,
-			IsInternalSql: meta.isInternal,
-		})
-		return true
-	})
-
-	planMap.Range(func(key, value interface{}) bool {
-		planDecoded, errDecode := decodePlan(value.(string))
-		if errDecode != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
-			return true
-		}
-		res.planMetas = append(res.planMetas, &tipb.PlanMeta{
-			PlanDigest:     []byte(key.(string)),
-			NormalizedPlan: planDecoded,
-		})
-		return true
-	})
-
-	return
-}
-
 func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
@@ -653,8 +653,9 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		}
 	})
 
+	deadline := time.Now().Add(timeout)
 	for i := range tsr.dataSinks {
-		tsr.dataSinks[i].Send(data, timeout)
+		tsr.dataSinks[i].Send(data, deadline)
 	}
 }
 
