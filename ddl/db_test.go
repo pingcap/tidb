@@ -7307,7 +7307,7 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 	d.(ddl.DDLForTest).SetHook(hook)
 	defer d.(ddl.DDLForTest).SetHook(originalHook)
 
-	// Cancelling will be retried but it still fails, and adding index succeeds.
+	// Test when cancelling cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
@@ -7319,7 +7319,7 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 	tk.MustExec("alter table t add index (id)")
 	c.Assert(cancelErr.Error(), Equals, "mock commit error")
 
-	// Cancelling will be retried only once and it succeeds at the end.
+	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
