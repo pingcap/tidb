@@ -433,6 +433,7 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	return is
 }
 
+// MockPartitionTable mocks a partition table for test
 func MockPartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
