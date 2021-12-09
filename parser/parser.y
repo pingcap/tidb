@@ -666,6 +666,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -5786,6 +5787,7 @@ UnReservedKeyword:
 |	"PREPARE"
 |	"PRE_SPLIT_REGIONS"
 |	"PROXY"
+|	"PLAN_CACHE"
 |	"QUICK"
 |	"REBUILD"
 |	"REDUNDANT"
@@ -10133,6 +10135,13 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminResetTelemetryID,
+		}
+	}
+|	"ADMIN" "FLUSH" GlobalScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:          ast.AdminFlushPlanCache,
+			GlobalScope: $3.(bool),
 		}
 	}
 

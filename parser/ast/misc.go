@@ -1926,6 +1926,7 @@ type AdminStmt struct {
 	ShowSlow     *ShowSlow
 	Plugins      []string
 	Where        ExprNode
+	GlobalScope  bool
 }
 
 // Restore implements Node interface.
