@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -76,6 +77,8 @@ type PollTiFlashContext struct {
 	TiFlashStores map[int64]helper.StoreStat
 	HandlePdCounter int
 	UpdateTiFlashStoreCounter int
+	mu sync.Mutex
+	UpdateMap map[int64]bool
 }
 
 func NewPollTiFlashContext() *PollTiFlashContext{
@@ -84,6 +87,7 @@ func NewPollTiFlashContext() *PollTiFlashContext{
 		UpdateTiFlashStoreCounter: 0,
 		TiFlashStores: make(map[int64]helper.StoreStat),
 		BackoffContext: NewPollTiFlashBackoffContext(PollTiFlashBackoffMinTick, PollTiFlashBackoffMaxTick, PollTiFlashBackoffCapacity),
+		UpdateMap: make(map[int64]bool),
 	}
 }
 
@@ -121,7 +125,7 @@ var (
 	// PollTiFlashBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMaxTick int = 10
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
-	PollTiFlashBackoffMinTick int = 2
+	PollTiFlashBackoffMinTick int = 1
 	// PollTiFlashBackoffCapacity is the cache size of backoff struct.
 	PollTiFlashBackoffCapacity int = 1000
 )
@@ -167,7 +171,11 @@ func (b *PollTiFlashBackoffElement) Grow(ctx *PollTiFlashBackoffContext) {
 		b.Threshold = ctx.MaxTick
 		return
 	}
-	b.Threshold *= 2
+	if b.Threshold < 8 {
+		b.Threshold += 1
+	} else {
+		b.Threshold *= 2
+	}
 	b.Counter = 1
 }
 
@@ -397,6 +405,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
 			available = val.(bool)
 		})
+		//pollTiFlashContext.mu.Lock()
+		//if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok && a {
+		//	// If this table is available, but have not be `UpdateTableReplicaInfo`-ed, reckon it available.
+		//	// So we will not add duplicate job.
+		//	log.Info("TiFlash replica is pending, reckon it available", zap.Int64("tableID", tb.ID))
+		//	available = true
+		//}
+		//pollTiFlashContext.mu.Unlock()
 		if !available {
 			bo, ok := pollTiFlashContext.BackoffContext.Get(tb.ID)
 			if !ok {
@@ -463,9 +479,19 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				}
 			}
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
-			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
-				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
+			//if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
+			//	log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
+			//}
+			pollTiFlashContext.mu.Lock()
+			if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
+				if a == avail {
+					log.Info("Neglect duplicate TiFlash status updating", zap.Int64("tableID", tb.ID))
+				}
+				pollTiFlashContext.UpdateMap[tb.ID] = avail
+			} else {
+				pollTiFlashContext.UpdateMap[tb.ID] = avail
 			}
+			pollTiFlashContext.mu.Unlock()
 		}
 	}
 

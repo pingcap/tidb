@@ -25,8 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/store/helper"
-
 	"github.com/pingcap/log"
 
 	"github.com/google/uuid"
@@ -413,14 +411,41 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	go func() {
-		_, ok := d.store.(helper.Storage)
-		if !ok {
-			log.Error("failed to get store for PollTiFlashReplicaStatus")
-			return
-		}
-
 		pollTiflashContext := NewPollTiFlashContext()
-
+		go func () {
+			for {
+				pollTiflashContext.mu.Lock()
+				var id int64 = -1
+				avail := false
+				for id, avail = range pollTiflashContext.UpdateMap {
+					break
+				}
+				pollTiflashContext.mu.Unlock()
+				if id != -1 {
+					sctx, _ := d.sessPool.get()
+					log.Info("Handle UpdateTableReplicaInfo", zap.Int64("tid", id))
+					err := d.UpdateTableReplicaInfo(sctx, id, avail)
+					if err != nil {
+						d.sessPool.put(sctx)
+						log.Info("Error Handle UpdateTableReplicaInfo", zap.Int64("tid", id), zap.Error(err))
+					} else {
+						d.sessPool.put(sctx)
+						log.Info("Finish Handle UpdateTableReplicaInfo", zap.Int64("tid", id))
+						pollTiflashContext.mu.Lock()
+						delete(pollTiflashContext.UpdateMap, id)
+						pollTiflashContext.mu.Unlock()
+						log.Info("Removed UpdateTableReplicaInfo", zap.Int64("tid", id))
+					}
+				} else {
+					select {
+					case <-d.ctx.Done():
+						log.Info("Quit consumer")
+						return
+					case <-time.After(100*time.Millisecond):
+					}
+				}
+			}
+		}()
 		for {
 			if d.sessPool == nil {
 				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
