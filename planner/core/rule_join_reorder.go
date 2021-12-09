@@ -209,26 +209,24 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
-	if tracer.final != tracer.initial {
-		action := fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
-		reason := func() string {
-			buffer := bytes.NewBufferString("join cost during reorder: [")
-			var joins []string
-			for join := range tracer.cost {
-				joins = append(joins, join)
+	action := fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
+	reason := func() string {
+		buffer := bytes.NewBufferString("join cost during reorder: [")
+		var joins []string
+		for join := range tracer.cost {
+			joins = append(joins, join)
+		}
+		sort.Strings(joins)
+		for i, join := range joins {
+			if i > 0 {
+				buffer.WriteString(",")
 			}
-			sort.Strings(joins)
-			for i, join := range joins {
-				if i > 0 {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
-			}
-			buffer.WriteString("]")
-			return buffer.String()
-		}()
-		opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
-	}
+			buffer.WriteString(fmt.Sprintf("[%s, cost:%v]", join, tracer.cost[join]))
+		}
+		buffer.WriteString("]")
+		return buffer.String()
+	}()
+	opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
 func allJoinOrderToString(tt []*tracing.LogicalPlanTrace) string {

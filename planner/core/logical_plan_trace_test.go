@@ -88,7 +88,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 	}{
 		{
 			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagJoinReOrder},
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
@@ -98,13 +98,13 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			},
 		},
 		{
-			sql:            "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagJoinReOrder},
+			sql:            "select * from t t1, t t2, t t3,t t4 where t1.a=t2.a and t3.a=t2.a",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "join order becomes (((t1*t2)*(t3*t4))*t5) from original ((((t1*t2)*t3)*t4)*t5)",
-					assertReason: "join cost during reorder: [[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000],[t5, cost:10000]]",
+					assertAction: "join order becomes (((t1*t2)*t3)*t4) from original (((t1*t2)*t3)*t4)",
+					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000]]",
 				},
 			},
 		},
@@ -185,7 +185,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
-		p, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
+		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
 		c.Assert(otrace, NotNil)
