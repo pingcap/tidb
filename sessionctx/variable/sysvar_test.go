@@ -608,7 +608,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	require.NoError(t, err)

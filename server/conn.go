@@ -715,6 +715,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+			return err
 		}
 		if len(newAuth) > 0 {
 			resp.Auth = newAuth
@@ -858,16 +859,24 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if err != nil {
 		return nil, err
 	}
-	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: host})
-	failpoint.Inject("FakeUser", func(val failpoint.Value) {
-		userplugin = val.(string)
-	})
+	// Find the identity of the user based on username and peer host.
+	identity, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
-		// This happens if the account doesn't exist
+		return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	}
+	// Get the plugin for the identity.
+	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
 	}
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		userplugin = val.(string)
+	})
 	if userplugin == mysql.AuthSocket {
+		if !cc.isUnixSocket {
+			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
 		resp.AuthPlugin = mysql.AuthSocket
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
 		if err != nil {
@@ -2181,10 +2190,15 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	// if fetchedRows is not enough, getting data from recordSet.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
+		// NOTE: chunk should not be allocated from the allocator
+		// the allocator will reset every statement
+		// but it maybe stored in the result set among statements
+		// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
 		// Here server.tidbResultSet implements Next method.
+		req.Reset()
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}
@@ -2196,7 +2210,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
