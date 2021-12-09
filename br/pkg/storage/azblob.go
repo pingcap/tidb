@@ -1,0 +1,405 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"fmt"
+	"io"
+	"os"
+	"path"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"go.uber.org/zap"
+)
+
+type ClientBuilder interface {
+	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
+	GetServiceClient() (azblob.ServiceClient, error)
+	GetAccountName() string
+}
+
+// use shared key to access azure blob storage
+type sharedKeyClientBuilder struct {
+	cred        *azblob.SharedKeyCredential
+	accountName string
+	serviceURL  string
+}
+
+func (b *sharedKeyClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+	return azblob.NewServiceClientWithSharedKey(b.serviceURL, b.cred, nil)
+}
+
+func (b *sharedKeyClientBuilder) GetAccountName() string {
+	return b.accountName
+}
+
+// use token to access azure blob storage
+type tokenClientBuilder struct {
+	cred        *azidentity.ClientSecretCredential
+	accountName string
+	serviceURL  string
+}
+
+func (b *tokenClientBuilder) GetServiceClient() (azblob.ServiceClient, error) {
+	return azblob.NewServiceClient(b.serviceURL, b.cred, nil)
+}
+
+func (b *tokenClientBuilder) GetAccountName() string {
+	return b.accountName
+}
+
+func getAuthorizerFromEnvironment() (clientId, tenantId, clientSecret string) {
+	return os.Getenv("AZURE_CLIENT_ID"),
+		os.Getenv("AZURE_TENANT_ID"),
+		os.Getenv("AZURE_CLIENT_SECRET")
+}
+
+// get azure service client from options and environment
+func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBuilder, error) {
+	if len(options.Bucket) == 0 {
+		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
+	}
+
+	accountName := options.AccountName
+	if val := os.Getenv("AZURE_STORAGE_ACCOUNT"); len(val) > 0 {
+		accountName = val
+	}
+
+	if len(accountName) == 0 {
+		return nil, errors.New("account name cannot be empty to access azure blob storage")
+	}
+
+	serviceURL := options.Endpoint
+	if len(serviceURL) == 0 {
+		serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net", accountName)
+	}
+
+	if clientId, tenantId, clientSecret := getAuthorizerFromEnvironment(); len(clientId) > 0 && len(tenantId) > 0 && len(clientSecret) > 0 {
+		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
+		if err != nil {
+			log.Warn("Failed to get azure token credential from environment but variables exist, try to use shared key.", zap.String("tenantId", tenantId), zap.String("clientId", clientId), zap.String("clientSecret", "?"))
+		} else {
+			return &tokenClientBuilder{
+				cred,
+				accountName,
+				serviceURL,
+			}, nil
+		}
+	}
+
+	sharedKey := options.SharedKey
+	if val, ex := os.LookupEnv("AZURE_STORAGE_KEY"); ex {
+		log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
+		sharedKey = val
+	}
+
+	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
+	if err != nil {
+		return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+	}
+	return &sharedKeyClientBuilder{
+		cred,
+		accountName,
+		serviceURL,
+	}, nil
+}
+
+type AzureBlobStorage struct {
+	options *backuppb.AzureBlobStorage
+
+	containerClient azblob.ContainerClient
+}
+
+func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage) (*AzureBlobStorage, error) {
+	clientBuilder, err := getAzureServiceClientBuilder(options)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return newAzureBlobStorageWithClientBuilder(ctx, options, clientBuilder)
+}
+
+func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
+
+	serviceClient, err := clientBuilder.GetServiceClient()
+	if err != nil {
+		return nil, errors.Annotate(err, "Failed to create azure service client")
+	}
+
+	respIter := serviceClient.ListContainers(nil)
+	containerExist := false
+RESPITER:
+	for {
+		err := respIter.Err()
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to list azure containers")
+		}
+
+		if !respIter.NextPage(ctx) {
+			err := respIter.Err()
+			if err != nil {
+				return nil, errors.Annotate(err, "Failed to list azure containers")
+			}
+			break RESPITER
+		}
+
+		for _, container := range respIter.PageResponse().ContainerItems {
+			if *container.Name == options.Bucket {
+				containerExist = true
+				break RESPITER
+			}
+		}
+	}
+
+	respIter.PageResponse().RawResponse.Body.Close()
+	containerClient := serviceClient.NewContainerClient(options.Bucket)
+	if !containerExist {
+		_, err := containerClient.Create(ctx, nil)
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to create the container")
+		}
+	}
+
+	return &AzureBlobStorage{
+		options,
+		containerClient,
+	}, nil
+}
+
+func (s *AzureBlobStorage) withPrefix(name string) string {
+	return path.Join(s.options.Prefix, name)
+}
+
+func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	_, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{})
+	if err != nil {
+		return errors.Annotatef(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	return nil
+}
+
+func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	resp, err := client.Download(ctx, nil)
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	defer resp.RawResponse.Body.Close()
+	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{}))
+	if err != nil {
+		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	return data, err
+}
+
+func (s *AzureBlobStorage) FileExists(ctx context.Context, name string) (bool, error) {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	_, err := client.GetProperties(ctx, nil)
+	if err != nil {
+		var errResp *azblob.StorageError
+		if internalErr, ok := err.(*azblob.InternalError); ok && internalErr.As(&errResp) {
+			if errResp.ErrorCode == azblob.StorageErrorCodeBlobNotFound {
+				return false, nil
+			}
+		}
+		return false, errors.Trace(err)
+	}
+	return true, nil
+}
+
+func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	_, err := client.Delete(ctx, nil)
+	if err != nil {
+		return errors.Annotatef(err, "Failed to delete azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+	}
+	return nil
+}
+
+func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileReader, error) {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	return &azblobObjectReader{
+		blobClient: client,
+
+		pos: 0,
+
+		ctx: ctx,
+	}, nil
+}
+
+func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error {
+	if opt == nil {
+		opt = &WalkOption{}
+	}
+
+	prefix := path.Join(s.options.Prefix, opt.SubDir)
+	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	prefixLength := len(prefix)
+
+	listOption := &azblob.ContainerListBlobFlatSegmentOptions{Prefix: &prefix}
+	for {
+		respIter := s.containerClient.ListBlobsFlat(listOption)
+
+		err := respIter.Err()
+		if err != nil {
+			return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
+		}
+
+		if !respIter.NextPage(ctx) {
+			err := respIter.Err()
+			if err != nil {
+				return errors.Annotatef(err, "Failed to list azure blobs, bucket(container)='%s'", s.options.Bucket)
+			}
+			break
+		}
+
+		for _, blob := range respIter.PageResponse().Segment.BlobItems {
+			if err := fn((*blob.Name)[prefixLength:], *blob.Properties.ContentLength); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		listOption.Marker = respIter.PageResponse().NextMarker
+		if len(*listOption.Marker) == 0 {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (s *AzureBlobStorage) URI() string {
+	return "azure://" + s.options.Bucket + "/" + s.options.Prefix
+}
+
+func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
+	uploader := &azblobUploader{
+		blobClient: client,
+
+		blockIDList: make([]string, 0, 4),
+	}
+
+	uploaderWriter := newBufferedWriter(uploader, azblob.BlockBlobMaxUploadBlobBytes, NoCompression)
+	return uploaderWriter, nil
+}
+
+type azblobObjectReader struct {
+	blobClient azblob.BlockBlobClient
+
+	pos int64
+
+	ctx context.Context
+}
+
+// Read implement the io.Reader interface.
+func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
+	count := int64(len(p))
+	resp, err := r.blobClient.Download(r.ctx, &azblob.DownloadBlobOptions{Offset: &r.pos, Count: &count})
+	if err != nil {
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, count)
+	}
+	fmt.Printf("%+v\n", *resp)
+	n, err = resp.Body(azblob.RetryReaderOptions{}).Read(p)
+	if err != nil && err != io.EOF {
+		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, count)
+	}
+	r.pos += int64(n)
+	return n, nil
+}
+
+// Close implement the io.Closer interface.
+func (r *azblobObjectReader) Close() error {
+	return nil
+}
+
+func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
+	var realOffset int64
+	switch whence {
+	case io.SeekStart:
+		if offset < 0 {
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range.", offset)
+		}
+		realOffset = offset
+	case io.SeekCurrent:
+		realOffset = r.pos + offset
+		if r.pos < 0 && realOffset >= 0 {
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' out of range. current pos is '%v'.", offset, r.pos)
+		}
+	case io.SeekEnd:
+		if offset >= 0 {
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset '%v' should be negative.", offset)
+		}
+		realOffset = offset
+	default:
+		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+
+	if realOffset < 0 {
+		resp, err := r.blobClient.GetProperties(r.ctx, nil)
+		if err != nil {
+			return 0, errors.Annotate(err, "Failed to get properties from the azure blob")
+		}
+
+		contentLength := *resp.ContentLength
+		r.pos = contentLength + realOffset
+		if r.pos < 0 {
+			return 0, errors.Annotatef(err, "Seek: offset is %d, but length of content is only %d", realOffset, contentLength)
+		}
+	} else {
+		r.pos = realOffset
+	}
+	return r.pos, nil
+}
+
+type nopCloser struct {
+	io.ReadSeeker
+}
+
+func newNopCloser(r io.ReadSeeker) nopCloser {
+	return nopCloser{r}
+}
+
+func (r nopCloser) Close() error {
+	return nil
+}
+
+type azblobUploader struct {
+	blobClient azblob.BlockBlobClient
+
+	blockIDList []string
+}
+
+func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
+	generatedUuid, err := uuid.NewUUID()
+	if err != nil {
+		return 0, errors.Annotate(err, "Fail to generate uuid")
+	}
+	blockId := base64.StdEncoding.EncodeToString([]byte(generatedUuid.String()))
+
+	_, err = u.blobClient.StageBlock(ctx, blockId, newNopCloser(bytes.NewReader(data)), nil)
+	if err != nil {
+		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
+	}
+	u.blockIDList = append(u.blockIDList, blockId)
+
+	return len(data), nil
+}
+
+func (u *azblobUploader) Close(ctx context.Context) error {
+	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, nil)
+	return errors.Trace(err)
+}
