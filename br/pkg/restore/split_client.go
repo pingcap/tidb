@@ -416,6 +416,11 @@ func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	var conf config.Config
 	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
 		return 0, errors.Trace(err)
@@ -482,11 +487,15 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
-	res.Body.Close()
 	err = json.Unmarshal(b, &rule)
 	if err != nil {
 		return rule, errors.Trace(err)
