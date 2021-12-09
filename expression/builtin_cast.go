@@ -285,7 +285,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
-		// when cast from binary to some other charsets, we should check if the binary is valid or not.
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
 		// so we build a from_binary function to do this check.
 		ft := args[0].GetType().Clone()
 		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
