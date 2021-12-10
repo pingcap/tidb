@@ -359,7 +359,7 @@ const (
 	);`
 	// CreateTableCacheMetaTable stores the cached table meta lock information.
 	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
-		tid int(11) NOT NULL DEFAULT 0,
+		tid bigint(11) NOT NULL DEFAULT 0,
 		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
 		lease bigint(20) NOT NULL DEFAULT 0,
 		oldReadLease bigint(20) NOT NULL DEFAULT 0,

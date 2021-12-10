@@ -27,7 +27,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-// InitRow add a new record into the cached table meta lock table.
+// initRow add a new record into the cached table meta lock table.
 func initRow(ctx context.Context, exec session.Session, tid int) error {
 	_, err := exec.ExecuteInternal(ctx, "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", tid)
 	return err

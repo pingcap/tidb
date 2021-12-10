@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // RenewLeaseType define the type for renew lease.

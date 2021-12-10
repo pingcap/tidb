@@ -185,7 +185,7 @@ func TestCacheCondition(t *testing.T) {
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	tk.MustExec("delete from t2  where id = 2")
+	tk.MustExec("delete from t2 where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
@@ -447,4 +447,26 @@ func TestRenewLease(t *testing.T) {
 		}
 	}
 	require.True(t, i < 20)
+}
+
+func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	tk.MustExec("drop table if exists wait_tb1")
+	tk.MustExec("create table wait_tb1(id int)")
+	tk.MustExec("alter table wait_tb1 cache")
+	tk.MustExec("select *from wait_tb1")
+	var i int
+	for i = 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk.HasPlan("select *from wait_tb1", "UnionScan") {
+			break
+		}
+	}
+	require.True(t, i < 10)
+	tk.MustExec("insert into wait_tb1 values(1)")
+	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
 }

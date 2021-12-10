@@ -95,7 +95,7 @@ type Domain struct {
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
 	onClose              func()
-	sysFactory           func(*Domain) (pools.Resource, error)
+	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -181,7 +181,7 @@ func (do *Domain) sysFacHack() (pools.Resource, error) {
 	// we initialize Domain finish, we can't require that again.
 	// After we remove the lazy logic of creating Domain, we
 	// can simplify code here.
-	return do.sysFactory(do)
+	return do.sysExecutorFactory(do)
 }
 
 func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
@@ -722,8 +722,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
-	do.sysFactory = sysFactory
+func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
 		var addrs []string
@@ -765,7 +765,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	// After we remove the lazy logic of creating Domain, we
 	// can simplify code here.
 	sysFac := func() (pools.Resource, error) {
-		return sysFactory(do)
+		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())

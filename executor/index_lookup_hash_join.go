@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -152,6 +153,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+	e.finished.Store(false)
 	e.startWorkers(ctx)
 	return nil
 }
@@ -201,6 +203,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
+		e.IndexLookUpJoin.finished.Store(true)
 		err := errors.New(fmt.Sprintf("%v", r))
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
@@ -209,6 +212,7 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
+			e.IndexLookUpJoin.ctxCancelReason.Store(err)
 			e.cancelFunc()
 		}
 	}
@@ -245,6 +249,9 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
+		if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
+			return err.(error)
+		}
 		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
@@ -274,6 +281,9 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
+			if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
+				return err.(error)
+			}
 			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
@@ -319,6 +329,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+	e.finished.Store(false)
 	return e.baseExecutor.Close()
 }
 
@@ -326,6 +337,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
+		failpoint.Inject("TestIssue30211", nil)
 		task, err := ow.buildTask(ctx)
 		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")
@@ -432,6 +444,8 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,
+			lookup:        &e.IndexLookUpJoin,
+			memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 		},
 		taskCh:            taskCh,
 		joiner:            e.joiners[workerID],
@@ -440,6 +454,14 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		matchedOuterPtrs:  make([]chunk.RowPtr, 0, e.maxChunkSize),
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
+	}
+	iw.memTracker.AttachTo(e.memTracker)
+	if len(copiedRanges) != 0 {
+		// We should not consume this memory usage in `iw.memTracker`. The
+		// memory usage of inner worker will be reset the end of iw.handleTask.
+		// While the life cycle of this memory consumption exists throughout the
+		// whole active period of inner worker.
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -584,6 +606,9 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
+	defer func() {
+		iw.memTracker.Consume(-iw.memTracker.BytesConsumed())
+	}()
 	var joinStartTime time.Time
 	if iw.stats != nil {
 		start := time.Now()
@@ -631,6 +656,9 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
+					if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+						return err.(error)
+					}
 					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
@@ -779,6 +807,9 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
+						if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+							return err.(error)
+						}
 						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)
