@@ -4211,7 +4211,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						if r := recover(); r != nil {
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(store, startTS)
+					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
