@@ -677,5 +677,6 @@ func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) {
 	case r.registerCh <- dataSink:
 	case <-r.reporterDoneCh:
 		logutil.BgLogger().Warn("[top-sql] failed to register datasink due to the reporter is down")
+		dataSink.Close()
 	}
 }

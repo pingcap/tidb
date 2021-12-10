@@ -17,6 +17,7 @@ package topsql_test
 import (
 	"bytes"
 	"context"
+	"google.golang.org/grpc/keepalive"
 	"testing"
 	"time"
 
@@ -196,7 +197,15 @@ func TestTopSQLPubSub(t *testing.T) {
 	defer server.Stop()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
-	conn, err := grpc.Dial(server.Address(), grpc.WithBlock(), grpc.WithInsecure())
+	conn, err := grpc.Dial(
+		server.Address(),
+		grpc.WithBlock(),
+		grpc.WithInsecure(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 3 * time.Second,
+		}),
+	)
 	require.NoError(t, err)
 	defer conn.Close()
 
