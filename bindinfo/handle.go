@@ -1058,7 +1058,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 }
 
 // HandleEvolvePlanTask tries to evolve one plan task.
-// It only handle one tasks once because we want each task could use the latest parameters.
+// It only processes one task at a time because we want each task to use the latest parameters.
 func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve bool) error {
 	originalSQL, db, binding := h.getOnePendingVerifyJob()
 	if originalSQL == "" {
