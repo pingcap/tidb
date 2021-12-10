@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
@@ -282,15 +283,13 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	e.errs, b.err = admin.CancelJobs(txn, e.jobIDs)
-	if b.err != nil {
-		return nil
+	// Run within a new transaction. If it runs within the session transaction, commit failure won't be reported to the user.
+	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
+		return
+	})
+	if errInTxn != nil {
+		b.err = errInTxn
 	}
 	return e
 }
@@ -1059,6 +1058,11 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		reader = sel.children[0]
 	}
 
+	us.collators = make([]collate.Collator, 0, len(us.columns))
+	for _, tp := range retTypes(us) {
+		us.collators = append(us.collators, collate.GetCollator(tp.Collate))
+	}
+
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
@@ -1089,6 +1093,12 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 				}
 			}
 		}
+		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
+		us.columns = x.columns
+		us.table = x.table
+		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
+	case *IndexMergeReaderExecutor:
+		// IndexMergeReader doesn't care order for now. So we will not set desc and useIndex.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -2799,23 +2809,29 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
+	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
 	}
 	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
 	e.innerCtx.keyColIDs = innerKeyColIDs
+	e.innerCtx.keyCollators = keyCollators
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
+	hashCollators := make([]collate.Collator, 0, len(v.InnerHashKeys))
 	for i := 0; i < len(v.OuterHashKeys); i++ {
 		outerHashCols[i] = v.OuterHashKeys[i].Index
 	}
 	for i := 0; i < len(v.InnerHashKeys); i++ {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
+		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.Collate))
 	}
 	e.outerCtx.hashCols = outerHashCols
 	e.innerCtx.hashCols = innerHashCols
+	e.innerCtx.hashCollators = hashCollators
 
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
@@ -2867,8 +2883,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.Collate))
 	}
 	executorCounterIndexLookUpJoin.Inc()
 
@@ -2887,6 +2905,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			rowTypes:                innerTypes,
 			joinKeys:                v.InnerJoinKeys,
 			keyCols:                 innerKeyCols,
+			keyCollators:            keyCollators,
 			compareFuncs:            v.CompareFuncs,
 			colLens:                 v.IdxColLens,
 			desc:                    v.Desc,
