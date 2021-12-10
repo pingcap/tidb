@@ -1069,11 +1069,11 @@ var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 // IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
 func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
-	if collPseudo && c.NotAccurate() {
+	if (sc != nil && sc.StatsLoad.Fallback) || (collPseudo && c.NotAccurate()) {
 		return true
 	}
 	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
-		if len(sc.StatsLoad.NeededColumns) > 0 {
+		if sc.StatsLoad.Timeout > 0 {
 			logutil.BgLogger().Warn("Hist for column %v should already be loaded as sync but not found.",
 				zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 		}

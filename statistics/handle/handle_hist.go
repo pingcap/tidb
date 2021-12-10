@@ -159,7 +159,9 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	}()
 	task, err0 := h.drainColTask(exit)
 	if err0 != nil && task == nil {
-		logutil.BgLogger().Fatal("Fail to drain task for stats loading.")
+		if err0 != ErrExit {
+			logutil.BgLogger().Fatal("Fail to drain task for stats loading.")
+		}
 		return err0
 	}
 	col := task.TableColumnID

@@ -19,9 +19,9 @@ import (
 )
 
 // GoodTimer wraps the standard time.Timer to provide more user-friendly interfaces.
-// As Russ Cox suggested (here and here), the correct way to use time.Timer is:
-// All the Timer operations (Timer.Stop, Timer.Reset and receiving from or draining the channel) should be done in the same goroutine.
-// The program should manage an extra status showing whether it has received from the Timer's channel or not.
+// As Russ Cox suggested, the correct way to use time.Timer is:
+// 1. All the Timer operations (Timer.Stop, Timer.Reset and receiving from or draining the channel) should be done in the same goroutine.
+// 2. The program should manage an extra status showing whether it has received from the Timer's channel or not.
 // **NOTE**: All the functions of GoodTimer *should* be used in the same goroutine.
 type GoodTimer struct {
 	t    *time.Timer // The actual timer
