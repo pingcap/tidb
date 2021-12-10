@@ -5777,7 +5777,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
 		"  `b` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk",
 	))
 	tk.MustExec("create table t4(a char(10));")
 	tk.MustExec("alter table t4 add column b char(10) charset gbk;")
@@ -5792,7 +5792,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustExec("create table t1(a char(10));")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk",
 	))
 }
 

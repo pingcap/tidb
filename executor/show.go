@@ -1011,9 +1011,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	buf.WriteString(") ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(tblCollate) == 0 || tblCollate == "binary" {
+	if len(tblCollate) == 0 || (!mysql.IsUTF8Charset(tblCharset) && getDefaultCollate(tblCharset) == tblCollate) {
 		// If we can not find default collate for the given charset,
-		// or the collate is 'binary'(MySQL-5.7 compatibility, see #15633 for details),
+		// or the charset is not utf8 (MySQL compatibility, see #15633 and #30568 for details),
 		// do not show the collate part.
 		fmt.Fprintf(buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
