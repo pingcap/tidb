@@ -976,11 +976,13 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	t := &TraceExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		stmtNode:       v.StmtNode,
-		builder:        b,
-		format:         v.Format,
-		optimizerTrace: v.OptimizerTrace,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmtNode:     v.StmtNode,
+		builder:      b,
+		format:       v.Format,
+
+		optimizerTrace:       v.OptimizerTrace,
+		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
 		return &SortExec{
