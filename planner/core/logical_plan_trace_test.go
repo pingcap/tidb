@@ -98,13 +98,13 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			},
 		},
 		{
-			sql:            "select * from t t1, t t2, t t3 where t1.a=t2.a and t3.a=t2.a",
+			sql:            "select * from t t1, t t2, t t3 where t1.a=t2.a and t3.a=t2.a and t1.a=t3.a",
 			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
 			assertRuleName: "join_reorder",
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "join order becomes ((t1*t2)*t3) from original ((t1*t2)*t3)",
-					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
+					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
 				},
 			},
 		},
