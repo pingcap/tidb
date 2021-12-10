@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/brpb"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/stretchr/testify/require"
 )
 
