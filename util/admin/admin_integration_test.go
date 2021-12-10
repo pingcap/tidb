@@ -121,6 +121,7 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_mutation_checker = 0;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, v int, UNIQUE KEY i1(id, v))")
