@@ -150,8 +150,8 @@ type RemoteTopSQLReporter struct {
 	dataSinks     []DataSink
 	dataSinkRegCh chan DataSink
 
-	// paused means no active datasinks
-	paused atomic2.Bool
+	// paused indicates no active datasinks
+	paused *atomic2.Bool
 
 	// normalizedSQLMap is a map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -184,6 +184,7 @@ func NewRemoteTopSQLReporter(planBinaryDecodeFunc planBinaryDecodeFunc) *RemoteT
 		ctx:    ctx,
 		cancel: cancel,
 
+		paused:        atomic2.NewBool(true),
 		dataSinkRegCh: make(chan DataSink),
 
 		decodePlan: planBinaryDecodeFunc,
