@@ -259,13 +259,13 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 		if sort != nil {
 			buffer.WriteString(fmt.Sprintf("add sort[%v],", sort.ID()))
 		}
-		buffer.WriteString(fmt.Sprintf("add limit[%v] during eliminate agg[%v] %s function", limit.ID(), agg.ID(), agg.AggFuncs[0].Name))
+		buffer.WriteString(fmt.Sprintf("add limit[%v] during eliminating agg[%v] %s function", limit.ID(), agg.ID(), agg.AggFuncs[0].Name))
 		return buffer.String()
 	}()
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] has only one function[%s] without group by", agg.ID(), agg.AggFuncs[0].Name))
 		if sel != nil {
-			buffer.WriteString(fmt.Sprintf(", the columns in agg[%v] shouldn't be NULL and needs to be filer NULL out", agg.ID()))
+			buffer.WriteString(fmt.Sprintf(", the columns in agg[%v] shouldn't be NULL and needs NULL to be filtered out", agg.ID()))
 		}
 		if sort != nil {
 			buffer.WriteString(fmt.Sprintf(", the columns in agg[%v] should be sorted", agg.ID()))
@@ -291,18 +291,18 @@ func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*
 			}
 			buffer.WriteString(fmt.Sprintf("%v", join.ID()))
 		}
-		buffer.WriteString(fmt.Sprintf("] as their parent during eliminate agg[%v] multi min/max functions", originAgg.ID()))
+		buffer.WriteString(fmt.Sprintf("] to connect them during eliminating agg[%v] multi min/max functions", originAgg.ID()))
 		return buffer.String()
 	}()
 	reason := func() string {
-		buffer := bytes.NewBufferString("each column is sorted and has index in agg[")
+		buffer := bytes.NewBufferString("each column is sorted and can benefit from index/primary key in agg[")
 		for i, agg := range aggs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
 			buffer.WriteString(fmt.Sprintf("%v", agg.ID()))
 		}
-		buffer.WriteString("] and none of them has group by statement")
+		buffer.WriteString("] and none of them has group by clause")
 		return buffer.String()
 	}()
 	opt.appendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
