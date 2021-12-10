@@ -439,7 +439,7 @@ func TestLeft(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Left].getFunction(ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Left].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -490,7 +490,7 @@ func TestRight(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Right].getFunction(ctx, []Expression{varcharCon, int8Con})
+	_, err := funcs[ast.Right].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
 	require.NoError(t, err)
 }
 
@@ -629,7 +629,7 @@ func TestLower(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -688,7 +688,7 @@ func TestUpper(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{varcharCon})
+	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 
 	// Test GBK String
@@ -1338,10 +1338,10 @@ func TestHexFunc(t *testing.T) {
 		}
 	}
 
-	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{int8Con})
+	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{getInt8Con()})
 	require.NoError(t, err)
 
-	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{varcharCon})
+	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{getVarcharCon()})
 	require.NoError(t, err)
 }
 
