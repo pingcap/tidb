@@ -115,16 +115,16 @@ func (sp *sqlCPUProfiler) Run() {
 
 func (sp *sqlCPUProfiler) SetCollector(c Collector) {
 	sp.collector.Lock()
-	defer sp.collector.Unlock()
-
 	sp.collector.v = c
+	sp.collector.Unlock()
 }
 
-func (sp *sqlCPUProfiler) GetCollector() Collector {
+func (sp *sqlCPUProfiler) GetCollector() (res Collector) {
 	sp.collector.Lock()
-	defer sp.collector.Unlock()
+	res = sp.collector.v
+	sp.collector.Unlock()
 
-	return sp.collector.v
+	return
 }
 
 func (sp *sqlCPUProfiler) startCPUProfileWorker() {

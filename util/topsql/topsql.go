@@ -38,9 +38,7 @@ const (
 	MaxPlanTextSize = 32 * 1024
 )
 
-var (
-	globalTopSQLReport reporter.TopSQLReporter
-)
+var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {

@@ -69,7 +69,7 @@ func newPubSubDataSink(
 ) *pubSubDataSink {
 	return &pubSubDataSink{
 		stream:     stream,
-		sendTaskCh: make(chan sendTask),
+		sendTaskCh: make(chan sendTask, 1),
 		isDown:     atomic.NewBool(false),
 	}
 }

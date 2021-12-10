@@ -45,7 +45,7 @@ type sendTask struct {
 //
 func NewSingleTargetDataSink() *SingleTargetDataSink {
 	dataSink := &SingleTargetDataSink{
-		sendTaskCh: make(chan sendTask),
+		sendTaskCh: make(chan sendTask, 1),
 	}
 
 	go util.WithRecovery(dataSink.run, nil)
