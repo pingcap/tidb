@@ -54,10 +54,11 @@ func SetupTopSQL() {
 
 // InstanceEnabled is used to check if TopSQL is enabled on the current instance.
 func InstanceEnabled() bool {
-	if globalTopSQLReport == nil {
+	collector := tracecpu.GlobalSQLCPUProfiler.GetCollector()
+	if collector == nil {
 		return false
 	}
-	return !globalTopSQLReport.IsPaused()
+	return !collector.IsPaused()
 }
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
