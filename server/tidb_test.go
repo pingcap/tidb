@@ -1566,8 +1566,7 @@ func TestTopSQLReceiver(t *testing.T) {
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	r := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	err = r.DataSinkRegHandle().Register(reporter.NewSingleTargetDataSink())
-	require.NoError(t, err)
+	r.DataSinkRegHandle().Register(reporter.NewSingleTargetDataSink())
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts

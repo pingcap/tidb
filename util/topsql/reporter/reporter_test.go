@@ -64,7 +64,7 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func setupRemoteTopSQLReporter(t *testing.T, maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
+func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -73,15 +73,13 @@ func setupRemoteTopSQLReporter(t *testing.T, maxStatementsNum, interval int, add
 
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := NewSingleTargetDataSink()
-	err := ts.DataSinkRegHandle().Register(ds)
-	if t != nil {
-		require.NoError(t, err)
-	}
+	ts.DataSinkRegHandle().Register(ds)
+
 	return ts
 }
 
 func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
-	ts := setupRemoteTopSQLReporter(nil, maxStatementsNum, interval, addr)
+	ts := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
 	populateCache(ts, 0, maxStatementsNum, 1)
 	return ts
 }
@@ -91,7 +89,7 @@ func TestCollectAndSendBatch(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(t, maxSQLNum, 1, agentServer.Address())
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
@@ -130,7 +128,7 @@ func TestCollectAndEvicted(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(t, maxSQLNum, 1, agentServer.Address())
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
 	defer tsr.Close()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
@@ -195,7 +193,7 @@ func TestCollectAndTopN(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(t, 2, 1, agentServer.Address())
+	tsr := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
 	defer tsr.Close()
 
 	records := []tracecpu.SQLCPUTimeRecord{
@@ -256,7 +254,7 @@ func TestCollectAndTopN(t *testing.T) {
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr := setupRemoteTopSQLReporter(t, maxSQLNum, 60, "")
+	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
 	defer tsr.Close()
 
 	registerSQL := func(n int) {
@@ -397,7 +395,7 @@ func TestCollectInternal(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(t, 3000, 1, agentServer.Address())
+	tsr := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
 	defer tsr.Close()
 
 	records := []tracecpu.SQLCPUTimeRecord{

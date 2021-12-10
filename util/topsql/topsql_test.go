@@ -124,8 +124,7 @@ func TestTopSQLReporter(t *testing.T) {
 	defer report.Close()
 
 	dataSink := reporter.NewSingleTargetDataSink()
-	err = report.DataSinkRegHandle().Register(dataSink)
-	require.NoError(t, err)
+	report.DataSinkRegHandle().Register(dataSink)
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {

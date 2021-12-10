@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -53,8 +52,7 @@ func SetupTopSQL() {
 
 	// register single target datasink to reporter
 	singleTargetDataSink := reporter.NewSingleTargetDataSink()
-	err := globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
-	terror.MustNil(err)
+	globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
 
 	enable := len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0
 	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enable)

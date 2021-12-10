@@ -17,7 +17,6 @@ package reporter
 import (
 	"bytes"
 	"context"
-	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -57,7 +56,7 @@ type TopSQLReporter interface {
 
 // DataSinkRegHandle registers DataSink
 type DataSinkRegHandle interface {
-	Register(dataSink DataSink) error
+	Register(dataSink DataSink)
 }
 
 type cpuData struct {
@@ -128,9 +127,8 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	dataSinks          []DataSink
-	dataSinkRegCh      chan DataSink
-	dataSinkRegCloseCh chan struct{}
+	dataSinks     []DataSink
+	dataSinkRegCh chan DataSink
 
 	// normalizedSQLMap is a map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -253,7 +251,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 
 // DataSinkRegHandle returns a DataSinkRegHandle for DataSink registration.
 func (tsr *RemoteTopSQLReporter) DataSinkRegHandle() DataSinkRegHandle {
-	return &RemoteDataSinkRegHandle{registerCh: tsr.dataSinkRegCh, closeCh: tsr.dataSinkRegCloseCh}
+	return &RemoteDataSinkRegHandle{reporterDoneCh: tsr.ctx.Done(), registerCh: tsr.dataSinkRegCh}
 }
 
 // Close uses to close and release the reporter resource.
@@ -262,7 +260,6 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	for i := range tsr.dataSinks {
 		tsr.dataSinks[i].Close()
 	}
-	close(tsr.dataSinkRegCloseCh)
 	tsr.dataSinks = nil
 }
 
@@ -349,7 +346,13 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	for {
-		tsr.handleDataSinkRegistration()
+		tsr.acceptDataSinkRegs()
+		tsr.removeDownDataSinks()
+		if len(tsr.dataSinks) > 10 {
+			logutil.BgLogger().Warn("[top-sql] too many datasinks, keep 10 first", zap.Int("count", len(tsr.dataSinks)))
+			tsr.dataSinks = tsr.dataSinks[:10]
+		}
+		tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(tsr.activeDataSinkCnt() > 0)
 
 		select {
 		case data := <-tsr.collectCPUDataChan:
@@ -368,7 +371,8 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) handleDataSinkRegistration() {
+// acceptDataSinkRegs accepts datasink registrations
+func (tsr *RemoteTopSQLReporter) acceptDataSinkRegs() {
 out:
 	for {
 		select {
@@ -378,8 +382,10 @@ out:
 			break out
 		}
 	}
+}
 
-	// Remove all down dataSinks
+// removeDownDataSinks removes all down dataSinks
+func (tsr *RemoteTopSQLReporter) removeDownDataSinks() {
 	idx := 0
 	for _, dataSink := range tsr.dataSinks {
 		if dataSink.IsDown() {
@@ -390,20 +396,17 @@ out:
 		idx++
 	}
 	tsr.dataSinks = tsr.dataSinks[:idx]
+}
 
-	if len(tsr.dataSinks) > 10 {
-		logutil.BgLogger().Warn("[top-sql] too many datasinks, keep 10 first", zap.Int("count", len(tsr.dataSinks)))
-		tsr.dataSinks = tsr.dataSinks[:10]
-	}
-
+// activeDataSinkCnt gets the count of active datasinks
+func (tsr *RemoteTopSQLReporter) activeDataSinkCnt() int {
 	pendingCnt := 0
 	for _, dataSink := range tsr.dataSinks {
 		if dataSink.IsPaused() {
 			pendingCnt += 1
 		}
 	}
-	runningCnt := len(tsr.dataSinks) - pendingCnt
-	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(runningCnt > 0)
+	return len(tsr.dataSinks) - pendingCnt
 }
 
 func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
@@ -664,16 +667,15 @@ var _ DataSinkRegHandle = &RemoteDataSinkRegHandle{}
 
 // RemoteDataSinkRegHandle is used to receive DataSink registrations.
 type RemoteDataSinkRegHandle struct {
-	registerCh chan DataSink
-	closeCh    chan struct{}
+	registerCh     chan DataSink
+	reporterDoneCh <-chan struct{}
 }
 
 // Register implements DataSinkRegHandle interface.
-func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) error {
+func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) {
 	select {
 	case r.registerCh <- dataSink:
-		return nil
-	case <-r.closeCh:
-		return errors.New("registration channel is closed")
+	case <-r.reporterDoneCh:
+		logutil.BgLogger().Warn("[top-sql] failed to register datasink due to the reporter is down")
 	}
 }

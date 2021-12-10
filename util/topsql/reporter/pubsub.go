@@ -53,11 +53,7 @@ func (t *TopSQLPubSubService) Subscribe(
 	stream tipb.TopSQLPubSub_SubscribeServer,
 ) error {
 	ds := newPubSubDataSink(stream)
-
-	if err := t.dataSinkRegHandle.Register(ds); err != nil {
-		return err
-	}
-
+	t.dataSinkRegHandle.Register(ds)
 	ds.run()
 	return nil
 }
