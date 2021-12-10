@@ -53,8 +53,8 @@ const (
 	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
 	// pagingGrowingSum = (pagingSize ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
 	pagingGrowingSum float64 = 16320
-	// if the desired rows are below the threshold, use paging
-	pagingThreshold uint64 = 1000
+	// if the desired rows are below the threshold, use paging, threshold is the sum of 4 pages
+	pagingThreshold uint64 = 960
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
