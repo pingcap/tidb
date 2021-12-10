@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"strings"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -439,7 +439,7 @@ func resolveType4Extremum(args []Expression) (tp types.EvalType, temporalType by
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), temporalItem.Tp, cmpStringAsDatetime
+	return aggType.EvalType(), aggType.Tp, cmpStringAsDatetime
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -497,7 +497,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf, newBuiltinMaxMinCmpStringAsTimeSig(temporalType)}
+			sig = &builtinGreatestCmpStringAsTimeSig{bf, getParseTimeFunc(temporalType)}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
 			sig = &builtinGreatestStringSig{bf}
@@ -647,26 +647,24 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type builtinMaxMinCmpStringAsTimeSig struct {
-	parseTimeFunc func(sc *stmtctx.StatementContext, str string) (types.Time, error)
-}
+type ParseTimeFunc = func(sc *stmtctx.StatementContext, str string) (types.Time, error)
 
-func newBuiltinMaxMinCmpStringAsTimeSig(temporalType byte) builtinMaxMinCmpStringAsTimeSig {
+func getParseTimeFunc(temporalType byte) ParseTimeFunc {
 	if temporalType == mysql.TypeDate {
-		return builtinMaxMinCmpStringAsTimeSig{types.ParseDate}
+		return types.ParseDate
 	}
-	return builtinMaxMinCmpStringAsTimeSig{types.ParseDatetime}
+	return types.ParseDatetime
 }
 
 type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
-	builtinMaxMinCmpStringAsTimeSig
+	parseTime ParseTimeFunc
 }
 
 func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinGreatestCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.builtinMaxMinCmpStringAsTimeSig = b.builtinMaxMinCmpStringAsTimeSig
+	newSig.parseTime = b.parseTime
 	return newSig
 }
 
@@ -679,7 +677,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := b.parseTimeFunc(sc, v)
+		t, err := b.parseTime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
@@ -785,7 +783,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsTimeSig{bf, newBuiltinMaxMinCmpStringAsTimeSig(temporalType)}
+			sig = &builtinLeastCmpStringAsTimeSig{bf, getParseTimeFunc(temporalType)}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
 			sig = &builtinLeastStringSig{bf}
@@ -924,13 +922,13 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 
 type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
-	builtinMaxMinCmpStringAsTimeSig
+	parseTime ParseTimeFunc
 }
 
 func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinLeastCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.builtinMaxMinCmpStringAsTimeSig = b.builtinMaxMinCmpStringAsTimeSig
+	newSig.parseTime = b.parseTime
 	return newSig
 }
 
@@ -943,7 +941,7 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := b.parseTimeFunc(sc, v)
+		t, err := b.parseTime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
