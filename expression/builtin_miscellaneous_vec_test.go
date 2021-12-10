@@ -108,6 +108,9 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidBinGener{newDefaultRandGen()}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&uuidBinGener{newDefaultRandGen()}}},
 	},
+	ast.IsUUID: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
 }
 
 func TestVectorizedBuiltinMiscellaneousEvalOneVec(t *testing.T) {
