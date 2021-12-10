@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
@@ -195,7 +194,6 @@ func TestCollectPredicateColumns(t *testing.T) {
 			require.True(t, ok, comment)
 			cols = append(cols, col)
 		}
-		sort.Strings(cols)
 		require.ElementsMatch(t, expected, cols, comment)
 	}
 
@@ -211,7 +209,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
 		lp, ok := p.(plannercore.LogicalPlan)
-		require.Equal(t, true, ok, comment)
+		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
 		// logutil.BgLogger().Info("before logical opt", zap.String("lp", plannercore.ToString(lp)))
