@@ -196,6 +196,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowHistogramsInFlight:
+		e.fetchShowHistogramsInFlight()
+		return nil
 	case ast.ShowColumnStatsUsage:
 		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
