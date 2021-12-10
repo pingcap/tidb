@@ -9501,3 +9501,31 @@ func (s *testSerialSuite) TestIssue30289(c *C) {
 	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 	c.Assert(err.Error(), Matches, "issue30289 build return error")
 }
+
+func (s *testSerialSuite) TestIssue29498(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t29498_t1;")
+	tk.MustExec("CREATE TABLE t29498_t1 (t3 TIME(3), d DATE, t TIME);")
+	tk.MustExec("INSERT INTO t29498_t1 VALUES ('00:00:00.567', '2002-01-01', '00:00:02');")
+	res := tk.MustQuery("SELECT CONCAT(IFNULL(t3, d)) AS col1 FROM t29498_t1;")
+	for _, row := range res.Rows() {
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp + 3 + 1)
+		c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+	}
+	res = tk.MustQuery("SELECT IFNULL(t3, d) AS col1 FROM t29498_t1;")
+	for _, row := range res.Rows() {
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp + 3 + 1)
+		c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+	}
+	res = tk.MustQuery("SELECT CONCAT(IFNULL(d, t)) AS col1 FROM t29498_t1;")
+	for _, row := range res.Rows() {
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
+		c.Assert(row[len(row)-8:], Equals, "00:00:02")
+	}
+	res = tk.MustQuery("SELECT IFNULL(d, t) AS col1 FROM t29498_t1;")
+	for _, row := range res.Rows() {
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
+		c.Assert(row[len(row)-8:], Equals, "00:00:02")
+	}
+}
