@@ -18,9 +18,12 @@ import (
 	"time"
 )
 
-// DataSink sends data to the target server.
+// DataSink collects and sends data to a target.
 type DataSink interface {
-	Send(data reportData, deadline time.Time)
+	// Send pushes a report data into the sink, which will later be sent to a target by the sink. A deadline can be
+	// specified to control how late it should be sent. If the sink is kept full and cannot schedule a send within
+	// the specified deadline, the data will be silently dropped.
+	Send(data ReportData, deadline time.Time)
 
 	// IsPaused indicates that the DataSink is not expecting to receive records for now
 	// and may resume in the future.

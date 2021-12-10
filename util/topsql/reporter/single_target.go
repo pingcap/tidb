@@ -37,7 +37,7 @@ type SingleTargetDataSink struct {
 }
 
 type sendTask struct {
-	data     reportData
+	data     ReportData
 	deadline time.Time
 }
 
@@ -75,7 +75,7 @@ func (r *SingleTargetDataSink) run() {
 var _ DataSink = &SingleTargetDataSink{}
 
 // Send implements the DataSink interface.
-func (r *SingleTargetDataSink) Send(data reportData, deadline time.Time) {
+func (r *SingleTargetDataSink) Send(data ReportData, deadline time.Time) {
 	select {
 	case r.sendTaskCh <- sendTask{data: data, deadline: deadline}:
 		// sent successfully
@@ -86,7 +86,7 @@ func (r *SingleTargetDataSink) Send(data reportData, deadline time.Time) {
 }
 
 // Currently the doSend will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *SingleTargetDataSink) doSend(ctx context.Context, addr string, data reportData) (err error) {
+func (r *SingleTargetDataSink) doSend(ctx context.Context, addr string, data ReportData) (err error) {
 	err = r.tryEstablishConnection(ctx, addr)
 	if err != nil {
 		return
@@ -98,15 +98,15 @@ func (r *SingleTargetDataSink) doSend(ctx context.Context, addr string, data rep
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, data.sqlMetas)
+		errCh <- r.sendBatchSQLMeta(ctx, data.SQLMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchPlanMeta(ctx, data.planMetas)
+		errCh <- r.sendBatchPlanMeta(ctx, data.PlanMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchCPUTimeRecord(ctx, data.cpuTimeRecords)
+		errCh <- r.sendBatchCPUTimeRecord(ctx, data.CPUTimeRecords)
 	}()
 	wg.Wait()
 	close(errCh)

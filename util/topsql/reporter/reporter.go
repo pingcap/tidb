@@ -528,21 +528,21 @@ type collectedData struct {
 	normalizedPlanMap *sync.Map
 }
 
-// reportData contains data that reporter sends to the agent
-type reportData struct {
-	// cpuTimeRecords contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
-	cpuTimeRecords []*tipb.CPUTimeRecord
-	sqlMetas       []*tipb.SQLMeta
-	planMetas      []*tipb.PlanMeta
+// ReportData contains data that reporter sends to the agent
+type ReportData struct {
+	// CPUTimeRecords contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
+	CPUTimeRecords []*tipb.CPUTimeRecord
+	SQLMetas       []*tipb.SQLMeta
+	PlanMetas      []*tipb.PlanMeta
 }
 
-func (d *reportData) hasData() bool {
-	return len(d.cpuTimeRecords) != 0 || len(d.sqlMetas) != 0 || len(d.planMetas) != 0
+func (d *ReportData) hasData() bool {
+	return len(d.CPUTimeRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
-func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res reportData) {
+func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res ReportData) {
 	for _, record := range records {
-		res.cpuTimeRecords = append(res.cpuTimeRecords, &tipb.CPUTimeRecord{
+		res.CPUTimeRecords = append(res.CPUTimeRecords, &tipb.CPUTimeRecord{
 			RecordListTimestampSec: record.TimestampList,
 			RecordListCpuTimeMs:    record.CPUTimeMsList,
 			SqlDigest:              record.SQLDigest,
@@ -552,7 +552,7 @@ func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map,
 
 	sqlMap.Range(func(key, value interface{}) bool {
 		meta := value.(SQLMeta)
-		res.sqlMetas = append(res.sqlMetas, &tipb.SQLMeta{
+		res.SQLMetas = append(res.SQLMetas, &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -566,7 +566,7 @@ func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map,
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true
 		}
-		res.planMetas = append(res.planMetas, &tipb.PlanMeta{
+		res.PlanMetas = append(res.PlanMetas, &tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
 			NormalizedPlan: planDecoded,
 		})
@@ -595,9 +595,9 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	}
 }
 
-// getReportData gets reportData from the collectedData.
+// getReportData gets ReportData from the collectedData.
 // This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
-func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportData {
+func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) ReportData {
 	records, sqlMap, planMap := getTopN(collected)
 	return buildReportData(records, sqlMap, planMap, tsr.decodePlan)
 }
@@ -636,7 +636,7 @@ func getTopN(collected collectedData) (records []*dataPoints, sqlMap *sync.Map, 
 	return
 }
 
-func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
+func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
 	if !data.hasData() {

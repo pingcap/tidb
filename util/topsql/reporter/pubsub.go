@@ -79,7 +79,7 @@ func newPubSubDataSink(
 
 var _ DataSink = &pubSubDataSink{}
 
-func (s *pubSubDataSink) Send(data reportData, deadline time.Time) {
+func (s *pubSubDataSink) Send(data ReportData, deadline time.Time) {
 	if s.IsDown() {
 		return
 	}
@@ -146,14 +146,14 @@ func (s *pubSubDataSink) run() {
 	}
 }
 
-func (s *pubSubDataSink) doSend(ctx context.Context, data reportData) error {
-	if err := s.sendCPUTime(ctx, data.cpuTimeRecords); err != nil {
+func (s *pubSubDataSink) doSend(ctx context.Context, data ReportData) error {
+	if err := s.sendCPUTime(ctx, data.CPUTimeRecords); err != nil {
 		return err
 	}
-	if err := s.sendSQLMeta(ctx, data.sqlMetas); err != nil {
+	if err := s.sendSQLMeta(ctx, data.SQLMetas); err != nil {
 		return err
 	}
-	return s.sendPlanMeta(ctx, data.planMetas)
+	return s.sendPlanMeta(ctx, data.PlanMetas)
 }
 
 func (s *pubSubDataSink) sendCPUTime(ctx context.Context, records []*tipb.CPUTimeRecord) (err error) {
