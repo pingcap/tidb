@@ -256,34 +256,3 @@ func CollectPredicateColumnsForTest(lp LogicalPlan) []model.TableColumnID {
 func collectPredicateColumns(sctx sessionctx.Context, lp LogicalPlan) {
 	// TODO:
 }
-
-// CollectHistNeededColumns collects histogram-needed columns from logical plan
-func CollectHistNeededColumns(plan LogicalPlan) []model.TableColumnID {
-	colMap := map[model.TableColumnID]struct{}{}
-	collectHistNeededColumnsFromPlan(plan, colMap)
-	histColumns := make([]model.TableColumnID, 0, len(colMap))
-	for col := range colMap {
-		histColumns = append(histColumns, col)
-	}
-	return histColumns
-}
-
-func collectHistNeededColumnsFromPlan(plan LogicalPlan, colMap map[model.TableColumnID]struct{}) {
-	for _, child := range plan.Children() {
-		collectHistNeededColumnsFromPlan(child, colMap)
-	}
-	switch x := plan.(type) {
-	case *DataSource:
-		tblID := x.TableInfo().ID
-		columns := expression.ExtractColumnsFromExpressions(nil, x.pushedDownConds, nil)
-		for _, col := range columns {
-			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
-			colMap[tblColID] = struct{}{}
-		}
-	case *LogicalCTE:
-		collectHistNeededColumnsFromPlan(x.cte.seedPartLogicalPlan, colMap)
-		if x.cte.recursivePartLogicalPlan != nil {
-			collectHistNeededColumnsFromPlan(x.cte.recursivePartLogicalPlan, colMap)
-		}
-	}
-}
