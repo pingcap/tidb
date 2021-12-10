@@ -9510,12 +9510,12 @@ func (s *testSerialSuite) TestIssue29498(c *C) {
 	tk.MustExec("INSERT INTO t29498_t1 VALUES ('00:00:00.567', '2002-01-01', '00:00:02');")
 	res := tk.MustQuery("SELECT CONCAT(IFNULL(t3, d)) AS col1 FROM t29498_t1;")
 	for _, row := range res.Rows() {
-		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp + 3 + 1)
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 		c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
 	}
 	res = tk.MustQuery("SELECT IFNULL(t3, d) AS col1 FROM t29498_t1;")
 	for _, row := range res.Rows() {
-		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp + 3 + 1)
+		c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 		c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
 	}
 	res = tk.MustQuery("SELECT CONCAT(IFNULL(d, t)) AS col1 FROM t29498_t1;")
