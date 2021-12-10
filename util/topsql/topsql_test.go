@@ -17,7 +17,6 @@ package topsql_test
 import (
 	"bytes"
 	"context"
-	"google.golang.org/grpc/keepalive"
 	"testing"
 	"time"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type collectorWrapper struct {
