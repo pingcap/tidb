@@ -697,6 +697,7 @@ var tokenMap = map[string]int{
 	"SWITCHES":                 switchesSym,
 	"SYSTEM":                   system,
 	"SYSTEM_TIME":              systemTime,
+	"TARGET":                   target,
 	"TABLE_CHECKSUM":           tableChecksum,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
