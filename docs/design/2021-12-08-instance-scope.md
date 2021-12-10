@@ -9,6 +9,7 @@
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
+* [Documentation Changes](#documentation-changes)
 * [Test Design](#test-design)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
@@ -160,11 +161,75 @@ tidb_general_log = "/path/to/file"
 
 The default will be that we map variables as read-only, so we don't need to think about the specific cases (i.e. you can't easily change the socket or port). This helps us achieve completeness first, and then we can then evaluate which ones can be made dynamic.
 
+The mapping system should consider all current instance variable mappings such as `log.enable-slow-log` to `tidb_enable_slow_log`. The earlier instance scoped variables proposal has an [example mapping table](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit?n=2020-09-15_Design_Doc_for_Instance_Variables#) which can be used as a guideline for how to create new system variable names.
+
+Because variables can be configured through either an "sysvar name" (under `[instance]`) or a heirachical name, we will need to decide which is the alias versus the actual name (the actual name appears in results like `SELECT * FROM INFORMATION_SCHEMA.CLUSTER_CONFIG`). I propose for this stage the original name is still the source of truth, but in refactoring (stage 3) we switch it.
+
 ### Stage 3: Refactoring
 
 The use of a `GetGlobal()` and `SetGlobal()` func for each instance scoped system variable is not ideal. It is possible to refactor the system variable framework so that instance scope is stored in a map, and the values are updated automatically by `SET GLOBAL` on an instance scoped variable. On startup, as the configuration file is parsed it will update the values in the map. This seems like a better approach than the current use of Setters/Getters, and because there is a prescribed way of doing it we can correctly handle the data races that are common with our current incorrect usage of calling `config.GetGlobalConfig()`.
 
 Thus, the source of truth for instance scoped variables moves from the `config` package to another part of the server (likely `domain`). See [issue #30366](https://github.com/pingcap/tidb/issues/30366).
+
+Because in this stage the source of truth is now no longer the `config` package, we will also need to decide how to handle features like `INFORMATION_SCHEMA.CLUSTER_CONFIG`. If it refers to the config file, it will not necessarily reflect the current configuration of the cluster. Because every instance setting will now have a system variable name (which becomes the unified name), I recommend that we deprecate `CLUSTER_CONFIG` for TiDB. We can change `CLUSTER_CONFIG` to read from the new source of truth and maintain both for some versions to support upgrades.
+
+## Documentation Changes
+
+For the purposes of user-communication we dont need to use the terminology `INSTANCE`. We will remove more of the confusing by instead refering to the difference between these as whether it "persists to [the] cluster". This also aligns closer to the syntax that users will be using. Consider the following example changes which are easier to read (the current text also doesn't actually explain that to set an `INSTANCE` variable you must use `SET SESSION`, so it actually communicates a lot more in fewer words):
+
+```
++++ b/system-variables.md
+@@ -6,13 +6,11 @@ aliases: ['/tidb/dev/tidb-specific-system-variables','/docs/dev/system-variables
+ 
+ # System Variables
+ 
+-TiDB system variables behave similar to MySQL with some differences, in that settings might apply on a `SESSION`, `INSTANCE`, or `GLOBAL` scope, or on a scope that combines `SESSION`, `INSTANCE`, or `GLOBAL`.
++TiDB system variables behave similar to MySQL, in that settings apply on a `SESSION` or `GLOBAL` scope:
+ 
+-- Changes to `GLOBAL` scoped variables **only apply to new connection sessions with TiDB**. Currently active connection sessions are not affected. These changes are persisted and valid after restarts.
+-- Changes to `INSTANCE` scoped variables apply to all active or new connection sessions with the current TiDB instance immediately after the changes are made. Other TiDB instances are not affected. These changes are not persisted and become invalid after TiDB restarts.
+-- Variables can also have `NONE` scope. These variables are read-only, and are typically used to convey static information that will not change after a TiDB server has started.
+-
+-Variables can be set with the [`SET` statement](/sql-statements/sql-statement-set-variable.md) on a per-session, instance or global basis:
++- Changes on a `SESSION` scope will only affect the current session.
++- Changes on a `GLOBAL` scope apply immediately, provided that the variable is not also `SESSION` scoped. In which case all sessions (including your session) will continue to use their current session value.
++- Changes are made using the [`SET` statement](/sql-statements/sql-statement-set-variable.md):
+ 
+ ```sql
+ # These two identical statements change a session variable
+@@ -26,9 +24,9 @@ SET  GLOBAL tidb_distsql_scan_concurrency = 10;
+ 
+ > **Note:**
+ >
+-> Executing `SET GLOBAL` applies immediately on the TiDB server where the statement was issued. A notification is then sent to all TiDB servers to refresh their system variable cache, which will start immediately as a background operation. Because there is a risk that some TiDB servers might miss the notification, the system variable cache is also refreshed automatically every 30 seconds. This helps ensure that all servers are operating with the same configuration.
++> Several `GLOBAL` variables persist to the TiDB cluster. For variables that specify `Persists to Cluster: Yes` a notification is sent to all TiDB servers to refresh their system variable cache when the global variable is changed. Adding additional TiDB servers (or restarting existing TiDB servers) will automatically use the persisted configuration value. For variables that specify `Persists to Cluster: No` any changes only apply to the local TiDB instance that you are connected to. In order to retain any values set, you will need to specify them in your `tidb.toml` configuration file.
+ >
+-> TiDB differs from MySQL in that `GLOBAL` scoped variables **persist** through TiDB server restarts. Additionally, TiDB presents several MySQL variables as both readable and settable. This is required for compatibility, because it is common for both applications and connectors to read MySQL variables. For example, JDBC connectors both read and set query cache settings, despite not relying on the behavior.
++> Additionally, TiDB presents several MySQL variables as both readable and settable. This is required for compatibility, because it is common for both applications and connectors to read MySQL variables. For example, JDBC connectors both read and set query cache settings, despite not relying on the behavior.
+ 
+ > **Note:**
+ >
+@@ -47,6 +45,7 @@ SET  GLOBAL tidb_distsql_scan_concurrency = 10;
+ ### allow_auto_random_explicit_insert <span class="version-mark">New in v4.0.3</span>
+ 
+ - Scope: SESSION | GLOBAL
++- Persists to cluster: Yes
+ - Default value: `OFF`
+ - Determines whether to allow explicitly specifying the values of the column with the `AUTO_RANDOM` attribute in the `INSERT` statement.
+ 
+@@ -166,7 +165,8 @@ mysql> SELECT * FROM t1;
+ 
+ ### ddl_slow_threshold
+ 
+-- Scope: INSTANCE
++- Scope: GLOBAL
++- Persists to cluster: No
+ - Default value: `300`
+ - Unit: Milliseconds
+ - Log DDL operations whose execution time exceeds the threshold value.
+```
+
+What this does mean is that each variable that includes `GLOBAL` or `INSTANCE` scope needs a new line added in Docs. But this can be [auto-generated](https://github.com/pingcap/docs/pull/5720) from the sysvar source code.
 
 ## Impacts & Risks
 
@@ -174,7 +239,7 @@ Many of the alternatives are difficult to implement because they break compatibi
 
 ## Investigation & Alternatives
 
-- There is no equivalent functionality to reference in MySQL since it does not have the native concept of a cluster.
+- There is no equivalent functionality to reference in MySQL since it does not have the native concept of a cluster _in the context of configuration_.
 - An [earlier proposal](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit) for `INSTANCE` scope, with rules for precedence (same author)
 - CockroachDB has cluster level settings and node-level settings. Most settings are cluster level, and [node-level](https://www.cockroachlabs.com/docs/v21.2/cockroach-start) needs to be parsed as arguments when starting the server.
 
@@ -218,7 +283,5 @@ The following suggestions are provided (to be discussed):
 
 - `tidb_store_limit`: Suggestion is to convert to global only (Currently does not work correctly, see [issue #30515](https://github.com/pingcap/tidb/issues/30515))
 - `tidb_stmt_summary_XXX`: Suggestion is to convert to global only.
-- `tidb_enable_stmt_summary`: Convert to instance scope only.
+- `tidb_enable_stmt_summary`: Convert to global scope only (updated 11 Dec 2021)
 - `tidb_capture_plan_baselines`: Convert to global scope only. 
-
-Thus, turning on statement summary is a per-server decision, but the configuration for statement summary is a per-cluster decision.
