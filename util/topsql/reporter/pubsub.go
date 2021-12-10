@@ -16,6 +16,7 @@ package reporter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/pingcap/tidb/util"
@@ -113,12 +114,8 @@ func (s *pubSubDataSink) run() {
 		start := time.Now()
 
 		var err error
-		doneCh := make(chan struct{})
 		go util.WithRecovery(func() {
-			defer func() {
-				doneCh <- struct{}{}
-				cancel()
-			}()
+			defer cancel()
 			err = s.doSend(ctx, task.data)
 			if err != nil {
 				reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
@@ -127,21 +124,17 @@ func (s *pubSubDataSink) run() {
 			}
 		}, nil)
 
-		select {
-		case <-doneCh:
-			if err != nil {
-				logutil.BgLogger().Warn(
-					"[top-sql] pubsub datasink failed to send data to subscriber",
-					zap.Error(err),
-				)
-				return
-			}
-		case <-ctx.Done():
+		<-ctx.Done()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			logutil.BgLogger().Warn(
-				"[top-sql] pubsub datasink failed to send data to subscriber due to timeout",
+				"[top-sql] pubsub datasink failed to send data to subscriber due to deadline exceeded",
 				zap.Time("deadline", task.deadline),
 			)
-			return
+		} else if err != nil {
+			logutil.BgLogger().Warn(
+				"[top-sql] pubsub datasink failed to send data to subscriber",
+				zap.Error(err),
+			)
 		}
 	}
 }

@@ -8722,6 +8722,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(true)
 	defer tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(false)
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
+
 	var sqlDigest, planDigest *parser.Digest
 	var tagLabel tipb.ResourceGroupTagLabel
 	checkFn := func() {}

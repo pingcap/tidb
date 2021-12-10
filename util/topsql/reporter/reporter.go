@@ -128,8 +128,9 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	dataSinks     []DataSink
-	dataSinkRegCh chan DataSink
+	dataSinks          []DataSink
+	dataSinkRegCh      chan DataSink
+	dataSinkRegCloseCh chan struct{}
 
 	// normalizedSQLMap is a map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -252,7 +253,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 
 // DataSinkRegHandle returns a DataSinkRegHandle for DataSink registration.
 func (tsr *RemoteTopSQLReporter) DataSinkRegHandle() DataSinkRegHandle {
-	return &RemoteDataSinkRegHandle{registerCh: tsr.dataSinkRegCh}
+	return &RemoteDataSinkRegHandle{registerCh: tsr.dataSinkRegCh, closeCh: tsr.dataSinkRegCloseCh}
 }
 
 // Close uses to close and release the reporter resource.
@@ -261,7 +262,7 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	for i := range tsr.dataSinks {
 		tsr.dataSinks[i].Close()
 	}
-	close(tsr.dataSinkRegCh)
+	close(tsr.dataSinkRegCloseCh)
 	tsr.dataSinks = nil
 }
 
@@ -664,16 +665,15 @@ var _ DataSinkRegHandle = &RemoteDataSinkRegHandle{}
 // RemoteDataSinkRegHandle is used to receive DataSink registrations.
 type RemoteDataSinkRegHandle struct {
 	registerCh chan DataSink
+	closeCh    chan struct{}
 }
 
 // Register implements DataSinkRegHandle interface.
-func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) (err error) {
-	defer func() {
-		if recover() != nil {
-			err = errors.New("registration channel is closed")
-		}
-	}()
-
-	r.registerCh <- dataSink
-	return nil
+func (r *RemoteDataSinkRegHandle) Register(dataSink DataSink) error {
+	select {
+	case r.registerCh <- dataSink:
+		return nil
+	case <-r.closeCh:
+		return errors.New("registration channel is closed")
+	}
 }
