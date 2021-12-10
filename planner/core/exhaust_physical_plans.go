@@ -1551,6 +1551,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			HighVal: make([]types.Datum, pointLength),
 		})
 	}
+	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
 	for i, j := 0, 0; j < len(eqAndInFuncs); i++ {
 		// This position is occupied by join key.
 		if ijHelper.curIdxOff2KeyOff[i] != -1 {
