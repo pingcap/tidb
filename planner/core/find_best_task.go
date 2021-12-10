@@ -860,7 +860,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+				if !ran.IsPointNonNullable(ds.ctx) {
+					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
 					allRangeIsPoint = false
 					break
 				}
@@ -1581,7 +1582,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 		return 0, false, corr
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ranges, err := ranger.BuildColumnRange(accessConds, sc, col.RetType, types.UnspecifiedLength)
+	ranges, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength)
 	if len(ranges) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
