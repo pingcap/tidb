@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // predicateColumnCollector collects predicate columns from logical plan. Predicate columns are the columns whose statistics
@@ -94,7 +95,7 @@ func (ds *DataSource) updateColMapAndAddPredicateColumns(c *predicateColumnColle
 		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
 		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
 	}
-	// TODO: use ds.pushedDownConds or ds.allConds?
+	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.pushedDownConds)
 }
 
@@ -249,4 +250,40 @@ func CollectPredicateColumnsForTest(lp LogicalPlan) []model.TableColumnID {
 		tblColIDs = append(tblColIDs, tblColID)
 	}
 	return tblColIDs
+}
+
+// collectPredicateColumns collects predicate columns from logical plan and stores them to session.
+func collectPredicateColumns(sctx sessionctx.Context, lp LogicalPlan) {
+	// TODO:
+}
+
+// CollectHistNeededColumns collects histogram-needed columns from logical plan
+func CollectHistNeededColumns(plan LogicalPlan) []model.TableColumnID {
+	colMap := map[model.TableColumnID]struct{}{}
+	collectHistNeededColumnsFromPlan(plan, colMap)
+	histColumns := make([]model.TableColumnID, 0, len(colMap))
+	for col := range colMap {
+		histColumns = append(histColumns, col)
+	}
+	return histColumns
+}
+
+func collectHistNeededColumnsFromPlan(plan LogicalPlan, colMap map[model.TableColumnID]struct{}) {
+	for _, child := range plan.Children() {
+		collectHistNeededColumnsFromPlan(child, colMap)
+	}
+	switch x := plan.(type) {
+	case *DataSource:
+		tblID := x.TableInfo().ID
+		columns := expression.ExtractColumnsFromExpressions(nil, x.pushedDownConds, nil)
+		for _, col := range columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			colMap[tblColID] = struct{}{}
+		}
+	case *LogicalCTE:
+		collectHistNeededColumnsFromPlan(x.cte.seedPartLogicalPlan, colMap)
+		if x.cte.recursivePartLogicalPlan != nil {
+			collectHistNeededColumnsFromPlan(x.cte.recursivePartLogicalPlan, colMap)
+		}
+	}
 }

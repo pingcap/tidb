@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPredicateColumnCollector(t *testing.T) {
+func TestCollectPredicateColumns(t *testing.T) {
 	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -192,11 +192,11 @@ func TestPredicateColumnCollector(t *testing.T) {
 		cols := make([]string, 0, len(tblColIDs))
 		for _, tblColID := range tblColIDs {
 			col, ok := getColName(tblColID)
-			require.Equal(t, true, ok, comment)
+			require.True(t, ok, comment)
 			cols = append(cols, col)
 		}
 		sort.Strings(cols)
-		require.Equal(t, expected, cols, comment)
+		require.ElementsMatch(t, expected, cols, comment)
 	}
 
 	for _, tt := range tests {
