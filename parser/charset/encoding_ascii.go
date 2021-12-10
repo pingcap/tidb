@@ -44,11 +44,11 @@ func (e *EncodingASCII) Peek(src []byte) []byte {
 	return src[:1]
 }
 
-func (e *EncodingASCII) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+func (e *EncodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
+	return e.EncodingBase.Transform(dest, src, op)
 }
 
 func (e *EncodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {

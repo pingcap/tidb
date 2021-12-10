@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -89,8 +91,8 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 	}
 	tp := b.args[0].GetType()
 	enc := charset.FindEncoding(tp.Charset)
-	res, err = charset.FromUTF8String(enc, val)
-	return res, false, err
+	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpEncode)
+	return string(ret), false, err
 }
 
 func (b *builtinInternalToBinarySig) vectorized() bool {
@@ -115,7 +117,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		encodedBuf, err = charset.FromUTF8Buf(enc, buf.GetBytes(i), encodedBuf)
+		encodedBuf, err = enc.Transform(encodedBuf, buf.GetBytes(i), charset.OpEncode)
 		if err != nil {
 			return err
 		}
@@ -167,12 +169,12 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 		return val, isNull, err
 	}
 	enc := charset.FindEncoding(b.tp.Charset)
-	res, err = charset.ToUTF8String(enc, val)
+	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpDecode)
 	if err != nil {
 		strHex := fmt.Sprintf("%X", val)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 	}
-	return res, false, err
+	return string(ret), false, err
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -198,7 +200,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 			continue
 		}
 		str := buf.GetBytes(i)
-		encBuf, err = charset.ToUTF8Buf(enc, str, encBuf)
+		encBuf, err = enc.Transform(encBuf, str, charset.OpDecode)
 		if err != nil {
 			strHex := fmt.Sprintf("%X", str)
 			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)

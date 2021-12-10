@@ -63,11 +63,11 @@ func (e *EncodingUTF8) Peek(src []byte) []byte {
 }
 
 // Transform implements Encoding interface.
-func (e *EncodingUTF8) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+func (e *EncodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
+	return e.EncodingBase.Transform(dest, src, op)
 }
 
 // Foreach implements Encoding interface.
@@ -101,9 +101,9 @@ func (e *EncodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh 
 }
 
 // Transform implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+func (e *EncodingUTF8MB3Strict) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op, opt, cOpt)
+	return e.EncodingBase.Transform(dest, src, op)
 }

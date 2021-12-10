@@ -1139,18 +1139,18 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if types.IsBinaryStr(argTp) {
 		// Convert charset binary -> utf8. If it meets error, NULL is returned.
 		enc := charset.FindEncoding(resultTp.Charset)
-		expr, err = charset.ToUTF8StringReplace(enc, expr)
-		return expr, err != nil, nil
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpDecodeReplace)
+		return string(ret), err != nil, nil
 	} else if types.IsBinaryStr(resultTp) {
 		// Convert charset utf8 -> binary.
 		enc := charset.FindEncoding(argTp.Charset)
-		expr, err = charset.FromUTF8StringReplace(enc, expr)
-		return expr, false, err
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpEncode)
+		return string(ret), false, err
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
 	if !charset.IsValidString(enc, expr) {
-		replace := charset.ReplaceIllegalString(enc, expr)
-		return replace, false, nil
+		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplace)
+		return string(replace), false, nil
 	}
 	return expr, false, nil
 }
@@ -2408,7 +2408,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 
 	dBytes := b.convertToBytes(bigints)
 	enc := charset.FindEncoding(b.tp.Charset)
-	res, err := charset.ToUTF8(enc, dBytes)
+	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
 	if err != nil {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		if b.ctx.GetSessionVars().StrictSQLMode {
@@ -2885,7 +2885,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	strBytes := hack.Slice(str)
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
-	res, err := charset.FromUTF8(enc, strBytes[:w])
+	res, err := enc.Transform(nil, strBytes[:w], charset.OpEncode)
 	if err != nil {
 		// Fallback to the first byte.
 		return calcOrd(strBytes[:1]), false, nil

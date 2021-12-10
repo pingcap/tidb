@@ -32,14 +32,14 @@ func TestEncoding(t *testing.T) {
 	e, _ := charset.Lookup("gbk")
 	gbkEncodedTxt, _, err := transform.Bytes(e.NewEncoder(), txt)
 	require.NoError(t, err)
-	result, err := charset.ToUTF8(enc, gbkEncodedTxt)
+	result, err := enc.Transform(nil, gbkEncodedTxt, charset.OpDecode)
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
-	gbkEncodedTxt2, err := charset.FromUTF8(enc, txt)
+	gbkEncodedTxt2, err := enc.Transform(nil, txt, charset.OpEncode)
 	require.NoError(t, err)
 	require.Equal(t, gbkEncodedTxt2, gbkEncodedTxt)
-	result, err = charset.ToUTF8(enc, gbkEncodedTxt2)
+	result, err = enc.Transform(nil, gbkEncodedTxt2, charset.OpDecode)
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
@@ -59,7 +59,7 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, err := charset.ToUTF8StringReplace(enc, tc.utf8Str)
+		result, err := enc.Transform(nil, []byte(tc.utf8Str), charset.OpDecodeReplace)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {
@@ -79,7 +79,7 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, err := charset.FromUTF8StringReplace(enc, tc.utf8Str)
+		result, err := enc.Transform(nil, []byte(tc.utf8Str), charset.OpEncodeReplace)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {
@@ -136,7 +136,7 @@ func TestEncodingValidate(t *testing.T) {
 		strBytes := []byte(tc.str)
 		ok := charset.IsValid(enc, strBytes)
 		require.Equal(t, tc.ok, ok, msg)
-		replace := charset.ReplaceIllegal(enc, strBytes)
+		replace, _ := enc.Transform(nil, strBytes, charset.OpReplace)
 		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }

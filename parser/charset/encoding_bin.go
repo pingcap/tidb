@@ -51,6 +51,6 @@ func (e *EncodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *EncodingBin) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+func (e *EncodingBin) Transform(dest, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }

@@ -343,10 +343,10 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	// from_binary: convert the binary to utf8.
 	if origin.Collation() == charset.CharsetBin {
 		src := casted.GetBytes()
-		encBytes, err := charset.ToUTF8(enc, src)
+		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
 		if err != nil {
 			casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
-			nSrc := charset.ToUTF8CountValidBytes(enc, src)
+			nSrc := charset.CountValidBytesDecode(enc, src)
 			return handleWrongCharsetValue(ctx, col, src, nSrc)
 		}
 		casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
@@ -355,9 +355,9 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
 	if !charset.IsValid(enc, str) {
-		replace := charset.ReplaceIllegal(enc, str)
+		replace, _ := enc.Transform(_, str, charset.OpReplace)
 		casted.SetBytesAsString(replace, charset.CharsetUTF8MB4, 0)
-		nSrc := charset.FromUTF8CountValidBytes(enc, str)
+		nSrc := charset.CountValidBytes(enc, str)
 		return handleWrongCharsetValue(ctx, col, str, nSrc)
 	}
 	return nil

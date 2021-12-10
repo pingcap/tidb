@@ -42,28 +42,27 @@ func (b EncodingBase) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 
-func (b EncodingBase) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) (result []byte, err error) {
+func (b EncodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
 		dest = make([]byte, len(src))
 	}
 	dest = dest[:0]
 	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
 		if !ok {
-			if err == nil {
+			if err == nil && (op&OpSkipError == 0) {
 				err = generateEncodingErr(b.self.Name(), from)
 			}
-			switch opt {
-			case TruncateOptTrim:
+			if op&OpTruncateTrim != 0 {
 				return false
-			case TruncateOptReplace:
+			}
+			if op&OpTruncateReplace != 0 {
 				dest = append(dest, '?')
 				return true
 			}
 		}
-		switch cOpt {
-		case CollectOptFrom:
+		if op&OpCollectFrom != 0 {
 			dest = append(dest, from...)
-		case CollectOptTo:
+		} else if op&OpCollectTo != 0 {
 			dest = append(dest, to...)
 		}
 		return true
@@ -74,7 +73,7 @@ func (b EncodingBase) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt C
 func (b EncodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	var tfm transform.Transformer
 	var peek func([]byte) []byte
-	if op == OpFromUTF8 {
+	if op&OpFromUTF8 != 0 {
 		tfm = b.enc.NewEncoder()
 		peek = EncodingUTF8Impl.Peek
 	} else {
@@ -85,7 +84,7 @@ func (b EncodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(peek(src[i:]))
 		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
-		meetErr := err != nil || (op == OpToUTF8 && beginWithReplacementChar(buf[:nDst]))
+		meetErr := err != nil || (op&OpToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
 		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
 			return
 		}

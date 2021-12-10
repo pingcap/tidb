@@ -343,10 +343,14 @@ func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
 	return uint16(mysql.CharsetNameToID(d.chsName))
 }
 
+// encodeMeta encodes bytes for meta info like column names.
+// Note that the result should be consumed immediately.
 func (d *resultEncoder) encodeMeta(src []byte) []byte {
 	return d.encodeWith(src, d.encoding)
 }
 
+// encodeData encodes bytes for row data.
+// Note that the result should be consumed immediately.
 func (d *resultEncoder) encodeData(src []byte) []byte {
 	if d.isNull || d.isBinary || d.dataIsBinary {
 		// Use the column charset to encode.
@@ -356,11 +360,13 @@ func (d *resultEncoder) encodeData(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
-	result, err := charset.FromUTF8Buf(enc, src, d.buffer)
+	var err error
+	d.buffer, err = enc.Transform(d.buffer, src, charset.OpEncode)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
-	return result
+	// The buffer will be reused.
+	return d.buffer
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {

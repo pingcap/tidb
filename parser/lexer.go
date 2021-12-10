@@ -152,12 +152,12 @@ func (s *Scanner) tryDecodeToUTF8String(sql string) string {
 		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
 		return sql
 	}
-	utf8Lit, err := charset.ToUTF8StringReplace(s.encoding, sql)
+	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecode)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()
 	}
-	return utf8Lit
+	return string(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {

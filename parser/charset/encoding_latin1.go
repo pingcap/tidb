@@ -46,6 +46,6 @@ func (e *EncodingLatin1) ReplaceIllegal(_, src []byte) []byte {
 	return src
 }
 
-func (e *EncodingLatin1) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
+func (e *EncodingLatin1) Transform(dest, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }
