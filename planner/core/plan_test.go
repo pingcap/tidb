@@ -659,10 +659,10 @@ func TestCopPaging(t *testing.T) {
 	}
 	tk.MustExec("analyze table t")
 
-	// limit 1000 should go paging
-	for i := 0; i < 1; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 1000").Check(kit.Rows(
-			"Limit 4.00 root  offset:0, count:1000",
+	// limit 960 should go paging
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:960",
 			"└─IndexLookUp 4.00 root  paging:true",
 			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
 			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
@@ -670,25 +670,14 @@ func TestCopPaging(t *testing.T) {
 			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
 
-	// limit 1001 exceeds the threshold, it should not go paging
+	// limit 961 exceeds the threshold, it should not go paging
 	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 1001").Check(kit.Rows(
-			"Limit 4.00 root  offset:0, count:1001",
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(kit.Rows(
+			"Limit 4.00 root  offset:0, count:961",
 			"└─IndexLookUp 4.00 root  ",
 			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
 			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
 			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
 			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// limit 1000 should go paging
-	for i := 0; i < 1; i++ {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 255 and c1 >= 0 and c1 <= 255 and c2 in (2, 4, 6, 8) order by c1 limit 1000").Check(kit.Rows(
-			"Limit 0.25 root  offset:0, count:1000",
-			"└─IndexLookUp 0.25 root  paging:true",
-			"  ├─Selection(Build) 64.00 cop[tikv]  le(test.t.id, 255)",
-			"  │ └─IndexRangeScan 256.00 cop[tikv] table:t, index:i(c1) range:[0,255], keep order:true",
-			"  └─Selection(Probe) 0.25 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 64.00 cop[tikv] table:t keep order:false"))
 	}
 }
