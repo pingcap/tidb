@@ -251,8 +251,3 @@ func CollectPredicateColumnsForTest(lp LogicalPlan) []model.TableColumnID {
 	}
 	return tblColIDs
 }
-
-// collectPredicateColumns collects predicate columns from logical plan and stores them to session.
-func collectPredicateColumns(sctx sessionctx.Context, lp LogicalPlan) {
-	// TODO:
-}
