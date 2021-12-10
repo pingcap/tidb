@@ -65,7 +65,7 @@ func TestEncoding(t *testing.T) {
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
 	}
 
 	utf8Cases := []struct {
@@ -85,7 +85,7 @@ func TestEncoding(t *testing.T) {
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
 	}
 }
 

@@ -106,12 +106,7 @@ func TestChar(t *testing.T) {
 	collate.SetCharsetFeatEnabledForTest(true)
 	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
-	defer func() {
-		stmtCtx.IgnoreTruncate = origin
-	}()
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	tbl := []struct {
 		str      string
 		iNum     int64
