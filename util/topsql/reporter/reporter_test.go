@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
@@ -65,8 +64,8 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 }
 
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
-	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
+	MaxStatementCount.Store(int64(maxStatementsNum))
+	ReportIntervalSeconds.Store(int64(interval))
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = addr
 	})
@@ -283,7 +282,7 @@ func TestCollectCapacity(t *testing.T) {
 		return records
 	}
 
-	variable.TopSQLVariable.MaxCollect.Store(10000)
+	MaxCollect.Store(10000)
 	registerSQL(5000)
 	require.Equal(t, int64(5000), tsr.sqlMapLength.Load())
 	registerPlan(1000)
@@ -294,13 +293,13 @@ func TestCollectCapacity(t *testing.T) {
 	registerPlan(20000)
 	require.Equal(t, int64(10000), tsr.planMapLength.Load())
 
-	variable.TopSQLVariable.MaxCollect.Store(20000)
+	MaxCollect.Store(20000)
 	registerSQL(50000)
 	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
 	registerPlan(50000)
 	require.Equal(t, int64(20000), tsr.planMapLength.Load())
 
-	variable.TopSQLVariable.MaxStatementCount.Store(5000)
+	MaxStatementCount.Store(5000)
 	collectedData := make(map[string]*dataPoints)
 	tsr.doCollect(collectedData, 1, genRecord(20000))
 	require.Equal(t, 5001, len(collectedData))

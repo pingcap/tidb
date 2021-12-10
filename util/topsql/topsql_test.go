@@ -23,7 +23,6 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
@@ -40,9 +39,6 @@ type collectorWrapper struct {
 }
 
 func TestTopSQLCPUProfile(t *testing.T) {
-	setTopSQLEnable(true)
-	defer setTopSQLEnable(false)
-
 	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 	reqs := []struct {
@@ -90,21 +86,24 @@ func TestTopSQLCPUProfile(t *testing.T) {
 }
 
 func TestIsEnabled(t *testing.T) {
-	setTopSQLEnable(false)
+	controller := mock.NewProfileController(false)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(controller)
+	defer tracecpu.GlobalSQLCPUProfiler.SetCollector(nil)
+
 	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 
-	setTopSQLEnable(true)
+	controller.SetEnabled(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
 	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-	setTopSQLEnable(false)
+	controller.SetEnabled(false)
 	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 	err = tracecpu.StopCPUProfile()
 	require.NoError(t, err)
 
-	setTopSQLEnable(false)
+	controller.SetEnabled(false)
 	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-	setTopSQLEnable(true)
+	controller.SetEnabled(true)
 	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
 }
 
@@ -115,8 +114,8 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 func TestTopSQLReporter(t *testing.T) {
 	server, err := mockServer.StartMockReceiverServer()
 	require.NoError(t, err)
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	reporter.MaxStatementCount.Store(200)
+	reporter.ReportIntervalSeconds.Store(1)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
@@ -185,8 +184,8 @@ func TestTopSQLReporter(t *testing.T) {
 }
 
 func TestTopSQLPubSub(t *testing.T) {
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	reporter.MaxStatementCount.Store(200)
+	reporter.ReportIntervalSeconds.Store(1)
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
@@ -363,10 +362,6 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
 	cPlan = collector.GetPlan(planDigest.Bytes())
 	require.Empty(t, cPlan)
-}
-
-func setTopSQLEnable(enabled bool) {
-	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {

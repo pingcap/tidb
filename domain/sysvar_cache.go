@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/topsql/reporter"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -207,28 +209,28 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+		tracecpu.PrecisionSeconds.Store(val)
 	case variable.TiDBTopSQLMaxStatementCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.MaxStatementCount.Store(val)
+		reporter.MaxStatementCount.Store(val)
 	case variable.TiDBTopSQLMaxCollect:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.MaxCollect.Store(val)
+		reporter.MaxCollect.Store(val)
 	case variable.TiDBTopSQLReportIntervalSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+		reporter.ReportIntervalSeconds.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:

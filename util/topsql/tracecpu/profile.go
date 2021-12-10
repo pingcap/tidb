@@ -24,16 +24,14 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	atomic2 "go.uber.org/atomic"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -41,16 +39,31 @@ const (
 	labelSQL        = "sql"
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
+
+	// DefPrecisionSeconds indicates that the default PrecisionSeconds is 10000
+	DefPrecisionSeconds = 1
 )
 
-// GlobalSQLCPUProfiler is the global SQL stats profiler.
-var GlobalSQLCPUProfiler = newSQLCPUProfiler()
+var (
+	// GlobalSQLCPUProfiler is the global SQL stats profiler.
+	GlobalSQLCPUProfiler = newSQLCPUProfiler()
+
+	// EnablePProfSQLCPU is true means want to keep the `sql` label. Otherwise, remove the `sql` label.
+	EnablePProfSQLCPU = atomic.NewBool(false)
+
+	// PrecisionSeconds indicates profile interval.
+	PrecisionSeconds = atomic.NewInt64(DefPrecisionSeconds)
+)
 
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
 	// ts is a Unix time, unit is second.
 	Collect(ts uint64, stats []SQLCPUTimeRecord)
+
+	// IsPaused indicates that the Collector is not expecting to receive records for now,
+	// and may resume in the future.
+	IsPaused() bool
 }
 
 // SQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -72,8 +85,10 @@ type sqlCPUProfiler struct {
 		ept *exportProfileTask
 	}
 
-	topSQLEnabled atomic2.Bool
-	collector     atomic.Value
+	collector struct {
+		sync.Mutex
+		v Collector
+	}
 }
 
 var (
@@ -99,23 +114,17 @@ func (sp *sqlCPUProfiler) Run() {
 }
 
 func (sp *sqlCPUProfiler) SetCollector(c Collector) {
-	sp.collector.Store(c)
+	sp.collector.Lock()
+	defer sp.collector.Unlock()
+
+	sp.collector.v = c
 }
 
 func (sp *sqlCPUProfiler) GetCollector() Collector {
-	c, ok := sp.collector.Load().(Collector)
-	if !ok || c == nil {
-		return nil
-	}
-	return c
-}
+	sp.collector.Lock()
+	defer sp.collector.Unlock()
 
-func (sp *sqlCPUProfiler) SetTopSQLEnabled(v bool) {
-	sp.topSQLEnabled.Store(v)
-}
-
-func (sp *sqlCPUProfiler) GetTopSQLEnabled() bool {
-	return sp.topSQLEnabled.Load()
+	return sp.collector.v
 }
 
 func (sp *sqlCPUProfiler) startCPUProfileWorker() {
@@ -131,7 +140,7 @@ func (sp *sqlCPUProfiler) startCPUProfileWorker() {
 
 func (sp *sqlCPUProfiler) doCPUProfile() {
 	metrics.TopSQLProfileCounter.Inc()
-	intervalSecond := variable.TopSQLVariable.PrecisionSeconds.Load()
+	intervalSecond := PrecisionSeconds.Load()
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		// Sleep a while before retry.
@@ -291,7 +300,15 @@ func (sp *sqlCPUProfiler) hasExportProfileTask() bool {
 
 // ShouldProfile return true if it's required to profile. It exports for tests.
 func (sp *sqlCPUProfiler) ShouldProfile() bool {
-	return sp.topSQLEnabled.Load() || sp.hasExportProfileTask()
+	if sp.hasExportProfileTask() {
+		return true
+	}
+
+	c := sp.GetCollector()
+	if c == nil {
+		return false
+	}
+	return !c.IsPaused()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.
@@ -350,12 +367,11 @@ func (sp *sqlCPUProfiler) stopExportCPUProfile() error {
 
 // removeLabel uses to remove labels for export cpu profile data.
 // Since the sql_digest and plan_digest label is strange for other users.
-// If `variable.EnablePProfSQLCPU` is true means wanto keep the `sql` label, otherwise, remove the `sql` label too.
 func (sp *sqlCPUProfiler) removeLabel(p *profile.Profile) {
 	if p == nil {
 		return
 	}
-	keepLabelSQL := variable.EnablePProfSQLCPU.Load()
+	keepLabelSQL := EnablePProfSQLCPU.Load()
 	for _, s := range p.Sample {
 		for k := range s.Label {
 			switch k {

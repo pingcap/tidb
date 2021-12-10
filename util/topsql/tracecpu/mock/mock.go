@@ -76,6 +76,11 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 	}
 }
 
+// IsPaused implements tracecpu.Collector
+func (c *TopSQLCollector) IsPaused() bool {
+	return false
+}
+
 // GetSQLStatsBySQLWithRetry uses for testing.
 func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUTimeRecord {
 	after := time.After(time.Second * 10)
@@ -187,4 +192,29 @@ func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUTimeRecord) string {
 func GenSQLDigest(sql string) *parser.Digest {
 	_, digest := parser.NormalizeDigest(sql)
 	return digest
+}
+
+// ProfileController is a mock collector only for controlling profile.
+type ProfileController struct {
+	paused *atomic.Bool
+}
+
+// NewProfileController creates a new ProfileController
+func NewProfileController(enabled bool) *ProfileController {
+	return &ProfileController{paused: atomic.NewBool(!enabled)}
+}
+
+var _ tracecpu.Collector = &ProfileController{}
+
+// Collect implements tracecpu.Collector
+func (*ProfileController) Collect(_ts uint64, _stats []tracecpu.SQLCPUTimeRecord) {}
+
+// IsPaused implements tracecpu.Collector
+func (c *ProfileController) IsPaused() bool {
+	return c.paused.Load()
+}
+
+// SetEnabled sets enabled
+func (c *ProfileController) SetEnabled(v bool) {
+	c.paused.Store(!v)
 }

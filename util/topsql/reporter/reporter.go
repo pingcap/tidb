@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -41,6 +40,27 @@ const (
 	grpcInitialConnWindowSize = 1 << 30
 	// keyOthers is the key to store the aggregation of all records that is out of Top N.
 	keyOthers = ""
+
+	// DefMaxStatementCount indicates that the default MaxStatementCount is 200.
+	DefMaxStatementCount = 200
+
+	// DefMaxCollect indicates that the default MaxCollect is 10000.
+	DefMaxCollect = 10000
+
+	// DefReportIntervalSeconds indicates that the default ReportIntervalSeconds is 60.
+	DefReportIntervalSeconds = 60
+)
+
+// Variables for control top sql feature.
+var (
+	// MaxStatementCount is the maximum number of statements kept in memory.
+	MaxStatementCount = atomic2.NewInt64(DefMaxStatementCount)
+
+	// MaxCollect is the maximum capacity of the collect map.
+	MaxCollect = atomic2.NewInt64(DefMaxCollect)
+
+	// ReportIntervalSeconds is he report data interval of top-sql.
+	ReportIntervalSeconds = atomic2.NewInt64(DefReportIntervalSeconds)
 )
 
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
@@ -130,6 +150,9 @@ type RemoteTopSQLReporter struct {
 	dataSinks     []DataSink
 	dataSinkRegCh chan DataSink
 
+	// paused means no active datasinks
+	paused atomic2.Bool
+
 	// normalizedSQLMap is a map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
@@ -202,7 +225,7 @@ var (
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
 func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if tsr.sqlMapLength.Load() >= MaxCollect.Load() {
 		ignoreExceedSQLCounter.Inc()
 		return
 	}
@@ -220,7 +243,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // RegisterPlan is like RegisterSQL, but for normalized plan strings.
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
-	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if tsr.planMapLength.Load() >= MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
@@ -247,6 +270,11 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 		// ignore if chan blocked
 		ignoreCollectChannelFullCounter.Inc()
 	}
+}
+
+// IsPaused returns whether RemoteTopSQLReporter is paused. The value also means whether TopSQL is enabled.
+func (tsr *RemoteTopSQLReporter) IsPaused() bool {
+	return tsr.paused.Load()
 }
 
 // DataSinkRegHandle returns a DataSinkRegHandle for DataSink registration.
@@ -343,7 +371,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
 	collectedData := make(map[string]*dataPoints)
-	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
+	currentReportInterval := ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	for {
 		tsr.acceptDataSinkRegs()
@@ -352,7 +380,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			logutil.BgLogger().Warn("[top-sql] too many datasinks, keep 10 first", zap.Int("count", len(tsr.dataSinks)))
 			tsr.dataSinks = tsr.dataSinks[:10]
 		}
-		tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(tsr.activeDataSinkCnt() > 0)
+		tsr.paused.Store(tsr.activeDataSinkCnt() == 0)
 
 		select {
 		case data := <-tsr.collectCPUDataChan:
@@ -361,7 +389,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 		case <-reportTicker.C:
 			tsr.takeDataAndSendToReportChan(&collectedData)
 			// Update `reportTicker` if report interval changed.
-			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
+			if newInterval := ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
 				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
 			}
@@ -417,7 +445,7 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 }
 
 func getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
-	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
+	maxStmt := int(MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
 	}
@@ -429,7 +457,7 @@ func getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tr
 }
 
 func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) {
-	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
+	maxStmt := int(MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
 	}
@@ -451,7 +479,7 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	records, evicted = getTopNRecords(records)
 
 	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))
-	listCapacity := int(variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1)
+	listCapacity := int(ReportIntervalSeconds.Load()/tracecpu.PrecisionSeconds.Load() + 1)
 	if listCapacity < 1 {
 		listCapacity = 1
 	}
@@ -650,7 +678,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
-			interval := time.Duration(variable.TopSQLVariable.ReportIntervalSeconds.Load()) * time.Second
+			interval := time.Duration(ReportIntervalSeconds.Load()) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}

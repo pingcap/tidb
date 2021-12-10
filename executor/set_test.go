@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/topsql/reporter"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
 func (s *testSerialSuite1) TestSetVar(c *C) {
@@ -1500,18 +1502,18 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
-	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
+	c.Assert(tracecpu.PrecisionSeconds.Load(), Equals, int64(2))
 	_, err := tk.Exec("set @@global.tidb_top_sql_precision_seconds='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_precision_seconds'")
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds='-1';")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
-	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
+	c.Assert(tracecpu.PrecisionSeconds.Load(), Equals, int64(2))
 
 	tk.MustExec("set @@global.tidb_top_sql_max_statement_count=20;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("20"))
-	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(20))
+	c.Assert(reporter.MaxStatementCount.Load(), Equals, int64(20))
 	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_statement_count'")
 	tk.MustExec("set @@global.tidb_top_sql_max_statement_count='-1';")
@@ -1522,11 +1524,11 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_max_statement_count=20;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("20"))
-	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(20))
+	c.Assert(reporter.MaxStatementCount.Load(), Equals, int64(20))
 
 	tk.MustExec("set @@global.tidb_top_sql_max_collect=20000;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_collect;").Check(testkit.Rows("20000"))
-	c.Assert(variable.TopSQLVariable.MaxCollect.Load(), Equals, int64(20000))
+	c.Assert(reporter.MaxCollect.Load(), Equals, int64(20000))
 	_, err = tk.Exec("set @@global.tidb_top_sql_max_collect='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_collect'")
 	tk.MustExec("set @@global.tidb_top_sql_max_collect='-1';")
@@ -1539,11 +1541,11 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_max_collect=20000;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_collect;").Check(testkit.Rows("20000"))
-	c.Assert(variable.TopSQLVariable.MaxCollect.Load(), Equals, int64(20000))
+	c.Assert(reporter.MaxCollect.Load(), Equals, int64(20000))
 
 	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds=120;")
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
-	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
+	c.Assert(reporter.ReportIntervalSeconds.Load(), Equals, int64(120))
 	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_report_interval_seconds'")
 	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds='5000';")
@@ -1552,7 +1554,7 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds=120;")
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
-	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
+	c.Assert(reporter.ReportIntervalSeconds.Load(), Equals, int64(120))
 
 	// Test for hide top sql variable in show variable.
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows())

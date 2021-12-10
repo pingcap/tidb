@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -53,14 +52,14 @@ func SetupTopSQL() {
 	// register single target datasink to reporter
 	singleTargetDataSink := reporter.NewSingleTargetDataSink()
 	globalTopSQLReport.DataSinkRegHandle().Register(singleTargetDataSink)
-
-	enable := len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0
-	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(enable)
 }
 
 // InstanceEnabled is used to check if TopSQL is enabled on the current instance.
 func InstanceEnabled() bool {
-	return tracecpu.GlobalSQLCPUProfiler.GetTopSQLEnabled()
+	if globalTopSQLReport == nil {
+		return false
+	}
+	return !globalTopSQLReport.IsPaused()
 }
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.

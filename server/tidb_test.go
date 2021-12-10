@@ -1316,8 +1316,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
-	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(true)
-	defer tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(false)
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")

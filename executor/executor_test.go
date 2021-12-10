@@ -83,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	tracecpumock "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -8719,8 +8720,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tk.MustExec("create table t(a int, b int, unique index idx(a));")
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
-	tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(true)
-	defer tracecpu.GlobalSQLCPUProfiler.SetTopSQLEnabled(false)
+	ctl := tracecpumock.NewProfileController(true)
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(ctl)
+	defer tracecpu.GlobalSQLCPUProfiler.SetCollector(nil)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
