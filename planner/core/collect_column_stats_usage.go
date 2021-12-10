@@ -17,7 +17,6 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 )
 
 // predicateColumnCollector collects predicate columns from logical plan. Predicate columns are the columns whose statistics
