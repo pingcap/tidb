@@ -2952,7 +2952,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	require.NoError(t, err)
 	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	rs = fmt.Sprintf(`{"a":%d,"table_id":"%d"}`, rowID, tbl.Meta().ID)
+	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
