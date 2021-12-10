@@ -323,6 +323,36 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4
 }
 
+// CollationToProto converts collation from string to int32(used by protocol).
+func CollationToProto(c string) int32 {
+	if coll, err := charset.GetCollationByName(c); err == nil {
+		return RewriteNewCollationIDIfNeeded(int32(coll.ID))
+	}
+	v := RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
+}
+
+// ProtoToCollation converts collation from int32(used by protocol) to string.
+func ProtoToCollation(c int32) string {
+	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
+	if err == nil {
+		return coll.Name
+	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return mysql.DefaultCollationName
+}
+
 func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
