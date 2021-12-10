@@ -32,12 +32,12 @@ func IsSupportedEncoding(charset string) bool {
 // FindEncoding finds the encoding according to charset.
 func FindEncoding(charset string) Encoding {
 	if len(charset) == 0 {
-		return EncodingUTF8Impl
+		return EncodingBinImpl
 	}
 	if e, exist := encodingMap[charset]; exist {
 		return e
 	}
-	return EncodingUTF8Impl
+	return EncodingBinImpl
 }
 
 var encodingMap = map[string]Encoding{
