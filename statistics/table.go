@@ -236,17 +236,17 @@ type tableColumnID struct {
 }
 
 type neededColumnMap struct {
-	m    sync.Mutex
+	m    sync.RWMutex
 	cols map[tableColumnID]struct{}
 }
 
 func (n *neededColumnMap) AllCols() []tableColumnID {
-	n.m.Lock()
+	n.m.RLock()
 	keys := make([]tableColumnID, 0, len(n.cols))
 	for key := range n.cols {
 		keys = append(keys, key)
 	}
-	n.m.Unlock()
+	n.m.RUnlock()
 	return keys
 }
 
@@ -260,6 +260,12 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
 	n.m.Unlock()
+}
+
+func (n *neededColumnMap) Length() int {
+	n.m.RLock()
+	defer n.m.RUnlock()
+	return len(n.cols)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
