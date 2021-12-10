@@ -685,6 +685,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	target                "TARGET"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -4546,6 +4547,16 @@ TraceStmt:
 		startOffset := parser.startOffset(&yyS[yypt])
 		$3.SetText(string(parser.src[startOffset:]))
 	}
+|	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:            $6,
+			TracePlan:       true,
+			TracePlanTarget: $5,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(string(parser.src[startOffset:]))
+	}
 
 ExplainSym:
 	"EXPLAIN"
@@ -6125,6 +6136,7 @@ NotKeywordToken:
 |	"VARIANCE"
 |	"VAR_POP"
 |	"VAR_SAMP"
+|	"TARGET"
 |	"TIMESTAMPADD"
 |	"TIMESTAMPDIFF"
 |	"TOKUDB_DEFAULT"
