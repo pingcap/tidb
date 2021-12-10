@@ -196,6 +196,12 @@ func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, cast
 	return truncateVal, err
 }
 
+// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
+// Currently only called from CastValue.
+// returns:
+//   value (possibly adjusted)
+//   boolean; true if break error/warning handling in CastValue and return what was returned from this
+//   error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
@@ -245,6 +251,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
 			sc.AppendWarning(innerErr)
 		}
+		return types.NewDatum(zeroV), true, nil
+	} else if tmIsInvalid && col.Tp == mysql.TypeTimestamp {
+		// Prevent from being stored! Invalid timestamp!
+		if mode.HasStrictMode() {
+			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		}
+		// no strict mode, truncate to 0000-00-00 00:00:00
+		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
