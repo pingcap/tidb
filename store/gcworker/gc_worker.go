@@ -1891,23 +1891,30 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
-	// Get the partition ID from the job and DelRangeTask.
+	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
+	var physicalTableIDs []int64
 	switch historyJob.Type {
 	case model.ActionDropTable, model.ActionTruncateTable:
-		var physicalTableIDs []int64
 		var startKey kv.Key
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
 		}
-		// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-		for _, id := range physicalTableIDs {
-			bundles = append(bundles, placement.NewBundle(id))
+	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
+			return
 		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
-	return
+
+	if len(physicalTableIDs) == 0 {
+		return
+	}
+
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, id := range physicalTableIDs {
+		bundles = append(bundles, placement.NewBundle(id))
+	}
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
