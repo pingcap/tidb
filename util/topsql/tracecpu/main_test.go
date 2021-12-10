@@ -12,50 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tracecpu_test
+package tracecpu
 
 import (
-	"bytes"
 	"testing"
 
-	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/testbridge"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock"
-	})
-	tracecpu.PrecisionSeconds.Store(1)
-	tracecpu.GlobalSQLCPUProfiler.Run()
-
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("time.Sleep"),
-		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUProfiler).startAnalyzeProfileWorker"),
-	}
-
-	goleak.VerifyTestMain(m, opts...)
-}
-
-func TestPProfCPUProfile(t *testing.T) {
-	buf := bytes.NewBuffer(nil)
-	err := tracecpu.StartCPUProfile(buf)
-	require.NoError(t, err)
-	// enable top sql.
-	ctl := mock.NewProfileController(true)
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(ctl)
-	defer tracecpu.GlobalSQLCPUProfiler.SetCollector(nil)
-	err = tracecpu.StopCPUProfile()
-	require.NoError(t, err)
-	_, err = profile.Parse(buf)
-	require.NoError(t, err)
+	goleak.VerifyTestMain(m)
 }

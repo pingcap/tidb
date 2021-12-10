@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
@@ -66,6 +67,7 @@ import (
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
@@ -209,7 +211,8 @@ func main() {
 		cleanup(svr, storage, dom, graceful)
 		close(exited)
 	})
-	topsql.SetupTopSQL()
+	report := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	topsql.SetupTopSQL(report)
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()

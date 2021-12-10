@@ -19,39 +19,41 @@ import (
 	"net"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 type mockPubSubServer struct {
 	addr       string
+	listen     net.Listener
 	grpcServer *grpc.Server
 }
 
-// StartMockPubSubServer starts the mock publisher server.
-func StartMockPubSubServer(
-	service tipb.TopSQLPubSubServer,
-) (*mockPubSubServer, error) {
+// NewMockPubSubServer creates a mock publisher server.
+func NewMockPubSubServer() (*mockPubSubServer, error) {
 	addr := "127.0.0.1:0"
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	server := grpc.NewServer()
-	tipb.RegisterTopSQLPubSubServer(server, service)
-
-	go func() {
-		err := server.Serve(lis)
-		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] mock pubsub server serve failed", zap.Error(err))
-		}
-	}()
 
 	return &mockPubSubServer{
 		addr:       fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
+		listen:     lis,
 		grpcServer: server,
 	}, nil
+}
+
+func (svr *mockPubSubServer) Serve() {
+	err := svr.grpcServer.Serve(svr.listen)
+	if err != nil {
+		logutil.BgLogger().Warn("[top-sql] mock pubsub server serve failed", zap.Error(err))
+	}
+}
+
+func (svr *mockPubSubServer) Server() *grpc.Server {
+	return svr.grpcServer
 }
 
 func (svr *mockPubSubServer) Address() string {

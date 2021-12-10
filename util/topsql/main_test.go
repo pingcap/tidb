@@ -17,21 +17,12 @@ package topsql
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/testbridge"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-
-	// set up
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock"
-	})
-	tracecpu.PrecisionSeconds.Store(1)
-	tracecpu.GlobalSQLCPUProfiler.Run()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
@@ -41,8 +40,8 @@ const (
 var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL() {
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+func SetupTopSQL(report reporter.TopSQLReporter) {
+	globalTopSQLReport = report
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
@@ -54,11 +53,10 @@ func SetupTopSQL() {
 
 // InstanceEnabled is used to check if TopSQL is enabled on the current instance.
 func InstanceEnabled() bool {
-	collector := tracecpu.GlobalSQLCPUProfiler.GetCollector()
-	if collector == nil {
+	if globalTopSQLReport == nil {
 		return false
 	}
-	return !collector.IsPaused()
+	return !globalTopSQLReport.IsPaused()
 }
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.

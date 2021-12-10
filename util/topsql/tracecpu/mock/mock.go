@@ -178,7 +178,7 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 
 // DataSinkRegHandle implements the interface.
 func (c *TopSQLCollector) DataSinkRegHandle() reporter.DataSinkRegHandle {
-	return nil
+	return &noopRegHandle{}
 }
 
 // Close implements the interface.
@@ -193,6 +193,15 @@ func GenSQLDigest(sql string) *parser.Digest {
 	_, digest := parser.NormalizeDigest(sql)
 	return digest
 }
+
+type noopRegHandle struct{}
+
+// Register implements reporter.DataSinkRegHandle
+func (noopRegHandle) Register(dataSink reporter.DataSink) {
+	dataSink.Close()
+}
+
+var _ reporter.DataSinkRegHandle = &noopRegHandle{}
 
 // ProfileController is a mock collector only for controlling profile.
 type ProfileController struct {

@@ -40,7 +40,10 @@ type collectorWrapper struct {
 
 func TestTopSQLCPUProfile(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	report := &collectorWrapper{collector}
+	topsql.SetupTopSQL(report)
+	defer topsql.Close()
+
 	reqs := []struct {
 		sql  string
 		plan string
@@ -85,28 +88,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 }
 
-func TestIsEnabled(t *testing.T) {
-	controller := mock.NewProfileController(false)
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(controller)
-	defer tracecpu.GlobalSQLCPUProfiler.SetCollector(nil)
-
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-
-	controller.SetEnabled(true)
-	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
-	require.NoError(t, err)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-	controller.SetEnabled(false)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-	err = tracecpu.StopCPUProfile()
-	require.NoError(t, err)
-
-	controller.SetEnabled(false)
-	require.False(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-	controller.SetEnabled(true)
-	require.True(t, tracecpu.GlobalSQLCPUProfiler.ShouldProfile())
-}
-
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
@@ -120,13 +101,10 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	defer report.Close()
+	report := &collectorWrapper{reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)}
+	topsql.SetupTopSQL(report)
+	defer topsql.Close()
 
-	dataSink := reporter.NewSingleTargetDataSink()
-	report.DataSinkRegHandle().Register(dataSink)
-
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
 		sql  string
 		plan string
@@ -188,14 +166,16 @@ func TestTopSQLPubSub(t *testing.T) {
 	reporter.ReportIntervalSeconds.Store(1)
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	defer report.Close()
+	topsql.SetupTopSQL(report)
+	defer topsql.Close()
 
-	pubsub := reporter.NewTopSQLPubSubService(report.DataSinkRegHandle())
-	server, err := mockServer.StartMockPubSubServer(pubsub)
+	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)
+
+	topsql.RegisterPubSubServer(server.Server())
+	go server.Serve()
 	defer server.Stop()
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	conn, err := grpc.Dial(
 		server.Address(),
 		grpc.WithBlock(),
@@ -306,17 +286,19 @@ func TestTopSQLPubSub(t *testing.T) {
 
 func TestTopSQLPubSubReporterStopBeforePubSub(t *testing.T) {
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	topsql.SetupTopSQL(report)
 
-	pubsub := reporter.NewTopSQLPubSubService(report.DataSinkRegHandle())
-	server, err := mockServer.StartMockPubSubServer(pubsub)
-	defer server.Stop()
+	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)
 
-	// close reporter first
-	report.Close()
+	topsql.RegisterPubSubServer(server.Server())
+	go server.Serve()
+	defer server.Stop()
+
+	// stop topsql first
+	topsql.Close()
 
 	// try to subscribe
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	conn, err := grpc.Dial(server.Address(), grpc.WithBlock(), grpc.WithInsecure())
 	require.NoError(t, err)
 	defer conn.Close()
@@ -333,7 +315,9 @@ func TestTopSQLPubSubReporterStopBeforePubSub(t *testing.T) {
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	report := &collectorWrapper{collector}
+	topsql.SetupTopSQL(report)
+	defer topsql.Close()
 
 	ctx := context.Background()
 

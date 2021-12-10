@@ -49,9 +49,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -130,8 +130,6 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-
-	tracecpu.GlobalSQLCPUProfiler.Run()
 
 	return ts, cleanup
 }
@@ -1315,8 +1313,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}()
 
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
-	defer tracecpu.GlobalSQLCPUProfiler.SetCollector(nil)
+	topsql.SetupTopSQL(&collectorWrapper{collector})
+	defer topsql.Close()
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
@@ -1559,14 +1557,14 @@ func TestTopSQLReceiver(t *testing.T) {
 		})
 	}
 
+	report := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	topsql.SetupTopSQL(report)
+	defer topsql.Close()
+
 	setTopSQLReceiverAddress("")
 	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-
-	r := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	r.DataSinkRegHandle().Register(reporter.NewSingleTargetDataSink())
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {
