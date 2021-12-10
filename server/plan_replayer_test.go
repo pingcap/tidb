@@ -15,14 +15,18 @@
 package server
 
 import (
-	"archive/zip"
 	"bytes"
 	"database/sql"
+	"io"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -50,8 +54,12 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	}()
 	client.waitUntilServerOnline()
 
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	statsHandler := &StatsHandler{dom}
+
 	planReplayerHandler := &PlanReplayerHandler{}
-	filename := prepareData4PlanReplayer(t, client)
+	filename := prepareData4PlanReplayer(t, client, statsHandler)
 
 	router := mux.NewRouter()
 	router.Handle("/plan_replayer/dump/{filename}", planReplayerHandler)
@@ -65,13 +73,46 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	body, err := ioutil.ReadAll(resp0.Body)
 	require.NoError(t, err)
 
-	zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	path := "/tmp/plan_replayer.zip"
+	fp, err := os.Create(path)
 	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
 
-	require.Equal(t, len(zipReader.File), 9)
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	db, err := sql.Open("mysql", client.getDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+
+	tk.MustExec("use planReplayer")
+	tk.MustExec("drop table planReplayer.t")
+	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+	rows := tk.MustQuery("show stats_meta")
+	require.True(t, rows.Next(), "unexpected data")
+	var dbName, tableName string
+	var modifyCount, count int64
+	var other interface{}
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	require.NoError(t, err)
+	require.Equal(t, "planReplayer", dbName)
+	require.Equal(t, "t", tableName)
+	require.Equal(t, int64(4), modifyCount)
+	require.Equal(t, int64(8), count)
 }
 
-func prepareData4PlanReplayer(t *testing.T, client *testServerClient) string {
+func prepareData4PlanReplayer(t *testing.T, client *testServerClient, statHandle *StatsHandler) string {
 	db, err := sql.Open("mysql", client.getDSN())
 	require.NoError(t, err, "Error connecting")
 	defer func() {
@@ -80,11 +121,17 @@ func prepareData4PlanReplayer(t *testing.T, client *testServerClient) string {
 	}()
 	tk := testkit.NewDBTestKit(t, db)
 
+	h := statHandle.do.StatsHandle()
 	tk.MustExec("create database planReplayer")
 	tk.MustExec("use planReplayer")
 	tk.MustExec("create table t(a int)")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values(5), (6), (7), (8)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string

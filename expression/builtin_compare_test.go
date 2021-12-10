@@ -279,6 +279,8 @@ func TestGreatestLeastFunc(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
+	decG := &types.MyDecimal{}
+	decL := &types.MyDecimal{}
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
@@ -290,6 +292,14 @@ func TestGreatestLeastFunc(t *testing.T) {
 		isNil            bool
 		getErr           bool
 	}{
+		{
+			[]interface{}{int64(-9223372036854775808), uint64(9223372036854775809)},
+			decG.FromUint(9223372036854775809), decL.FromInt(-9223372036854775808), false, false,
+		},
+		{
+			[]interface{}{uint64(9223372036854775808), uint64(9223372036854775809)},
+			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
+		},
 		{
 			[]interface{}{1, 2, 3, 4},
 			int64(4), int64(1), false, false,
@@ -312,11 +322,11 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
-			curTimeWithFspString, curTimeString, false, false,
+			"invalid_time_2", curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
-			curTimeWithFspString, curTimeString, false, false,
+			"invalid_time_2", curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
@@ -328,7 +338,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{duration, duration},
-			"12:59:59", "12:59:59", false, false,
+			duration, duration, false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},

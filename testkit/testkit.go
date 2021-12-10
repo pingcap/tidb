@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -224,4 +226,17 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) b
 		}
 	}
 	return false
+}
+
+// CheckExecResult checks the affected rows and the insert id after executing MustExec.
+func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
+	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows)
+	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID)
+}
+
+// WithPruneMode run test case under prune mode.
+func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
+	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
+	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
+	f()
 }

@@ -119,7 +119,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if times[i].IsZero() {
+		if times[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
@@ -965,12 +965,11 @@ func (b *builtinMicroSecondSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	ds := buf.GoDurations()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64((ds[i] % time.Second) / time.Microsecond)
+		i64s[i] = int64(buf.GetDuration(i, int(types.UnspecifiedFsp)).MicroSecond())
 	}
 	return nil
 }
@@ -2391,7 +2390,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				continue
 			}
 
-			t, err := buf.GetTime(i).GoTime(getTimeZone(b.ctx))
+			t, err := buf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
 			if err != nil {
 				i64s[i] = 0
 				continue

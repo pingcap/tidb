@@ -530,13 +530,17 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
-	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
+	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
 
@@ -1120,7 +1124,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	})
 
 	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
+	tk.MustExec("unlock tables")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 }
 
 func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
@@ -1645,6 +1652,7 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
 	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t2(a int auto_increment, unique key (a) invisible);", errno.ErrPKIndexCantBeInvisible)
 	// Column `a` become implicit primary key after DDL statement on itself
 	tk.MustExec("create table t2(a int not null)")
 	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)
