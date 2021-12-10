@@ -152,7 +152,7 @@ func (s *Scanner) tryDecodeToUTF8String(sql string) string {
 		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
 		return sql
 	}
-	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecode)
+	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()

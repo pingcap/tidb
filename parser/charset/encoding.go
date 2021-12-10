@@ -69,7 +69,7 @@ type Encoding interface {
 type Op int16
 
 const (
-	OpFromUTF8 Op = iota << 1
+	OpFromUTF8 Op = 1 << iota
 	OpToUTF8
 	OpTruncateTrim
 	OpTruncateReplace
