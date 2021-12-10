@@ -647,9 +647,9 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type ParseTimeFunc = func(sc *stmtctx.StatementContext, str string) (types.Time, error)
+type parseTimeFunc = func(sc *stmtctx.StatementContext, str string) (types.Time, error)
 
-func getParseTimeFunc(temporalType byte) ParseTimeFunc {
+func getParseTimeFunc(temporalType byte) parseTimeFunc {
 	if temporalType == mysql.TypeDate {
 		return types.ParseDate
 	}
@@ -658,7 +658,7 @@ func getParseTimeFunc(temporalType byte) ParseTimeFunc {
 
 type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
-	parseTime ParseTimeFunc
+	parseTime parseTimeFunc
 }
 
 func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
@@ -922,7 +922,7 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 
 type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
-	parseTime ParseTimeFunc
+	parseTime parseTimeFunc
 }
 
 func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
