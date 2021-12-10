@@ -674,9 +674,8 @@ func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBIn
 	for _, dbInfo := range oldSchemas {
 		if util.IsMemDB(dbInfo.Name.L) {
 			continue
-		} else {
-			schemas = append(schemas, dbInfo)
 		}
+		schemas = append(schemas, dbInfo)
 	}
 	return
 }
