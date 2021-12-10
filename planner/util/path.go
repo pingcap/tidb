@@ -64,6 +64,9 @@ type AccessPath struct {
 	Forced bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
+
+	// maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
+	IsShardIndexPath bool
 }
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.

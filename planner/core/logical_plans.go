@@ -586,6 +586,11 @@ type DataSource struct {
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
 	isForUpdateRead bool
+
+	// contain unique index and the first field is tidb_shard(),
+	// such as (tidb_shard(a), a ...), the fields are more than 2
+	containExprPrefixUk bool
+	addedExprPrefixCond bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

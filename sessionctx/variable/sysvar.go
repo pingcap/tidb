@@ -1899,6 +1899,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.MD5:        {},
 	ast.Reverse:    {},
 	ast.VitessHash: {},
+	ast.TidbShard:  {},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
