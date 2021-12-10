@@ -175,7 +175,7 @@ Because in this stage the source of truth is now no longer the `config` package,
 
 ## Documentation Changes
 
-For the purposes of user-communication we dont need to use the terminology `INSTANCE`. We will remove more of the confusing by instead refering to the difference between these as whether it "persists to [the] cluster". This also aligns closer to the syntax that users will be using. Consider the following example changes which are easier to read (the current text also doesn't actually explain that to set an `INSTANCE` variable you must use `SET SESSION`, so it actually communicates a lot more in fewer words):
+For the purposes of user-communication we don't need to use the terminology `INSTANCE`. We will remove more of the confusion by instead refering to the difference between these as whether it "persists to [the] cluster". This also aligns closer to the syntax that users will be using. Consider the following example changes which are easier to read (the current text also doesn't actually explain that to set an `INSTANCE` variable you must use `SET SESSION`, so it actually communicates a lot more in fewer words):
 
 ```
 +++ b/system-variables.md
