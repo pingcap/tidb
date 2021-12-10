@@ -4570,10 +4570,48 @@ func (s *testIntegrationSuite) TestIssue27242(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists UK_MU16407")
 	tk.MustExec("CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3));")
+	defer tk.MustExec("DROP TABLE UK_MU16407")
 	tk.MustExec(`insert into UK_MU16407 values("1985-08-31 18:03:27");`)
-	err := tk.ExecToErr(`SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, ".*Incorrect timestamp value.*")
+	tk.MustExec(`SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';`)
+}
+
+func verifyTimestampOutOfRange(tk *testkit.TestKit) {
+	tk.MustQuery(`select * from t28424 where t != "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t < "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t <= "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t >= "2038-1-19 3:14:08"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t > "2038-1-19 3:14:08"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t != "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t < "1970-1-1 0:0:0"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t <= "1970-1-1 0:0:0"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t >= "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t > "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+}
+
+func (s *testIntegrationSuite) TestIssue28424(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t28424, dt28242")
+
+	tk.MustExec(`set time_zone='+00:00'`)
+	tk.MustExec(`drop table if exists t28424,dt28424`)
+	tk.MustExec(`create table t28424 (t timestamp)`)
+	defer tk.MustExec("DROP TABLE t28424")
+	tk.MustExec(`insert into t28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01")`)
+
+	verifyTimestampOutOfRange(tk)
+	tk.MustExec(`alter table t28424 add unique index (t)`)
+	verifyTimestampOutOfRange(tk)
+	tk.MustExec(`create table dt28424 (dt datetime)`)
+	defer tk.MustExec("DROP TABLE dt28424")
+	tk.MustExec(`insert into dt28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01")`)
+	tk.MustExec(`insert into dt28424 values ("1969-12-31 23:59:59"), ("1970-01-01 00:00:00"), ("2038-03-19 03:14:08")`)
+	tk.MustQuery(`select * from t28424 right join dt28424 on t28424.t = dt28424.dt`).Sort().Check(testkit.Rows(
+		"1970-01-01 00:00:01 1970-01-01 00:00:01]\n" +
+			"[2038-01-19 03:14:07 2038-01-19 03:14:07]\n" +
+			"[<nil> 1969-12-31 23:59:59]\n" +
+			"[<nil> 1970-01-01 00:00:00]\n" +
+			"[<nil> 2038-03-19 03:14:08"))
 }
 
 func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
