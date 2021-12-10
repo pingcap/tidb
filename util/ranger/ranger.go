@@ -108,6 +108,9 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if point.value.Kind() == types.KindMysqlTime && tp.Tp == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+			// See issue #28424: query failed after add index
+			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
 		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
