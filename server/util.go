@@ -301,8 +301,9 @@ type resultEncoder struct {
 
 	buffer []byte
 
-	isBinary bool
-	isNull   bool
+	isBinary     bool
+	isNull       bool
+	dataIsBinary bool
 }
 
 // newResultEncoder creates a new resultEncoder.
@@ -327,6 +328,7 @@ func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
 	d.dataEncoding = charset.FindEncoding(chs)
+	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 
 func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
@@ -346,7 +348,7 @@ func (d *resultEncoder) encodeMeta(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeData(src []byte) []byte {
-	if d.isNull || d.isBinary {
+	if d.isNull || d.isBinary || d.dataIsBinary {
 		// Use the column charset to encode.
 		return d.encodeWith(src, d.dataEncoding)
 	}

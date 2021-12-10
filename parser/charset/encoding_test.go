@@ -59,7 +59,7 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, err := charset.ToUTF8String(enc, tc.utf8Str)
+		result, err := charset.ToUTF8StringReplace(enc, tc.utf8Str)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {
@@ -79,7 +79,7 @@ func TestEncoding(t *testing.T) {
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)
-		result, err := charset.FromUTF8String(enc, tc.utf8Str)
+		result, err := charset.FromUTF8StringReplace(enc, tc.utf8Str)
 		if tc.isValid {
 			require.NoError(t, err, cmt)
 		} else {

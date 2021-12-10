@@ -45,10 +45,6 @@ func (e *EncodingASCII) Peek(src []byte) []byte {
 }
 
 func (e *EncodingASCII) Transform(dest, src []byte, op Op, opt TruncateOpt, cOpt CollectOpt) ([]byte, error) {
-	if op == OpToUTF8 {
-		// ASCII is a subset of utf-8.
-		return src, nil
-	}
 	if IsValid(e, src) {
 		return src, nil
 	}

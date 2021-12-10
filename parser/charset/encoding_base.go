@@ -16,13 +16,14 @@ package charset
 import (
 	"bytes"
 	"fmt"
+	"reflect"
+	"strings"
+	"unsafe"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
-	"reflect"
-	"strings"
-	"unsafe"
 )
 
 var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
