@@ -777,6 +777,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableIndexMerge               = true
 )
 
 // Process global variables.

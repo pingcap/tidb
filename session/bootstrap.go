@@ -528,11 +528,14 @@ const (
 	version77 = 77
 	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
 	version78 = 78
+	// version79 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
+	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
+	version79 = 79
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version78
+var currentBootstrapVersion int64 = version79
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -614,6 +617,7 @@ var (
 		upgradeToVer76,
 		upgradeToVer77,
 		upgradeToVer78,
+		upgradeToVer79,
 	}
 )
 
@@ -1610,6 +1614,27 @@ func upgradeToVer78(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_enable_index_merge | off".
+	ctx := context.Background()
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
+	terror.MustNil(err)
 }
 
 func writeOOMAction(s Session) {
