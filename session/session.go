@@ -561,52 +561,63 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
-		c := cachedTableRenewLease{exit: make(chan struct{}), tables: tables}
+		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
 		err := c.start(ctx)
-		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
 		defer c.stop(ctx)
+		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.txn.SetOption(kv.CachedTableWriteLease, &c.lease)
+		s.txn.SetOption(kv.CachedTableWriteLease, c.lease)
 	}
 
 	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
 }
 
 type cachedTableRenewLease struct {
-	lease  uint64
-	exit   chan struct{}
 	tables map[int64]interface{}
+	lease  []uint64 // Lease for each visited cached tables.
+	exit   chan struct{}
 }
 
 func (c *cachedTableRenewLease) start(ctx context.Context) error {
-	var maxLease uint64
+	c.exit = make(chan struct{})
+	c.lease = make([]uint64, len(c.tables))
+	wg := make(chan error)
+	ith := 0
 	for tid, raw := range c.tables {
-		handle := raw.(tables.StateRemote)
-		writeLockLease, err := handle.LockForWrite(ctx, tid)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if writeLockLease > maxLease {
-			maxLease = writeLockLease
-		}
-		go c.keepAlive(ctx)
+		go c.keepAlive(ctx, wg, raw.(tables.StateRemote), tid, &c.lease[ith])
+		ith++
 	}
-	atomic.StoreUint64(&c.lease, maxLease)
-	return nil
+
+	// Wait for all LockForWrite() return, this function can return.
+	var err error
+	for ; ith > 0; ith-- {
+		tmp := <-wg
+		if tmp != nil {
+			err = tmp
+		}
+	}
+	return err
 }
 
-func (c *cachedTableRenewLease) keepAlive(ctx context.Context) {
+func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
+	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	atomic.StoreUint64(leasePtr, writeLockLease)
+	wg <- err
+	if err != nil {
+		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		return
+	}
+
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
-			if err := c.renew(ctx); err != nil {
-				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail",
-					zap.Error(err))
+			if err := c.renew(ctx, handle, tid, leasePtr); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
 				return
 			}
 		case <-c.exit:
@@ -615,22 +626,18 @@ func (c *cachedTableRenewLease) keepAlive(ctx context.Context) {
 	}
 }
 
-func (c *cachedTableRenewLease) renew(ctx context.Context) error {
-	newLease := atomic.LoadUint64(&c.lease)
-	physicalTime := oracle.GetTimeFromTS(newLease)
-	newLease = oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
-	for tid, raw := range c.tables {
-		handle := raw.(tables.StateRemote)
-		succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !succ {
-			// Don't update the new lease unless all the operation success.
-			return nil
-		}
+func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRemote, tid int64, leasePtr *uint64) error {
+	oldLease := atomic.LoadUint64(leasePtr)
+	physicalTime := oracle.GetTimeFromTS(oldLease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
+
+	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	atomic.StoreUint64(&c.lease, newLease)
+	if succ {
+		atomic.StoreUint64(leasePtr, newLease)
+	}
 	return nil
 }
 

@@ -231,7 +231,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.SnapInterceptor:
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
 	case kv.CachedTableWriteLease:
-		txn.KVTxn.SetCachedTableWriteLease(val.(*uint64))
+		txn.KVTxn.SetCachedTableWriteLease(val.([]uint64))
 	}
 }
 

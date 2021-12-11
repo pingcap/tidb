@@ -132,7 +132,6 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 	return succ, err
 }
 
-
 // LockForWrite try to add a write lock to the table with the specified tableID, return the write lock lease.
 func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64) (uint64, error) {
 	h.Lock()
@@ -217,7 +216,6 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 	}
 	return 0
 }
-
 
 func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, newLease uint64, op RenewLeaseType) (bool, error) {
 	h.Lock()
