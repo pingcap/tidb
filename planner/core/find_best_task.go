@@ -15,7 +15,6 @@
 package core
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -1128,11 +1127,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		// Here we want to add a Selection for exprs that cannot be pushed to TiKV, but some of them has already been put
-		// in Selection above DataSource, so we need to filter these exprs.
-		_, filtersInSelection := expression.PushDownExprs(sessVars.StmtCtx, tableFilters, ds.ctx.GetClient(), kv.UnSpecified)
-		pushedFilters, remainedFilters := expression.PushDownExprs(sessVars.StmtCtx, tableFilters, ds.ctx.GetClient(), kv.TiKV)
-		remainedFilters = removeExprsInSelection(sessVars.StmtCtx, remainedFilters, filtersInSelection)
+		pushedFilters, remainedFilters := extraceFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
 		partialCost += totalRowCount * sessVars.CopCPUFactor
 		if len(pushedFilters) != 0 {
 			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
@@ -1149,19 +1144,23 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost, nil, nil
 }
 
-func removeExprsInSelection(sc *stmtctx.StatementContext, remainedFilters []expression.Expression, filtersInSelection []expression.Expression) (res []expression.Expression) {
-	for _, e1 := range remainedFilters {
-		remove := false
-		for _, e2 := range filtersInSelection {
-			if bytes.Equal(e1.HashCode(sc), e2.HashCode(sc)) {
-				remove = true
-			}
+// extraceFiltersForIndexMerge returns:
+// 1. exprs that can be pushed to TiKV.
+// 2. exprs that cannot be pushed to TiKV but can be pushed to other storages.
+// Why: IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
+// 	But the new Selection should exclude exprs that cannot be pushed to other storages either.
+// 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
+func extraceFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remained []expression.Expression) {
+	for _, expr := range filters {
+		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
+			pushed = append(pushed, expr)
+			continue
 		}
-		if !remove {
-			res = append(res, e1)
+		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.UnSpecified) {
+			remained = append(remained, expr)
 		}
 	}
-	return res
+	return
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
