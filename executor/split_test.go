@@ -137,8 +137,8 @@ func TestSplitIndex(t *testing.T) {
 	}
 	valueList, err := e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.Nil(t, err)
-	require.Equal(t, len(valueList), e.num+1)
+	require.NoError(t, err)
+	require.Len(t, len(valueList),e.num+1)
 
 	cases := []struct {
 		value        int
@@ -166,13 +166,13 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
@@ -193,8 +193,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.Nil(t, err)
-	require.Equal(t, len(valueList), e.num+1)
+	require.NoError(t, err)
+	require.Len(t, len(valueList),e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -214,13 +214,13 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases2 {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
@@ -245,8 +245,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	require.Nil(t, err)
-	require.Equal(t, len(valueList), e.num+1)
+	require.NoError(t, err)
+	require.Len(t, len(valueList), e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -272,13 +272,13 @@ func TestSplitIndex(t *testing.T) {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
@@ -326,8 +326,8 @@ func TestSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	require.Nil(t, err)
-	require.Equal(t, len(valueList), e.num-1)
+	require.NoError(t, err)
+	require.Len(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        int
@@ -355,7 +355,7 @@ func TestSplitTable(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, key)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
@@ -418,8 +418,8 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	require.Nil(t, err)
-	require.Equal(t, len(valueList), e.num-1)
+	require.NoError(t, err)
+	require.Len(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        []types.Datum
@@ -448,9 +448,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	for _, ca := range cases {
 		h, err := e.handleCols.BuildHandleByDatums(ca.value)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, key)
 		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
