@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -34,12 +33,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func Commentf(format string, args ...interface{}) string {
-	return fmt.Sprintf(format, args)
-}
 
 func TestLongestCommonPrefixLen(t *testing.T) {
 	t.Parallel()
@@ -60,7 +55,7 @@ func TestLongestCommonPrefixLen(t *testing.T) {
 
 	for _, ca := range cases {
 		re := longestCommonPrefixLen([]byte(ca.s1), []byte(ca.s2))
-		assert.Equal(t, ca.l, re)
+		require.Equal(t, ca.l, re)
 	}
 }
 
@@ -83,9 +78,9 @@ func TestGetStepValue(t *testing.T) {
 
 	for _, ca := range cases {
 		l := longestCommonPrefixLen(ca.lower, ca.upper)
-		assert.Equal(t, ca.l, l)
+		require.Equal(t, ca.l, l)
 		v0 := getStepValue(ca.lower[l:], ca.upper[l:], 1)
-		assert.Equal(t, v0, ca.v)
+		require.Equal(t, v0, ca.v)
 	}
 }
 
@@ -142,8 +137,8 @@ func TestSplitIndex(t *testing.T) {
 	}
 	valueList, err := e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	assert.Nil(t, err)
-	assert.Equal(t, len(valueList), e.num+1)
+	require.Nil(t, err)
+	require.Equal(t, len(valueList), e.num+1)
 
 	cases := []struct {
 		value        int
@@ -171,15 +166,15 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
@@ -198,8 +193,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	assert.Nil(t, err)
-	assert.Equal(t, len(valueList), e.num+1)
+	require.Nil(t, err)
+	require.Equal(t, len(valueList), e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -219,15 +214,15 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases2 {
 		// test for minInt64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
 
 	// Test for timestamp index.
@@ -250,8 +245,8 @@ func TestSplitIndex(t *testing.T) {
 
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
-	assert.Nil(t, err)
-	assert.Equal(t, len(valueList), e.num+1)
+	require.Nil(t, err)
+	require.Equal(t, len(valueList), e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -277,15 +272,15 @@ func TestSplitIndex(t *testing.T) {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
 }
 
@@ -331,8 +326,8 @@ func TestSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	assert.Nil(t, err)
-	assert.Equal(t, len(valueList), e.num-1)
+	require.Nil(t, err)
+	require.Equal(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        int
@@ -360,9 +355,9 @@ func TestSplitTable(t *testing.T) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
 }
 
@@ -423,8 +418,8 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
-	assert.Nil(t, err)
-	assert.Equal(t, len(valueList), e.num-1)
+	require.Nil(t, err)
+	require.Equal(t, len(valueList), e.num-1)
 
 	cases := []struct {
 		value        []types.Datum
@@ -453,11 +448,11 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
 	for _, ca := range cases {
 		h, err := e.handleCols.BuildHandleByDatums(ca.value)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
-		assert.Nil(t, err)
+		require.Nil(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		assert.Equal(t, idx, ca.lessEqualIdx, Commentf("%#v", ca))
+		require.Equal(t, idx, ca.lessEqualIdx, "%#v", ca)
 	}
 }
 
