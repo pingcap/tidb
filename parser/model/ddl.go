@@ -88,7 +88,7 @@ const (
 	ActionCreatePlacementPolicy         ActionType = 51
 	ActionAlterPlacementPolicy          ActionType = 52
 	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPolicy     ActionType = 54
+	ActionAlterTablePartitionPlacement  ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
@@ -145,7 +145,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCheckConstraint:          "alter check constraint",
 	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
-	ActionAlterTablePartitionPolicy:     "alter table partition policy",
+	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
 	ActionCreatePlacementPolicy:         "create placement policy",
 	ActionAlterPlacementPolicy:          "alter placement policy",
