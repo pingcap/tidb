@@ -1324,7 +1324,7 @@ func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinTidbShardSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_TidbShard)
+	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
 	return sig, nil
 }
 

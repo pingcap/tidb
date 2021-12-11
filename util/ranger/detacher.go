@@ -881,16 +881,16 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 /**
   @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
   @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
-						   e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
-						   `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
-						   only relative to uk's columns.
+                           e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
+                           `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
+                           only relative to uk's columns.
   @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
-						   columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
-						   is empty.
+                           columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
+                           is empty.
 
   @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
-			 []*valueInfo			   the values of every columns in the returned new condtions
-			 bool					   true means "IN" function is transformed to a "OR" function
+			 []*valueInfo              the values of every columns in the returned new condtions
+			 bool                      true means "IN" function is transformed to a "OR" function
 */
 func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -915,8 +915,8 @@ func AddGcColumnCond(sctx sessionctx.Context,
   For param explanation, please refer to the function `AddGcColumnCond`.
 
   @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
-			 []*valueInfo			   the values of every columns in the returned new condtions
-			 bool					   true means "IN" function is transformed to a "OR" function
+			 []*valueInfo              the values of every columns in the returned new condtions
+			 bool                      true means "IN" function is transformed to a "OR" function
 */
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -973,8 +973,8 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
   For param explanation, please refer to the function `AddGcColumnCond`.
 
   @retval -  []expression.Expression   the new condtions after adding `tidb_shard() = xxx` prefix
-			 []*valueInfo			   the values of every columns in the returned new condtions
-			 bool					   true means "IN" function is transformed to a "OR" function
+			 []*valueInfo              the values of every columns in the returned new condtions
+			 bool                      true means "IN" function is transformed to a "OR" function
 */
 func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
@@ -1077,12 +1077,12 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 /**
   @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
   @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
-						   e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
-						   `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
-						   only relative to uk's columns.
+                           e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
+                           `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
+                           only relative to uk's columns.
   @param[in] columnValues  the values of index columns in param accessCond. if accessCond is {a = 2, b = 1},
-						   columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
-						   is empty.
+                           columnValues is {2, 1}. if accessCond the "IN" function like `a IN (1, 2)`, columnValues
+                           is empty.
 
   @retval -  return true if it needs to addr tidb_shard() prefix, ohterwise return false
 */
@@ -1158,7 +1158,7 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
   (3) the rest params of "IN" function all shoulde be constant
   (4) the first param of "IN" function shoulde be the column in the expression of first index field.
       e.g. uk(tidb_shard(a), a). If the condtions is `WHERE b in (1, 2, 3)`, the first param of "IN" function
-	  is `b` that's not the column in `tidb_shard(a)`.
+      is `b` that's not the column in `tidb_shard(a)`.
 
   @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
 */
@@ -1210,7 +1210,6 @@ func GetFieldsFromExpr(virtaulExpr *expression.ScalarFunction) []*expression.Col
   1) the column count shoudle be >= 2
   2) the first column shoudle be tidb_shard(xxx)
   3) the parameter of tidb_shard shoudle be a column that is the second column of index
-
 
   @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
 
