@@ -288,3 +288,10 @@ func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
 	}
 	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
 }
+
+func (path *AccessPath) IsUkShardIndex() bool {
+	if path.Index.Unique && path.IsShardIndexPath {
+		return true
+	}
+	return false
+}
