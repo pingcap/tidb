@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -109,12 +110,6 @@ const (
 		FROM %s.` + conflictErrorTableName + `
 		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
-	`
-	selectConflictErrorRowIDSample = `
-		SELECT _tidb_rowid
-		FROM %s.` + conflictErrorTableName + `
-		TABLESAMPLE REGIONS()
-		ORDER BY _tidb_rowid;
 	`
 )
 
@@ -312,27 +307,6 @@ func (em *ErrorManager) RecordIndexConflictError(
 	})
 }
 
-func (em *ErrorManager) selectConflictErrorRowIDSample(ctx context.Context) ([]int64, error) {
-	rows, err := em.db.QueryContext(ctx, fmt.Sprintf(selectConflictErrorRowIDSample, em.schemaEscaped))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer rows.Close()
-	rowIDs := []int64{0}
-	for rows.Next() {
-		var rowID int64
-		if err := rows.Scan(&rowID); err != nil {
-			return nil, errors.Trace(err)
-		}
-		rowIDs = append(rowIDs, rowID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	rowIDs = append(rowIDs, math.MaxInt64)
-	return rowIDs, nil
-}
-
 // ResolveAllConflictKeys query all conflicting rows (handle and their
 // values) from the current error report and resolve them concurrently.
 func (em *ErrorManager) ResolveAllConflictKeys(
@@ -344,21 +318,29 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	if em.db == nil {
 		return nil
 	}
-	rowIDs, err := em.selectConflictErrorRowIDSample(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
+	const rowLimit = 1000
+	taskCh := make(chan [2]int64)
+	taskWg := &sync.WaitGroup{}
 	g, gCtx := errgroup.WithContext(ctx)
-	for i := 1; i < len(rowIDs); i++ {
-		start := rowIDs[i-1]
-		end := rowIDs[i]
+
+	go func() {
+		taskWg.Add(1)
+		taskCh <- [2]int64{0, math.MaxInt64}
+		taskWg.Wait()
+		close(taskCh)
+	}()
+
+	for t := range taskCh {
+		start, end := t[0], t[1]
 		pool.ApplyOnErrorGroup(g, func() error {
+			defer taskWg.Done()
+
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
 					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
-					tableName, start, end, 1000)
+					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -383,6 +365,18 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 					return errors.Trace(err)
 				}
 				start = lastRowID + 1
+				// If the remaining tasks cannot be processed at once, split the task
+				// into two subtasks and send one of them to the other idle worker if possible.
+				if end-start > rowLimit {
+					mid := start + (end-start)/2
+					taskWg.Add(1)
+					select {
+					case taskCh <- [2]int64{mid, end}:
+						end = mid
+					default:
+						taskWg.Done()
+					}
+				}
 				handleRows = handleRows[:0]
 			}
 			return nil

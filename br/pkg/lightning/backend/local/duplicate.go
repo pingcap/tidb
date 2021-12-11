@@ -395,15 +395,15 @@ func (s *RemoteDupKVStream) Close() error {
 // DuplicateManager provides methods to collect and decode duplicated KV pairs into row data. The results
 // are stored into the errorMgr.
 type DuplicateManager struct {
-	tbl               table.Table
-	tableName         string
-	splitCli          restore.SplitClient
-	tikvCli           *tikv.KVStore
-	errorMgr          *errormanager.ErrorManager
-	decoder           *kv.TableKVDecoder
-	logger            log.Logger
-	regionConcurrency int
-	hasDupe           *atomic.Bool
+	tbl         table.Table
+	tableName   string
+	splitCli    restore.SplitClient
+	tikvCli     *tikv.KVStore
+	errorMgr    *errormanager.ErrorManager
+	decoder     *kv.TableKVDecoder
+	logger      log.Logger
+	concurrency int
+	hasDupe     *atomic.Bool
 }
 
 // NewDuplicateManager creates a new DuplicateManager.
@@ -414,7 +414,7 @@ func NewDuplicateManager(
 	tikvCli *tikv.KVStore,
 	errMgr *errormanager.ErrorManager,
 	sessOpts *kv.SessionOptions,
-	regionConcurrency int,
+	concurrency int,
 	hasDupe *atomic.Bool,
 ) (*DuplicateManager, error) {
 	decoder, err := kv.NewTableKVDecoder(tbl, tableName, sessOpts)
@@ -423,15 +423,15 @@ func NewDuplicateManager(
 	}
 	logger := log.With(zap.String("tableName", tableName))
 	return &DuplicateManager{
-		tbl:               tbl,
-		tableName:         tableName,
-		splitCli:          splitCli,
-		tikvCli:           tikvCli,
-		errorMgr:          errMgr,
-		decoder:           decoder,
-		logger:            logger,
-		regionConcurrency: regionConcurrency,
-		hasDupe:           hasDupe,
+		tbl:         tbl,
+		tableName:   tableName,
+		splitCli:    splitCli,
+		tikvCli:     tikvCli,
+		errorMgr:    errMgr,
+		decoder:     decoder,
+		logger:      logger,
+		concurrency: concurrency,
+		hasDupe:     hasDupe,
 	}, nil
 }
 
@@ -631,7 +631,7 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 	logger := m.logger
 	logger.Info("[detect-dupe] collect duplicate rows from local duplicate db", zap.Int("tasks", len(tasks)))
 
-	pool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from duplicate db")
+	pool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
@@ -808,8 +808,8 @@ func (m *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, imp
 	logger := m.logger
 	logger.Info("[detect-dupe] collect duplicate rows from tikv", zap.Int("tasks", len(tasks)))
 
-	taskPool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from tikv")
-	regionPool := utils.NewWorkerPool(uint(m.regionConcurrency), "collect duplicate rows from tikv by region")
+	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
+	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -211,8 +212,8 @@ type local struct {
 	batchWriteKVPairs int
 	checkpointEnabled bool
 
-	regionConcurrency int
-	maxOpenFiles      int
+	dupeConcurrency int
+	maxOpenFiles    int
 
 	engineMemCacheSize      int
 	localWriterMemCacheSize int64
@@ -312,7 +313,7 @@ func NewLocalBackend(
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
-		regionConcurrency: rangeConcurrency,
+		dupeConcurrency:   rangeConcurrency * 2,
 		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
 		checkpointEnabled: cfg.Checkpoint.Enable,
 		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
@@ -1372,7 +1373,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.regionConcurrency, atomicHasDupe)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1390,7 +1391,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 
 	atomicHasDupe := atomic.NewBool(false)
 	duplicateManager, err := NewDuplicateManager(tbl, tableName, local.splitCli, local.tikvCli,
-		local.errorMgr, opts, local.regionConcurrency, atomicHasDupe)
+		local.errorMgr, opts, local.dupeConcurrency, atomicHasDupe)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1424,12 +1425,22 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
-	pool := utils.NewWorkerPool(uint(local.regionConcurrency), "resolve duplicate rows")
+	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
 		func(ctx context.Context, handleRows [][2][]byte) error {
-			err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
-			return errors.Trace(err)
+			for {
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				if err == nil {
+					return nil
+				}
+				// Retry for write conflict error. It is strange that
+				// conflict error occurred in pessimistic transaction.
+				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+					return errors.Trace(err)
+				}
+				logger.Warn("write conflict encountered", log.ShortError(err))
+			}
 		},
 	)
 	return errors.Trace(err)
