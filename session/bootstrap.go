@@ -357,6 +357,14 @@ const (
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
+	// CreateTableCacheMetaTable stores the cached table meta lock information.
+	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
+		tid bigint(11) NOT NULL DEFAULT 0,
+		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
+		lease bigint(20) NOT NULL DEFAULT 0,
+		oldReadLease bigint(20) NOT NULL DEFAULT 0,
+		PRIMARY KEY (tid)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -528,14 +536,16 @@ const (
 	version77 = 77
 	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
 	version78 = 78
-	// version79 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
-	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
+	// version79 adds the mysql.table_cache_meta table
 	version79 = 79
+	// version80 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
+	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
+	version80 = 80
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version79
+var currentBootstrapVersion int64 = version80
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -618,6 +628,7 @@ var (
 		upgradeToVer77,
 		upgradeToVer78,
 		upgradeToVer79,
+		upgradeToVer80,
 	}
 )
 
@@ -1620,6 +1631,13 @@ func upgradeToVer79(s Session, ver int64) {
 	if ver >= version79 {
 		return
 	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
+}
+
+func upgradeToVer80(s Session, ver int64) {
+	if ver >= version80 {
+		return
+	}
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
 	ctx := context.Background()
@@ -1633,8 +1651,8 @@ func upgradeToVer79(s Session, ver int64) {
 		return
 	}
 
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
-	terror.MustNil(err)
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
 }
 
 func writeOOMAction(s Session) {
@@ -1719,6 +1737,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 	// Create column_stats_usage table
 	mustExecute(s, CreateColumnStatsUsageTable)
+	// Create table_cache_meta table.
+	mustExecute(s, CreateTableCacheMetaTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

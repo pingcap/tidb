@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -101,8 +102,10 @@ type innerCtx struct {
 	rowTypes      []*types.FieldType
 	keyCols       []int
 	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
+	keyCollators  []collate.Collator
 	hashTypes     []*types.FieldType
 	hashCols      []int
+	hashCollators []collate.Collator
 	colLens       []int
 	hasPrefixCol  bool
 }
@@ -629,7 +632,7 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			}
 			return nil, nil, err
 		}
-		cmp, err := outerValue.CompareDatum(sc, &innerValue)
+		cmp, err := outerValue.Compare(sc, &innerValue, iw.hashCollators[i])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -651,7 +654,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	}
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	sort.Slice(lookUpContents, func(i, j int) bool {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[j].keys)
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[j].keys, iw.keyCollators)
 		if cmp != 0 || iw.nextColCompareFilters == nil {
 			return cmp < 0
 		}
@@ -659,7 +662,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	})
 	deDupedLookupKeys := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
-		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys)
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys, iw.keyCollators)
 		if cmp != 0 || (iw.nextColCompareFilters != nil && iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
 			deDupedLookupKeys = append(deDupedLookupKeys, lookUpContents[i])
 		}
@@ -667,9 +670,9 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 	return deDupedLookupKeys
 }
 
-func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
+func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
 	for idx := 0; idx < len(left); idx++ {
-		cmp, err := left[idx].CompareDatum(sc, &right[idx])
+		cmp, err := left[idx].Compare(sc, &right[idx], ctors[idx])
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
 		if cmp > 0 {
