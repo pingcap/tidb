@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -229,10 +228,8 @@ func TestIssue10178(t *testing.T) {
 
 func TestInconsistentIndex(t *testing.T) {
 	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
