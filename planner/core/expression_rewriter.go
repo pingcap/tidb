@@ -2030,7 +2030,12 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 	if handle.IsInt() {
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
-		ret["_tidb_rowid"] = handle.IntValue()
+		// When the clustered index is enabled, we should show the PK name.
+		if tbl.Meta().HasClusteredIndex() {
+			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
+		} else {
+			ret["_tidb_rowid"] = handle.IntValue()
+		}
 		retStr, err := json.Marshal(ret)
 		if err != nil {
 			return "", errors.Trace(err)
