@@ -20,6 +20,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/parser"
 	"math"
 	"regexp"
 	"strconv"
@@ -5555,6 +5556,13 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 			return "", true, nil
 		}
 		return "", true, err
+	}
+
+	check := arg1Str
+	_, check, _ = parser.Number(parser.Space0(check))
+	check, err = parser.Char(check, '-')
+	if strings.Compare(check, "") != 0 && err == nil {
+		return "", true, nil
 	}
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
