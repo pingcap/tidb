@@ -4352,6 +4352,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TiFlashSystemTableExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
+		case infoschema.TableTiKVRegionStatus:
+			p.Extractor = &TikvRegionStatusExtractor{}
 		}
 	}
 	return p, nil
