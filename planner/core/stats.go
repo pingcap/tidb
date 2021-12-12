@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -698,12 +699,21 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current+1:]...)
+	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current])
-			break
+			addCurrentFilter = true
 		}
+		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.IndexFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+			path.IndexFilters = nil
+		}
+	}
+	if addCurrentFilter {
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current])
 	}
 	return indexMergePath
 }

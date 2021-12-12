@@ -1127,7 +1127,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		pushedFilters, remainedFilters := extraceFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
+		pushedFilters, remainedFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
 		partialCost += totalRowCount * sessVars.CopCPUFactor
 		if len(pushedFilters) != 0 {
 			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
@@ -1144,13 +1144,13 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	return ts, partialCost, nil, nil
 }
 
-// extraceFiltersForIndexMerge returns:
+// extractFiltersForIndexMerge returns:
 // 1. exprs that can be pushed to TiKV.
 // 2. exprs that cannot be pushed to TiKV but can be pushed to other storages.
 // Why: IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
 // 	But the new Selection should exclude exprs that cannot be pushed to other storages either.
 // 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extraceFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remained []expression.Expression) {
+func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remained []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
 			pushed = append(pushed, expr)
