@@ -620,6 +620,8 @@ const (
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
+	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 )
 
 // TiDB intentional limits
