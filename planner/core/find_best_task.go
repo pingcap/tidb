@@ -1128,8 +1128,8 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	}
 	if len(tableFilters) > 0 {
 		pushedFilters, remainedFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
-		partialCost += totalRowCount * sessVars.CopCPUFactor
 		if len(pushedFilters) != 0 {
+			partialCost += totalRowCount * sessVars.CopCPUFactor
 			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
