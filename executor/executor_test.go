@@ -83,7 +83,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/topsql"
-	topsqlmock "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	topsqlmock "github.com/pingcap/tidb/util/tracecpu/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"

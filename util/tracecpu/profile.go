@@ -40,7 +40,7 @@ const (
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
 
-	// DefPrecisionSeconds indicates that the default PrecisionSeconds is 10000
+	// DefPrecisionSeconds indicates that the default PrecisionSeconds is 1s
 	DefPrecisionSeconds = 1
 
 	// DefEnablePProfSQLCPU indicates that the default EnablePProfSQLCPU is false
