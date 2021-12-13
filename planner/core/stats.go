@@ -339,8 +339,10 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
-		logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v, from connection %d, for %s",
-			isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn, ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
+		if ds.tableInfo != nil {
+			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v, from connection %d, for %s",
+				isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn, ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
+		}
 	}
 	return ds.stats, nil
 }
