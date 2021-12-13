@@ -172,6 +172,28 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select t1.b,t1.c from t as t1 left join t as t2 on t1.a = t2.a;",
+			flags:          []uint64{flagBuildKeyInfo, flagEliminateOuterJoin},
+			assertRuleName: "outer_join_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
+					assertReason: "The columns[test.t.b,test.t.c] are from outer table, and the inner join keys[test.t.a] are unique",
+				},
+			},
+		},
+		{
+			sql:            "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagEliminateOuterJoin},
+			assertRuleName: "outer_join_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
+					assertReason: "The columns[test.t.a,test.t.b] in agg are from outer table, and the agg functions are duplicate agnostic",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
