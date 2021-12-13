@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"math"
 	"time"
 )
@@ -67,8 +69,6 @@ const (
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
-
-var flagRulesAfterStats = []uint64{flagJoinReOrder, flagPrunColumnsAgain}
 
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
@@ -291,7 +291,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
+		refineCETrace(sctx)
+	}
+
 	return finalPlan, cost, nil
+}
+
+// refineCETrace will adjust the content of CETrace.
+// Currently, it will (1) deduplicate trace records and (2) fill in the table name.
+func refineCETrace(sctx sessionctx.Context) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
+	traceRecords := stmtCtx.OptimizerCETrace
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	for _, rec := range traceRecords {
+		tbl, ok := is.TableByID(rec.TableID)
+		if !ok {
+			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+				zap.Int64("table id", rec.TableID))
+		}
+		rec.TableName = tbl.Meta().Name.O
+	}
 }
 
 // SyncLoadColumnFullStats sends columns' full-stats request and sync-wait until timeout
