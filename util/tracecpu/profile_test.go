@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/pingcap/tidb/util/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu/mock"
 	"github.com/stretchr/testify/require"
 )
 

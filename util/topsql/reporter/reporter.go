@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"

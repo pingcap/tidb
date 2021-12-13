@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/stretchr/testify/require"
 )
 

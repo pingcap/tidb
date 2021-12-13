@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"

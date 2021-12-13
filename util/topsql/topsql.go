@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

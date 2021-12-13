@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"

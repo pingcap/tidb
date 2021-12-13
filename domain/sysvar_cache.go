@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/tracecpu"
 )
 
 func (s *testSerialSuite1) TestSetVar(c *C) {
