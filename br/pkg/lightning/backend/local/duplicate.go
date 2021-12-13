@@ -671,19 +671,25 @@ func (m *DuplicateManager) splitKeyRangeByRegions(
 	regions := make([]*restore.RegionInfo, 0, len(allRegions))
 	keyRanges := make([]tidbkv.KeyRange, 0, len(allRegions))
 	for _, region := range allRegions {
-		_, startKey, err := codec.DecodeBytes(region.Region.StartKey, nil)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		startKey := keyRange.StartKey
+		endKey := keyRange.EndKey
+		if len(region.Region.StartKey) > 0 {
+			_, regionStartKey, err := codec.DecodeBytes(region.Region.StartKey, nil)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			if bytes.Compare(startKey, regionStartKey) < 0 {
+				startKey = regionStartKey
+			}
 		}
-		_, endKey, err := codec.DecodeBytes(region.Region.EndKey, nil)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if bytes.Compare(startKey, keyRange.StartKey) < 0 {
-			startKey = keyRange.StartKey
-		}
-		if bytes.Compare(endKey, keyRange.EndKey) > 0 {
-			endKey = keyRange.EndKey
+		if len(region.Region.EndKey) > 0 {
+			_, regionEndKey, err := codec.DecodeBytes(region.Region.EndKey, nil)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			if bytes.Compare(endKey, regionEndKey) > 0 {
+				endKey = regionEndKey
+			}
 		}
 		if bytes.Compare(startKey, endKey) < 0 {
 			regions = append(regions, region)
@@ -721,9 +727,12 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
 	for i := 0; i < len(regions); i++ {
+		if ctx.Err() != nil {
+			metErr.Set(ctx.Err())
+			break
+		}
 		region := regions[i]
 		kr := keyRanges[i]
-
 		wg.Add(1)
 		regionPool.Apply(func() {
 			defer wg.Done()
