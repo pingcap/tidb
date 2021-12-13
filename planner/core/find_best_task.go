@@ -1145,8 +1145,8 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 }
 
 // extractFiltersForIndexMerge returns:
-// 1. exprs that can be pushed to TiKV.
-// 2. exprs that cannot be pushed to TiKV but can be pushed to other storages.
+// `pushed`: exprs that can be pushed to TiKV.
+// `remained`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
 // Why: IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
 // 	But the new Selection should exclude exprs that cannot be pushed to other storages either.
 // 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
