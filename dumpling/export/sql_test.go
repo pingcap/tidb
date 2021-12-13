@@ -351,14 +351,16 @@ func TestShowCreatePolicy(t *testing.T) {
 		require.NoError(t, db.Close())
 	}()
 
+	tctx := tcontext.Background().WithLogger(appLogger)
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
 	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `policy_x`").
 		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
 			AddRow("policy_x", "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1"))
 
-	createPolicySQL, err := ShowCreatePlacementPolicy(conn, "policy_x")
+	createPolicySQL, err := ShowCreatePlacementPolicy(tctx, baseConn, "policy_x")
 	require.NoError(t, err)
 	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -374,13 +376,15 @@ func TestListPolicyNames(t *testing.T) {
 		require.NoError(t, db.Close())
 	}()
 
+	tctx := tcontext.Background().WithLogger(appLogger)
 	conn, err := db.Conn(context.Background())
+	baseConn := newBaseConn(conn, true, nil)
 	require.NoError(t, err)
 
 	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
 		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
 			AddRow("policy_x"))
-	policies, err := ListAllPlacementPolicyNames(conn)
+	policies, err := ListAllPlacementPolicyNames(tctx, baseConn)
 	require.NoError(t, err)
 	require.Equal(t, []string{"policy_x"}, policies)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -389,7 +393,7 @@ func TestListPolicyNames(t *testing.T) {
 	expectedErr := &mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'information_schema.placement_rules' doesn't exist"}
 	mock.ExpectExec("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
 		WillReturnError(expectedErr)
-	policies, err = ListAllPlacementPolicyNames(conn)
+	policies, err = ListAllPlacementPolicyNames(tctx, baseConn)
 	if mysqlErr, ok := err.(*mysql.MySQLError); ok {
 		require.Equal(t, mysqlErr.Number, ErrNoSuchTable)
 	}
