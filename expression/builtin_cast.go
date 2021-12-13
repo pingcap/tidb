@@ -1603,6 +1603,15 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
+	v, ok := b.ctx.GetSessionVars().GetSystemVar(variable.Timestamp)
+	if ok {
+		sc.Timestamp, err = strconv.Atoi(v)
+		if err != nil {
+			return res, isNull, err
+		}
+	} else {
+		sc.Timestamp = -1
+	}
 	res, err = val.ConvertToTime(sc, b.tp.Tp)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)

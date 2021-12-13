@@ -10445,3 +10445,12 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 }
+
+func (s *testIntegrationSuite) TestIssue30327(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows(time.Now().Format("2006-01-02")))
+	tk.MustExec("SET TIMESTAMP=978332400;")
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2001-01-01"))
+}

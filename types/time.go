@@ -1461,7 +1461,12 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(sc.TimeZone).Date()
+	baseTime := gotime.Now()
+	if sc.Timestamp >= 0 {
+		diff := int64(sc.Timestamp) - baseTime.Unix()
+		baseTime = baseTime.Add(gotime.Duration(diff) * gotime.Second)
+	}
+	year, month, day := baseTime.In(sc.TimeZone).Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 

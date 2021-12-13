@@ -190,6 +190,8 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+	// Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
+	Timestamp int
 }
 
 // StmtHints are SessionVars related sql hints.
