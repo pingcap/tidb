@@ -254,8 +254,9 @@ func SubTestColumnRange() func(*testing.T) {
 			},
 		}
 		ran := []*ranger.Range{{
-			LowVal:  []types.Datum{{}},
-			HighVal: []types.Datum{types.MaxValueDatum()},
+			LowVal:    []types.Datum{{}},
+			HighVal:   []types.Datum{types.MaxValueDatum()},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		count, err := tbl.GetRowCountByColumnRanges(ctx, 0, ran)
 		require.NoError(t, err)
@@ -325,8 +326,9 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			},
 		}
 		ran := []*ranger.Range{{
-			LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
-			HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
+			LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
+			HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		count, err := tbl.GetRowCountByIntColumnRanges(ctx, 0, ran)
 		require.NoError(t, err)
@@ -348,8 +350,9 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.Equal(t, 1, int(count))
 
 		ran = []*ranger.Range{{
-			LowVal:  []types.Datum{types.NewUintDatum(0)},
-			HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			LowVal:    []types.Datum{types.NewUintDatum(0)},
+			HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		count, err = tbl.GetRowCountByIntColumnRanges(ctx, 0, ran)
 		require.NoError(t, err)
@@ -419,8 +422,9 @@ func SubTestIndexRanges() func(*testing.T) {
 			},
 		}
 		ran := []*ranger.Range{{
-			LowVal:  []types.Datum{types.MinNotNullDatum()},
-			HighVal: []types.Datum{types.MaxValueDatum()},
+			LowVal:    []types.Datum{types.MinNotNullDatum()},
+			HighVal:   []types.Datum{types.MaxValueDatum()},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
 		count, err := tbl.GetRowCountByIndexRanges(ctx, 0, ran)
 		require.NoError(t, err)

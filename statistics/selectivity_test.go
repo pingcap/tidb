@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -123,8 +124,9 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 
 func getRange(start, end int64) []*ranger.Range {
 	ran := &ranger.Range{
-		LowVal:  []types.Datum{types.NewIntDatum(start)},
-		HighVal: []types.Datum{types.NewIntDatum(end)},
+		LowVal:    []types.Datum{types.NewIntDatum(start)},
+		HighVal:   []types.Datum{types.NewIntDatum(end)},
+		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	return []*ranger.Range{ran}
 }
