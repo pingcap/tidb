@@ -71,7 +71,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
-	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
+	rc := NewSingleTargetDataSink(mockPlanBinaryDecoderFunc)
 	ts := NewRemoteTopSQLReporter(rc)
 	return ts
 }

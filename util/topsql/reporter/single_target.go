@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -27,36 +29,87 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
-// ReportClient send data to the target server.
-type ReportClient interface {
-	Send(ctx context.Context, addr string, data reportData) error
-	Close()
-}
-
-// GRPCReportClient reports data to grpc servers.
-type GRPCReportClient struct {
+// SingleTargetDataSink reports data to grpc servers.
+type SingleTargetDataSink struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	// calling decodePlan this can take a while, so should not block critical paths
 	decodePlan planBinaryDecodeFunc
+	sendTaskCh chan sendTask
 }
 
-// NewGRPCReportClient returns a new GRPCReportClient
-func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
-	return &GRPCReportClient{
+// NewSingleTargetDataSink returns a new SingleTargetDataSink
+func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataSink {
+	dataSink := &SingleTargetDataSink{
 		decodePlan: decodePlan,
+		sendTaskCh: make(chan sendTask, 1),
+	}
+	go util.WithRecovery(dataSink.run, nil)
+	return dataSink
+}
+
+func (ds *SingleTargetDataSink) run() {
+	for task := range ds.sendTaskCh {
+		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+		if targetRPCAddr == "" {
+			continue
+		}
+
+		ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
+		start := time.Now()
+		err := ds.doSend(ctx, targetRPCAddr, task.data)
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
+			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
 	}
 }
 
-var _ ReportClient = &GRPCReportClient{}
+var _ DataSink = &SingleTargetDataSink{}
 
-// Send implements the ReportClient interface.
-// Currently the implementation will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData) error {
-	if targetRPCAddr == "" {
-		return nil
+// Send implements the DataSink interface.
+// Currently the implementation will establish a new connection every time,
+// which is suitable for a per-minute sending period
+func (ds *SingleTargetDataSink) Send(data ReportData, deadline time.Time) {
+	select {
+	case ds.sendTaskCh <- sendTask{data: data, deadline: deadline}:
+		// sent successfully
+	default:
+		ignoreReportChannelFullCounter.Inc()
+		logutil.BgLogger().Warn("[top-sql] the channel of single target datasink is full")
 	}
-	err := r.tryEstablishConnection(ctx, targetRPCAddr)
+}
+
+// IsPaused implements the DataSink interface.
+func (ds *SingleTargetDataSink) IsPaused() bool {
+	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
+}
+
+// IsDown implements the DataSink interface.
+// SingleTargetDataSink be never down. As long as the config ReceiverAddress is valid,
+// SingleTargetDataSink will keep running.
+func (ds *SingleTargetDataSink) IsDown() bool {
+	return false
+}
+
+// Close uses to close grpc connection.
+func (ds *SingleTargetDataSink) Close() {
+	close(ds.sendTaskCh)
+	if ds.conn == nil {
+		return
+	}
+	err := ds.conn.Close()
+	if err != nil {
+		logutil.BgLogger().Warn("[top-sql] single target datasink close connection failed", zap.Error(err))
+	}
+	ds.conn = nil
+}
+
+func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data ReportData) error {
+	err := ds.tryEstablishConnection(ctx, addr)
 	if err != nil {
 		return err
 	}
@@ -67,15 +120,15 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
+		errCh <- ds.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchPlanMeta(ctx, data.normalizedPlanMap)
+		errCh <- ds.sendBatchPlanMeta(ctx, data.normalizedPlanMap)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- r.sendBatchCPUTimeRecord(ctx, data.collectedData)
+		errCh <- ds.sendBatchCPUTimeRecord(ctx, data.collectedData)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -87,25 +140,13 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 	return nil
 }
 
-// Close uses to close grpc connection.
-func (r *GRPCReportClient) Close() {
-	if r.conn == nil {
-		return
-	}
-	err := r.conn.Close()
-	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
-	}
-	r.conn = nil
-}
-
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
+func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
 	start := time.Now()
-	client := tipb.NewTopSQLAgentClient(r.conn)
+	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportCPUTimeRecords(ctx)
 	if err != nil {
 		return err
@@ -133,9 +174,9 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records [
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
 	start := time.Now()
-	client := tipb.NewTopSQLAgentClient(r.conn)
+	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
 		return err
@@ -169,16 +210,16 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
+func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
 	start := time.Now()
-	client := tipb.NewTopSQLAgentClient(r.conn)
+	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
 	cnt := 0
 	planMap.Range(func(key, value interface{}) bool {
-		planDecoded, errDecode := r.decodePlan(value.(string))
+		planDecoded, errDecode := ds.decodePlan(value.(string))
 		if errDecode != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true
@@ -208,26 +249,26 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 }
 
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
-func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
-	if r.curRPCAddr == targetRPCAddr && r.conn != nil {
+func (ds *SingleTargetDataSink) tryEstablishConnection(ctx context.Context, targetRPCAddr string) (err error) {
+	if ds.curRPCAddr == targetRPCAddr && ds.conn != nil {
 		// Address is not changed, skip.
 		return nil
 	}
 
-	if r.conn != nil {
-		err := r.conn.Close()
-		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+	if ds.conn != nil {
+		err := ds.conn.Close()
+		logutil.BgLogger().Warn("[top-sql] grpc datasink close connection failed", zap.Error(err))
 	}
 
-	r.conn, err = r.dial(ctx, targetRPCAddr)
+	ds.conn, err = ds.dial(ctx, targetRPCAddr)
 	if err != nil {
 		return err
 	}
-	r.curRPCAddr = targetRPCAddr
+	ds.curRPCAddr = targetRPCAddr
 	return nil
 }
 
-func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
+func (ds *SingleTargetDataSink) dial(ctx context.Context, targetRPCAddr string) (*grpc.ClientConn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	return grpc.DialContext(
@@ -249,4 +290,9 @@ func (r *GRPCReportClient) dial(ctx context.Context, targetRPCAddr string) (*grp
 			},
 		}),
 	)
+}
+
+type sendTask struct {
+	data     ReportData
+	deadline time.Time
 }
