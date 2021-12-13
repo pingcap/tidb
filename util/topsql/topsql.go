@@ -33,8 +33,8 @@ import (
 const (
 	// MaxSQLTextSize exports for testing.
 	MaxSQLTextSize = 4 * 1024
-	// MaxPlanTextSize exports for testing.
-	MaxPlanTextSize = 32 * 1024
+	// MaxBinaryPlanSize exports for testing.
+	MaxBinaryPlanSize = 2 * 1024
 )
 
 var globalTopSQLReport reporter.TopSQLReporter
@@ -125,7 +125,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
-	if len(normalizedBinaryPlan) > MaxPlanTextSize {
+	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return
 	}
