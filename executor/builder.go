@@ -976,11 +976,13 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	t := &TraceExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		stmtNode:       v.StmtNode,
-		builder:        b,
-		format:         v.Format,
-		optimizerTrace: v.OptimizerTrace,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmtNode:     v.StmtNode,
+		builder:      b,
+		format:       v.Format,
+
+		optimizerTrace:       v.OptimizerTrace,
+		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
 		return &SortExec{
@@ -4734,7 +4736,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 						zap.Stack("stack trace"))
 				}
 			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}
