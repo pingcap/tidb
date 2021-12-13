@@ -284,6 +284,7 @@ type HotTableIndex struct {
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
+	tables := h.GetTablesInfoWithKeyRange(allSchemas)
 	for regionID, regionMetric := range metrics {
 		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
@@ -292,22 +293,33 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
 		}
+		regionsInfo := &RegionsInfo{
+			Count: 1,
+			Regions: []RegionInfo{
+				{
+					ID:       int64(regionID),
+					StartKey: bytesKeyToHex(region.StartKey),
+					EndKey:   bytesKeyToHex(region.EndKey),
+				},
+			},
+		}
+		regionsTableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
 
-		hotRange, err := NewRegionFrameRange(region)
-		if err != nil {
-			return nil, err
+		if tableInfos, ok := regionsTableInfos[int64(regionID)]; ok {
+			for _, tableInfo := range tableInfos {
+				t.DbName = tableInfo.DB.Name.O
+				t.TableName = tableInfo.Table.Name.O
+				t.TableID = tableInfo.Table.ID
+				t.IndexName = tableInfo.Index.Name.O
+				t.IndexID = tableInfo.Index.ID
+
+				hotTables = append(hotTables, t)
+			}
+		} else {
+			hotTables = append(hotTables, t)
 		}
-		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
-		if f != nil {
-			t.DbName = f.DBName
-			t.TableName = f.TableName
-			t.TableID = f.TableID
-			t.IndexName = f.IndexName
-			t.IndexID = f.IndexID
-		}
-		hotTables = append(hotTables, t)
+
 	}
-
 	return hotTables, nil
 }
 
@@ -602,18 +614,18 @@ func (xs byRegionStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
-// tableInfoWithKeyRange stores table or index informations with its key range.
-type tableInfoWithKeyRange struct {
+// TableInfoWithKeyRange stores table or index informations with its key range.
+type TableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string
 	EndKey   string
 }
 
-func (t tableInfoWithKeyRange) getStartKey() string { return t.StartKey }
-func (t tableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
+func (t TableInfoWithKeyRange) getStartKey() string { return t.StartKey }
+func (t TableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
 
 // for sorting
-type byTableStartKey []tableInfoWithKeyRange
+type byTableStartKey []TableInfoWithKeyRange
 
 func (xs byTableStartKey) Len() int      { return len(xs) }
 func (xs byTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
@@ -621,11 +633,11 @@ func (xs byTableStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
-func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) tableInfoWithKeyRange {
+func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return tableInfoWithKeyRange{
+	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:      db,
 			Table:   table,
@@ -637,11 +649,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) tableInfoWit
 	}
 }
 
-func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) tableInfoWithKeyRange {
+func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableIndexKeyRange(table.ID, index.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return tableInfoWithKeyRange{
+	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:      db,
 			Table:   table,
@@ -653,11 +665,11 @@ func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 	}
 }
 
-func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) tableInfoWithKeyRange {
+func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitionID int64) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(partitionID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
 	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
-	return tableInfoWithKeyRange{
+	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:      db,
 			Table:   table,
@@ -673,15 +685,14 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
 func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
-	tableInfos := make(map[int64][]TableInfo, len(regionsInfo.Regions))
+	tables := h.GetTablesInfoWithKeyRange(schemas)
+	tableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
+	return tableInfos
+}
 
-	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
-		tableInfos[regionsInfo.Regions[i].ID] = []TableInfo{}
-		regions = append(regions, &regionsInfo.Regions[i])
-	}
-
-	tables := []tableInfoWithKeyRange{}
+// GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
+func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
+	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
 			if table.Partition != nil {
@@ -696,13 +707,25 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 			}
 		}
 	}
+	sort.Sort(byTableStartKey(tables))
+	return tables
+}
+
+// ParseRegionsTableInfos parse the tables or indices in regions according to key range.
+func (h *Helper) ParseRegionsTableInfos(regionsInfo *RegionsInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+	tableInfos := make(map[int64][]TableInfo, len(regionsInfo.Regions))
+
+	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
+	for i := 0; i < len(regionsInfo.Regions); i++ {
+		tableInfos[regionsInfo.Regions[i].ID] = []TableInfo{}
+		regions = append(regions, &regionsInfo.Regions[i])
+	}
 
 	if len(tables) == 0 || len(regions) == 0 {
 		return tableInfos
 	}
 
 	sort.Sort(byRegionStartKey(regions))
-	sort.Sort(byTableStartKey(tables))
 
 	idx := 0
 OutLoop:
