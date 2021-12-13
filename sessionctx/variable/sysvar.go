@@ -801,14 +801,13 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(int64(GlobalLogMaxDays.Load()), 10), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, skipInit: true, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
-		enable := uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0
-		EnablePProfSQLCPU.Store(enable)
+	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(tracecpu.DefEnablePProfSQLCPU), Type: TypeInt, skipInit: true, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		enable := uint32(tidbOptPositiveInt32(val, tracecpu.DefEnablePProfSQLCPU)) > 0
 		tracecpu.EnablePProfSQLCPU.Store(enable)
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		val := "0"
-		if EnablePProfSQLCPU.Load() {
+		if tracecpu.EnablePProfSQLCPU.Load() {
 			val = "1"
 		}
 		return val, nil

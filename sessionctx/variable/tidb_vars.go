@@ -688,7 +688,6 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin        = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL                = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                     = false
-	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
 	DefTiDBDisableTxnAutoRetry            = true
 	DefTiDBConstraintCheckInPlace         = false
@@ -778,7 +777,6 @@ const (
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
 	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	EnablePProfSQLCPU           = atomic.NewBool(false)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
 	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit

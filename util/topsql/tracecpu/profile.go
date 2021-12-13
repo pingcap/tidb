@@ -42,6 +42,9 @@ const (
 
 	// DefPrecisionSeconds indicates that the default PrecisionSeconds is 10000
 	DefPrecisionSeconds = 1
+
+	// DefEnablePProfSQLCPU indicates that the default EnablePProfSQLCPU is false
+	DefEnablePProfSQLCPU = 0
 )
 
 var (

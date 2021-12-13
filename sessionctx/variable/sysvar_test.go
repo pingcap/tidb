@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/stretchr/testify/require"
 )
 
@@ -568,7 +569,7 @@ func TestInstanceScopedVars(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBPProfSQLCPU)
 	require.NoError(t, err)
 	expected := "0"
-	if EnablePProfSQLCPU.Load() {
+	if tracecpu.EnablePProfSQLCPU.Load() {
 		expected = "1"
 	}
 	require.Equal(t, expected, val)

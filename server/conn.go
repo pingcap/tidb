@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -1248,7 +1249,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if topsql.InstanceEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
-	if variable.EnablePProfSQLCPU.Load() {
+	if tracecpu.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
 		if len(label) > 0 {
 			defer pprof.SetGoroutineLabels(ctx)
