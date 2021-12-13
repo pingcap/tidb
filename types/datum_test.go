@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -151,59 +152,46 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
-func TestToFloat32(t *testing.T) {
-	t.Parallel()
-	ft := NewFieldType(mysql.TypeFloat)
-	var datum = NewFloat64Datum(281.37)
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	converted, err := datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat32, converted.Kind())
-	require.Equal(t, float32(281.37), converted.GetFloat32())
-
-	datum.SetString("281.37", mysql.DefaultCollationName)
-	converted, err = datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat32, converted.Kind())
-	require.Equal(t, float32(281.37), converted.GetFloat32())
-
-	ft = NewFieldType(mysql.TypeDouble)
-	datum = NewFloat32Datum(281.37)
-	converted, err = datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
-	require.Equal(t, KindFloat64, converted.Kind())
-	// Convert to float32 and convert back to float64, we will get a different value.
-	require.NotEqual(t, 281.37, converted.GetFloat64())
-	require.Equal(t, datum.GetFloat64(), converted.GetFloat64())
-}
-
-func TestToFloat64(t *testing.T) {
+func TestConvertToFloat(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		d      Datum
+		tp     byte
 		errMsg string
-		result float64
+		r64    float64
+		r32    float32
 	}{
-		{NewDatum(float32(3.00)), "", 3.00},
-		{NewDatum(float64(12345.678)), "", 12345.678},
-		{NewDatum("12345.678"), "", 12345.678},
-		{NewDatum([]byte("12345.678")), "", 12345.678},
-		{NewDatum(int64(12345)), "", 12345},
-		{NewDatum(uint64(123456)), "", 123456},
-		{NewDatum(byte(123)), "cannot convert .*", 0},
+		{NewDatum(float32(3.00)), mysql.TypeDouble, "", 3.00, 3.00},
+		{NewDatum(float64(12345.678)), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum("12345.678"), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum([]byte("12345.678")), mysql.TypeDouble, "", 12345.678, 12345.678},
+		{NewDatum(int64(12345)), mysql.TypeDouble, "", 12345, 12345},
+		{NewDatum(uint64(123456)), mysql.TypeDouble, "", 123456, 123456},
+		{NewDatum(byte(123)), mysql.TypeDouble, "cannot convert ", 0, 0},
+		{NewDatum(math.NaN()), mysql.TypeDouble, "constant .* overflows double", 0, 0},
+		{NewDatum(math.Inf(-1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(-1), float32(math.Inf(-1))},
+		{NewDatum(math.Inf(1)), mysql.TypeDouble, "constant .* overflows double", math.Inf(1), float32(math.Inf(1))},
+		{NewDatum(float32(281.37)), mysql.TypeFloat, "", 281.37, 281.37},
+		{NewDatum("281.37"), mysql.TypeFloat, "", 281.37, 281.37},
 	}
 
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	for _, testCase := range testCases {
-		converted, err := testCase.d.ToFloat64(sc)
+		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
 			require.NoError(t, err)
 		} else {
-			require.Regexp(t, testCase.errMsg, err)
+			require.Error(t, err)
+			require.Regexp(t, testCase.errMsg, err.Error())
 		}
-		require.Equal(t, testCase.result, converted)
+		require.Equal(t, testCase.r32, converted.GetFloat32())
+		if testCase.tp == mysql.TypeDouble {
+			require.Equal(t, testCase.r64, converted.GetFloat64())
+		} else {
+			// Convert to float32 and convert back to float64, we will get a different value.
+			require.NotEqual(t, testCase.r64, converted.GetFloat64())
+		}
 	}
 }
 
@@ -248,7 +236,7 @@ func TestToJSON(t *testing.T) {
 			require.NoError(t, err)
 
 			var cmp int
-			cmp, err = obtain.CompareDatum(sc, &expected)
+			cmp, err = obtain.Compare(sc, &expected, collate.GetBinaryCollator())
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		} else {
@@ -324,7 +312,7 @@ func TestComputePlusAndMinus(t *testing.T) {
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
 		require.Equal(t, tt.hasErr, err != nil)
-		v, err := got.CompareDatum(sc, &tt.plus)
+		v, err := got.Compare(sc, &tt.plus, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
 	}
@@ -347,7 +335,7 @@ func TestCloneDatum(t *testing.T) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
-		res, err := tt.CompareDatum(sc, &tt1)
+		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, res)
 		if tt.b != nil {
@@ -489,7 +477,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
 		require.NoError(t, err)
 		var cmp int
-		cmp, err = reverseRes.CompareDatum(sc, &test.res)
+		cmp, err = reverseRes.Compare(sc, &test.res, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}
@@ -542,7 +530,7 @@ func BenchmarkCompareDatum(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
-			_, err := v.CompareDatum(sc, &vals1[j])
+			_, err := v.Compare(sc, &vals1[j], collate.GetBinaryCollator())
 			if err != nil {
 				b.Fatal(err)
 			}

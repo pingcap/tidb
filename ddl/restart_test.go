@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mock"
@@ -123,7 +124,8 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	dbInfo := testSchemaInfo(c, d1, "test_restart")
+	dbInfo, err := testSchemaInfo(d1, "test_restart")
+	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -160,7 +162,8 @@ func (s *testStatSuite) TestStat(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test_restart")
+	dbInfo, err := testSchemaInfo(d, "test_restart")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
@@ -199,12 +202,45 @@ LOOP:
 	}
 }
 
+var _ = Suite(&testTableSuite{})
+
+type testTableSuite struct {
+	store  kv.Storage
+	dbInfo *model.DBInfo
+
+	d *ddl
+}
+
+func (s *testTableSuite) SetUpSuite(c *C) {
+	s.store = testCreateStore(c, "test_table")
+	ddl, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	s.d = ddl
+
+	s.dbInfo, err = testSchemaInfo(s.d, "test_table")
+	c.Assert(err, IsNil)
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+}
+
+func (s *testTableSuite) TearDownSuite(c *C) {
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	err := s.d.Stop()
+	c.Assert(err, IsNil)
+	err = s.store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testTableSuite) TestTableResume(c *C) {
 	d := s.d
 
 	testCheckOwner(c, d, true)
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID:   s.dbInfo.ID,
 		TableID:    tblInfo.ID,

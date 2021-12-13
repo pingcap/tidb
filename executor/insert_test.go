@@ -1790,3 +1790,48 @@ func (s *testSuite13) TestIssue17745(c *C) {
 	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
 }
+
+// TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
+func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("set global tidb_txn_mode='optimistic';")
+	tk.MustExec("set global tidb_disable_txn_auto_retry=false;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double auto_increment key, b int)")
+	tk.MustExec("insert into t values (146576794, 1)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t(b) select 1")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec(`use test`)
+	tk2.MustExec("begin")
+	tk2.MustExec("insert into t values (146576795, 1)")
+	tk2.MustExec("insert into t values (146576796, 1)")
+	tk2.MustExec("commit")
+
+	// since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
+	// which will duplicate with what has been inserted in tk1.
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
+}
+
+// https://github.com/pingcap/tidb/issues/29483.
+func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists replace_auto_id;")
+	tk.MustExec("create database replace_auto_id;")
+	tk.MustExec(`use replace_auto_id;`)
+
+	tk.MustExec("SET sql_mode='NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a tinyint not null auto_increment primary key, b char(20));")
+	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
+	// Note that this error is different from MySQL's duplicated primary key error.
+	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
+}

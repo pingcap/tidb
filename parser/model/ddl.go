@@ -88,7 +88,7 @@ const (
 	ActionCreatePlacementPolicy         ActionType = 51
 	ActionAlterPlacementPolicy          ActionType = 52
 	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPolicy     ActionType = 54
+	ActionAlterTablePartitionPlacement  ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
@@ -111,6 +111,7 @@ var actionMap = map[ActionType]string{
 	ActionModifyColumn:                  "modify column",
 	ActionRebaseAutoID:                  "rebase auto_increment ID",
 	ActionRenameTable:                   "rename table",
+	ActionRenameTables:                  "rename tables",
 	ActionSetDefaultValue:               "set default value",
 	ActionShardRowID:                    "shard row ID",
 	ActionModifyTableComment:            "modify table comment",
@@ -144,12 +145,15 @@ var actionMap = map[ActionType]string{
 	ActionAlterCheckConstraint:          "alter check constraint",
 	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
+	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
 	ActionCreatePlacementPolicy:         "create placement policy",
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
-	ActionAlterCacheTable:               "alter cache table",
+	ActionAlterTablePlacement:           "alter table placement",
+	ActionAlterCacheTable:               "alter table cache",
+	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
@@ -203,6 +207,7 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *time.Location                   `json:"time_location"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.

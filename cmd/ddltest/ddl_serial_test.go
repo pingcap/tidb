@@ -33,7 +33,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -48,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	goctx "golang.org/x/net/context"
@@ -91,10 +89,8 @@ type ddlSuite struct {
 }
 
 func createDDLSuite(t *testing.T) (s *ddlSuite) {
+	var err error
 	s = new(ddlSuite)
-
-	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
-	require.NoError(t, err)
 
 	s.quit = make(chan struct{})
 
@@ -122,6 +118,11 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	require.NoError(t, err)
 	ddl.RunWorker = false
 	session.ResetStoreForWithTiKVTest(s.store)
+	s.dom.Close()
+	require.NoError(t, s.store.Close())
+
+	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
+	require.NoError(t, err)
 	s.s, err = session.CreateSession(s.store)
 	require.NoError(t, err)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -239,8 +240,14 @@ func (s *ddlSuite) stopServers() error {
 	defer s.m.Unlock()
 
 	for i := 0; i < len(s.procs); i++ {
-		if s.procs[i] != nil {
-			err := s.killServer(s.procs[i].Process)
+		if proc := s.procs[i]; proc != nil {
+			if proc.db != nil {
+				if err := proc.db.Close(); err != nil {
+					return err
+				}
+			}
+
+			err := s.killServer(proc.Process)
 			if err != nil {
 				return errors.Trace(err)
 			}

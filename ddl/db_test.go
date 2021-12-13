@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
@@ -78,7 +79,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -5474,8 +5475,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDate(c *C) {
 		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "date", "0000-00-00", 0},
+		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
@@ -5492,8 +5492,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDatetime(c *C) {
 		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -5510,8 +5509,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToTimestamp(c *C) {
 		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5662,6 +5660,30 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
+}
+
+func (s *testSerialDBSuite) TestForbitCacheTableForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` cache", one))
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
+		}
+		sysTables = sysTables[:0]
+	}
 }
 
 func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
@@ -6420,14 +6442,6 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 	} else {
 		c.Assert(tb.Meta().Lock, IsNil)
 	}
-}
-
-func checkTableCacheStatus(c *C, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testGetTableByName(c, se, dbName, tableName)
-	dom := domain.GetDomain(se)
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().TableCacheStatusType, Equals, status)
 }
 
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
@@ -7275,6 +7289,51 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 
 	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
+}
+
+// Close issue #24172.
+// See https://github.com/pingcap/tidb/issues/24172
+func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+
+	var cancelErr error
+	var rs []sqlexec.RecordSet
+	hook := &ddl.TestDDLCallback{}
+	d := s.dom.DDL()
+	originalHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originalHook)
+
+	// Test when cancelling cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustExec("alter table t add index (id)")
+	c.Assert(cancelErr.Error(), Equals, "mock commit error")
+
+	// Test when cancelling is retried only once and adding index is cancelled in the end.
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
+	c.Assert(cancelErr, IsNil)
+	result := tk1.ResultSetToResultWithCtx(context.Background(), rs[0], Commentf("cancel ddl job fails"))
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
 }
 
 // For Close issue #24288

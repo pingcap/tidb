@@ -844,7 +844,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = 1
 		return nil
 	}
-	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, sc, pkCol.RetType)
+	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType)
 	if err != nil {
 		return err
 	}
@@ -1309,6 +1309,9 @@ type LogicalCTETable struct {
 	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
+
+	// seedSchema is only used in predicateColumnCollector to get column mapping
+	seedSchema *expression.Schema
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
