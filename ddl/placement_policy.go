@@ -331,7 +331,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
-					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == part.ID {
+					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == policy.ID {
 						partIDs = append(partIDs, part.ID)
 					}
 				}
