@@ -40,7 +40,7 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	encoding charset.Encoding
+	encoding *charset.Encoding
 
 	errs         []error
 	warns        []error

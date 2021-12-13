@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -787,7 +788,7 @@ func TestEval(t *testing.T) {
 		result, err := expr.Eval(row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.CompareDatum(sc, &tt.result)
+		cmp, err := result.Compare(sc, &tt.result, collate.GetCollator(fieldTps[0].Collate))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -867,7 +868,7 @@ func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Flen:    int32(ft.Flen),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Collate: collate.CollationToProto(ft.Collate),
 		Elems:   ft.Elems,
 	}
 }

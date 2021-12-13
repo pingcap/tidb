@@ -41,17 +41,18 @@ func (s *testPartitionSuite) TearDownSuite(c *C) {
 }
 
 func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_partition")
+	dbInfo, err := testSchemaInfo(d, "test_partition")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(c, d)

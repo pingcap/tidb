@@ -19,6 +19,7 @@ const (
 	outputFileTemplateTable  = "table"
 	outputFileTemplateView   = "view"
 	outputFileTemplateData   = "data"
+	outputFileTemplatePolicy = "placement-policy"
 
 	defaultOutputFileTemplateBase = `
 		{{- define "objectName" -}}
@@ -50,6 +51,9 @@ const (
 		{{- end -}}
 		{{- define "data" -}}
 			{{template "objectName" .}}.{{.Index}}
+		{{- end -}}
+		{{- define "placement-policy" -}}
+            {{fn .Policy}}-placement-policy-create
 		{{- end -}}
 	`
 
@@ -112,6 +116,9 @@ const (
 	TableTypeBase TableType = iota
 	// TableTypeView represents the view table
 	TableTypeView
+	// TableTypeSequence represents the view table
+	// TODO: need to be supported
+	TableTypeSequence
 )
 
 const (
@@ -119,6 +126,8 @@ const (
 	TableTypeBaseStr = "BASE TABLE"
 	// TableTypeViewStr represents the view table string
 	TableTypeViewStr = "VIEW"
+	// TableTypeSequenceStr represents the view table string
+	TableTypeSequenceStr = "SEQUENCE"
 )
 
 func (t TableType) String() string {
@@ -127,6 +136,8 @@ func (t TableType) String() string {
 		return TableTypeBaseStr
 	case TableTypeView:
 		return TableTypeViewStr
+	case TableTypeSequence:
+		return TableTypeSequenceStr
 	default:
 		return "UNKNOWN"
 	}
@@ -139,6 +150,8 @@ func ParseTableType(s string) (TableType, error) {
 		return TableTypeBase, nil
 	case TableTypeViewStr:
 		return TableTypeView, nil
+	case TableTypeSequenceStr:
+		return TableTypeSequence, nil
 	default:
 		return TableTypeBase, errors.Errorf("unknown table type %s", s)
 	}
