@@ -1072,7 +1072,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sctx.GetSessionVars().StmtCtx != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sctx != nil && sctx.GetSessionVars().StmtCtx != nil {
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
