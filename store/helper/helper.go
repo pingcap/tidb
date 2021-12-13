@@ -306,6 +306,10 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		regionsTableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
 
 		if tableInfos, ok := regionsTableInfos[int64(regionID)]; ok {
+			if len(tableInfos) == 0 {
+				hotTables = append(hotTables, t)
+				continue
+			}
 			for _, tableInfo := range tableInfos {
 				t.DbName = tableInfo.DB.Name.O
 				t.TableName = tableInfo.Table.Name.O
