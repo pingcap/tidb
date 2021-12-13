@@ -109,13 +109,6 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-upload-coverage: SHELL:=/bin/bash
-upload-coverage:
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
-endif
-
 devgotest: failpoint-enable
 # grep regex: Filter out all tidb logs starting with:
 # - '[20' (like [2021/09/15 ...] [INFO]..)
@@ -129,7 +122,27 @@ devgotest: failpoint-enable
 gotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci_part_1: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running gotest_in_verify_ci_part_1."
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_EXPENSIVE) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci_part_2: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running gotest_in_verify_ci_part_2."
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_OTHERS) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
@@ -310,7 +323,16 @@ br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
+br_unit_test_in_verify_ci: tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
+	-tags leak $(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/br-coverage.xml"
 	@make failpoint-disable
 
 br_integration_test: br_bins build_br build_for_br_integration_test
@@ -369,6 +391,13 @@ dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
 dumpling_unit_test: failpoint-enable
 	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
+dumpling_unit_test_in_verify_ci: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- -tags leak $(DUMPLING_ARGS) \
+	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/dumpling-coverage.xml"
+	@make failpoint-disable
 
 dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 	@make failpoint-disable
@@ -388,3 +417,12 @@ dumpling_bins:
 	@which bin/minio
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
+
+tools/bin/gotestsum: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+tools/bin/gocov: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov  github.com/axw/gocov/gocov
+
+tools/bin/gocov-xml: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov-xml github.com/AlekSi/gocov-xml

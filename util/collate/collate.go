@@ -143,14 +143,21 @@ func GetCollator(collate string) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
-			logutil.BgLogger().Warn(
-				"Unable to get collator by name, use binCollator instead.",
-				zap.String("name", collate),
-				zap.Stack("stack"))
-			return newCollatorMap["utf8mb4_bin"]
+			if collate != "" {
+				logutil.BgLogger().Warn(
+					"Unable to get collator by name, use binCollator instead.",
+					zap.String("name", collate),
+					zap.Stack("stack"))
+			}
+			return newCollatorMap[charset.CollationUTF8MB4]
 		}
 		return ctor
 	}
+	return binCollatorInstance
+}
+
+// GetBinaryCollator gets the binary collator, it is often used when we want to apply binary compare.
+func GetBinaryCollator() Collator {
 	return binCollatorInstance
 }
 

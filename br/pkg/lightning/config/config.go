@@ -358,11 +358,11 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
-	DupeResAlgRecord DuplicateResolutionAlgorithm = iota
-
 	// DupeResAlgNone doesn't detect duplicate.
-	DupeResAlgNone
+	DupeResAlgNone DuplicateResolutionAlgorithm = iota
+
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
@@ -471,6 +471,14 @@ type IgnoreColumns struct {
 	Table       string   `toml:"table" json:"table"`
 	TableFilter []string `toml:"table-filter" json:"table-filter"`
 	Columns     []string `toml:"columns" json:"columns"`
+}
+
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
 }
 
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
@@ -585,6 +593,48 @@ func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
 
+// Charset defines character set
+type Charset int
+
+const (
+	Binary Charset = iota
+	UTF8MB4
+	GB18030
+	GBK
+)
+
+// String return the string value of charset
+func (c Charset) String() string {
+	switch c {
+	case Binary:
+		return "binary"
+	case UTF8MB4:
+		return "utf8mb4"
+	case GB18030:
+		return "gb18030"
+	case GBK:
+		return "gbk"
+	default:
+		return "unknown_charset"
+	}
+}
+
+// ParseCharset parser character set for string
+func ParseCharset(dataCharacterSet string) (Charset, error) {
+	switch strings.ToLower(dataCharacterSet) {
+	case "", "binary":
+		return Binary, nil
+	case "utf8mb4":
+		return UTF8MB4, nil
+	case "gb18030":
+		return GB18030, nil
+	case "gbk":
+		return GBK, nil
+	default:
+		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
+	}
+}
+
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -642,7 +692,7 @@ func NewConfig() *Config {
 			SendKVPairs:         32768,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgRecord,
+			DuplicateResolution: DupeResAlgNone,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -785,6 +835,16 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 	if len(cfg.Mydumper.DataCharacterSet) == 0 {
 		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
+	if err1 != nil {
+		return err1
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
 	}
 
 	if cfg.TikvImporter.Backend == "" {

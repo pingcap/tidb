@@ -205,7 +205,9 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
-# Automatic creation of TLS certificates
+# Automatic creation of TLS certificates.
+# Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
+# If this config is commented/missed, the value would be 'false' for the compatibility with TiDB versions that does not support it.
 auto-tls = true
 
 # Minium TLS version to use, e.g. "TLSv1.2"
@@ -302,9 +304,6 @@ committer-concurrency = 128
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
-
-# the interval duration between two memory profile into global tracker
-mem-profile-interval = "1m"
 
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.

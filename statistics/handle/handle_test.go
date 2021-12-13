@@ -49,7 +49,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-// TODO replace cleanEnv with createTestKitAndDom in gc_test.go when migrate this file
+// TODO replace cleanEnv with createTestKitAndDom in gc_series_test.go when migrate this file
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")

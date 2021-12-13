@@ -158,8 +158,8 @@ func TestBinlog(t *testing.T) {
 	require.Greater(t, prewriteVal.SchemaVersion, int64(0))
 	require.Greater(t, prewriteVal.Mutations[0].TableId, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName)},
 	}
 	gotRows := mutationRowsToRows(t, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	require.Equal(t, expected, gotRows)
@@ -167,10 +167,10 @@ func TestBinlog(t *testing.T) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(t, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName)},
 	}
 	gotRows = mutationRowsToRows(t, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	require.Equal(t, oldRow, gotRows)
@@ -182,7 +182,7 @@ func TestBinlog(t *testing.T) {
 	prewriteVal = getLatestBinlogPrewriteValue(t, pump)
 	gotRows = mutationRowsToRows(t, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName)},
 	}
 	require.Equal(t, expected, gotRows)
 

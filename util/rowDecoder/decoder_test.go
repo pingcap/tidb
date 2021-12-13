@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -129,7 +130,7 @@ func TestRowDecoder(t *testing.T) {
 		for i, col := range cols[:len(cols)-1] {
 			v, ok := r[col.ID]
 			if ok {
-				equal, err1 := v.CompareDatum(sc, &row.output[i])
+				equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
 				require.Nil(t, err1)
 				require.Equal(t, 0, equal)
 			} else {
@@ -143,7 +144,7 @@ func TestRowDecoder(t *testing.T) {
 		for k, v := range r2 {
 			v1, ok := r[k]
 			require.True(t, ok)
-			equal, err1 := v.CompareDatum(sc, &v1)
+			equal, err1 := v.Compare(sc, &v1, collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}
@@ -204,7 +205,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		for i, col := range cols {
 			v, ok := r[col.ID]
 			require.True(t, ok)
-			equal, err1 := v.CompareDatum(sc, &row.output[i])
+			equal, err1 := v.Compare(sc, &row.output[i], collate.GetBinaryCollator())
 			require.Nil(t, err1)
 			require.Equal(t, 0, equal)
 		}

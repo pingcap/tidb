@@ -24,4 +24,7 @@ type Trace struct {
 
 	StmtNode ast.StmtNode
 	Format   string
+
+	// OptimizerTrace indicates `trace plan <statement>` case
+	OptimizerTrace bool
 }

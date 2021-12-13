@@ -16,9 +16,10 @@ package ast_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDDLVisitorCover(t *testing.T) {
@@ -26,7 +27,7 @@ func TestDDLVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
 	constraint := &Constraint{Keys: []*IndexPartSpecification{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}
 
-	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, PlacementSpecs: []*PlacementSpec{{}, {}}, AttributesSpec: &AttributesSpec{}}
+	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, AttributesSpec: &AttributesSpec{}}
 
 	stmts := []struct {
 		node             Node
@@ -622,4 +623,27 @@ func TestSequenceRestore(t *testing.T) {
 		return node
 	}
 	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestDropIndexRestore(t *testing.T) {
+	t.Parallel()
+	sourceSQL := "drop index if exists idx on t"
+	cases := []struct {
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{format.DefaultRestoreFlags, "DROP INDEX IF EXISTS `idx` ON `t`"},
+		{format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "DROP INDEX /*T! IF EXISTS  */`idx` ON `t`"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
 }

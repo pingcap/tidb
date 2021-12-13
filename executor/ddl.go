@@ -185,7 +185,18 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
+		if x.OrReplace && x.IfNotExists {
+			err = ddl.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+			break
+		}
 		err = e.executeCreatePlacementPolicy(x)
+		if x.OrReplace && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyExists) {
+			alterStmt := &ast.AlterPlacementPolicyStmt{
+				PolicyName:       x.PolicyName,
+				PlacementOptions: x.PlacementOptions,
+			}
+			err = e.executeAlterPlacementPolicy(alterStmt)
+		}
 	case *ast.DropPlacementPolicyStmt:
 		err = e.executeDropPlacementPolicy(x)
 	case *ast.AlterPlacementPolicyStmt:
@@ -791,20 +802,23 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
+		return nil
+	}
+
 	for _, tb := range s.TableLocks {
 		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
 			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
 
-	if !config.TableLockEnabled() {
-		return nil
-	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()

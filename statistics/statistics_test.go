@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -178,11 +179,11 @@ func TestMergeHistogram(t *testing.T) {
 		require.Equal(t, tt.bucketNum, h.Len())
 		require.Equal(t, tt.leftNum+tt.rightNum, int64(h.TotalRowCount()))
 		expectLower := types.NewIntDatum(tt.leftLower)
-		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
+		cmp, err := h.GetLower(0).Compare(sc, &expectLower, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 		expectUpper := types.NewIntDatum(tt.rightLower + tt.rightNum - 1)
-		cmp, err = h.GetUpper(h.Len()-1).CompareDatum(sc, &expectUpper)
+		cmp, err = h.GetUpper(h.Len()-1).Compare(sc, &expectUpper, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -194,9 +195,11 @@ func TestPseudoTable(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:        1,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
+	require.Equal(t, len(tbl.Columns), 1)
 	require.Greater(t, tbl.Count, int64(0))
 	sc := new(stmtctx.StatementContext)
 	count := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
@@ -206,6 +209,15 @@ func TestPseudoTable(t *testing.T) {
 	require.Equal(t, 10, int(count))
 	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	require.Equal(t, 250, int(count))
+	ti.Columns = append(ti.Columns, &model.ColumnInfo{
+		ID:        2,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		Hidden:    true,
+		State:     model.StatePublic,
+	})
+	tbl = PseudoTable(ti)
+	// We added a hidden column. The pseudo table still only have one column.
+	require.Equal(t, len(tbl.Columns), 1)
 }
 
 func buildCMSketch(values []types.Datum) *CMSketch {
@@ -219,9 +231,10 @@ func buildCMSketch(values []types.Datum) *CMSketch {
 	return cms
 }
 
-func SubTestColumnRange(s *testStatisticsSamples) func(*testing.T) {
+func SubTestColumnRange() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
@@ -297,9 +310,10 @@ func SubTestColumnRange(s *testStatisticsSamples) func(*testing.T) {
 	}
 }
 
-func SubTestIntColumnRanges(s *testStatisticsSamples) func(*testing.T) {
+func SubTestIntColumnRanges() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
@@ -391,9 +405,10 @@ func SubTestIntColumnRanges(s *testStatisticsSamples) func(*testing.T) {
 	}
 }
 
-func SubTestIndexRanges(s *testStatisticsSamples) func(*testing.T) {
+func SubTestIndexRanges() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx

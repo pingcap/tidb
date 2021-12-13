@@ -381,6 +381,46 @@ func TestRoleGraphBFS(t *testing.T) {
 	require.Len(t, ret, 6)
 }
 
+func TestFindAllUserEffectiveRoles(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer se.Close()
+	mustExec(t, se, `CREATE USER u1`)
+	mustExec(t, se, `CREATE ROLE r_1, r_2, r_3, r_4;`)
+	mustExec(t, se, `GRANT r_3 to r_1`)
+	mustExec(t, se, `GRANT r_4 to r_2`)
+	mustExec(t, se, `GRANT r_1 to u1`)
+	mustExec(t, se, `GRANT r_2 to u1`)
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadAll(se)
+	require.NoError(t, err)
+	ret := p.FindAllUserEffectiveRoles("u1", "%", []*auth.RoleIdentity{
+		{Username: "r_1", Hostname: "%"},
+		{Username: "r_2", Hostname: "%"},
+	})
+	require.Equal(t, 4, len(ret))
+	require.Equal(t, "r_1", ret[0].Username)
+	require.Equal(t, "r_2", ret[1].Username)
+	require.Equal(t, "r_3", ret[2].Username)
+	require.Equal(t, "r_4", ret[3].Username)
+
+	mustExec(t, se, `REVOKE r_2 from u1`)
+	err = p.LoadAll(se)
+	require.NoError(t, err)
+	ret = p.FindAllUserEffectiveRoles("u1", "%", []*auth.RoleIdentity{
+		{Username: "r_1", Hostname: "%"},
+		{Username: "r_2", Hostname: "%"},
+	})
+	require.Equal(t, 2, len(ret))
+	require.Equal(t, "r_1", ret[0].Username)
+	require.Equal(t, "r_3", ret[1].Username)
+}
+
 func TestAbnormalMySQLTable(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)

@@ -37,7 +37,7 @@ func TestFaultInjectionBasic(t *testing.T) {
 	txn, err := storage.Begin()
 	require.Nil(t, err)
 
-	_, err = storage.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(GlobalTxnScope).SetStartTS(0))
+	_, err = storage.Begin(tikv.WithTxnScope(GlobalTxnScope), tikv.WithStartTS(0))
 	require.Nil(t, err)
 
 	ver := Version{Ver: 1}

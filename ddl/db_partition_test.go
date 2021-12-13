@@ -224,7 +224,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( TO_SECONDS(`a`) ) (\n  PARTITION `p0` VALUES LESS THAN (63240134400),\n  PARTITION `p1` VALUES LESS THAN (63271756800)\n)"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (TO_SECONDS(`a`))\n(PARTITION `p0` VALUES LESS THAN (63240134400),\n PARTITION `p1` VALUES LESS THAN (63271756800))"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -2153,23 +2153,29 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
 
-func checkPartitionDelRangeDone(c *C, tk *testkit.TestKit, s *testIntegrationSuite, oldPID int64) {
-	startTime := time.Now()
-	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+func waitGCDeleteRangeDone(c *C, tk *testkit.TestKit, physicalID int64) bool {
 	var i int
 	for i = 0; i < waitForCleanDataRound; i++ {
-		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", oldPID)
+		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
 		c.Assert(err, IsNil)
 		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 		c.Assert(err, IsNil)
 		val := rows[0][0]
 		if val != "0" {
-			break
+			return true
 		}
 		time.Sleep(waitForCleanDataInterval)
 	}
 
-	if i == waitForCleanDataRound {
+	return false
+}
+
+func checkPartitionDelRangeDone(c *C, tk *testkit.TestKit, s *testIntegrationSuite, oldPID int64) {
+	startTime := time.Now()
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+
+	done := waitGCDeleteRangeDone(c, tk, oldPID)
+	if !done {
 		// Takes too long, give up the check.
 		logutil.BgLogger().Info("truncate partition table",
 			zap.Int64("id", oldPID),
@@ -2638,26 +2644,17 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	tk.MustExec(addIdxSQL)
 
 	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
+	indexID := testGetIndexID(c, ctx, "test_db", "partition_drop_idx", idxName)
 
-	var idx1 table.Index
-	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == idxName {
-			idx1 = pidx
-			break
-		}
-	}
-	c.Assert(idx1, NotNil)
-
+	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	defer reset()
 	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case err = <-done:
+		case err := <-done:
 			if err == nil {
 				break LOOP
 			}
@@ -2673,23 +2670,7 @@ LOOP:
 			num += step
 		}
 	}
-
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	var idxn table.Index
-	t.Indices()
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == idxName {
-			idxn = idx
-			break
-		}
-	}
-	c.Assert(idxn, IsNil)
-	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2700,7 +2681,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestPartitionCancelAddIndex(c *C) {
-	idxName := "idx1"
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c1)"
 	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
 }
@@ -2737,7 +2718,8 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originHook := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originHook)
-	d.(ddl.DDLForTest).SetHook(hook)
+	jobIDExt := wrapJobIDExtCallback(hook)
+	d.(ddl.DDLForTest).SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -2768,17 +2750,7 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
-	}
-
-	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
-
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
@@ -2794,7 +2766,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
 			// Get the index's meta.
-			if c3IdxInfo != nil {
+			if c3IdxInfo.ID != 0 {
 				return
 			}
 			t := testGetTableByName(c, ctx, "test_db", "t1")
@@ -2803,7 +2775,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 					continue
 				}
 				if index.Meta().Name.L == idxName {
-					c3IdxInfo = index.Meta()
+					*c3IdxInfo = *index.Meta()
 				}
 			}
 			return
@@ -2981,11 +2953,12 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 	row := rows[0]
 	c.Assert(row.GetString(3), Equals, "drop schema")
 	jobID := row.GetInt64(0)
+
+	var tableIDs []int64
 	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(jobID)
 		c.Assert(err, IsNil)
-		var tableIDs []int64
 		err = historyJob.DecodeArgs(&tableIDs)
 		c.Assert(err, IsNil)
 		// There is 2 partitions.
@@ -2993,6 +2966,17 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+
+	startTime := time.Now()
+	done := waitGCDeleteRangeDone(c, tk, tableIDs[2])
+	if !done {
+		// Takes too long, give up the check.
+		logutil.BgLogger().Info("drop schema",
+			zap.Int64("id", tableIDs[0]),
+			zap.Stringer("duration", time.Since(startTime)),
+		)
+		return
+	}
 
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {

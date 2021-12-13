@@ -15,7 +15,10 @@ package charset
 
 import (
 	"strings"
+	go_unicode "unicode"
+	"unicode/utf8"
 
+	"github.com/cznic/mathutil"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/japanese"
@@ -24,6 +27,15 @@ import (
 	"golang.org/x/text/encoding/traditionalchinese"
 	"golang.org/x/text/encoding/unicode"
 )
+
+var encodingMap = map[EncodingLabel]*Encoding{
+	CharsetUTF8MB4: UTF8Encoding,
+	CharsetUTF8:    UTF8Encoding,
+	CharsetGBK:     GBKEncoding,
+	CharsetLatin1:  LatinEncoding,
+	CharsetBin:     BinaryEncoding,
+	CharsetASCII:   ASCIIEncoding,
+}
 
 // Lookup returns the encoding with the specified label, and its canonical
 // name. It returns nil and the empty string if label is not one of the
@@ -263,38 +275,178 @@ var encodings = map[string]struct {
 	"x-user-defined":      {charmap.XUserDefined, "x-user-defined"},
 }
 
-// FindNextCharacterLength is used in lexer.peek() to determine the next character length.
-func FindNextCharacterLength(label string) func([]byte) int {
-	if f, ok := encodingNextCharacterLength[label]; ok {
-		return f
-	}
-	return nil
+// TruncateStrategy indicates the way to handle the invalid strings in specific charset.
+//   - TruncateStrategyEmpty: returns an empty string.
+//   - TruncateStrategyTrim: returns the valid prefix part of string.
+//   - TruncateStrategyReplace: returns the whole string, but the invalid characters are replaced with '?'.
+type TruncateStrategy int8
+
+const (
+	TruncateStrategyEmpty TruncateStrategy = iota
+	TruncateStrategyTrim
+	TruncateStrategyReplace
+)
+
+var _ StringValidator = StringValidatorASCII{}
+var _ StringValidator = StringValidatorUTF8{}
+var _ StringValidator = StringValidatorOther{}
+
+// StringValidator is used to check if a string is valid in the specific charset.
+type StringValidator interface {
+	Validate(str string) (invalidPos int)
+	Truncate(str string, strategy TruncateStrategy) (result string, invalidPos int)
 }
 
-var encodingNextCharacterLength = map[string]func([]byte) int{
-	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":   characterLengthGBK,
-	"utf-8": characterLengthUTF8,
-	"binary": func(bs []byte) int {
-		return 1
-	},
+// StringValidatorASCII checks whether a string is valid ASCII string.
+type StringValidatorASCII struct{}
+
+// Validate checks whether the string is valid in the given charset.
+func (s StringValidatorASCII) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
 }
 
-func characterLengthGBK(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-		return 1
+// Truncate implement the interface StringValidator.
+func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	invalidPos := -1
+	for i := 0; i < len(str); i++ {
+		if str[i] > go_unicode.MaxASCII {
+			invalidPos = i
+			break
+		}
 	}
-	return 2
+	if invalidPos == -1 {
+		// Quick check passed.
+		return str, -1
+	}
+	switch strategy {
+	case TruncateStrategyEmpty:
+		return "", invalidPos
+	case TruncateStrategyTrim:
+		return str[:invalidPos], invalidPos
+	case TruncateStrategyReplace:
+		result := make([]byte, 0, len(str))
+		for i, w := 0, 0; i < len(str); i += w {
+			w = 1
+			if str[i] > go_unicode.MaxASCII {
+				w = UTF8Encoding.CharLength(Slice(str)[i:])
+				w = mathutil.Min(w, len(str)-i)
+				result = append(result, '?')
+				continue
+			}
+			result = append(result, str[i:i+w]...)
+		}
+		return string(result), invalidPos
+	}
+	return str, -1
 }
 
-func characterLengthUTF8(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return 1
-	} else if bs[0] < 0xe0 {
-		return 2
-	} else if bs[0] < 0xf0 {
-		return 3
+// StringValidatorUTF8 checks whether a string is valid UTF8 string.
+type StringValidatorUTF8 struct {
+	IsUTF8MB4           bool // Distinguish between "utf8" and "utf8mb4"
+	CheckMB4ValueInUTF8 bool
+}
+
+// Validate checks whether the string is valid in the given charset.
+func (s StringValidatorUTF8) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
+}
+
+// Truncate implement the interface StringValidator.
+func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	if str == "" {
+		return str, -1
 	}
-	return 4
+	if s.IsUTF8MB4 && utf8.ValidString(str) {
+		// Quick check passed.
+		return str, -1
+	}
+	doMB4CharCheck := !s.IsUTF8MB4 && s.CheckMB4ValueInUTF8
+	var result []byte
+	if strategy == TruncateStrategyReplace {
+		result = make([]byte, 0, len(str))
+	}
+	invalidPos := -1
+	for i, w := 0, 0; i < len(str); i += w {
+		var rv rune
+		rv, w = utf8.DecodeRuneInString(str[i:])
+		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
+			if invalidPos == -1 {
+				invalidPos = i
+			}
+			switch strategy {
+			case TruncateStrategyEmpty:
+				return "", invalidPos
+			case TruncateStrategyTrim:
+				return str[:i], invalidPos
+			case TruncateStrategyReplace:
+				result = append(result, '?')
+				continue
+			}
+		}
+		if strategy == TruncateStrategyReplace {
+			result = append(result, str[i:i+w]...)
+		}
+	}
+	if strategy == TruncateStrategyReplace {
+		return string(result), invalidPos
+	}
+	return str, -1
+}
+
+// StringValidatorOther checks whether a string is valid string in given charset.
+type StringValidatorOther struct {
+	Charset string
+}
+
+// Validate checks whether the string is valid in the given charset.
+func (s StringValidatorOther) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
+}
+
+// Truncate implement the interface StringValidator.
+func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	if str == "" {
+		return str, -1
+	}
+	enc := NewEncoding(s.Charset)
+	if !enc.enabled() {
+		return str, -1
+	}
+	var result []byte
+	if strategy == TruncateStrategyReplace {
+		result = make([]byte, 0, len(str))
+	}
+	var buf [4]byte
+	strBytes := Slice(str)
+	transformer := enc.enc.NewEncoder()
+	invalidPos := -1
+	for i, w := 0, 0; i < len(str); i += w {
+		w = UTF8Encoding.CharLength(strBytes[i:])
+		w = mathutil.Min(w, len(str)-i)
+		_, _, err := transformer.Transform(buf[:], strBytes[i:i+w], true)
+		if err != nil {
+			if invalidPos == -1 {
+				invalidPos = i
+			}
+			switch strategy {
+			case TruncateStrategyEmpty:
+				return "", invalidPos
+			case TruncateStrategyTrim:
+				return str[:i], invalidPos
+			case TruncateStrategyReplace:
+				result = append(result, '?')
+				continue
+			}
+		}
+		if strategy == TruncateStrategyReplace {
+			result = append(result, strBytes[i:i+w]...)
+		}
+	}
+	if strategy == TruncateStrategyReplace {
+		return string(result), invalidPos
+	}
+	return str, -1
 }

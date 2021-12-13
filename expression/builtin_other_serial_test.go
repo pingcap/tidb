@@ -84,8 +84,8 @@ func TestInFunc(t *testing.T) {
 	}
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci", 0)
-	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci", 0)
+	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
+	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))
 	require.NoError(t, err)
 	d, isNull, err := fn.evalInt(chunk.Row{})

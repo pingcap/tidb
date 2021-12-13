@@ -24,7 +24,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -146,6 +145,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
+	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
 	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
@@ -161,9 +161,7 @@ type Session interface {
 	ClearDiskFullOpt()
 }
 
-var (
-	_ Session = (*session)(nil)
-)
+var _ Session = (*session)(nil)
 
 type stmtRecord struct {
 	st      sqlexec.Statement
@@ -546,7 +544,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
+	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
@@ -1117,7 +1115,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return sv.Value, nil
 		}
 	}
-	return sysVar, nil
+	// It might have been written from an earlier TiDB version, so we should do type validation
+	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
+	return sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1522,8 +1522,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.PrepareTxnCtx(ctx)
-	err := s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
 		return nil, err
 	}
 
@@ -2084,7 +2083,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	txn, err := s.store.Begin(tikv.WithTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
@@ -2129,7 +2128,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return err
 	}
 	txnScope := config.GetTxnScopeFromConfig()
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTS(startTS))
+	txn, err := s.store.Begin(tikv.WithTxnScope(txnScope), tikv.WithStartTS(startTS))
 	if err != nil {
 		return err
 	}
@@ -2222,89 +2221,59 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	return authplugin, nil
 }
 
+// Auth validates a user using an authentication string and salt.
+// If the password fails, it will keep trying other users until exhausted.
+// This means it can not be refactored to use MatchIdentity yet.
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
-	if success {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
+		return false
+	}
+	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
-	} else if user.Hostname == variable.DefHostname {
-		return false
-	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
 	}
 	return false
+}
+
+// MatchIdentity finds the matching username + password in the MySQL privilege tables
+// for a username + hostname, since MySQL can have wildcards.
+func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	var success bool
+	var skipNameResolve bool
+	var user = &auth.UserIdentity{}
+	varVal, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
+	if err == nil && variable.TiDBOptOn(varVal) {
+		skipNameResolve = true
+	}
+	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
+	if success {
+		return user, nil
+	}
+	// This error will not be returned to the user, access denied will be instead
+	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
 func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
-	if success {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
+		return false
+	}
+	if pm.GetAuthWithoutVerification(authUser.Username, authUser.Hostname) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
-	} else if user.Hostname == variable.DefHostname {
-		return false
-	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
 	}
 	return false
-}
-
-func (s *session) getHostByIP(ip string) []string {
-	if ip == "127.0.0.1" {
-		return []string{variable.DefHostname}
-	}
-	skipNameResolve, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
-	if err == nil && variable.TiDBOptOn(skipNameResolve) {
-		return []string{ip} // user wants to skip name resolution
-	}
-	addrs, err := net.LookupAddr(ip)
-	if err != nil {
-		// These messages can be noisy.
-		// See: https://github.com/pingcap/tidb/pull/13989
-		logutil.BgLogger().Debug(
-			"net.LookupAddr returned an error during auth check",
-			zap.String("ip", ip),
-			zap.Error(err),
-		)
-		return []string{ip}
-	}
-	return addrs
 }
 
 // RefreshVars implements the sessionctx.Context interface.
@@ -2425,9 +2394,7 @@ func loadDefOOMAction(se *session) (string, error) {
 	return defOOMAction, nil
 }
 
-var (
-	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
-)
+var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
@@ -2688,7 +2655,6 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		ver, err = t.GetBootstrapVersion()
 		return err
 	})
-
 	if err != nil {
 		logutil.BgLogger().Fatal("check bootstrapped failed",
 			zap.Error(err))
@@ -2827,7 +2793,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTS(startTS))
+	txn, err := s.store.Begin(tikv.WithTxnScope(s.GetSessionVars().CheckAndGetTxnScope()), tikv.WithStartTS(startTS))
 	if err != nil {
 		return err
 	}
@@ -3017,7 +2983,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
 }
 
-var _ telemetry.TemporaryTableFeatureChecker = &session{}
+var _ telemetry.TemporaryOrCacheTableFeatureChecker = &session{}
 
 // TemporaryTableExists is used by the telemetry package to avoid circle dependency.
 func (s *session) TemporaryTableExists() bool {
@@ -3025,6 +2991,19 @@ func (s *session) TemporaryTableExists() bool {
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CachedTableExists is used by the telemetry package to avoid circle dependency.
+func (s *session) CachedTableExists() bool {
+	is := domain.GetDomain(s).InfoSchema()
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return true
 			}
 		}

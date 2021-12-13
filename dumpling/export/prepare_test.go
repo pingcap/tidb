@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestPrepareDumpingDatabases(t *testing.T) {
@@ -287,7 +287,7 @@ func TestConfigValidation(t *testing.T) {
 	conf.FileType = FileFormatSQLTextString
 	err := adjustFileFormat(conf)
 	require.Error(t, err)
-	require.Regexp(t, ".*please unset --filetype or set it to 'csv'.*", err.Error())
+	require.Contains(t, err.Error(), "please unset --filetype or set it to 'csv'")
 
 	conf.FileType = FileFormatCSVString
 	require.NoError(t, adjustFileFormat(conf))
@@ -306,4 +306,38 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
+}
+
+func TestValidateResolveAutoConsistency(t *testing.T) {
+	t.Parallel()
+
+	conf1 := defaultConfigForTest(t)
+	d := &Dumper{conf: conf1}
+	conf := d.conf
+
+	testCases := []struct {
+		confConsistency string
+		confSnapshot    string
+		err             bool
+	}{
+		{consistencyTypeAuto, "", true},
+		{consistencyTypeAuto, "123", false},
+		{consistencyTypeFlush, "", true},
+		{consistencyTypeFlush, "456", false},
+		{consistencyTypeLock, "", true},
+		{consistencyTypeLock, "789", false},
+		{consistencyTypeSnapshot, "", true},
+		{consistencyTypeSnapshot, "456", true},
+		{consistencyTypeNone, "", true},
+		{consistencyTypeNone, "123", false},
+	}
+	for _, testCase := range testCases {
+		conf.Consistency = testCase.confConsistency
+		conf.Snapshot = testCase.confSnapshot
+		if testCase.err == true {
+			require.NoError(t, validateResolveAutoConsistency(d))
+		} else {
+			require.EqualError(t, validateResolveAutoConsistency(d), fmt.Sprintf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency))
+		}
+	}
 }

@@ -1305,18 +1305,12 @@ import (
 	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
 	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
-	PlacementCount                         "Placement rules count option"
-	PlacementLabelConstraints              "Placement rules label constraints option"
-	PlacementRole                          "Placement rules role option"
-	OldPlacementOptions                    "Placement rules options"
 	PlacementOption                        "Anonymous or direct placement option"
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
-	PlacementSpec                          "Placement rules specification"
-	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
-	PredicateColumnsOpt                    "predicate columns option"
+	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
@@ -1504,41 +1498,6 @@ AlterTableStmt:
 		}
 	}
 
-PlacementRole:
-	"ROLE" "=" "FOLLOWER"
-	{
-		$$ = ast.PlacementRoleFollower
-	}
-|	"ROLE" "=" "LEADER"
-	{
-		$$ = ast.PlacementRoleLeader
-	}
-|	"ROLE" "=" "LEARNER"
-	{
-		$$ = ast.PlacementRoleLearner
-	}
-|	"ROLE" "=" "VOTER"
-	{
-		$$ = ast.PlacementRoleVoter
-	}
-
-PlacementCount:
-	"REPLICAS" "=" LengthNum
-	{
-		cnt := $3.(uint64)
-		if cnt == 0 {
-			yylex.AppendError(yylex.Errorf("Invalid placement option REPLICAS, it is not allowed to be 0"))
-			return 1
-		}
-		$$ = cnt
-	}
-
-PlacementLabelConstraints:
-	"CONSTRAINTS" "=" stringLit
-	{
-		$$ = $3
-	}
-
 PlacementOptionList:
 	DirectPlacementOption
 	{
@@ -1619,86 +1578,6 @@ PlacementPolicyOption:
 |	"PLACEMENT" "POLICY" "SET" "DEFAULT"
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
-
-OldPlacementOptions:
-	PlacementCount
-	{
-		$$ = &ast.PlacementSpec{
-			Replicas: $1.(uint64),
-		}
-	}
-|	PlacementLabelConstraints
-	{
-		$$ = &ast.PlacementSpec{
-			Constraints: $1.(string),
-		}
-	}
-|	PlacementRole
-	{
-		$$ = &ast.PlacementSpec{
-			Role: $1.(ast.PlacementRole),
-		}
-	}
-|	OldPlacementOptions PlacementCount
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if spec.Replicas != 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option REPLICAS"))
-			return 1
-		}
-		spec.Replicas = $2.(uint64)
-		$$ = spec
-	}
-|	OldPlacementOptions PlacementLabelConstraints
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if len(spec.Constraints) > 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option CONSTRAINTS"))
-			return 1
-		}
-		spec.Constraints = $2.(string)
-		$$ = spec
-	}
-|	OldPlacementOptions PlacementRole
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if spec.Role != ast.PlacementRoleNone {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option ROLE"))
-			return 1
-		}
-		spec.Role = $2.(ast.PlacementRole)
-		$$ = spec
-	}
-
-PlacementSpec:
-	"ADD" "PLACEMENT" "POLICY" OldPlacementOptions
-	{
-		spec := $4.(*ast.PlacementSpec)
-		spec.Tp = ast.PlacementAdd
-		$$ = spec
-	}
-|	"ALTER" "PLACEMENT" "POLICY" OldPlacementOptions
-	{
-		spec := $4.(*ast.PlacementSpec)
-		spec.Tp = ast.PlacementAlter
-		$$ = spec
-	}
-|	"DROP" "PLACEMENT" "POLICY" PlacementRole
-	{
-		spec := &ast.PlacementSpec{Role: $4.(ast.PlacementRole)}
-		spec.Tp = ast.PlacementDrop
-		$$ = spec
-	}
-
-PlacementSpecList:
-	PlacementSpec
-	{
-		$$ = []*ast.PlacementSpec{$1.(*ast.PlacementSpec)}
-	}
-|	PlacementSpecList ',' PlacementSpec
-	{
-		$$ = append($1.([]*ast.PlacementSpec), $3.(*ast.PlacementSpec))
 	}
 
 AttributesOpt:
@@ -1908,14 +1787,6 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:               ast.AlterTableStatsOptions,
 			StatsOptionsSpec: $1.(*ast.StatsOptionsSpec),
-		}
-	}
-|	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma
-	{
-		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableAlterPartition,
-			PartitionNames: []model.CIStr{model.NewCIStr($3)},
-			PlacementSpecs: $4.([]*ast.PlacementSpec),
 		}
 	}
 |	"CHECK" "PARTITION" AllOrPartitionNameList
@@ -2300,13 +2171,6 @@ AlterTableSpec:
 			Tp:         ast.AlterTableIndexInvisible,
 			IndexName:  model.NewCIStr($3),
 			Visibility: $4.(ast.IndexVisibility),
-		}
-	}
-|	PlacementSpecList %prec lowerThanComma
-	{
-		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTablePlacement,
-			PlacementSpecs: $1.([]*ast.PlacementSpec),
 		}
 	}
 // 	Support caching or non-caching a table in memory for tidb, It can be found in the official Oracle document, see: https://docs.oracle.com/database/121/SQLRF/statements_3001.htm
@@ -2696,9 +2560,9 @@ SplitSyntaxOption:
 	}
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList PredicateColumnsOpt AnalyzeOptionListOpt
+	"ANALYZE" "TABLE" TableNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), PredicateColumns: $4.(bool), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), ColumnChoice: $4.(model.ColumnChoice), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2708,9 +2572,9 @@ AnalyzeTableStmt:
 	{
 		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList PredicateColumnsOpt AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), PredicateColumns: $6.(bool), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), ColumnChoice: $6.(model.ColumnChoice), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2733,47 +2597,53 @@ AnalyzeTableStmt:
 			AnalyzeOpts:    $9.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			AnalyzeOpts:        $8.([]ast.AnalyzeOpt),
 			HistogramOperation: ast.HistogramOperationUpdate,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" ColumnNameList
+|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:  []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames: $5.([]*ast.ColumnName),
-			AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+			TableNames:   []*ast.TableName{$3.(*ast.TableName)},
+			ColumnNames:  $5.([]model.CIStr),
+			ColumnChoice: model.ColumnList,
+			AnalyzeOpts:  $6.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
-			ColumnNames:    $7.([]*ast.ColumnName),
+			ColumnNames:    $7.([]model.CIStr),
+			ColumnChoice:   model.ColumnList,
 			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
 	}
 
-PredicateColumnsOpt:
+AllColumnsOrPredicateColumnsOpt:
 	/* empty */
 	{
-		$$ = false
+		$$ = model.DefaultChoice
+	}
+|	"ALL" "COLUMNS"
+	{
+		$$ = model.AllColumns
 	}
 |	"PREDICATE" "COLUMNS"
 	{
-		$$ = true
+		$$ = model.PredicateColumns
 	}
 
 AnalyzeOptionListOpt:
@@ -4651,8 +4521,9 @@ TraceStmt:
 	"TRACE" TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $2,
-			Format: "row",
+			Stmt:      $2,
+			Format:    "row",
+			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$2.SetText(string(parser.src[startOffset:]))
@@ -4660,11 +4531,21 @@ TraceStmt:
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $5,
-			Format: $4,
+			Stmt:      $5,
+			Format:    $4,
+			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$5.SetText(string(parser.src[startOffset:]))
+	}
+|	"TRACE" "PLAN" TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:      $3,
+			TracePlan: true,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$3.SetText(string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -6854,7 +6735,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not2, V: $2}
 	}
-|	SubSelect
+|	SubSelect %prec neg
 |	'(' Expression ')'
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
@@ -9270,6 +9151,29 @@ SubSelect:
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
+|	'(' SubSelect ')'
+	{
+		subQuery := $2.(*ast.SubqueryExpr).Query
+		isRecursive := true
+		// remove redundant brackets like '((select 1))'
+		for isRecursive {
+			if _, isRecursive = subQuery.(*ast.SubqueryExpr); isRecursive {
+				subQuery = subQuery.(*ast.SubqueryExpr).Query
+			}
+		}
+		switch rs := subQuery.(type) {
+		case *ast.SelectStmt:
+			endOffset := parser.endOffset(&yyS[yypt])
+			parser.setLastSelectFieldText(rs, endOffset)
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		case *ast.SetOprStmt:
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		}
+	}
 
 // See https://dev.mysql.com/doc/refman/8.0/en/innodb-locking-reads.html
 SelectLockOpt:
@@ -9820,7 +9724,7 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	"LOCAL" VariableName EqOrAssignmentEq Expression
+|	"LOCAL" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
@@ -13429,12 +13333,13 @@ DropPolicyStmt:
 	}
 
 CreatePolicyStmt:
-	"CREATE" "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
+	"CREATE" OrReplace "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
 	{
 		$$ = &ast.CreatePlacementPolicyStmt{
-			IfNotExists:      $4.(bool),
-			PolicyName:       model.NewCIStr($5),
-			PlacementOptions: $6.([]*ast.PlacementOption),
+			OrReplace:        $2.(bool),
+			IfNotExists:      $5.(bool),
+			PolicyName:       model.NewCIStr($6),
+			PlacementOptions: $7.([]*ast.PlacementOption),
 		}
 	}
 

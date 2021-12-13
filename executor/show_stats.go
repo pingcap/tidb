@@ -446,8 +446,8 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 func (e *ShowExec) fetchShowAnalyzeStatus() {
 	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
-		for i, val := range row {
-			e.result.AppendDatum(i, &val)
+		for i := range row {
+			e.result.AppendDatum(i, &row[i])
 		}
 	}
 }
@@ -498,14 +498,10 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
-					}
-				}
-			} else {
-				for _, def := range pi.Definitions {
-					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+			}
+			if pi != nil {
+				for i := range pi.Definitions {
+					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])
 				}
 			}
 		}

@@ -16,7 +16,6 @@ package expression
 
 import (
 	"testing"
-	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
@@ -40,7 +39,7 @@ func TestCIWeightString(t *testing.T) {
 	checkResult := func(collation string, tests []weightStringTest) {
 		fc := funcs[ast.WeightString]
 		for _, test := range tests {
-			str := types.NewCollationStringDatum(test.str, collation, utf8.RuneCountInString(test.str))
+			str := types.NewCollationStringDatum(test.str, collation)
 			var f builtinFunc
 			var err error
 			if test.padding == "NONE" {

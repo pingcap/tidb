@@ -23,6 +23,7 @@ func TestEncodePassword(t *testing.T) {
 	t.Parallel()
 	pwd := "123"
 	require.Equal(t, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", EncodePassword(pwd))
+	require.Equal(t, EncodePasswordBytes([]byte(pwd)), EncodePassword(pwd))
 }
 
 func TestDecodePassword(t *testing.T) {

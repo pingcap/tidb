@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -965,11 +964,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_HexIntArg:
 		f = &builtinHexIntArgSig{base}
 	case tipb.ScalarFuncSig_HexStrArg:
-		chs, args := "utf-8", base.getArgs()
-		if len(args) == 1 {
-			chs, _ = args[0].CharsetAndCollation(ctx)
-		}
-		f = &builtinHexStrArgSig{base, charset.NewEncoding(chs)}
+		f = &builtinHexStrArgSig{base}
 	case tipb.ScalarFuncSig_InsertUTF8:
 		f = &builtinInsertUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Insert:
@@ -1054,6 +1049,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)

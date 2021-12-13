@@ -556,6 +556,7 @@ func newBatchPointGetPlan(
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
 ) *BatchPointGetPlan {
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
 	var partitionExpr *tables.PartitionExpr
 	if tbl.GetPartitionInfo() != nil {
@@ -593,16 +594,8 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			if !checkCanConvertInPointGet(handleCol, d) {
-				return nil
-			}
-			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
-			if err != nil {
-				return nil
-			}
-			// The converted result must be same as original datum
-			cmp, err := intDatum.CompareDatum(ctx.GetSessionVars().StmtCtx, &d)
-			if err != nil || cmp != 0 {
+			intDatum := getPointGetValue(stmtCtx, handleCol, &d)
+			if intDatum == nil {
 				return nil
 			}
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
@@ -686,12 +679,14 @@ func newBatchPointGetPlan(
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
-					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					if dval == nil {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
-					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
+					if dval == nil {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
@@ -706,18 +701,20 @@ func newBatchPointGetPlan(
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			if dval == nil {
 				return nil
 			}
-			values = []types.Datum{x.Datum}
+			values = []types.Datum{*dval}
 		case *driver.ParamMarkerExpr:
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+			dval := getPointGetValue(stmtCtx, colInfos[0], &x.Datum)
+			if dval == nil {
 				return nil
 			}
-			values = []types.Datum{x.Datum}
+			values = []types.Datum{*dval}
 			valuesParams = []*driver.ParamMarkerExpr{x}
 		default:
 			return nil
@@ -1227,6 +1224,23 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
+}
+
+func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, d *types.Datum) *types.Datum {
+	if !checkCanConvertInPointGet(col, *d) {
+		return nil
+	}
+	dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
+	if err != nil {
+		return nil
+	}
+	// The converted result must be same as original datum.
+	// Compare them based on the dVal's type.
+	cmp, err := dVal.CompareDatum(stmtCtx, d)
+	if err != nil || cmp != 0 {
+		return nil
+	}
+	return &dVal
 }
 
 func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
