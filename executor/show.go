@@ -196,6 +196,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowHistogramsInFlight:
+		e.fetchShowHistogramsInFlight()
+		return nil
 	case ast.ShowColumnStatsUsage:
 		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
@@ -972,7 +975,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")

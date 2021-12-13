@@ -120,9 +120,11 @@ func (n *AuthOption) Restore(ctx *format.RestoreCtx) error {
 type TraceStmt struct {
 	stmtNode
 
-	Stmt      StmtNode
-	Format    string
-	TracePlan bool
+	Stmt   StmtNode
+	Format string
+
+	TracePlan       bool
+	TracePlanTarget string
 }
 
 // Restore implements Node interface.
@@ -130,6 +132,12 @@ func (n *TraceStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("TRACE ")
 	if n.TracePlan {
 		ctx.WriteKeyWord("PLAN ")
+		if n.TracePlanTarget != "" {
+			ctx.WriteKeyWord("TARGET")
+			ctx.WritePlain(" = ")
+			ctx.WriteString(n.TracePlanTarget)
+			ctx.WritePlain(" ")
+		}
 	} else if n.Format != "row" {
 		ctx.WriteKeyWord("FORMAT")
 		ctx.WritePlain(" = ")

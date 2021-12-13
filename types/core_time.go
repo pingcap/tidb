@@ -184,6 +184,59 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 	return tm, nil
 }
 
+// FindZoneTransition check for one Time Zone transition within +/- 4h
+// Currently the needed functions are not exported, if gotime.Location.lookup would be exported
+// then it would be easy to use that directly
+func FindZoneTransition(tIn gotime.Time) (gotime.Time, error) {
+	// Check most common case first, DST transition on full hour.
+	// round truncates away from zero!
+	t2 := tIn.Round(gotime.Hour).Add(-1 * gotime.Hour)
+	t1 := t2.Add(-1 * gotime.Second)
+	_, offset1 := t1.Zone()
+	_, offset2 := t2.Zone()
+	if offset1 != offset2 {
+		return t2, nil
+	}
+
+	// Check if any offset change?
+	t1 = tIn.Add(-4 * gotime.Hour)
+	t2 = tIn.Add(4 * gotime.Hour)
+	_, offset1 = t1.Zone()
+	_, offset2 = t2.Zone()
+	if offset1 == offset2 {
+		return tIn, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, tIn))
+	}
+
+	// Check generic case, like for 'Australia/Lord_Howe'
+	for t2.After(t1.Add(gotime.Second)) {
+		t := t1.Add(t2.Sub(t1) / 2).Round(gotime.Second)
+		_, offset := t.Zone()
+		if offset == offset1 {
+			t1 = t
+		} else {
+			t2 = t
+		}
+	}
+	return t2, nil
+}
+
+// AdjustedGoTime converts Time to GoTime and adjust for invalid DST times
+// like during the DST change with increased offset,
+// normally moving to Daylight Saving Time.
+// see https://github.com/pingcap/tidb/issues/28739
+func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
+	tm, err := t.GoTime(loc)
+	if err == nil {
+		return tm, nil
+	}
+
+	tAdj, err2 := FindZoneTransition(tm)
+	if err2 == nil {
+		return tAdj, nil
+	}
+	return tm, err
+}
+
 // IsLeapYear returns if it's leap year.
 func (t CoreTime) IsLeapYear() bool {
 	return isLeapYear(t.getYear())
