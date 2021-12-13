@@ -2826,7 +2826,7 @@ func TestTiDBDecodePlanFunc(t *testing.T) {
 	tk.MustQuery("select tidb_decode_plan('xxx')").Check(testkit.Rows("xxx"))
 }
 
-func TestTiDBInternalFunc(t *testing.T) {
+func TestTiDBDecodeKeyFunc(t *testing.T) {
 	t.Parallel()
 
 	store, clean := testkit.CreateMockStore(t)
@@ -2876,16 +2876,14 @@ func TestTiDBInternalFunc(t *testing.T) {
 		h, err := kv.NewCommonHandle(k)
 		require.NoError(t, err)
 		k = tablecodec.EncodeRowKeyWithHandle(tableID, h)
-		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, k))
-		return hexKey
+		return hex.EncodeToString(codec.EncodeBytes(nil, k))
 	}
 	// split table t by ('bbbb', 10, '2020-01-01');
 	data := []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewTimeDatum(getTime(2020, 1, 1, mysql.TypeDatetime))}
 	hexKey := buildCommonKeyFromData(tbl.Meta().ID, data)
 	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
-	result = tk.MustQuery(sql)
 	rs := fmt.Sprintf(`{"handle":{"a":"bbbb","b":"10","c":"2020-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
-	result.Check(testkit.Rows(rs))
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
 
 	// split table t by ('bbbb', 10, null);
 	data = []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewDatum(nil)}
@@ -2903,8 +2901,7 @@ func TestTiDBInternalFunc(t *testing.T) {
 		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
 		require.NoError(t, err)
 		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
-		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, k))
-		return hexKey
+		return hex.EncodeToString(codec.EncodeBytes(nil, k))
 	}
 	// split table t index idx by ('aaaaa', 100, '2000-01-01');
 	data = []types.Datum{types.NewStringDatum("aaaaa"), types.NewIntDatum(100), types.NewTimeDatum(getTime(2000, 1, 1, mysql.TypeDatetime))}
@@ -2925,6 +2922,38 @@ func TestTiDBInternalFunc(t *testing.T) {
 	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// Test the table with the nonclustered index.
+	const rowID = 10
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key nonclustered, b int, key bk (b));")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	buildTableRowKey := func(tableID, rowID int64) string {
+		return hex.EncodeToString(
+			codec.EncodeBytes(
+				nil,
+				tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(rowID)),
+			))
+	}
+	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"_tidb_rowid":%d,"table_id":"%d"}`, rowID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
+
+	// Test the table with the clustered index.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key clustered, b int, key bk (b));")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	hexKey = buildTableRowKey(tbl.Meta().ID, rowID)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	rs = fmt.Sprintf(`{"%s":%d,"table_id":"%d"}`, tbl.Meta().GetPkName().String(), rowID, tbl.Meta().ID)
+	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
 func TestTwoDecimalTruncate(t *testing.T) {

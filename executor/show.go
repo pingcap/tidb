@@ -975,7 +975,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")

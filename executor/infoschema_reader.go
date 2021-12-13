@@ -577,7 +577,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 						rowCount = 1
 					}
 				}
-				if table.PKIsHandle || table.IsCommonHandle {
+				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)

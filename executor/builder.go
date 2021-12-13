@@ -4743,7 +4743,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 						zap.Stack("stack trace"))
 				}
 			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}
