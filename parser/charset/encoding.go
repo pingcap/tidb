@@ -15,12 +15,12 @@ package charset
 
 // Make sure all of them implement Encoding interface.
 var (
-	_ Encoding = &EncodingUTF8{}
-	_ Encoding = &EncodingUTF8MB3Strict{}
-	_ Encoding = &EncodingASCII{}
-	_ Encoding = &EncodingLatin1{}
-	_ Encoding = &EncodingBin{}
-	_ Encoding = &EncodingGBK{}
+	_ Encoding = &encodingUTF8{}
+	_ Encoding = &encodingUTF8MB3Strict{}
+	_ Encoding = &encodingASCII{}
+	_ Encoding = &encodingLatin1{}
+	_ Encoding = &encodingBin{}
+	_ Encoding = &encodingGBK{}
 )
 
 // IsSupportedEncoding checks if the charset is fully supported.
@@ -69,27 +69,27 @@ type Encoding interface {
 type Op int16
 
 const (
-	OpFromUTF8 Op = 1 << iota
-	OpToUTF8
-	OpTruncateTrim
-	OpTruncateReplace
-	OpCollectFrom
-	OpCollectTo
-	OpSkipError
+	opFromUTF8 Op = 1 << iota
+	opToUTF8
+	opTruncateTrim
+	opTruncateReplace
+	opCollectFrom
+	opCollectTo
+	opSkipError
 )
 
 const (
-	OpReplace       = OpFromUTF8 | OpTruncateReplace | OpCollectFrom | OpSkipError
-	OpEncode        = OpFromUTF8 | OpTruncateTrim | OpCollectTo
-	OpEncodeReplace = OpFromUTF8 | OpTruncateReplace | OpCollectTo
-	OpDecode        = OpToUTF8 | OpTruncateTrim | OpCollectTo
-	OpDecodeReplace = OpToUTF8 | OpTruncateReplace | OpCollectTo
+	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
+	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
+	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 
 // IsValid checks whether the bytes is valid in current encoding.
 func IsValid(e Encoding, src []byte) bool {
 	isValid := true
-	e.Foreach(src, OpFromUTF8, func(from, to []byte, ok bool) bool {
+	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
 		isValid = ok
 		return ok
 	})
@@ -105,7 +105,7 @@ func IsValidString(e Encoding, str string) bool {
 // can be encode to the current encoding.
 func CountValidBytes(e Encoding, src []byte) int {
 	nSrc := 0
-	e.Foreach(src, OpFromUTF8, func(from, to []byte, ok bool) bool {
+	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
 		if ok {
 			nSrc += len(from)
 		}
@@ -118,7 +118,7 @@ func CountValidBytes(e Encoding, src []byte) int {
 // can be decode to utf-8.
 func CountValidBytesDecode(e Encoding, src []byte) int {
 	nSrc := 0
-	e.Foreach(src, OpToUTF8, func(from, to []byte, ok bool) bool {
+	e.Foreach(src, opToUTF8, func(from, to []byte, ok bool) bool {
 		if ok {
 			nSrc += len(from)
 		}

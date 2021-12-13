@@ -20,25 +20,25 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-// EncodingGBKImpl is the instance of EncodingGBK
-var EncodingGBKImpl = &EncodingGBK{EncodingBase{enc: simplifiedchinese.GBK}}
+// EncodingGBKImpl is the instance of encodingGBK
+var EncodingGBKImpl = &encodingGBK{encodingBase{enc: simplifiedchinese.GBK}}
 
 func init() {
 	EncodingGBKImpl.self = EncodingGBKImpl
 }
 
-// EncodingGBK is GBK encoding.
-type EncodingGBK struct {
-	EncodingBase
+// encodingGBK is GBK encoding.
+type encodingGBK struct {
+	encodingBase
 }
 
 // Name implements Encoding interface.
-func (e *EncodingGBK) Name() string {
+func (e *encodingGBK) Name() string {
 	return CharsetGBK
 }
 
 // Peek implements Encoding interface.
-func (e *EncodingGBK) Peek(src []byte) []byte {
+func (e *encodingGBK) Peek(src []byte) []byte {
 	charLen := 2
 	if len(src) == 0 || src[0] < 0x80 {
 		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
@@ -51,12 +51,12 @@ func (e *EncodingGBK) Peek(src []byte) []byte {
 }
 
 // ToUpper implements Encoding interface.
-func (e *EncodingGBK) ToUpper(d string) string {
+func (e *encodingGBK) ToUpper(d string) string {
 	return strings.ToUpperSpecial(GBKCase, d)
 }
 
 // ToLower implements Encoding interface.
-func (e *EncodingGBK) ToLower(d string) string {
+func (e *encodingGBK) ToLower(d string) string {
 	return strings.ToLowerSpecial(GBKCase, d)
 }
 

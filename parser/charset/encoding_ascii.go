@@ -19,39 +19,39 @@ import (
 	"golang.org/x/text/encoding"
 )
 
-// EncodingASCIIImpl is the instance of EncodingASCII
-var EncodingASCIIImpl = &EncodingASCII{EncodingBase{enc: encoding.Nop}}
+// EncodingASCIIImpl is the instance of encodingASCII
+var EncodingASCIIImpl = &encodingASCII{encodingBase{enc: encoding.Nop}}
 
 func init() {
 	EncodingASCIIImpl.self = EncodingASCIIImpl
 }
 
-// EncodingASCII is the ASCII encoding.
-type EncodingASCII struct {
-	EncodingBase
+// encodingASCII is the ASCII encoding.
+type encodingASCII struct {
+	encodingBase
 }
 
 // Name implements Encoding interface.
-func (e *EncodingASCII) Name() string {
+func (e *encodingASCII) Name() string {
 	return CharsetASCII
 }
 
 // Peek implements Encoding interface.
-func (e *EncodingASCII) Peek(src []byte) []byte {
+func (e *encodingASCII) Peek(src []byte) []byte {
 	if len(src) == 0 {
 		return src
 	}
 	return src[:1]
 }
 
-func (e *EncodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op)
+	return e.encodingBase.Transform(dest, src, op)
 }
 
-func (e *EncodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (e *encodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		w = 1
 		ok := true

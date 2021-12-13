@@ -17,25 +17,25 @@ import (
 	"golang.org/x/text/encoding"
 )
 
-// EncodingBinImpl is the instance of EncodingBin.
-var EncodingBinImpl = &EncodingBin{EncodingBase{enc: encoding.Nop}}
+// EncodingBinImpl is the instance of encodingBin.
+var EncodingBinImpl = &encodingBin{encodingBase{enc: encoding.Nop}}
 
 func init() {
 	EncodingBinImpl.self = EncodingBinImpl
 }
 
-// EncodingBin is the binary encoding.
-type EncodingBin struct {
-	EncodingBase
+// encodingBin is the binary encoding.
+type encodingBin struct {
+	encodingBase
 }
 
 // Name implements Encoding interface.
-func (e *EncodingBin) Name() string {
+func (e *encodingBin) Name() string {
 	return CharsetBin
 }
 
 // Peek implements Encoding interface.
-func (e *EncodingBin) Peek(src []byte) []byte {
+func (e *encodingBin) Peek(src []byte) []byte {
 	if len(src) == 0 {
 		return src
 	}
@@ -43,7 +43,7 @@ func (e *EncodingBin) Peek(src []byte) []byte {
 }
 
 // Foreach implements Encoding interface.
-func (e *EncodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	for i := 0; i < len(src); i++ {
 		if !fn(src[i:i+1], src[i:i+1], true) {
 			return
@@ -51,6 +51,6 @@ func (e *EncodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *EncodingBin) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingBin) Transform(dest, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }

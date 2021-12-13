@@ -19,13 +19,13 @@ import (
 	"golang.org/x/text/encoding"
 )
 
-// EncodingUTF8Impl is the instance of EncodingUTF8.
-var EncodingUTF8Impl = &EncodingUTF8{EncodingBase{enc: encoding.Nop}}
+// EncodingUTF8Impl is the instance of encodingUTF8.
+var EncodingUTF8Impl = &encodingUTF8{encodingBase{enc: encoding.Nop}}
 
-// EncodingUTF8MB3StrictImpl is the instance of EncodingUTF8MB3Strict.
-var EncodingUTF8MB3StrictImpl = &EncodingUTF8MB3Strict{
-	EncodingUTF8{
-		EncodingBase{
+// EncodingUTF8MB3StrictImpl is the instance of encodingUTF8MB3Strict.
+var EncodingUTF8MB3StrictImpl = &encodingUTF8MB3Strict{
+	encodingUTF8{
+		encodingBase{
 			enc: encoding.Nop,
 		},
 	},
@@ -36,18 +36,18 @@ func init() {
 	EncodingUTF8MB3StrictImpl.self = EncodingUTF8MB3StrictImpl
 }
 
-// EncodingUTF8 is TiDB's default encoding.
-type EncodingUTF8 struct {
-	EncodingBase
+// encodingUTF8 is TiDB's default encoding.
+type encodingUTF8 struct {
+	encodingBase
 }
 
 // Name implements Encoding interface.
-func (e *EncodingUTF8) Name() string {
+func (e *encodingUTF8) Name() string {
 	return CharsetUTF8MB4
 }
 
 // Peek implements Encoding interface.
-func (e *EncodingUTF8) Peek(src []byte) []byte {
+func (e *encodingUTF8) Peek(src []byte) []byte {
 	nextLen := 4
 	if len(src) == 0 || src[0] < 0x80 {
 		nextLen = 1
@@ -63,15 +63,15 @@ func (e *EncodingUTF8) Peek(src []byte) []byte {
 }
 
 // Transform implements Encoding interface.
-func (e *EncodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op)
+	return e.encodingBase.Transform(dest, src, op)
 }
 
 // Foreach implements Encoding interface.
-func (e *EncodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (e *encodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	var rv rune
 	for i, w := 0, 0; i < len(src); i += w {
 		rv, w = utf8.DecodeRune(src[i:])
@@ -82,14 +82,14 @@ func (e *EncodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bo
 	}
 }
 
-// EncodingUTF8MB3Strict is the strict mode of EncodingUTF8MB3.
+// encodingUTF8MB3Strict is the strict mode of EncodingUTF8MB3.
 // MB4 characters are considered invalid.
-type EncodingUTF8MB3Strict struct {
-	EncodingUTF8
+type encodingUTF8MB3Strict struct {
+	encodingUTF8
 }
 
 // Foreach implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
+func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh []byte, ok bool) bool) {
 	for i, w := 0, 0; i < len(src); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRune(src[i:])
@@ -101,9 +101,9 @@ func (e *EncodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh 
 }
 
 // Transform implements Encoding interface.
-func (e *EncodingUTF8MB3Strict) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingUTF8MB3Strict) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
 		return src, nil
 	}
-	return e.EncodingBase.Transform(dest, src, op)
+	return e.encodingBase.Transform(dest, src, op)
 }

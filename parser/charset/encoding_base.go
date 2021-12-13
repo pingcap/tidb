@@ -28,41 +28,41 @@ import (
 
 var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
-// EncodingBase defines some generic functions.
-type EncodingBase struct {
+// encodingBase defines some generic functions.
+type encodingBase struct {
 	enc  encoding.Encoding
 	self Encoding
 }
 
-func (b EncodingBase) ToUpper(src string) string {
+func (b encodingBase) ToUpper(src string) string {
 	return strings.ToUpper(src)
 }
 
-func (b EncodingBase) ToLower(src string) string {
+func (b encodingBase) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 
-func (b EncodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
+func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
 		dest = make([]byte, len(src))
 	}
 	dest = dest[:0]
 	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
 		if !ok {
-			if err == nil && (op&OpSkipError == 0) {
+			if err == nil && (op&opSkipError == 0) {
 				err = generateEncodingErr(b.self.Name(), from)
 			}
-			if op&OpTruncateTrim != 0 {
+			if op&opTruncateTrim != 0 {
 				return false
 			}
-			if op&OpTruncateReplace != 0 {
+			if op&opTruncateReplace != 0 {
 				dest = append(dest, '?')
 				return true
 			}
 		}
-		if op&OpCollectFrom != 0 {
+		if op&opCollectFrom != 0 {
 			dest = append(dest, from...)
-		} else if op&OpCollectTo != 0 {
+		} else if op&opCollectTo != 0 {
 			dest = append(dest, to...)
 		}
 		return true
@@ -70,10 +70,10 @@ func (b EncodingBase) Transform(dest, src []byte, op Op) (result []byte, err err
 	return dest, err
 }
 
-func (b EncodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	var tfm transform.Transformer
 	var peek func([]byte) []byte
-	if op&OpFromUTF8 != 0 {
+	if op&opFromUTF8 != 0 {
 		tfm = b.enc.NewEncoder()
 		peek = EncodingUTF8Impl.Peek
 	} else {
@@ -84,7 +84,7 @@ func (b EncodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(peek(src[i:]))
 		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
-		meetErr := err != nil || (op&OpToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
+		meetErr := err != nil || (op&opToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
 		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
 			return
 		}
