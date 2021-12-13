@@ -888,7 +888,10 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 
 	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 		if iter == nil {
-			iter = newRowIter(rows, pkValNum)
+			iter = &rowIter{
+				rows: rows,
+				args: make([]interface{}, pkValNum),
+			}
 		}
 		err = iter.Decode(rowRec)
 		if err != nil {

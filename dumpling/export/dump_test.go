@@ -38,6 +38,7 @@ func TestDumpBlock(t *testing.T) {
 	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
 	d := &Dumper{
 		tctx:      tctx,
@@ -60,7 +61,7 @@ func TestDumpBlock(t *testing.T) {
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
 	d.conf.ServerInfo.ServerType = version.ServerTypeMySQL
-	require.ErrorIs(t, d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled)
+	require.ErrorIs(t, d.dumpDatabases(writerCtx, baseConn, taskChan), context.Canceled)
 	require.ErrorIs(t, wg.Wait(), writerErr)
 }
 
@@ -77,6 +78,7 @@ func TestDumpTableMeta(t *testing.T) {
 	defer cancel()
 	conn, err := db.Conn(tctx)
 	require.NoError(t, err)
+	baseConn := newBaseConn(conn, true, nil)
 
 	conf := DefaultConfig()
 	conf.NoSchemas = true
@@ -94,7 +96,7 @@ func TestDumpTableMeta(t *testing.T) {
 		}
 		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-		meta, err := dumpTableMeta(conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
+		meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
 		require.Equal(t, table, meta.TableName())
