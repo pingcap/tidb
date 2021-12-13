@@ -938,68 +938,68 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 				EndKey:   hisHotRegion.EndKey},
 		},
 	}
-	tableInfos := tikvHelper.ParseRegionsTableInfos(regionsInfo, tables)
+	regionsTableInfos := tikvHelper.ParseRegionsTableInfos(regionsInfo, tables)
 
-	// Ignore row without corresponding schema.
-	if tableInfos == nil {
-		return nil, nil
-	}
 	var rows [][]types.Datum
-	for _, tableInfo := range tableInfos[int64(hisHotRegion.RegionID)] {
-		updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
-		if updateTimestamp.Location() != tz {
-			updateTimestamp.In(tz)
-		}
-		updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-		row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
+	// Ignore row without corresponding schema.
+	if tableInfos, ok := regionsTableInfos[int64(hisHotRegion.RegionID)]; ok {
+		for _, tableInfo := range tableInfos {
+			updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+			if updateTimestamp.Location() != tz {
+				updateTimestamp.In(tz)
+			}
+			updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
+			row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
 
-		row[0].SetMysqlTime(updateTime)
-		row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
-		row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
-		row[3].SetInt64(tableInfo.Table.ID)
-		if tableInfo.IsIndex {
-			row[4].SetString(strings.ToUpper(tableInfo.Index.Name.O), mysql.DefaultCollationName)
-			row[5].SetInt64(tableInfo.Index.ID)
-		} else {
-			row[4].SetNull()
-			row[5].SetNull()
-		}
-		row[6].SetInt64(int64(hisHotRegion.RegionID))
-		row[7].SetInt64(int64(hisHotRegion.StoreID))
-		row[8].SetInt64(int64(hisHotRegion.PeerID))
-		if hisHotRegion.IsLearner {
-			row[9].SetInt64(1)
-		} else {
-			row[9].SetInt64(0)
-		}
-		if hisHotRegion.IsLeader {
-			row[10].SetInt64(1)
-		} else {
-			row[10].SetInt64(0)
-		}
+			row[0].SetMysqlTime(updateTime)
+			row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
+			row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
+			row[3].SetInt64(tableInfo.Table.ID)
+			if tableInfo.IsIndex {
+				row[4].SetString(strings.ToUpper(tableInfo.Index.Name.O), mysql.DefaultCollationName)
+				row[5].SetInt64(tableInfo.Index.ID)
+			} else {
+				row[4].SetNull()
+				row[5].SetNull()
+			}
+			row[6].SetInt64(int64(hisHotRegion.RegionID))
+			row[7].SetInt64(int64(hisHotRegion.StoreID))
+			row[8].SetInt64(int64(hisHotRegion.PeerID))
+			if hisHotRegion.IsLearner {
+				row[9].SetInt64(1)
+			} else {
+				row[9].SetInt64(0)
+			}
+			if hisHotRegion.IsLeader {
+				row[10].SetInt64(1)
+			} else {
+				row[10].SetInt64(0)
+			}
 
-		row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
-		if hisHotRegion.HotDegree != 0 {
-			row[12].SetInt64(hisHotRegion.HotDegree)
-		} else {
-			row[12].SetNull()
+			row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
+			if hisHotRegion.HotDegree != 0 {
+				row[12].SetInt64(hisHotRegion.HotDegree)
+			} else {
+				row[12].SetNull()
+			}
+			if hisHotRegion.FlowBytes != 0 {
+				row[13].SetFloat64(hisHotRegion.FlowBytes)
+			} else {
+				row[13].SetNull()
+			}
+			if hisHotRegion.KeyRate != 0 {
+				row[14].SetFloat64(hisHotRegion.KeyRate)
+			} else {
+				row[14].SetNull()
+			}
+			if hisHotRegion.QueryRate != 0 {
+				row[15].SetFloat64(hisHotRegion.QueryRate)
+			} else {
+				row[15].SetNull()
+			}
+			rows = append(rows, row)
 		}
-		if hisHotRegion.FlowBytes != 0 {
-			row[13].SetFloat64(hisHotRegion.FlowBytes)
-		} else {
-			row[13].SetNull()
-		}
-		if hisHotRegion.KeyRate != 0 {
-			row[14].SetFloat64(hisHotRegion.KeyRate)
-		} else {
-			row[14].SetNull()
-		}
-		if hisHotRegion.QueryRate != 0 {
-			row[15].SetFloat64(hisHotRegion.QueryRate)
-		} else {
-			row[15].SetNull()
-		}
-		rows = append(rows, row)
 	}
+
 	return rows, nil
 }
