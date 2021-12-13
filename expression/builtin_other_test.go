@@ -180,7 +180,7 @@ func TestValues(t *testing.T) {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
 	require.Error(t, err)
-	require.Regexp(t, ".*Incorrect parameter count in the call to native function 'values'", err.Error())
+	require.Regexp(t, "Incorrect parameter count in the call to native function 'values'$", err.Error())
 
 	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestValues(t *testing.T) {
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	require.Error(t, err)
-	require.Regexp(t, "Session current insert values len.*", err.Error())
+	require.Regexp(t, "^Session current insert values len", err.Error())
 
 	currInsertValues := types.MakeDatums("1", "2")
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()

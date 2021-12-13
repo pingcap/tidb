@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -260,7 +262,8 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
 
 	// Table ID or schema ID is wrong, so getting table is failed.
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		job.SchemaID = -1
@@ -374,7 +377,8 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 
 	dbInfo, err := testSchemaInfo(d, "test_ddl")
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
@@ -405,7 +409,8 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 
 	dbInfo, err := testSchemaInfo(d, "test_ddl")
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 
@@ -448,7 +453,8 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 
 	dbInfo, err := testSchemaInfo(d, "test_ddl")
 	c.Assert(err, IsNil)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	col := &model.ColumnInfo{
@@ -488,6 +494,32 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 }
 
+func (s *testDDLSerialSuite) TestAddBatchJobError(c *C) {
+	store := testCreateStore(c, "test_add_batch_job_error")
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	ctx := testNewContext(d)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`), IsNil)
+	// Test the job runner should not hang forever.
+	job := &model.Job{SchemaID: 1, TableID: 1}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "mockAddBatchDDLJobsErr")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr"), IsNil)
+}
+
 func testCheckOwner(c *C, d *ddl, expectedVal bool) {
 	c.Assert(d.isOwner(), Equals, expectedVal)
 }
@@ -507,6 +539,37 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+}
+
+func testCheckJobDoneT(t *testing.T, d *ddl, job *model.Job, isAdd bool) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		historyJob, err := tt.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.Equal(t, model.JobStateSynced, historyJob.State)
+		if isAdd {
+			require.Equal(t, model.StatePublic, historyJob.SchemaState)
+		} else {
+			require.Equal(t, model.StateNone, historyJob.SchemaState)
+		}
+
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func testCheckJobCancelledT(t *testing.T, d *ddl, job *model.Job, state *model.SchemaState) {
+	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		historyJob, err := tt.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+		if state != nil {
+			require.Equal(t, *state, historyJob.SchemaState)
+		}
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaState) {
@@ -540,6 +603,23 @@ func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, c *C, schemaID, 
 	return job
 }
 
+func doDDLJobErrWithSchemaStateT(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tableID int64, tp model.ActionType,
+	args []interface{}, state *model.SchemaState) *model.Job {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	err := d.doDDLJob(ctx, job)
+	// TODO: Add the detail error check.
+	require.Error(t, err, "err:%v", err)
+	testCheckJobCancelledT(t, d, job, state)
+
+	return job
+}
+
 func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, c *C, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}) {
 	job := &model.Job{
@@ -556,6 +636,11 @@ func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, c *C, schemaID, tableID int
 func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []interface{},
 	ctx sessionctx.Context, d *ddl) *model.Job {
 	return doDDLJobErrWithSchemaState(ctx, d, c, schemaID, tableID, tp, args, nil)
+}
+
+func doDDLJobErrT(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{},
+	ctx sessionctx.Context, d *ddl) *model.Job {
+	return doDDLJobErrWithSchemaStateT(ctx, d, t, schemaID, tableID, tp, args, nil)
 }
 
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
@@ -752,7 +837,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// Skip using sessPool. Make sure adding primary key can be successful.
 	partitionTblInfo.Columns[0].Flag |= mysql.NotNullFlag
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
-	tblInfo := testTableInfo(c, d, "t", 5)
+	tblInfo, err := testTableInfo(d, "t", 5)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -897,7 +983,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, true)
 
 	// for create table
-	tblInfo1 := testTableInfo(c, d, "t1", 2)
+	tblInfo1, err := testTableInfo(d, "t1", 2)
+	c.Assert(err, IsNil)
 	updateTest(&tests[8])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo1.ID, model.ActionCreateTable, []interface{}{tblInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
@@ -1199,7 +1286,8 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// test exchange partition failed caused by canceled
 	pt := testTableInfoWithPartition(c, d, "pt", 5)
-	nt := testTableInfo(c, d, "nt", 5)
+	nt, err := testTableInfo(d, "nt", 5)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo, pt)
 	testCreateTable(c, ctx, d, dbInfo, nt)
 
@@ -1480,7 +1568,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo1)
 	// create table t1 (c1 int, c2 int);
-	tblInfo1 := testTableInfo(c, d, "t1", 2)
+	tblInfo1, err := testTableInfo(d, "t1", 2)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo1)
 	// insert t1 values (10, 10), (20, 20)
 	tbl1 := testGetTable(c, d, dbInfo1.ID, tblInfo1.ID)
@@ -1489,7 +1578,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	_, err = tbl1.AddRecord(ctx, types.MakeDatums(2, 2))
 	c.Assert(err, IsNil)
 	// create table t2 (c1 int primary key, c2 int, c3 int);
-	tblInfo2 := testTableInfo(c, d, "t2", 3)
+	tblInfo2, err := testTableInfo(d, "t2", 3)
+	c.Assert(err, IsNil)
 	tblInfo2.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo2.PKIsHandle = true
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo2)
@@ -1506,7 +1596,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	c.Assert(err, IsNil)
 	testCreateSchema(c, ctx, d, dbInfo2)
 	// create table t3 (c1 int, c2 int, c3 int, c4 int);
-	tblInfo3 := testTableInfo(c, d, "t3", 4)
+	tblInfo3, err := testTableInfo(d, "t3", 4)
+	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, dbInfo2, tblInfo3)
 	// insert t3 values (11, 22, 33, 44)
 	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)

@@ -202,7 +202,8 @@ func TestCharset(t *testing.T) {
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.Nil(t, f)
-	require.Regexp(t, ".*FUNCTION CHARSET does not exist", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "FUNCTION CHARSET does not exist$", err.Error())
 }
 
 func TestCoercibility(t *testing.T) {

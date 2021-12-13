@@ -372,6 +372,35 @@ func TestShowGrants(t *testing.T) {
 	require.Len(t, gs, 3)
 }
 
+// TestErrorMessage checks that the identity in error messages matches the mysql.user table one.
+// MySQL is inconsistent in its error messages, as some match the loginHost and others the
+// identity from mysql.user. In TiDB we now use the identity from mysql.user in error messages
+// for consistency.
+func TestErrorMessage(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	rootSe := newSession(t, store, dbName)
+	mustExec(t, rootSe, `CREATE USER wildcard`)
+	mustExec(t, rootSe, `CREATE USER specifichost@192.168.1.1`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO wildcard`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO specifichost@192.168.1.1`)
+
+	wildSe := newSession(t, store, dbName)
+
+	// The session.Auth() func will populate the AuthUsername and AuthHostname fields.
+	// We don't have to explicitly specify them.
+	require.True(t, wildSe.Auth(&auth.UserIdentity{Username: "wildcard", Hostname: "192.168.1.1"}, nil, nil))
+	_, err := wildSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'wildcard'@'%' to database 'mysql'", err.Error())
+
+	specificSe := newSession(t, store, dbName)
+	require.True(t, specificSe.Auth(&auth.UserIdentity{Username: "specifichost", Hostname: "192.168.1.1"}, nil, nil))
+	_, err = specificSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'specifichost'@'192.168.1.1' to database 'mysql'", err.Error())
+}
+
 func TestShowColumnGrants(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
@@ -1105,10 +1134,10 @@ func TestConfigPrivilege(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil))
 	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
 	require.Error(t, err)
-	require.Regexp(t, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
 	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	require.Error(t, err)
-	require.Regexp(t, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
 	mustExec(t, se, `DROP USER tcd1, tcd2`)
 }
 
@@ -1951,11 +1980,11 @@ func TestRenameUser(t *testing.T) {
 	// Check privileges (need CREATE USER)
 	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.Error(t, err)
-	require.Regexp(t, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation", err.Error())
+	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	mustExec(t, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.Error(t, err)
-	require.Regexp(t, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation", err.Error())
+	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	mustExec(t, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.NoError(t, err)
@@ -1968,19 +1997,19 @@ func TestRenameUser(t *testing.T) {
 	// Including negative tests, i.e. non existing from user and existing to user
 	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru3@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru4@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru3@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru4@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru6@localhost.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru6@localhost")
 
 	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")

@@ -258,7 +258,7 @@ func TestShowStatusSnapshot(t *testing.T) {
 	tk.MustQuery("show table status;").Check(testkit.Rows())
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	result := tk.MustQuery("show table status;")
-	require.Regexp(t, "t", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][0])
 }
 
 func TestShowStatsExtended(t *testing.T) {
@@ -349,4 +349,17 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+}
+
+func TestShowHistogramsInFlight(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("show histograms_in_flight")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 1)
+	require.Equal(t, rows[0][0], "0")
 }

@@ -30,6 +30,25 @@
 
   },
   {
+    "name": "TestRegardNULLAsPoint",
+    "cases": [
+      "select * from tuk where a<=>null and b=1",
+      "select * from tik where a<=>null and b=1",
+      "select * from tuk where a<=>null and b>0 and b<2",
+      "select * from tik where a<=>null and b>0 and b<2",
+      "select * from tuk where a<=>null and b>=1 and b<2",
+      "select * from tik where a<=>null and b>=1 and b<2",
+      "select * from tuk where a<=>null and b=1 and c=1",
+      "select * from tik where a<=>null and b=1 and c=1",
+      "select * from tuk where a=1 and b<=>null and c=1",
+      "select * from tik where a=1 and b<=>null and c=1",
+      "select * from tuk where a<=>null and b<=>null and c=1",
+      "select * from tik where a<=>null and b<=>null and c=1",
+      "select * from tuk where a<=>null and b<=>null and c<=>null",
+      "select * from tik where a<=>null and b<=>null and c<=>null"
+    ]
+  },
+  {
     "name": "TestPushDownToTiFlashWithKeepOrder",
     "cases": [
       "explain format = 'brief' select max(a) from t",

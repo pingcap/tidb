@@ -615,7 +615,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 ")
-	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition policy")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition placement")
 
 	tk.MustExec("alter table tt1 cache")
 	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table cache")
@@ -8782,47 +8782,46 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 
 	cases := []struct {
 		sql       string
-		tagLabels []tipb.ResourceGroupTagLabel
+		tagLabels map[tipb.ResourceGroupTagLabel]struct{}
 		ignore    bool
 	}{
 		{
 			sql: "insert into t values(1,1),(2,2),(3,3)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a=1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a in (1,2,3)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t where b>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow: {},
 			},
 		},
 		{
 			sql: "select a from t use index (idx) where a>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
@@ -8831,9 +8830,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		},
 		{
 			sql: "insert into t values(4,4)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
@@ -8842,15 +8841,14 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		},
 		{
 			sql: "update t set a=5,b=5 where a=5",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "replace into t values(6,6)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 	}
@@ -8874,10 +8872,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			}
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
-			if len(ca.tagLabels) > 0 {
-				c.Assert(tagLabel, Equals, ca.tagLabels[0])
-				ca.tagLabels = ca.tagLabels[1:] // next label
-			}
+			_, ok := ca.tagLabels[tagLabel]
+			c.Assert(ok, Equals, true)
 			checkCnt++
 		}
 
@@ -9490,4 +9486,18 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 			tk.MustExec(sql)
 		}()
 	}
+}
+
+func (s *testSerialSuite) TestIssue30289(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	fpName := "github.com/pingcap/tidb/executor/issue30289"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+	c.Assert(err.Error(), Matches, "issue30289 build return error")
 }

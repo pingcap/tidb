@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -102,7 +104,7 @@ func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, be
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace(before))
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
@@ -112,11 +114,11 @@ func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action stri
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
 }
 
-func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
+func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace(final))
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -278,7 +280,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
+		refineCETrace(sctx)
+	}
+
 	return finalPlan, cost, nil
+}
+
+// refineCETrace will adjust the content of CETrace.
+// Currently, it will (1) deduplicate trace records and (2) fill in the table name.
+func refineCETrace(sctx sessionctx.Context) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
+	traceRecords := stmtCtx.OptimizerCETrace
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	for _, rec := range traceRecords {
+		tbl, ok := is.TableByID(rec.TableID)
+		if !ok {
+			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+				zap.Int64("table id", rec.TableID))
+		}
+		rec.TableName = tbl.Meta().Name.O
+	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -378,8 +402,10 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	opt := defaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
-	if vars.EnableStmtOptimizeTrace {
-		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
+	if vars.StmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.LogicalOptimizeTrace = tracer
@@ -398,8 +424,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if err != nil {
 			return nil, err
 		}
-		opt.trackAfterRuleOptimize(logic)
 	}
+	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 

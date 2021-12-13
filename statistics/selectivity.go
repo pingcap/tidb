@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"bytes"
 	"math"
 	"math/bits"
 	"sort"
@@ -22,12 +23,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -179,14 +185,20 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
+	ret := 1.0
+	sc := ctx.GetSessionVars().StmtCtx
+	tableID := coll.PhysicalID
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		return pseudoSelectivity(coll, exprs), nil, nil
+		ret = pseudoSelectivity(coll, exprs)
+		if sc.EnableOptimizerCETrace {
+			CETraceExpr(sc, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.Count))
+		}
+		return ret, nil, nil
 	}
-	ret := 1.0
+
 	var nodes []*StatsNode
-	sc := ctx.GetSessionVars().StmtCtx
 
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
@@ -281,6 +293,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	usedSets := GetUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
+	// curExpr records covered expressions by now. It's for cardinality estimation tracing.
+	var curExpr []expression.Expression
+
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity
@@ -290,6 +305,16 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		// conditions.
 		if set.partCover {
 			ret *= selectionFactor
+		}
+		if sc.EnableOptimizerCETrace {
+			// Tracing for the expression estimation results after applying this StatsNode.
+			for i := range remainedExprs {
+				if set.mask&(1<<uint64(i)) > 0 {
+					curExpr = append(curExpr, remainedExprs[i])
+				}
+			}
+			expr := expression.ComposeCNFCondition(ctx, curExpr...)
+			CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
 		}
 	}
 
@@ -345,11 +370,21 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				}
 
 				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+				if sc.EnableOptimizerCETrace {
+					// Tracing for the expression estimation results of this DNF.
+					CETraceExpr(sc, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.Count))
+				}
 			}
 
 			if selectivity != 0 {
 				ret *= selectivity
 				mask &^= 1 << uint64(i)
+			}
+			if sc.EnableOptimizerCETrace {
+				// Tracing for the expression estimation results after applying the DNF estimation result.
+				curExpr = append(curExpr, remainedExprs[i])
+				expr := expression.ComposeCNFCondition(ctx, curExpr...)
+				CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
 			}
 		}
 	}
@@ -357,6 +392,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
 		ret *= selectionFactor
+	}
+	if sc.EnableOptimizerCETrace {
+		// Tracing for the expression estimation results after applying the default selectivity.
+		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
+		CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.Count))
 	}
 	return ret, nodes, nil
 }
@@ -477,4 +517,81 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 		return retCols
 	}
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
+}
+
+// CETraceExpr appends an expression and related information into CE trace
+func CETraceExpr(sc *stmtctx.StatementContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
+	exprStr, err := ExprToString(expr)
+	if err != nil {
+		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of an expression",
+			zap.Any("expression", expr))
+		return
+	}
+	rec := tracing.CETraceRecord{
+		TableID:  tableID,
+		Type:     tp,
+		Expr:     exprStr,
+		RowCount: uint64(rowCount),
+	}
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &rec)
+}
+
+// ExprToString prints an Expression into a string which can appear in a SQL.
+//
+// It might be too tricky because it makes use of TiDB allowing using internal function name in SQL.
+// For example, you can write `eq`(a, 1), which is the same as a = 1.
+// We should have implemented this by first implementing a method to turn an expression to an AST
+//   then call astNode.Restore(), like the Constant case here. But for convenience, we use this trick for now.
+//
+// It may be more appropriate to put this in expression package. But currently we only use it for CE trace,
+//   and it may not be general enough to handle all possible expressions. So we put it here for now.
+func ExprToString(e expression.Expression) (string, error) {
+	switch expr := e.(type) {
+	case *expression.ScalarFunction:
+		var buffer bytes.Buffer
+		buffer.WriteString("`" + expr.FuncName.L + "`(")
+		switch expr.FuncName.L {
+		case ast.Cast:
+			for _, arg := range expr.GetArgs() {
+				argStr, err := ExprToString(arg)
+				if err != nil {
+					return "", err
+				}
+				buffer.WriteString(argStr)
+				buffer.WriteString(", ")
+				buffer.WriteString(expr.RetType.String())
+			}
+		default:
+			for i, arg := range expr.GetArgs() {
+				argStr, err := ExprToString(arg)
+				if err != nil {
+					return "", err
+				}
+				buffer.WriteString(argStr)
+				if i+1 != len(expr.GetArgs()) {
+					buffer.WriteString(", ")
+				}
+			}
+		}
+		buffer.WriteString(")")
+		return buffer.String(), nil
+	case *expression.Column:
+		return expr.String(), nil
+	case *expression.CorrelatedColumn:
+		return "", errors.New("tracing for correlated columns not supported now")
+	case *expression.Constant:
+		value, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			return "", err
+		}
+		valueExpr := driver.ValueExpr{Datum: value}
+		var buffer bytes.Buffer
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buffer)
+		err = valueExpr.Restore(restoreCtx)
+		if err != nil {
+			return "", err
+		}
+		return buffer.String(), nil
+	}
+	return "", errors.New("unexpected type of Expression")
 }
