@@ -323,6 +323,13 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 		c.Assert(cfg.TiDB.Security.CAPath, Equals, tc.expectedCA, comment)
 		c.Assert(cfg.TiDB.TLS, Equals, tc.expectedTLS, comment)
 	}
+	// test different tls config name
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+	cfg.Security.CAPath = "/path/to/ca.pem"
+	cfg.Security.TLSConfigName = "tidb-tls"
+	c.Assert(cfg.Adjust(context.Background()), IsNil)
+	c.Assert(cfg.TiDB.Security.TLSConfigName, Equals, cfg.TiDB.TLS)
 }
 
 func (s *configTestSuite) TestInvalidCSV(c *C) {

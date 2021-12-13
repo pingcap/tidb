@@ -2390,7 +2390,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				continue
 			}
 
-			t, err := buf.GetTime(i).GoTime(getTimeZone(b.ctx))
+			t, err := buf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
 			if err != nil {
 				i64s[i] = 0
 				continue

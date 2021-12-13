@@ -302,7 +302,7 @@ func TestString(t *testing.T) {
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
-		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
+		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 

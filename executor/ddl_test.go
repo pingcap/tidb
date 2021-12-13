@@ -1205,7 +1205,7 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1244,7 +1244,7 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
 }
 
-func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
