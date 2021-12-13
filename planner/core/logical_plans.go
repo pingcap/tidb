@@ -1310,7 +1310,7 @@ type LogicalCTETable struct {
 	name         string
 	idForStorage int
 
-	// seedSchema is only used in predicateColumnCollector to get column mapping
+	// seedSchema is only used in columnStatsUsageCollector to get column mapping
 	seedSchema *expression.Schema
 }
 

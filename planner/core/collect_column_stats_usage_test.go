@@ -17,8 +17,10 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"testing"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
@@ -26,6 +28,31 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
+
+func getColumnName(is infoschema.InfoSchema, tblColID model.TableColumnID) (string, bool) {
+	tbl, ok := is.TableByID(tblColID.TableID)
+	if !ok {
+		return "", false
+	}
+	tblInfo := tbl.Meta()
+	for _, col := range tblInfo.Columns {
+		if tblColID.ColumnID == col.ID {
+			return tblInfo.Name.L + "." + col.Name.L, true
+		}
+	}
+	return "", false
+}
+
+func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp plannercore.LogicalPlan, onlyHistNeeded bool, expected []string, comment string) {
+	tblColIDs := plannercore.CollectColumnStatsUsageForTest(lp, onlyHistNeeded)
+	cols := make([]string, 0, len(tblColIDs))
+	for _, tblColID := range tblColIDs {
+		col, ok := getColumnName(is, tblColID)
+		require.True(t, ok, comment)
+		cols = append(cols, col)
+	}
+	require.ElementsMatch(t, expected, cols, comment)
+}
 
 func TestCollectPredicateColumns(t *testing.T) {
 	t.Parallel()
@@ -173,30 +200,6 @@ func TestCollectPredicateColumns(t *testing.T) {
 	ctx := context.Background()
 	sctx := tk.Session()
 	is := dom.InfoSchema()
-	getColName := func(tblColID model.TableColumnID) (string, bool) {
-		tbl, ok := is.TableByID(tblColID.TableID)
-		if !ok {
-			return "", false
-		}
-		tblInfo := tbl.Meta()
-		for _, col := range tblInfo.Columns {
-			if tblColID.ColumnID == col.ID {
-				return tblInfo.Name.L + "." + col.Name.L, true
-			}
-		}
-		return "", false
-	}
-	checkPredicateColumns := func(lp plannercore.LogicalPlan, expected []string, comment string) {
-		tblColIDs := plannercore.CollectPredicateColumnsForTest(lp)
-		cols := make([]string, 0, len(tblColIDs))
-		for _, tblColID := range tblColIDs {
-			col, ok := getColName(tblColID)
-			require.True(t, ok, comment)
-			cols = append(cols, col)
-		}
-		require.ElementsMatch(t, expected, cols, comment)
-	}
-
 	for _, tt := range tests {
 		comment := fmt.Sprintf("for %s", tt.sql)
 		logutil.BgLogger().Info(comment)
@@ -212,11 +215,73 @@ func TestCollectPredicateColumns(t *testing.T) {
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		// logutil.BgLogger().Info("before logical opt", zap.String("lp", plannercore.ToString(lp)))
-		checkPredicateColumns(lp, tt.res, comment)
+		checkColumnStatsUsage(t, is, lp, false, tt.res, comment)
 		lp, err = plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), lp)
 		require.NoError(t, err, comment)
-		// logutil.BgLogger().Info("after logical opt", zap.String("lp", plannercore.ToString(lp)))
-		checkPredicateColumns(lp, tt.res, comment)
+		checkColumnStatsUsage(t, is, lp, false, tt.res, comment)
+	}
+}
+
+func TestCollectHistNeededColumns(t *testing.T) {
+	t.Parallel()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int, c int, index idx_b(b))")
+	tk.MustExec("create table t2(a int, b int, c int)")
+
+	tests := []struct {
+		sql string
+		res []string
+	}{
+		{
+			sql: "select * from t1 where a > 2",
+			res: []string{"t1.a"},
+		},
+		{
+			sql: "select * from t1 where b in (2, 5) or c = 5",
+			res: []string{"t1.b", "t1.c"},
+		},
+		{
+			sql: "select * from t1 where a + b > 1",
+			res: []string{"t1.a", "t1.b"},
+		},
+		{
+			sql: "select b, count(a) from t1 where b > 1 group by b having count(a) > 2",
+			res: []string{"t1.b"},
+		},
+		{
+			sql: "select * from t1 as x join t2 as y on x.b + y.b > 2 and x.a > 1 and y.c < 1",
+			res: []string{"t1.a", "t2.c"},
+		},
+	}
+
+	ctx := context.Background()
+	sctx := tk.Session()
+	is := dom.InfoSchema()
+	for _, tt := range tests {
+		comment := fmt.Sprintf("for %s", tt.sql)
+		logutil.BgLogger().Info(comment)
+		stmts, err := tk.Session().Parse(ctx, tt.sql)
+		require.NoError(t, err, comment)
+		stmt := stmts[0]
+		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		require.NoError(t, err, comment)
+		builder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+		p, err := builder.Build(ctx, stmt)
+		require.NoError(t, err, comment)
+		lp, ok := p.(plannercore.LogicalPlan)
+		require.True(t, ok, comment)
+		flags := builder.GetOptFlag()
+		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
+		// Hence we disable JoinReOrder and PruneColumnsAgain here.
+		flags &= ^(uint64(1<<13) | uint64(1<<14))
+		lp, err = plannercore.LogicalOptimize(ctx, flags, lp)
+		require.NoError(t, err, comment)
+		logutil.BgLogger().Info("sql is ", zap.String("sql", tt.sql))
+		logutil.BgLogger().Info("after opt", zap.String("lp", plannercore.ToString(lp)))
+		checkColumnStatsUsage(t, is, lp, true, tt.res, comment)
 	}
 }
