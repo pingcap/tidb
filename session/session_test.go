@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -5884,14 +5886,34 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func (s *testSessionSuite2) TestDefend24029(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk.MustExec("create table t(a int key, b varchar(20) collate utf8mb4_unicode_ci, c varchar(20) collate utf8mb4_general_ci, unique key idx_b_c(b, c));")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData", "return(false)"), IsNil)
-	_, err := tk.Exec("insert into t values (4, 'd', 'F');")
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "inconsistent index values"), IsTrue)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData"), IsNil)
+func TestCorrupt(t *testing.T) {
+	store, close := testkit2.CreateMockStore(t)
+	defer close()
+	tk := testkit2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec("set global tidb_enable_mutation_checker = true;")
+	tk.MustExec("set tidb_enable_mutation_checker = true;")
+	tk.MustQuery("select @@tidb_enable_mutation_checker").Check(testkit2.Rows("1"))
+	tk.MustExec(`CREATE TABLE t1653 (c1 VARCHAR(10), c1377 VARCHAR(10), KEY i1654 (c1, c1377), KEY i1655 (c1377, c1))`)
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/corruptMutations", "return(\"missingIndex\")")
+	tk.MustExec("begin")
+	tk.MustExec(`insert into t1653 set c1 = 'a', c1377 = 'b'`)
+	tk.MustExec(`insert into t1653 values('aa', 'bb')`)
+	tk.MustExec("commit")
+	failpoint.Disable("github.com/pingcap/tidb/table/tables/corruptMutations")
+}
+
+func TestCheckInTxn(t *testing.T) {
+	store, close := testkit2.CreateMockStore(t)
+	defer close()
+	tk := testkit2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("set global tidb_enable_mutation_checker = true;")
+	tk.MustExec("create table t(id int, v varchar(20), unique key i1(id))")
+	tk.MustExec("insert into t values (1, 'a')")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'd'), (3, 'f') on duplicate key update v='x'")
+	tk.MustExec("commit")
 }

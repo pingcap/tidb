@@ -17,7 +17,6 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/failpoint"
 	"math"
 	"strings"
 	"time"
@@ -1130,9 +1129,6 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 //		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
 //		|     and the restored data together to restore original data.
 func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
-	failpoint.Inject("injectNeedRestoredData", func(val failpoint.Value) {
-		needRestoredData = val.(bool)
-	})
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
 		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData)
 	}
