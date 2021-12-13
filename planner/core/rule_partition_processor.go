@@ -141,7 +141,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
-		if r.IsPointNullable(ctx) {
+		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
 			if !r.HighVal[0].IsNull() {
 				if len(r.HighVal) != len(partIdx) {
 					used = []int{-1}
@@ -474,7 +474,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			return nil, true, nil
 		}
 		var locations []tables.ListPartitionLocation
-		if r.IsPointNullable(l.ctx) {
+		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
 			if types.ErrOverflow.Equal(err) {
 				return nil, true, nil // return full-scan if over-flow
@@ -556,7 +556,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	}
 	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
-		if r.IsPointNullable(l.ctx) {
+		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
 			if len(r.HighVal) != len(exprCols) {
 				return l.fullRange, nil
 			}
