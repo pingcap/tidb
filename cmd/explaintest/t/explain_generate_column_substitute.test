@@ -232,3 +232,30 @@ insert into t02 values ('a'), ('b'), ('c');
 select * from t02 where lower(a) < 'c';
 create index eidx on t02 ((lower(a)));
 select * from t02 use index(eidx) where lower(a) < 'c';
+
+select @@tidb_allow_function_for_expression_index;
+
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+  `COL1` double NOT NULL,
+  `COL2` double NOT NULL,
+  `COL3` double DEFAULT NULL,
+  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');

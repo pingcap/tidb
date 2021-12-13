@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -96,11 +97,11 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 		defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 		cases := []struct {
-			sql      string
-			types    set.StringSet
-			addrs    set.StringSet
-			names    set.StringSet
-			skipOnOS string
+			sql        string
+			types      set.StringSet
+			addrs      set.StringSet
+			names      set.StringSet
+			skipOnDist set.StringSet
 		}{
 			{
 				sql:   "select * from information_schema.CLUSTER_LOAD;",
@@ -114,7 +115,8 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 				addrs: set.NewStringSet(s.listenAddr),
 				names: set.NewStringSet("cpu", "memory", "net", "disk"),
 				// The sysutil package will filter out all disk don't have /dev prefix.
-				skipOnOS: "windows",
+				// gopsutil cpu.Info will fail on mac M1
+				skipOnDist: set.NewStringSet("windows", "darwin/arm64"),
 			},
 			{
 				sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
@@ -125,12 +127,12 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 				// Because the underlying implementation use `sysctl` command to get the result
 				// and there is no such command on windows.
 				// https://github.com/pingcap/sysutil/blob/2bfa6dc40bcd4c103bf684fba528ae4279c7ec9f/system_info.go#L50
-				skipOnOS: "windows",
+				skipOnDist: set.NewStringSet("windows"),
 			},
 		}
 
 		for _, cas := range cases {
-			if cas.skipOnOS == runtime.GOOS {
+			if cas.skipOnDist.Exist(runtime.GOOS+"/"+runtime.GOARCH) || cas.skipOnDist.Exist(runtime.GOOS) {
 				continue
 			}
 
@@ -160,10 +162,10 @@ func SubTestTestDataLockWaits(s *clusterTablesSuite) func(*testing.T) {
 		_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 		_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 		s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-			{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil)},
-			{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil)},
+			{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+			{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 			// Invalid digests
-			{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil)},
+			{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 			{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 		})
 
@@ -539,12 +541,13 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
+			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
 		}, nil

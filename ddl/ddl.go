@@ -545,6 +545,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
+	if err != nil {
+		// The transaction of enqueuing job is failed.
+		return errors.Trace(err)
+	}
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -586,7 +590,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
-		} else if historyJob == nil {
+		}
+		if historyJob == nil {
 			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}

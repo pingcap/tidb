@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
@@ -78,7 +79,7 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = Suite(&testDBSuite6{&testDBSuite{}})
+var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -125,6 +126,8 @@ func setUpSuite(s *testDBSuite, c *C) {
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
 	_, err = s.s.Execute(context.Background(), "set @@global.tidb_max_delta_schema_count= 4096")
+	c.Assert(err, IsNil)
+	_, err = s.s.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
@@ -571,7 +574,7 @@ func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 }
 
 func (s *testDBSuite7) TestCancelAddIndex(c *C) {
-	idxName := "c3_index "
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
 
@@ -614,7 +617,8 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	ctx := tk.Se.(sessionctx.Context)
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originalHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
+	jobIDExt := wrapJobIDExtCallback(hook)
+	d.(ddl.DDLForTest).SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -644,14 +648,7 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, idxName), IsFalse)
-	}
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -1711,16 +1708,9 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
 	ctx := tk.Se.(sessionctx.Context)
-	t := testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var c3idx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			c3idx = tidx
-			break
-		}
-	}
-	c.Assert(c3idx, NotNil)
-
+	indexID := testGetIndexID(c, ctx, "test_db", "test_drop_index", idxName)
+	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	defer reset()
 	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
@@ -1748,20 +1738,7 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), idxName), IsFalse)
 
-	// Check in index, it must be no index in KV.
-	// Make sure there is no index with name c3_index.
-	t = testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var nidx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			nidx = tidx
-			break
-		}
-	}
-	c.Assert(nidx, IsNil)
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3idx.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
@@ -1819,19 +1796,14 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
-	var c3idx table.Index
 	for i := range testCases {
+		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
 			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
-			tt := s.testGetTable(c, "test_drop_column")
-			for _, idx := range tt.Indices() {
-				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-					c3idx = idx
-					break
-				}
-			}
+			ctx := tk.Se.(sessionctx.Context)
+			c3IdxID = testGetIndexID(c, ctx, s.schemaName, "test_drop_column", "idx_c3")
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
@@ -1862,9 +1834,10 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			// Check index is deleted
-			ctx := s.s.(sessionctx.Context)
-			checkDelRangeDone(c, ctx, c3idx)
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAdded(tk, jobID, c3IdxID)
+			}
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1926,19 +1899,14 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
-	var c3idx table.Index
 	for i := range testCases {
+		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
 			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
-			tt := s.testGetTable(c, "test_drop_column")
-			for _, idx := range tt.Indices() {
-				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
-					c3idx = idx
-					break
-				}
-			}
+			ctx := tk.Se.(sessionctx.Context)
+			c3IdxID = testGetIndexID(c, ctx, s.schemaName, "test_drop_column", "idx_c3")
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
 		t := s.testGetTable(c, "test_drop_column")
@@ -1967,9 +1935,10 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			// Check index is deleted
-			ctx := s.s.(sessionctx.Context)
-			checkDelRangeDone(c, ctx, c3idx)
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAdded(tk, jobID, c3IdxID)
+			}
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1977,47 +1946,56 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3, drop column c4")
 }
 
-func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
-	startTime := time.Now()
-	f := func() map[int64]struct{} {
-		handles := make(map[int64]struct{})
+func testGetIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	c.Assert(err, IsNil)
 
-		c.Assert(ctx.NewTxn(context.Background()), IsNil)
-		txn, err := ctx.Txn(true)
-		c.Assert(err, IsNil)
-		defer func() {
-			err := txn.Rollback()
-			c.Assert(err, IsNil)
-		}()
-
-		txn, err = ctx.Txn(true)
-		c.Assert(err, IsNil)
-		it, err := idx.SeekFirst(txn)
-		c.Assert(err, IsNil)
-		defer it.Close()
-
-		for {
-			_, h, err := it.Next()
-			if terror.ErrorEqual(err, io.EOF) {
-				break
-			}
-
-			c.Assert(err, IsNil)
-			handles[h.IntValue()] = struct{}{}
-		}
-		return handles
-	}
-
-	var handles map[int64]struct{}
-	for i := 0; i < waitForCleanDataRound; i++ {
-		handles = f()
-		if len(handles) != 0 {
-			time.Sleep(waitForCleanDataInterval)
-		} else {
-			break
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
 		}
 	}
-	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
+	c.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	return -1
+}
+
+type testDDLJobIDCallback struct {
+	ddl.Callback
+	jobID int64
+}
+
+func (t *testDDLJobIDCallback) OnJobUpdated(job *model.Job) {
+	if t.jobID == 0 {
+		t.jobID = job.ID
+	}
+	if t.Callback != nil {
+		t.Callback.OnJobUpdated(job)
+	}
+}
+
+func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
+	return &testDDLJobIDCallback{
+		Callback: oldCallback,
+		jobID:    0,
+	}
+}
+
+func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback, tearDown func()) {
+	dom := domain.GetDomain(ctx)
+	originHook := dom.DDL().GetHook()
+	jobIDExt := wrapJobIDExtCallback(originHook)
+	dom.DDL().SetHook(jobIDExt)
+	return jobIDExt, func() {
+		dom.DDL().SetHook(originHook)
+	}
+}
+
+func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
+	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
 func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
@@ -5497,8 +5475,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDate(c *C) {
 		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "date", "0000-00-00", 0},
+		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
@@ -5515,8 +5492,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToDatetime(c *C) {
 		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -5533,8 +5509,7 @@ func (s *testDBSuite1) TestModifyColumnTime_YearToTimestamp(c *C) {
 		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
-		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
+		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5685,6 +5660,30 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
+}
+
+func (s *testSerialDBSuite) TestForbitCacheTableForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` cache", one))
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
+		}
+		sysTables = sysTables[:0]
+	}
 }
 
 func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
@@ -5965,6 +5964,36 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	tk2.MustExec("alter table t1 add column b int;")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/29752
+// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
+func (s *testDBSuite2) TestRenameTableWithLocked(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database renamedb")
+	tk.MustExec("create database renamedb2")
+	tk.MustExec("use renamedb")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a int);")
+
+	tk.MustExec("LOCK TABLES t1 WRITE;")
+	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
+	tk.MustExec("RENAME TABLE t1 TO t2;")
+	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
+	tk.MustExec("UNLOCK TABLES")
+	tk.MustExec("RENAME TABLE t2 TO t1;")
+	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
+
+	tk.MustExec("LOCK TABLES t1 READ;")
+	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
+	tk.MustExec("UNLOCK TABLES")
+
+	tk.MustExec("drop database renamedb")
 }
 
 func (s *testDBSuite2) TestLockTables(c *C) {
@@ -7262,6 +7291,51 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
 }
 
+// Close issue #24172.
+// See https://github.com/pingcap/tidb/issues/24172
+func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+
+	var cancelErr error
+	var rs []sqlexec.RecordSet
+	hook := &ddl.TestDDLCallback{}
+	d := s.dom.DDL()
+	originalHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originalHook)
+
+	// Test when cancelling cannot be retried and adding index succeeds.
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustExec("alter table t add index (id)")
+	c.Assert(cancelErr.Error(), Equals, "mock commit error")
+
+	// Test when cancelling is retried only once and adding index is cancelled in the end.
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
+			jobID = job.ID
+			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("retry_once")`), IsNil)
+			defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn"), IsNil) }()
+			rs, cancelErr = tk1.Se.Execute(context.Background(), stmt)
+		}
+	}
+	tk.MustGetErrCode("alter table t add index (id)", errno.ErrCancelledDDLJob)
+	c.Assert(cancelErr, IsNil)
+	result := tk1.ResultSetToResultWithCtx(context.Background(), rs[0], Commentf("cancel ddl job fails"))
+	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
+}
+
 // For Close issue #24288
 // see https://github.com/pingcap/tidb/issues/24288
 func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
@@ -7304,18 +7378,12 @@ func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dro
 		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
 	}
 	ctx := tk.Se.(sessionctx.Context)
-	t := testGetTableByName(c, ctx, "test_db", "test_drop_indexes")
-	var idxs []table.Index
-	for _, tidx := range t.Indices() {
-		for _, idxName := range idxNames {
-			if tidx.Meta().Name.L == idxName {
-				idxs = append(idxs, tidx)
-				break
-			}
-		}
+	idxIDs := make([]int64, 0, 3)
+	for _, idxName := range idxNames {
+		idxIDs = append(idxIDs, testGetIndexID(c, ctx, "test_db", "test_drop_indexes", idxName))
 	}
-	c.Assert(idxs, NotNil)
-
+	jobIDExt, resetHook := setupJobIDExtCallback(ctx)
+	defer resetHook()
 	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
@@ -7339,23 +7407,8 @@ LOOP:
 			num += step
 		}
 	}
-
-	// Check in index, it must be no index in KV.
-	// Make sure there is no index with name c2_index、c3_index.
-	t = testGetTableByName(c, ctx, "test_db", "test_drop_indexes")
-	var nidxs []table.Index
-	for _, tidx := range t.Indices() {
-		for _, ids := range idxs {
-			if tidx.Meta().Name.L == ids.Meta().Name.L {
-				nidxs = append(nidxs, tidx)
-			}
-		}
-	}
-	c.Assert(nidxs, IsNil)
-
-	for _, idx := range idxs {
-		idx := tables.NewIndex(t.Meta().ID, t.Meta(), idx.Meta())
-		checkDelRangeDone(c, ctx, idx)
+	for _, idxID := range idxIDs {
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
 	}
 }
 

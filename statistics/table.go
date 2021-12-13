@@ -33,8 +33,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -233,17 +236,17 @@ type tableColumnID struct {
 }
 
 type neededColumnMap struct {
-	m    sync.Mutex
+	m    sync.RWMutex
 	cols map[tableColumnID]struct{}
 }
 
 func (n *neededColumnMap) AllCols() []tableColumnID {
-	n.m.Lock()
+	n.m.RLock()
 	keys := make([]tableColumnID, 0, len(n.cols))
 	for key := range n.cols {
 		keys = append(keys, key)
 	}
-	n.m.Unlock()
+	n.m.RUnlock()
 	return keys
 }
 
@@ -257,6 +260,12 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
 	n.m.Unlock()
+}
+
+func (n *neededColumnMap) Length() int {
+	n.m.RLock()
+	defer n.m.RUnlock()
+	return len(n.cols)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
@@ -331,17 +340,26 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
+	var result float64
 	c, ok := coll.Columns[colID]
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		if len(intRanges) == 0 {
 			return 0, nil
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
-			return getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count)), nil
+			result = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count))
+		} else {
+			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count))
 		}
-		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
+		if sc.EnableOptimizerCETrace && ok {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
+		}
+		return result, nil
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
 }
 
@@ -349,21 +367,38 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
 	c, ok := coll.Columns[colID]
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
-		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
+		result, err := GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
+		if err == nil && sc.EnableOptimizerCETrace && ok {
+			CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
+		}
+		return result, err
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
 }
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
-	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(coll.Pseudo) {
+	idx, ok := coll.Indices[idxID]
+	colNames := make([]string, 0, 8)
+	if ok {
+		for _, col := range idx.Info.Columns {
+			colNames = append(colNames, col.Name.O)
+		}
+	}
+	if !ok || idx.IsInvalid(coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
 		}
-		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
+		result, err := getPseudoRowCountByIndexRanges(sc, indexRanges, float64(coll.Count), colsLen)
+		if err == nil && sc.EnableOptimizerCETrace && ok {
+			CETraceRange(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
+		}
+		return result, err
 	}
 	var result float64
 	var err error
@@ -372,7 +407,41 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	} else {
 		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.Count)
 	}
+	if sc.EnableOptimizerCETrace {
+		CETraceRange(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
+	}
 	return result, errors.Trace(err)
+}
+
+// CETraceRange appends a list of ranges and related information into CE trace
+func CETraceRange(sc *stmtctx.StatementContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
+	allPoint := true
+	for _, ran := range ranges {
+		if !ran.IsPointNullable(sc) {
+			allPoint = false
+			break
+		}
+	}
+	if allPoint {
+		tp = tp + "-Point"
+	} else {
+		tp = tp + "-Range"
+	}
+	expr, err := ranger.RangesToString(sc, ranges, colNames)
+	if err != nil {
+		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of ranges", zap.Error(err))
+	}
+	// We don't need to record meaningless expressions.
+	if expr == "" || expr == "true" || expr == "false" {
+		return
+	}
+	CERecord := tracing.CETraceRecord{
+		TableID:  tableID,
+		Type:     tp,
+		Expr:     expr,
+		RowCount: rowCount,
+	}
+	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
@@ -554,7 +623,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
-		return 1.0 / float64(idx.TotalRowCount()), nil
+		return 1.0 / idx.TotalRowCount(), nil
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
@@ -669,9 +738,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(idx.TotalRowCount())
+			selectivity = selectivity * count / idx.TotalRowCount()
 		}
-		totalCount += selectivity * float64(idx.TotalRowCount())
+		totalCount += selectivity * idx.TotalRowCount()
 	}
 	if totalCount > idx.TotalRowCount() {
 		totalCount = idx.TotalRowCount()
@@ -695,7 +764,10 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 		HistColl: pseudoHistColl,
 	}
 	for _, col := range tblInfo.Columns {
-		if col.State == model.StatePublic {
+		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
+		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
+		// Thus we don't create pseudo stats for it.
+		if col.State == model.StatePublic && !col.Hidden {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,
