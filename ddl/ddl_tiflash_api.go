@@ -162,7 +162,7 @@ func (b *PollTiFlashBackoffElement) Tick(ctx *PollTiFlashBackoffContext) bool {
 	return b.Counter%b.Threshold == 0
 }
 
-// Grow will increase Threshold
+// Grow will increase Threshold, and reset counter
 func (b *PollTiFlashBackoffElement) Grow(ctx *PollTiFlashBackoffContext) {
 	if b.Threshold < ctx.MinTick {
 		b.Threshold = ctx.MinTick
@@ -171,7 +171,7 @@ func (b *PollTiFlashBackoffElement) Grow(ctx *PollTiFlashBackoffContext) {
 		b.Threshold = ctx.MaxTick
 		return
 	}
-	if b.Threshold < 8 {
+	if b.Threshold < 4 {
 		b.Threshold += 1
 	} else {
 		b.Threshold *= 2
@@ -636,4 +636,73 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	}
 
 	return nil
+}
+
+func (d *ddl) PollTiFlashRoutine() {
+	pollTiflashContext := NewPollTiFlashContext()
+	go func () {
+		for {
+			pollTiflashContext.mu.Lock()
+			var id int64 = -1
+			avail := false
+			for id, avail = range pollTiflashContext.UpdateMap {
+				break
+			}
+			pollTiflashContext.mu.Unlock()
+			if id != -1 {
+				sctx, _ := d.sessPool.get()
+				err := d.UpdateTableReplicaInfo(sctx, id, avail)
+				if err != nil {
+					// This may because some table no longer exists, so we don't retry.
+					// This is safe, because if this table is detected to be non-existing, the loop will retry.
+					log.Warn("Error Handle UpdateTableReplicaInfo", zap.Int64("tid", id), zap.Error(err))
+				} else {
+					log.Info("Finish Handle UpdateTableReplicaInfo", zap.Int64("tid", id))
+				}
+				d.sessPool.put(sctx)
+				pollTiflashContext.mu.Lock()
+				delete(pollTiflashContext.UpdateMap, id)
+				pollTiflashContext.mu.Unlock()
+			} else {
+				select {
+				case <-d.ctx.Done():
+					log.Info("Quit consumer")
+					return
+				case <-time.After(100*time.Millisecond):
+				}
+			}
+		}
+	}()
+	for {
+		if d.sessPool == nil {
+			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+			return
+		}
+		failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
+			failpoint.Continue()
+		})
+		if d.IsTiFlashPollEnabled() {
+			sctx, err := d.sessPool.get()
+			if err == nil {
+				if d.ownerManager.IsOwner() {
+					_, err := d.PollTiFlashReplicaStatus(sctx, pollTiflashContext)
+					if err != nil {
+						log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+					}
+				}
+				d.sessPool.put(sctx)
+			} else {
+				if sctx != nil {
+					d.sessPool.put(sctx)
+				}
+				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
+			}
+		}
+
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(PollTiFlashInterval):
+		}
+	}
 }

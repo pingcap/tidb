@@ -364,36 +364,33 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 // Test when TiFlash Replia is not ready for some period of time.
 func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	// May fail because of Grow/Tick strategy
-//	backoffctx := ddl.NewPollTiFlashBackoffContext(2, 50, 20)
-//	ctx := &backoffctx
-//	backoff := ddl.NewPollTiFlashReplicaStatusBackoff()
-//	c.Assert(backoff.Tick(ctx), Equals, false)
-//	c.Assert(backoff.Tick(ctx), Equals, true)
-//	backoff.Grow(ctx)
-//	for i := 0; i < 3; i++ {
-//		c.Assert(backoff.Tick(ctx), Equals, false)
-//	}
-//	c.Assert(backoff.Tick(ctx), Equals, true)
-//	backoff.Grow(ctx)
-//	for i := 0; i < 7; i++ {
-//		c.Assert(backoff.Tick(ctx), Equals, false)
-//	}
-//	c.Assert(backoff.Tick(ctx), Equals, true)
-//	backoff.Grow(ctx)
-//	for i := 0; i < 50; i++ {
-//		c.Assert(backoff.Tick(ctx), Equals, false)
-//	}
-//	c.Assert(backoff.Tick(ctx), Equals, true)
-//
-//	origin := ddl.PollTiFlashBackoffMinTick
-//	ddl.PollTiFlashBackoffMinTick = 1
-//	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
-//	c.Assert(backoff.Tick(), Equals, true)
-//	backoff.Grow()
-//	c.Assert(backoff.Tick(), Equals, false)
-//	c.Assert(backoff.Tick(), Equals, true)
-//
-//	ddl.PollTiFlashBackoffMinTick = origin
+	backoffctx := ddl.NewPollTiFlashBackoffContext(2, 50, 20)
+	ctx := &backoffctx
+	backoff := ddl.NewPollTiFlashReplicaStatusBackoff()
+	next := func(x int) {
+		backoff.Grow(ctx)
+		for i := 0; i < x - 1; i++ {
+			c.Assert(backoff.Tick(ctx), Equals, false)
+		}
+		c.Assert(backoff.Tick(ctx), Equals, true)
+	}
+	c.Assert(backoff.Tick(ctx), Equals, false)
+	c.Assert(backoff.Tick(ctx), Equals, true)
+	next(3)
+	next(4)
+	next(8)
+	backoff.Grow(ctx) // 16
+	backoff.Grow(ctx) // 32
+	backoff.Grow(ctx) // 50
+	next(50)
+
+	ctx.MinTick = 1
+	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
+	c.Assert(backoff.Tick(ctx), Equals, true)
+	backoff.Grow(ctx)
+	c.Assert(backoff.Tick(ctx), Equals, false)
+	c.Assert(backoff.Tick(ctx), Equals, true)
+
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -411,14 +408,17 @@ func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, false)
+	// -> 3
+	time.Sleep(ddl.PollTiFlashInterval * 3)
 	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue")
 	failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue")
-	// -> 4(only 1s)
+	// -> 4(can't be ready with only 1s)
 	time.Sleep(ddl.PollTiFlashInterval * 1)
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, false)
+	// -> 8
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
