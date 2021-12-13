@@ -15,11 +15,9 @@
 package executor_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
-	"runtime/pprof"
 	"strings"
 	"testing"
 	"time"
@@ -39,17 +37,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-func checkGoroutineExists(keyword string) bool {
-	buf := new(bytes.Buffer)
-	profile := pprof.Lookup("goroutine")
-	err := profile.WriteTo(buf, 1)
-	if err != nil {
-		panic(err)
-	}
-	str := buf.String()
-	return strings.Contains(str, keyword)
-}
 
 func TestCopClientSend(t *testing.T) {
 	t.Parallel()
@@ -120,7 +107,7 @@ func TestCopClientSend(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
 	keyword := "(*copIterator).work"
-	require.False(t, checkGoroutineExists(keyword))
+	require.False(t, executor.CheckGoroutineExists(keyword))
 }
 
 func TestGetLackHandles(t *testing.T) {
