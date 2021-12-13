@@ -18,7 +18,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
@@ -124,9 +124,8 @@ func TestRange(t *testing.T) {
 			isPoint: false,
 		},
 	}
-	sc := new(stmtctx.StatementContext)
 	for _, v := range isPointTests {
-		require.Equal(t, v.isPoint, v.ran.IsPoint(sc))
+		require.Equal(t, v.isPoint, v.ran.IsPoint(core.MockContext()))
 	}
 }
 
@@ -135,53 +134,68 @@ func TestIsFullRange(t *testing.T) {
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	isFullRangeTests := []struct {
-		ran         ranger.Range
-		isFullRange bool
+		ran               ranger.Range
+		unsignedIntHandle bool
+		isFullRange       bool
 	}{
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(math.MaxInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MinInt64)},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{*nullDatum.Clone()},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.MinNotNullDatum()},
 				HighVal: []types.Datum{types.MaxValueDatum()},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewUintDatum(0)},
+				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			},
+			unsignedIntHandle: true,
+			isFullRange:       true,
 		},
 	}
 	for _, v := range isFullRangeTests {
-		require.Equal(t, v.isFullRange, v.ran.IsFullRange())
+		require.Equal(t, v.isFullRange, v.ran.IsFullRange(v.unsignedIntHandle))
 	}
 }

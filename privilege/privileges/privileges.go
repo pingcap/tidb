@@ -22,10 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -46,6 +46,8 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
+	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
+	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
 	"RESTRICTED_VARIABLES_ADMIN",      // Can see all variables when SEM is enabled
@@ -143,14 +145,21 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
-	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
-			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+	case util.PerformanceSchemaName.L:
+		if perfschema.IsPredefinedTable(table) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
+			}
+		}
+	case util.MetricSchemaName.L:
+		if infoschema.IsMetricTable(table) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			// PROCESS is the same with SELECT for metrics_schema.
 			case mysql.SelectPriv:
-				return true
+				priv |= mysql.ProcessPriv
 			}
 		}
 	}
@@ -201,6 +210,10 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return false
 	}
 
+	if record.AuthPlugin == mysql.AuthSocket {
+		return true
+	}
+
 	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
@@ -231,7 +244,10 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
-	if len(record.AuthenticationString) == 0 {
+	// zero-length auth string means no password for native and caching_sha2 auth.
+	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
+	// and the OS user.
+	if record.AuthenticationString == "" && record.AuthPlugin != mysql.AuthSocket {
 		return "", nil
 	}
 	if p.isValidHash(record) {
@@ -240,8 +256,21 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	return "", errors.New("Failed to get plugin for user")
 }
 
+// MatchIdentity implements the Manager interface.
+func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
+	if SkipWithGrant {
+		return user, host, true
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
+	if record != nil {
+		return record.User, record.Host, true
+	}
+	return "", "", false
+}
+
 // GetAuthWithoutVerification implements the Manager interface.
-func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success bool) {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -257,16 +286,14 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string
 		return
 	}
 
-	u = record.User
-	h = record.Host
 	p.user = user
-	p.host = h
+	p.host = record.Host
 	success = true
 	return
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (u string, h string, success bool) {
+func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (success bool) {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -281,9 +308,6 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 			zap.String("user", user), zap.String("host", host))
 		return
 	}
-
-	u = record.User
-	h = record.Host
 
 	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
 	if globalPriv != nil {
@@ -312,13 +336,15 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-		p.host = h
+		p.host = record.Host
 		success = true
 		return
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
-		return
+		if record.AuthPlugin != mysql.AuthSocket {
+			return
+		}
 	}
 
 	if record.AuthPlugin == mysql.AuthNativePassword {
@@ -340,13 +366,20 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		if !authok {
 			return
 		}
+	} else if record.AuthPlugin == mysql.AuthSocket {
+		if string(authentication) != user && string(authentication) != pwd {
+			logutil.BgLogger().Error("Failed socket auth", zap.String("user", user),
+				zap.String("socket_user", string(authentication)),
+				zap.String("authentication_string", pwd))
+			return
+		}
 	} else {
 		logutil.BgLogger().Error("unknown authentication plugin", zap.String("user", user), zap.String("plugin", record.AuthPlugin))
 		return
 	}
 
 	p.user = user
-	p.host = h
+	p.host = record.Host
 	success = true
 	return
 }
@@ -517,7 +550,7 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
 		return true
 	}
-	allRoles := mysqlPriv.FindAllRole(activeRoles)
+	allRoles := mysqlPriv.FindAllUserEffectiveRoles(p.user, p.host, activeRoles)
 	for _, role := range allRoles {
 		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
 			return true

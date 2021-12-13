@@ -24,9 +24,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -37,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -111,7 +111,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -125,7 +125,7 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	it = chunk.NewIterator4Chunk(req)
 	for {
 		err1 := rs.Next(ctx, req)
@@ -385,7 +385,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -400,7 +400,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select a, name_exp_2 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -409,7 +409,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1 from v")
 	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -453,6 +453,27 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
+
+	tk.MustExec("SET SESSION character_set_server='ascii'")
+	tk.MustExec("SET SESSION collation_server='ascii_bin'")
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
+	))
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test collate utf8mb4_general_ci;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */",
+	))
+
+	tk.MustExec("drop database charset_test;")
+	tk.MustExec("create database charset_test charset utf8mb4;")
+	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -515,7 +536,7 @@ func (s *testSuite6) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-1 * time.Millisecond).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -543,7 +564,7 @@ func (s *testSuite6) TestAlterTableAddColumns(c *C) {
 	tk.MustExec("alter table alter_test add column (c7 timestamp default current_timestamp, c3 varchar(50) default 'CURRENT_TIMESTAMP')")
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -902,7 +923,8 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false, autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Se).Get(autoid.RowIDAllocType)
+	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
@@ -1183,7 +1205,7 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
@@ -1203,8 +1225,9 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
@@ -1216,11 +1239,12 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
 }
 
-func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
+func (s *testSerialSuite) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)

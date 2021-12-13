@@ -59,7 +59,7 @@ func (k Key) PrefixNext() Key {
 	}
 	if i == -1 {
 		copy(buf, k)
-		buf = append(buf, 0)
+		buf = append(buf, 0) // nozero
 	}
 	return buf
 }
@@ -125,6 +125,12 @@ func (r *KeyRange) IsPoint() bool {
 	diffOneIdx := i
 	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
 		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
+}
+
+// Entry is the entry for key and value
+type Entry struct {
+	Key   Key
+	Value []byte
 }
 
 // Handle is the ID of a row.

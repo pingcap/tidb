@@ -20,10 +20,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -467,7 +467,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
-		if v, err := d.CompareDatum(sc, &val); err == nil {
+		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.Collate)); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
@@ -571,7 +571,20 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			dt.SetString(dt.GetString(), colCollate)
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
-			dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			switch dt.Kind() {
+			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
+				targetType := expr.GetArgs()[0].GetType()
+				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
+				if parseErr == nil {
+					dt.SetMysqlEnum(enum, targetType.Collate)
+				} else {
+					err = parseErr
+				}
+			default:
+				dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			}
+
 			if err != nil {
 				// in (..., an impossible value (not valid enum), ...), the range is empty, so skip it.
 				continue
@@ -614,7 +627,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
-	_, collation := expr.CharsetAndCollation(expr.GetCtx())
+	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
 		return getFullRange()
 	}
@@ -671,7 +684,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate)
 		return []*point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := &point{start: true, excl: exclude}

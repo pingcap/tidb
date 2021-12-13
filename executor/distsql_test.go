@@ -24,10 +24,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -81,7 +81,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
@@ -96,7 +96,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
@@ -105,7 +105,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(rs.Close(), IsNil)

@@ -26,15 +26,16 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
@@ -330,14 +331,14 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// with the previous chosen feedbacks.
 	var existsErr bool
 	sort.Slice(fbs, func(i, j int) bool {
-		res, err := fbs[i].Upper.CompareDatum(sc, fbs[j].Upper)
+		res, err := fbs[i].Upper.Compare(sc, fbs[j].Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
 			return res < 0
 		}
-		res, err = fbs[i].Lower.CompareDatum(sc, fbs[j].Lower)
+		res, err = fbs[i].Lower.Compare(sc, fbs[j].Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
@@ -349,7 +350,7 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	resFBs := make([]Feedback, 0, len(fbs))
 	previousEnd := &types.Datum{}
 	for _, fb := range fbs {
-		res, err := previousEnd.CompareDatum(sc, fb.Lower)
+		res, err := previousEnd.Compare(sc, fb.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			return fbs, false
 		}
@@ -370,14 +371,14 @@ type BucketFeedback struct {
 
 // outOfRange checks if the `val` is between `min` and `max`.
 func outOfRange(sc *stmtctx.StatementContext, min, max, val *types.Datum) (int, error) {
-	result, err := val.CompareDatum(sc, min)
+	result, err := val.Compare(sc, min, collate.GetBinaryCollator())
 	if err != nil {
 		return 0, err
 	}
 	if result < 0 {
 		return result, nil
 	}
-	result, err = val.CompareDatum(sc, max)
+	result, err = val.Compare(sc, max, collate.GetBinaryCollator())
 	if err != nil {
 		return 0, err
 	}
@@ -457,7 +458,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		bkt.feedback = append(bkt.feedback, fb)
 		// Update the bound if necessary.
-		res, err := bkt.lower.CompareDatum(nil, fb.Lower)
+		res, err := bkt.lower.Compare(nil, fb.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.lower), zap.Any("value2", fb.Lower), zap.Error(err))
 			continue
@@ -465,7 +466,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		if res > 0 {
 			bkt.lower = fb.Lower
 		}
-		res, err = bkt.upper.CompareDatum(nil, fb.Upper)
+		res, err = bkt.upper.Compare(nil, fb.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", bkt.upper), zap.Any("value2", fb.Upper), zap.Error(err))
 			continue
@@ -501,7 +502,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	total = 1
 	// Erase the repeat values.
 	for i := 1; i < len(vals); i++ {
-		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
+		cmp, err := vals[total-1].Compare(nil, &vals[i], collate.GetBinaryCollator())
 		if err != nil {
 			logutil.BgLogger().Debug("compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]), zap.Error(err))
 			continue
@@ -639,6 +640,8 @@ func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt buc
 const (
 	defaultSplitCount = 10
 	splitPerFeedback  = 10
+	// defaultBucketCount is the number of buckets a column histogram has.
+	defaultBucketCount = 256
 )
 
 // getSplitCount gets the split count for the histogram. It is based on the intuition that:
@@ -686,11 +689,8 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
-// defaultBucketCount is the number of buckets a column histogram has.
-var defaultBucketCount = 256
-
-func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []bucket {
-	mergeCount := len(bkts) - defaultBucketCount
+func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCount float64) []bucket {
+	mergeCount := len(bkts) - bucketCount
 	if mergeCount <= 0 {
 		return bkts
 	}
@@ -726,11 +726,11 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 }
 
 // splitBuckets split the histogram buckets according to the feedback.
-func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
+func splitBuckets(h *Histogram, feedback *QueryFeedback, bucketCount int) ([]bucket, []bool, int64) {
 	bktID2FB, numTotalFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(numTotalFBs, defaultBucketCount-h.Len())
+	splitCount := getSplitCount(numTotalFBs, bucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -760,14 +760,20 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
+	return UpdateHistogramWithBucketCount(h, feedback, statsVer, defaultBucketCount)
+}
+
+// UpdateHistogramWithBucketCount updates the histogram according buckets with customized
+// bucketCount for testing.
+func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, statsVer int, bucketCount int) *Histogram {
 	if statsVer < Version2 {
-		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
+		// If it's the stats we haven't maintained the bucket NDV yet. Reset the ndv.
 		for i := range feedback.Feedback {
 			feedback.Feedback[i].Ndv = 0
 		}
 	}
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
-	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback, bucketCount)
+	buckets = mergeBuckets(buckets, isNewBuckets, bucketCount, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {

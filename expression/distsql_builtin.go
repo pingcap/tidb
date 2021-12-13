@@ -21,13 +21,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -40,7 +41,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 		Flen:    int(tp.Flen),
 		Decimal: int(tp.Decimal),
 		Charset: tp.Charset,
-		Collate: protoToCollation(tp.Collate),
+		Collate: collate.ProtoToCollation(tp.Collate),
 		Elems:   tp.Elems,
 	}
 }
@@ -1049,6 +1050,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
@@ -1212,7 +1217,7 @@ func convertUint(val []byte) (*Constant, error) {
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
-	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
+	d.SetBytesAsString(val, collate.ProtoToCollation(tp.Collate), uint32(tp.Flen))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
 }
 

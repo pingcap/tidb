@@ -16,7 +16,7 @@ store = "unistore"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-socket = ""
+socket = "/tmp/tidb-{Port}.sock"
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
@@ -205,11 +205,16 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
-# Automatic creation of TLS certificates
+# Automatic creation of TLS certificates.
+# Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
+# If this config is commented/missed, the value would be 'false' for the compatibility with TiDB versions that does not support it.
 auto-tls = true
 
 # Minium TLS version to use, e.g. "TLSv1.2"
 tls-version = ""
+
+# The RSA Key size for automatic generated RSA keys
+rsa-key-size = 4096
 
 [status]
 # If enable status report HTTP service.
@@ -300,9 +305,6 @@ committer-concurrency = 128
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
-# the interval duration between two memory profile into global tracker
-mem-profile-interval = "1m"
-
 # The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
 # If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
 # If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
@@ -318,7 +320,7 @@ header-timeout = 5
 
 [prepared-plan-cache]
 enabled = false
-capacity = 100
+capacity = 1000
 memory-guard-ratio = 0.1
 
 [opentracing]
@@ -422,6 +424,9 @@ store-liveness-timeout = "1s"
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
 
+# If the number of keys that one prewrite request of one region involves exceed this threshold, it will use `ResolveLock` instead of `ResolveLockLite`.
+resolve-lock-lite-threshold = 16
+
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
@@ -477,6 +482,8 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

@@ -20,11 +20,11 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -298,8 +298,8 @@ type tidbResultSet struct {
 	preparedStmt *core.CachedPrepareStmt
 }
 
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	return trs.recordSet.NewChunk(alloc)
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.Chunk) error {

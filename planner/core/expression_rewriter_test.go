@@ -16,7 +16,8 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
@@ -461,8 +462,34 @@ func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
 	tk.MustExec("insert into t1 values ('a', 'B');")
 	tk.MustExec("insert into t1 values ('c', 'D');")
 	tk.MustQuery("select * from t1 where a between 'B' and c;").Check(testkit.Rows("c D"))
+	tk.MustQuery("explain select * from t1 where 'a' between 'g' and 'f';").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
 
-	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'between'")
+	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'")
+}
+
+func (s *testExpressionRewriterSuite) TestInsertOnDuplicateLazyMoreThan1Row(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE if exists t1, t2, source;")
+	tk.MustExec("CREATE TABLE t1(a INTEGER PRIMARY KEY);")
+	tk.MustExec("CREATE TABLE t2(a INTEGER);")
+	tk.MustExec("CREATE TABLE source (b INTEGER);")
+	tk.MustExec("INSERT INTO t1 VALUES (1);")
+	tk.MustExec("INSERT INTO t2 VALUES (1);")
+	tk.MustExec("INSERT INTO source VALUES (1),(1);")
+	// the on duplicate is not triggered by t1's primary key.
+	tk.MustGetErrCode("INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);", mysql.ErrSubqueryNo1Row)
+	// the on duplicate is not triggered.
+	tk.MustExec("INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);")
+	tk.MustExec("DROP TABLE if exists t1, t2, source;")
 }
 
 func (s *testExpressionRewriterSuite) TestMultiColInExpression(c *C) {

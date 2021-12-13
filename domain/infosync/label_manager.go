@@ -30,7 +30,7 @@ type LabelRuleManager interface {
 	PutLabelRule(ctx context.Context, rule *label.Rule) error
 	UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error
 	GetAllLabelRules(ctx context.Context) ([]*label.Rule, error)
-	GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error)
+	GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error)
 }
 
 // PDLabelManager manages rules with pd
@@ -71,7 +71,7 @@ func (lm *PDLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, 
 }
 
 // GetLabelRules implements GetLabelRules
-func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
+func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
 	ids, err := json.Marshal(ruleIDs)
 	if err != nil {
 		return nil, err
@@ -83,12 +83,17 @@ func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)
 	}
-	return rules, err
+
+	ruleMap := make(map[string]*label.Rule, len((rules)))
+	for _, r := range rules {
+		ruleMap[r.ID] = r
+	}
+	return ruleMap, err
 }
 
 type mockLabelManager struct {
 	sync.RWMutex
-	labelRules map[string]*label.Rule
+	labelRules map[string][]byte
 }
 
 // PutLabelRule implements PutLabelRule
@@ -98,7 +103,11 @@ func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) 
 	if rule == nil {
 		return nil
 	}
-	mm.labelRules[rule.ID] = rule
+	r, err := json.Marshal(rule)
+	if err != nil {
+		return err
+	}
+	mm.labelRules[rule.ID] = r
 	return nil
 }
 
@@ -116,7 +125,11 @@ func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.R
 		if p == nil {
 			continue
 		}
-		mm.labelRules[p.ID] = p
+		r, err := json.Marshal(p)
+		if err != nil {
+			return err
+		}
+		mm.labelRules[p.ID] = r
 	}
 	return nil
 }
@@ -130,23 +143,33 @@ func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule
 		if labelRule == nil {
 			continue
 		}
-		r = append(r, labelRule)
+		var rule *label.Rule
+		err := json.Unmarshal(labelRule, &rule)
+		if err != nil {
+			return nil, err
+		}
+		r = append(r, rule)
 	}
 	return r, nil
 }
 
 // mockLabelManager implements GetLabelRules
-func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
+func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
-	r := make([]*label.Rule, 0, len(ruleIDs))
+	r := make(map[string]*label.Rule, len(ruleIDs))
 	for _, ruleID := range ruleIDs {
-		for _, labelRule := range mm.labelRules {
-			if labelRule.ID == ruleID {
+		for id, labelRule := range mm.labelRules {
+			if id == ruleID {
 				if labelRule == nil {
 					continue
 				}
-				r = append(r, labelRule)
+				var rule *label.Rule
+				err := json.Unmarshal(labelRule, &rule)
+				if err != nil {
+					return nil, err
+				}
+				r[ruleID] = rule
 				break
 			}
 		}
