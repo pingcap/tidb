@@ -271,6 +271,14 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if err != nil {
 		return nil, 0, err
 	}
+	// load full stats if not loaded in logicalOptimize()
+	if !sctx.GetSessionVars().StmtCtx.StatsLoad.FullStatsLoaded {
+		_, err = SyncLoadColumnFullStats(logic)
+		if err != nil {
+			return nil, 0, err
+		}
+		sctx.GetSessionVars().StmtCtx.StatsLoad.FullStatsLoaded = true
+	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
 	}
@@ -426,7 +434,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}()
 	}
 	var err error
-	fullStatsLoaded := false
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -436,12 +443,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
 		// sync-load full stats before the first stats-needed rule applied
-		if !fullStatsLoaded && rule.needStats() {
+		if !vars.StmtCtx.StatsLoad.FullStatsLoaded && rule.needStats() {
 			_, err = SyncLoadColumnFullStats(logic)
 			if err != nil {
 				return nil, err
 			}
-			fullStatsLoaded = true
+			vars.StmtCtx.StatsLoad.FullStatsLoaded = true
 		}
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {

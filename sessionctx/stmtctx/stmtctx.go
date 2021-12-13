@@ -213,6 +213,8 @@ type StatementContext struct {
 		ResultCh chan model.TableColumnID
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
+		// FullStatsLoaded indicates if full stats of all needed columns are loaded
+		FullStatsLoaded bool
 	}
 }
 

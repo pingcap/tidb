@@ -109,26 +109,26 @@ func (h *Handle) appendNeededColumn(c model.TableColumnID, resultCh chan model.T
 
 var errExit = errors.New("Stop loading since domain is closed.")
 
+type statsReaderContext struct {
+	reader      *statsReader
+	createdTime time.Time
+}
+
 // SubLoadWorker loads hist data for each column
 func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) error {
+	readerCtx := &statsReaderContext{}
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
-	}()
-	reader, err0 := h.getStatsReader(0, ctx.(sqlexec.RestrictedSQLExecutor))
-	if err0 != nil {
-		return err0
-	}
-	defer func() {
-		err1 := h.releaseStatsReader(reader, ctx.(sqlexec.RestrictedSQLExecutor))
-		if err1 != nil && err0 == nil {
-			logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err1))
+		if readerCtx.reader != nil {
+			err := h.releaseStatsReader(readerCtx.reader, ctx.(sqlexec.RestrictedSQLExecutor))
+			if err != nil {
+				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
+			}
 		}
 	}()
-	batched := 0
 	for {
-		batched += 1
-		err := h.handleOneTask(reader, exit)
+		err := h.handleOneTask(readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
 		if err != nil {
 			switch err {
 			case errExit:
@@ -138,39 +138,27 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 				continue
 			}
 		}
-		if batched >= 100 {
-			// refresh statsReader after a while for latest stats
-			err = h.releaseStatsReader(reader, ctx.(sqlexec.RestrictedSQLExecutor))
-			if err != nil {
-				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
-			}
-			reader, err = h.getStatsReader(0, ctx.(sqlexec.RestrictedSQLExecutor))
-			if err != nil {
-				// TODO will begin/commit fail?
-				logutil.BgLogger().Error("Fail to new stats loader: ", zap.Error(err))
-			}
-			batched = 0
-		}
 	}
 }
 
 // handleOneTask handles one column task.
-func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
+func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (err error) {
 	defer func() {
+		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("stats loading panicked", zap.String("stack", string(buf)))
-			metrics.PanicCounter.WithLabelValues(metrics.LabelStatsLoadWorker).Inc()
 		}
 	}()
-	task, err0 := h.drainColTask(exit)
-	if err0 != nil && task == nil {
-		if err0 != errExit {
-			logutil.BgLogger().Error("Fail to drain task for stats loading.")
+	h.getFreshStatsReader(readerCtx, ctx.(sqlexec.RestrictedSQLExecutor))
+	task, err := h.drainColTask(exit)
+	if err != nil {
+		if err != errExit {
+			logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
 		}
-		return err0
+		return err
 	}
 	col := task.TableColumnID
 	// to avoid duplicated handling in concurrent scenario
@@ -189,7 +177,7 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 		return nil
 	}
 	t := time.Now()
-	hist, err := h.readStatsForOne(col, c, reader)
+	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
 	if err != nil {
 		h.StatsLoad.NeededColumnsCh <- task
 		return err
@@ -200,6 +188,30 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	}
 	h.finishWorking(col)
 	return nil
+}
+
+func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
+	if readerCtx.reader == nil || readerCtx.createdTime.Add(time.Second*3).Before(time.Now()) {
+		if readerCtx.reader != nil {
+			err := h.releaseStatsReader(readerCtx.reader, ctx)
+			if err != nil {
+				logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
+			}
+		}
+		for {
+			newReader, err := h.getStatsReader(0, ctx)
+			if err != nil {
+				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
+				time.Sleep(time.Millisecond * 10)
+			} else {
+				readerCtx.reader = newReader
+				readerCtx.createdTime = time.Now()
+				return
+			}
+		}
+	} else {
+		return
+	}
 }
 
 // readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
