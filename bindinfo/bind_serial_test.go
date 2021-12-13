@@ -396,11 +396,6 @@ func TestBindingSymbolList(t *testing.T) {
 func TestDMLSQLBind(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -411,172 +406,47 @@ func TestDMLSQLBind(t *testing.T) {
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"))
-
-	tk.MustExec("prepare stmt1 from 'delete from t1 where b = 1 and c > 1';")
-	tk.MustExec("execute stmt1;")
-	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
-	tk.MustExec("execute stmt1;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"))
 
-	tk.MustExec("execute stmt1;")
-	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
-
 	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"))
-
-	tk.MustExec("prepare stmt2 from 'delete t1, t2 from t1 inner join t2 on t1.b = t2.b';")
-	tk.MustExec("execute stmt2;")
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
-	tk.MustExec("execute stmt2;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
 	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin"))
-
-	tk.MustExec("execute stmt2;")
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
 	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"))
-
-	tk.MustExec("prepare stmt3 from 'update t1 set a = 1 where b = 1 and c > 1';")
-	tk.MustExec("execute stmt3;")
-	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
-	tk.MustExec("execute stmt3;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"))
 
-	tk.MustExec("execute stmt3;")
-	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
-
 	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"))
-
-	tk.MustExec("prepare stmt4 from 'update t1, t2 set t1.a = 1 where t1.b = t2.b';")
-	tk.MustExec("execute stmt4;")
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
-	tk.MustExec("execute stmt4;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
 	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin"))
-
-	tk.MustExec("execute stmt4;")
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
 
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-
-	tk.MustExec("prepare stmt5 from 'insert into t1 select * from t2 where t2.b = 2 and t2.c > 2';")
-	tk.MustExec("execute stmt5;")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
-	tk.MustExec("execute stmt5;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-
-	tk.MustExec("execute stmt5;")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
-
 	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
 
-	tk.MustExec("execute stmt5;")
-	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
-
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
-
-	tk.MustExec("prepare stmt6 from 'replace into t1 select * from t2 where t2.b = 2 and t2.c > 2';")
-	tk.MustExec("execute stmt6;")
-	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
-	tk.MustExec("execute stmt6;")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
 	tk.MustExec("create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
-
-	tk.MustExec("execute stmt6;")
-	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 }
 
 func TestBestPlanInBaselines(t *testing.T) {
