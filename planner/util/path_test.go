@@ -100,7 +100,6 @@ func TestOnlyPointRange(t *testing.T) {
 	intHandlePath.Ranges = []*ranger.Range{&onePointRange, &one2TwoRange}
 	require.False(t, intHandlePath.OnlyPointRange(sctx))
 
-
 	indexPath := &util.AccessPath{Index: &model.IndexInfo{Columns: make([]*model.IndexColumn, 1)}}
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
 	require.True(t, indexPath.OnlyPointRange(sctx))
