@@ -572,7 +572,13 @@ func (d *ReportData) hasData() bool {
 	return len(d.CPUTimeRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
-func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) (res ReportData) {
+func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map, decodePlan planBinaryDecodeFunc) ReportData {
+	res := ReportData{
+		CPUTimeRecords: make([]*tipb.CPUTimeRecord, 0, len(records)),
+		SQLMetas:       make([]*tipb.SQLMeta, 0, len(records)),
+		PlanMetas:      make([]*tipb.PlanMeta, 0, len(records)),
+	}
+
 	for _, record := range records {
 		res.CPUTimeRecords = append(res.CPUTimeRecords, &tipb.CPUTimeRecord{
 			RecordListTimestampSec: record.TimestampList,
@@ -605,7 +611,7 @@ func buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map,
 		return true
 	})
 
-	return
+	return res
 }
 
 // reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
