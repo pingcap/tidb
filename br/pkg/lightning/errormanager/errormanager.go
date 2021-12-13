@@ -325,6 +325,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	g, gCtx := errgroup.WithContext(ctx)
 
 	go func() {
+		//nolint:staticcheck
 		taskWg.Add(1)
 		taskCh <- [2]int64{0, math.MaxInt64}
 		taskWg.Wait()
