@@ -433,8 +433,8 @@ func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema
 	return is
 }
 
-// MockPartitionTable mocks a partition table for test
-func MockPartitionTable() *model.TableInfo {
+// MockRangePartitionTable mocks a range partition table for test
+func MockRangePartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -464,6 +464,86 @@ func MockPartitionTable() *model.TableInfo {
 		Expr:        "ptn",
 		Enable:      true,
 		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}
+
+func MockHashPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   51,
+			Name: model.NewCIStr("p1"),
+		},
+		{
+			ID:   52,
+			Name: model.NewCIStr("p2"),
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt2")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeHash,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	return tableInfo
+}
+
+func MockListPartitionTable() *model.TableInfo {
+	definitions := []model.PartitionDefinition{
+		{
+			ID:   61,
+			Name: model.NewCIStr("p1"),
+			InValues: [][]string{
+				{
+					"1",
+				},
+			},
+		},
+		{
+			ID:   62,
+			Name: model.NewCIStr("p2"),
+			InValues: [][]string{
+				{
+					"2",
+				},
+			},
+		},
+	}
+	tableInfo := MockSignedTable()
+	tableInfo.Name = model.NewCIStr("pt3")
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	last := tableInfo.Columns[len(tableInfo.Columns)-1]
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    last.Offset + 1,
+		Name:      model.NewCIStr("ptn"),
+		FieldType: newLongType(),
+		ID:        last.ID + 1,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeList,
+		Expr:        "ptn",
+		Enable:      true,
+		Definitions: definitions,
+		Num:         2,
 	}
 	tableInfo.Columns = cols
 	tableInfo.Partition = partition

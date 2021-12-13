@@ -87,6 +87,50 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from pt3 where ptn > 3;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[6] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt3 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one available partiton table[p1] after partition pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn in (1,2,3);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one available partiton table[p2] after partition pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
 			sql:            "select * from pt1 where ptn > 100;",
 			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "partition_processor",
