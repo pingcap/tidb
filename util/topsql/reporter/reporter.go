@@ -402,13 +402,12 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 
 // acceptDataSinkRegs accepts datasink registrations
 func (tsr *RemoteTopSQLReporter) acceptDataSinkRegs() {
-out:
 	for {
 		select {
 		case dataSink := <-tsr.dataSinkRegCh:
 			tsr.dataSinks = append(tsr.dataSinks, dataSink)
 		default:
-			break out
+			return
 		}
 	}
 }
