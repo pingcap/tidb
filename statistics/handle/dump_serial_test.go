@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -322,12 +323,10 @@ func TestDumpExtendedStats(t *testing.T) {
 	requireTableEqual(t, loadTbl, tbl)
 
 	cleanStats(tk, dom)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	wg := util.WaitGroupWrapper{}
+	wg.Run(func() {
 		require.Nil(t, h.Update(is))
-		wg.Done()
-	}()
+	})
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	wg.Wait()
 	require.NoError(t, err)
