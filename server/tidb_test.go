@@ -95,14 +95,14 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	ts.waitUntilServerOnline()
 
 	cleanup := func() {
-		if ts.store != nil {
-			ts.store.Close()
-		}
 		if ts.domain != nil {
 			ts.domain.Close()
 		}
 		if ts.server != nil {
 			ts.server.Close()
+		}
+		if ts.store != nil {
+			require.NoError(t, ts.store.Close())
 		}
 	}
 
