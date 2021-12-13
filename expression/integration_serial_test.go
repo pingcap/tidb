@@ -3890,7 +3890,14 @@ func TestPreparePlanCacheNotForCacheTable(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("alter table t cache")
 
-	tk.MustQuery("select * from t where a = 1")
+	var useCache bool
+	for i := 0; i < 50; i++ {
+		tk.MustQuery("select * from t where a = 1")
+		if tk.HasPlan("select * from t where a = 1", "Union") {
+			useCache = true
+		}
+	}
+	require.True(t, useCache)
 	// already read cache after reading first time
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
 		"Projection 10.00 root  test.t.a",
