@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -61,8 +60,8 @@ func (h *Handle) SyncLoad(sc *stmtctx.StatementContext, neededColumns []model.Ta
 		resultCheckMap[col] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
-	timeoutTimer := timeutil.NewWrappedTimer(timeout)
-	defer timeoutTimer.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	t := time.Now()
 	for {
 		select {
@@ -74,8 +73,7 @@ func (h *Handle) SyncLoad(sc *stmtctx.StatementContext, neededColumns []model.Ta
 					return true
 				}
 			}
-		case <-timeoutTimer.C():
-			timeoutTimer.SetRead()
+		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return false
 		}
@@ -242,38 +240,38 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 
 // drainColTask will hang until a column task can return.
 func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
-	timeout := time.Millisecond
-	to := timeutil.NewWrappedTimer(timeout)
+	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
-		to.Reset(timeout)
-		// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 		select {
+		case <-exit:
+			return nil, errExit
 		case task, ok := <-h.StatsLoad.NeededColumnsCh:
 			if !ok {
-				return nil, errors.New("drainColTask: cannot read from a closed NeededColumnsCh, maybe the chan is closed.")
+				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
 			}
 			if time.Now().After(task.ToTimeout) {
 				h.StatsLoad.TimeoutColumnsCh <- task
 				continue
 			}
 			return task, nil
-		case <-to.C():
-			to.SetRead()
-			to.Reset(timeout)
+		case task, ok := <-h.StatsLoad.TimeoutColumnsCh:
 			select {
-			case task, ok := <-h.StatsLoad.TimeoutColumnsCh:
-				if !ok {
-					return nil, errors.New("drainColTask: cannot read from a closed TimeoutColumnsCh, maybe the chan is closed.")
-				}
-				return task, nil
-			case <-to.C():
-				to.SetRead()
-				continue
 			case <-exit:
 				return nil, errExit
+			case task0, ok0 := <-h.StatsLoad.NeededColumnsCh:
+				if !ok0 {
+					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
+				}
+				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
+				h.StatsLoad.TimeoutColumnsCh <- task
+				return task0, nil
+			default:
+				if !ok {
+					return nil, errors.New("drainColTask: cannot read from TimeoutColumnsCh, maybe the chan is closed.")
+				}
+				// NeededColumnsCh is empty now, handle task from TimeoutColumnsCh
+				return task, nil
 			}
-		case <-exit:
-			return nil, errExit
 		}
 	}
 }
