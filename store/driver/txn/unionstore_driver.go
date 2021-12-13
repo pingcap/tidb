@@ -43,7 +43,7 @@ func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }
 
-func (m *memBuffer) DeleteKey(k kv.Key) {
+func (m *memBuffer) RemoveFromBuffer(k kv.Key) {
 	m.MemDB.RemoveFromBuffer(k)
 }
 

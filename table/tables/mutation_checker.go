@@ -444,7 +444,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 					continue
 				}
 				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
-				memBuffer.DeleteKey(indexMutation.key)
+				memBuffer.RemoveFromBuffer(indexMutation.key)
 			}
 		case "corruptIndexKey":
 			// a corrupted index mutation.
@@ -455,7 +455,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				}
 				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
 				key := indexMutation.key
-				memBuffer.DeleteKey(key)
+				memBuffer.RemoveFromBuffer(key)
 				key[len(key)-1] += 1
 				memBuffer.Set(key, indexMutation.value)
 			}
