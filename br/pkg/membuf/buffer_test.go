@@ -18,19 +18,11 @@ import (
 	"crypto/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
 func init() {
 	allocBufLen = 1024
-}
-
-type bufferSuite struct{}
-
-var _ = Suite(&bufferSuite{})
-
-func Test(t *testing.T) {
-	TestingT(t)
 }
 
 type testAllocator struct {
@@ -47,45 +39,49 @@ func (t *testAllocator) Free(_ []byte) {
 	t.frees++
 }
 
-func (*bufferSuite) TestBufferPool(c *C) {
+func TestBufferPool(t *testing.T) {
+	t.Parallel()
+
 	allocator := &testAllocator{}
 	pool := NewPool(2, allocator)
 
 	bytesBuf := pool.NewBuffer()
 	bytesBuf.AllocBytes(256)
-	c.Assert(allocator.allocs, Equals, 1)
+	require.Equal(t, 1, allocator.allocs)
 	bytesBuf.AllocBytes(512)
-	c.Assert(allocator.allocs, Equals, 1)
+	require.Equal(t, 1, allocator.allocs)
 	bytesBuf.AllocBytes(257)
-	c.Assert(allocator.allocs, Equals, 2)
+	require.Equal(t, 2, allocator.allocs)
 	bytesBuf.AllocBytes(767)
-	c.Assert(allocator.allocs, Equals, 2)
+	require.Equal(t, 2, allocator.allocs)
 
-	c.Assert(allocator.frees, Equals, 0)
+	require.Equal(t, 0, allocator.frees)
 	bytesBuf.Destroy()
-	c.Assert(allocator.frees, Equals, 0)
+	require.Equal(t, 0, allocator.frees)
 
 	bytesBuf = pool.NewBuffer()
 	for i := 0; i < 6; i++ {
 		bytesBuf.AllocBytes(512)
 	}
 	bytesBuf.Destroy()
-	c.Assert(allocator.allocs, Equals, 3)
-	c.Assert(allocator.frees, Equals, 1)
+	require.Equal(t, 3, allocator.allocs)
+	require.Equal(t, 1, allocator.frees)
 }
 
-func (*bufferSuite) TestBufferIsolation(c *C) {
+func TestBufferIsolation(t *testing.T) {
+	t.Parallel()
+
 	bytesBuf := NewBuffer()
 	defer bytesBuf.Destroy()
 
 	b1 := bytesBuf.AllocBytes(16)
 	b2 := bytesBuf.AllocBytes(16)
-	c.Assert(cap(b1), Equals, len(b1))
-	c.Assert(cap(b2), Equals, len(b2))
+	require.Equal(t, len(b1), cap(b1))
+	require.Equal(t, len(b2), cap(b2))
 
 	_, err := rand.Read(b2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	b3 := append([]byte(nil), b2...)
 	b1 = append(b1, 0, 1, 2, 3)
-	c.Assert(b2, DeepEquals, b3)
+	require.Equal(t, b3, b2)
 }

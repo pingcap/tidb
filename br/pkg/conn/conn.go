@@ -184,6 +184,13 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 				}
 			})
 
+			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
+					err = status.Error(codes.Canceled, "Cancel Retry")
+				}
+			})
+
 			return errors.Trace(err)
 		},
 		utils.NewPDReqBackoffer(),

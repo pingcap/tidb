@@ -15,8 +15,11 @@
 package mock
 
 import (
+	"testing"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/assert"
 )
 
 // SliceIter is used to iterate slice
@@ -72,4 +75,59 @@ func (i *SliceIter) Next() error {
 // Close closes the iterator.
 func (i *SliceIter) Close() {
 	i.cur = -1
+}
+
+// MockedIter is a mocked iter for test
+type MockedIter struct {
+	kv.Iterator
+	t                *testing.T
+	nextErr          error
+	closed           bool
+	failOnMultiClose bool
+}
+
+// NewMockIterFromRecords creates a new MockedIter
+func NewMockIterFromRecords(t *testing.T, records []*kv.Entry, failOnMultiClose bool) *MockedIter {
+	return &MockedIter{
+		t:                t,
+		Iterator:         NewSliceIter(records),
+		failOnMultiClose: failOnMultiClose,
+	}
+}
+
+// InjectNextError injects error to its Next
+func (i *MockedIter) InjectNextError(err error) {
+	i.nextErr = err
+}
+
+// GetInjectedNextError get the injected error
+func (i *MockedIter) GetInjectedNextError() error {
+	return i.nextErr
+}
+
+// FailOnMultiClose set if should fail when Close is invoked more than once
+func (i *MockedIter) FailOnMultiClose(fail bool) {
+	i.failOnMultiClose = fail
+}
+
+// Next implements kv.Iterator.Next
+func (i *MockedIter) Next() error {
+	if i.nextErr != nil {
+		return i.nextErr
+	}
+	return i.Iterator.Next()
+}
+
+// Close implements kv.Iterator.Close
+func (i *MockedIter) Close() {
+	if i.closed && i.failOnMultiClose {
+		assert.FailNow(i.t, "Multi close iter")
+	}
+	i.closed = true
+	i.Iterator.Close()
+}
+
+// Closed returns if the iter is closed
+func (i *MockedIter) Closed() bool {
+	return i.closed
 }

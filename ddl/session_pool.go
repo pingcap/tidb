@@ -19,7 +19,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"

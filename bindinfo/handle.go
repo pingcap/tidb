@@ -24,12 +24,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -384,11 +384,11 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-			deleted, updateTs, originalSQL, updateTs)
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+			deleted, updateTs, originalSQL, updateTs, deleted)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
-			deleted, updateTs, originalSQL, updateTs, binding.BindSQL)
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
+			deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
 	}
 
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
@@ -815,7 +815,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)
 	if err != nil {
 		return "", err
@@ -1046,7 +1046,7 @@ func runSQL(ctx context.Context, sctx sessionctx.Context, sql string, resultChan
 		resultChan <- err
 		return
 	}
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	for {
 		err = rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {

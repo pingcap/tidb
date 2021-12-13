@@ -26,12 +26,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -252,7 +252,8 @@ func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInf
 }
 
 func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id, item := range destMap {
+	for id := range destMap {
+		item := destMap[id]
 		m.updateByKey(id, &item)
 	}
 }
@@ -700,7 +701,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
-				req := rc.NewChunk()
+				req := rc.NewChunk(nil)
 				iter := chunk.NewIterator4Chunk(req)
 				err := rc.Next(context.TODO(), req)
 				if err != nil {
@@ -827,7 +828,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -863,12 +864,7 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //    between `start` and `end`.
-func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
-	// Tests if current time is within the time period.
-	if !timeutil.WithinDayTimePeriod(start, end, now) {
-		return false, ""
-	}
-
+func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
@@ -942,11 +938,17 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
 		return false
 	}
+	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+		return false
+	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
+			if tblInfo.IsView() {
+				continue
+			}
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
@@ -983,7 +985,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio); needAnalyze {
 		escaped, err := sqlexec.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
@@ -996,9 +998,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + "index %n"
+			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sql, params...)
+			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
 				return false
 			}
@@ -1020,7 +1022,7 @@ func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.P
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.Count < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
+		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
@@ -1083,7 +1085,11 @@ func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
+		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
+		if err1 != nil {
+			escaped = ""
+		}
+		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
@@ -1234,7 +1240,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !ok {
 		return nil
 	}
-	tablePseudo := t.Pseudo || t.IsOutdated()
+	tablePseudo := t.Pseudo
+	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		tablePseudo = t.Pseudo || t.IsOutdated()
+	}
 	if !tablePseudo {
 		return nil
 	}

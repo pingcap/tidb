@@ -1,0 +1,181 @@
+[
+  {
+    "Name": "TestTraceCE",
+    "Cases": [
+      {
+        "Expr": "a > 0 and a < 2",
+        "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
+            "RowCount": 4
+          }
+        ]
+      },
+      {
+        "Expr": "a >= 1 and a < 10",
+        "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`ge`(test.t.a, 1), `lt`(test.t.a, 10))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`ge`(test.t.a, 1), `lt`(test.t.a, 10))",
+            "RowCount": 6
+          }
+        ]
+      },
+      {
+        "Expr": "a < 3 or b < 4",
+        "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          }
+        ]
+      },
+      {
+        "Expr": "a = 1 and b = 2",
+        "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`eq`(test.t.a, 1), `eq`(test.t.b, 2))",
+            "RowCount": 2
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`and`(`eq`(test.t.a, 1), `eq`(test.t.b, 2))",
+            "RowCount": 2
+          }
+        ]
+      }
+    ]
+  }
+]

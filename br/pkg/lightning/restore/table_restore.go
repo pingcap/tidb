@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -36,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
@@ -52,7 +53,7 @@ type TableRestore struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 
-	ignoreColumns []string
+	ignoreColumns map[string]struct{}
 }
 
 func NewTableRestore(
@@ -61,7 +62,7 @@ func NewTableRestore(
 	dbInfo *checkpoints.TidbDBInfo,
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
-	ignoreColumns []string,
+	ignoreColumns map[string]struct{},
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
@@ -166,15 +167,21 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 	return nil
 }
 
-func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo *model.TableInfo) ([]int, error) {
+func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}, tableInfo *model.TableInfo) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
 		shouldIncludeRowID := common.TableHasAutoRowID(tableInfo)
 
 		// no provided columns, so use identity permutation.
-		for i := range tableInfo.Columns {
-			colPerm = append(colPerm, i)
+		for i, col := range tableInfo.Columns {
+			idx := i
+			if _, ok := ignoreColumns[col.Name.L]; ok {
+				idx = -1
+			} else if col.IsGenerated() {
+				idx = -1
+			}
+			colPerm = append(colPerm, idx)
 		}
 		if shouldIncludeRowID {
 			colPerm = append(colPerm, -1)
@@ -192,6 +199,7 @@ func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo
 func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
+		tr.logger.Error("fail to restoreEngines because indexengine is nil")
 		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
 	}
 	// If there is an index engine only, it indicates no data needs to restore.
@@ -314,11 +322,20 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
+						if rc.status != nil {
+							for _, chunk := range ecp.Chunks {
+								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+							}
+						}
 					}
 					if err != nil {
 						setError(err)
 					}
 				}(restoreWorker, engineID, engine)
+			} else {
+				for _, chunk := range engine.Chunks {
+					rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
+				}
 			}
 		}
 
@@ -691,11 +708,15 @@ func (tr *TableRestore) postProcess(
 		return false, errors.Trace(err)
 	}
 
+	if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
+		return true, nil
+	}
+
 	w := rc.checksumWorks.Apply()
 	defer rc.checksumWorks.Recycle(w)
 
-	finished := true
-	if cp.Status < checkpoints.CheckpointStatusChecksummed {
+	shouldSkipAnalyze := false
+	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
 		for _, engine := range cp.Engines {
@@ -703,80 +724,105 @@ func (tr *TableRestore) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
-		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-			tr.logger.Info("skip checksum")
-			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusChecksumSkipped); err != nil {
-				return false, errors.Trace(err)
+		// 4.5. do duplicate detection.
+		hasDupe := false
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
 			}
-		} else {
-			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
-				tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable); err != nil {
-						tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-					}
-				}
-				needChecksum, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum)
-				if err != nil {
-					return false, err
-				}
-				if !needChecksum {
-					return false, nil
-				}
-				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable); err != nil {
-						tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
-						err = nil
-					}
-				}
-				if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
-					localChecksum.Add(&cp.Checksum)
-					localChecksum.Add(baseTotalChecksum)
-					tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
-				}
-
-				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
-				if err != nil {
-					return false, err
-				}
-				// TODO: If there are duplicate keys, do not set the `ChecksumMismatch` error
-				err = tr.compareChecksum(remoteChecksum, localChecksum)
-				// with post restore level 'optional', we will skip checksum error
-				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-					if err != nil {
-						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-						err = nil
-					}
-				}
-				if err == nil {
-					err = metaMgr.FinishTable(ctx)
-				}
-
-				saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusChecksummed)
-				if err = firstErr(err, saveCpErr); err != nil {
-					return false, errors.Trace(err)
-				}
-
-				cp.Status = checkpoints.CheckpointStatusChecksummed
+			var err error
+			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			if err != nil {
+				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
+				return false, err
 			} else {
-				finished = false
+				hasDupe = hasLocalDupe
 			}
 		}
-	}
-	if !finished {
-		return !finished, nil
+
+		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		if err != nil {
+			return false, err
+		}
+
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
+			}
+			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			if e != nil {
+				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
+				return false, e
+			} else {
+				hasDupe = hasDupe || hasRemoteDupe
+			}
+			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+				return false, err
+			}
+		}
+
+		nextStage := checkpoints.CheckpointStatusChecksummed
+		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {
+			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
+				localChecksum.Add(&cp.Checksum)
+				localChecksum.Add(baseTotalChecksum)
+				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
+			}
+
+			var remoteChecksum *RemoteChecksum
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			if err != nil {
+				return false, err
+			}
+			err = tr.compareChecksum(remoteChecksum, localChecksum)
+			// with post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if err != nil {
+					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
+				}
+			}
+		} else {
+			switch {
+			case rc.cfg.PostRestore.Checksum == config.OpLevelOff:
+				tr.logger.Info("skip checksum because the checksum option is off")
+			case hasDupe:
+				tr.logger.Info("skip checksum&analyze because duplicates were detected")
+				shouldSkipAnalyze = true
+			case !needChecksum:
+				tr.logger.Info("skip checksum&analyze because other lightning instance will do this")
+				shouldSkipAnalyze = true
+			}
+			err = nil
+			nextStage = checkpoints.CheckpointStatusChecksumSkipped
+		}
+
+		// Don't call FinishTable when other lightning will calculate checksum.
+		if err == nil && !hasDupe && needChecksum {
+			err = metaMgr.FinishTable(ctx)
+		}
+
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, nextStage)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = nextStage
 	}
 
 	// 5. do table analyze
-	if cp.Status < checkpoints.CheckpointStatusAnalyzed {
+	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
-		case rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
 			}
-			cp.Status = checkpoints.CheckpointStatusAnalyzed
+			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
@@ -792,26 +838,19 @@ func (tr *TableRestore) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
 		default:
-			finished = false
+			return true, nil
 		}
 	}
 
-	return !finished, nil
+	return true, nil
 }
 
-func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns []string) ([]int, error) {
+func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
 	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
 
 	columnMap := make(map[string]int)
 	for i, column := range columns {
 		columnMap[column] = i
-	}
-
-	ignoreMap := make(map[string]int)
-	for _, column := range ignoreColumns {
-		if i, ok := columnMap[column]; ok {
-			ignoreMap[column] = i
-		}
 	}
 
 	tableColumnMap := make(map[string]int)
@@ -823,7 +862,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 	var unknownCols []string
 	for _, c := range columns {
 		if _, ok := tableColumnMap[c]; !ok && c != model.ExtraHandleName.L {
-			if _, ignore := ignoreMap[c]; !ignore {
+			if _, ignore := ignoreColumns[c]; !ignore {
 				unknownCols = append(unknownCols, c)
 			}
 		}
@@ -835,7 +874,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 
 	for _, colInfo := range tableInfo.Columns {
 		if i, ok := columnMap[colInfo.Name.L]; ok {
-			if _, ignore := ignoreMap[colInfo.Name.L]; !ignore {
+			if _, ignore := ignoreColumns[colInfo.Name.L]; !ignore {
 				colPerm = append(colPerm, i)
 			} else {
 				log.L().Debug("column ignored by user requirements",
@@ -856,11 +895,16 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			colPerm = append(colPerm, -1)
 		}
 	}
+	// append _tidb_rowid column
+	rowIDIdx := -1
 	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-		colPerm = append(colPerm, i)
-	} else if common.TableHasAutoRowID(tableInfo) {
-		colPerm = append(colPerm, -1)
+		if _, ignored := ignoreColumns[model.ExtraHandleName.L]; !ignored {
+			rowIDIdx = i
+		}
 	}
+	// FIXME: the schema info for tidb backend is not complete, so always add the _tidb_rowid field.
+	// Other logic should ignore this extra field if not needed.
+	colPerm = append(colPerm, rowIDIdx)
 
 	return colPerm, nil
 }

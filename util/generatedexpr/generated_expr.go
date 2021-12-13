@@ -18,10 +18,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -63,7 +63,9 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	stmts, _, err := parser.New().Parse(expr, charset, collation)
+	stmts, _, err := parser.New().ParseSQL(expr,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation))
 	if err == nil {
 		node = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}

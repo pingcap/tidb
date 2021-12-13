@@ -15,9 +15,9 @@
 package ranger
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 )
@@ -46,7 +46,7 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
+	_, collation := scalar.CharsetAndCollation()
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
@@ -111,7 +111,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 }
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
-	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
+	_, collation := scalar.CharsetAndCollation()
 	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
 		return false
 	}

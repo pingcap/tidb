@@ -44,7 +44,7 @@ func (m *memBuffer) Delete(k kv.Key) error {
 }
 
 func (m *memBuffer) DeleteKey(k kv.Key) {
-	m.MemDB.DeleteKey(k)
+	m.MemDB.RemoveFromBuffer(k)
 }
 
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
@@ -136,13 +136,6 @@ func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 // tikvIterator wraps tikv.Iterator as kv.Iterator
 type tikvIterator struct {
 	tikv.Iterator
-}
-
-func newKVIterator(it tikv.Iterator) kv.Iterator {
-	if it == nil {
-		return nil
-	}
-	return &tikvIterator{Iterator: it}
 }
 
 func (it *tikvIterator) Key() kv.Key {

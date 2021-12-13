@@ -22,14 +22,14 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -462,7 +462,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
@@ -488,7 +488,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",

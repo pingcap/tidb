@@ -41,4 +41,6 @@ var (
 	ErrMissingRoleField = errors.New("the ROLE field is not specified")
 	// ErrNoRulesToDrop is from bundle.go.
 	ErrNoRulesToDrop = errors.New("no rule of such role to drop")
+	// ErrInvalidPlacementOptions is from bundle.go.
+	ErrInvalidPlacementOptions = errors.New("invalid placement option")
 )

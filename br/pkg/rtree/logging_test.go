@@ -5,19 +5,17 @@ package rtree_test
 import (
 	"fmt"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-var _ = Suite(&testLoggingSuite{})
-
-type testLoggingSuite struct{}
-
-func (s *testLoggingSuite) TestLogRanges(c *C) {
+func TestLogRanges(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -40,7 +38,7 @@ func (s *testLoggingSuite) TestLogRanges(c *C) {
 			ranges[j].Files = append(ranges[j].Files, &backuppb.File{TotalKvs: uint64(j), TotalBytes: uint64(j)})
 		}
 		out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{rtree.ZapRanges(ranges)})
-		c.Assert(err, IsNil)
-		c.Assert(strings.TrimRight(out.String(), "\n"), Equals, cs.expect)
+		require.NoError(t, err)
+		require.Equal(t, cs.expect, strings.TrimRight(out.String(), "\n"))
 	}
 }

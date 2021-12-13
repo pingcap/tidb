@@ -17,7 +17,7 @@ package chunk
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -84,15 +84,15 @@ func TestMultiIterator(t *testing.T) {
 
 	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4Chunk(chk2)), expected, t)
 	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4List(li)), expected, t)
-	rc := &RowContainer{}
-	rc.m.records = li
+	rc := NewRowContainer(fields, 1024)
+	rc.m.records.inMemory = li
 	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4RowContainer(rc)), expected, t)
 
 	li.Clear()
 	li.Add(chk)
 	checkEqual(NewMultiIterator(NewIterator4List(li), NewIterator4Chunk(chk2)), expected, t)
-	rc = &RowContainer{}
-	rc.m.records = new(List)
+	rc = NewRowContainer(fields, 1024)
+	rc.m.records.inMemory = new(List)
 	checkEqual(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4List(li), NewIterator4Chunk(chk2)), expected, t)
 }
 
@@ -175,8 +175,8 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, it.End(), it.Current())
 	require.Equal(t, li2.GetRow(ptrs2[0]), it.Begin())
 
-	rc := &RowContainer{}
-	rc.m.records = li
+	rc := NewRowContainer(fields, 1024)
+	rc.m.records.inMemory = li
 	it = NewIterator4RowContainer(rc)
 	checkEqual(it, expected, t)
 	it.Begin()
@@ -196,8 +196,8 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, it.End(), it.Begin())
 	it = NewIterator4RowPtr(li, nil)
 	require.Equal(t, it.End(), it.Begin())
-	rc = &RowContainer{}
-	rc.m.records = NewList(fields, 1, 1)
+	rc = NewRowContainer(fields, 1024)
+	rc.m.records.inMemory = NewList(fields, 1, 1)
 	it = NewIterator4RowContainer(rc)
 	require.Equal(t, it.End(), it.Begin())
 }

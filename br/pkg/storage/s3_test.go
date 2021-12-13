@@ -740,6 +740,15 @@ func (s *s3Suite) TestOpenSeek(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, 100)
 	c.Assert(slice, DeepEquals, someRandomBytes[990100:990200])
+
+	// test seek to the file end or bigger positions
+	for _, p := range []int64{1000000, 1000001, 2000000} {
+		offset, err = reader.Seek(p, io.SeekStart)
+		c.Assert(offset, Equals, int64(1000000))
+		c.Assert(err, IsNil)
+		_, err := reader.Read(slice)
+		c.Assert(err, Equals, io.EOF)
+	}
 }
 
 type limitedBytesReader struct {

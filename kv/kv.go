@@ -23,12 +23,14 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -239,7 +241,7 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -331,15 +333,22 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
-	// TxnScope is the scope of the current txn.
-	TxnScope string
+	// ReadReplicaScope is the scope of the read replica.
+	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
-	// ResourceGroupTag indicates the kv request task group.
-	ResourceGroupTag []byte
+	// ResourceGroupTagger indicates the kv request task group tagger.
+	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	// Paging indicates whether the request is a paging request.
+	Paging bool
 }
+
+const (
+	// GlobalReplicaScope indicates the default replica scope for tidb to request
+	GlobalReplicaScope = oracle.GlobalTxnScope
+)
 
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
@@ -373,6 +382,18 @@ type Snapshot interface {
 	SetOption(opt int, val interface{})
 }
 
+// SnapshotInterceptor is used to intercept snapshot's read operation
+type SnapshotInterceptor interface {
+	// OnGet intercepts Get operation for Snapshot
+	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
+	// OnBatchGet intercepts BatchGet operation for Snapshot
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	// OnIter intercepts Iter operation for Snapshot
+	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
+	// OnIterReverse intercepts IterReverse operation for Snapshot
+	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
+}
+
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
@@ -390,9 +411,7 @@ type Driver interface {
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
-	Begin() (Transaction, error)
-	// BeginWithOption begins a transaction with given option
-	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
+	Begin(opts ...tikv.TxnOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot

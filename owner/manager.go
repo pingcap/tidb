@@ -27,8 +27,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"

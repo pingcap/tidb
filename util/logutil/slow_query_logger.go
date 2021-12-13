@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package logutil
 
 import (
@@ -15,14 +29,12 @@ var _pool = buffer.NewPool()
 
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 
-	// copy global config and override slow query log file
-	// if slow query log filename is empty, slow query log will behave the same as global log
+	// copy the global log config to slow log config
+	// if the filename of slow log config is empty, slow log will behave the same as global log.
 	sqConfig := cfg.Config
 	if len(cfg.SlowQueryFile) != 0 {
-		sqConfig.File = log.FileLogConfig{
-			MaxSize:  cfg.File.MaxSize,
-			Filename: cfg.SlowQueryFile,
-		}
+		sqConfig.File = cfg.File
+		sqConfig.File.Filename = cfg.SlowQueryFile
 	}
 
 	// create the slow query logger

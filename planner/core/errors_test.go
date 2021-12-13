@@ -16,8 +16,8 @@ package core
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 type testErrorSuite struct{}
@@ -28,6 +28,7 @@ func (s testErrorSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedType,
 		ErrAnalyzeMissIndex,
+		ErrAnalyzeMissColumn,
 		ErrWrongParamCount,
 		ErrSchemaChanged,
 		ErrTablenameNotAllowedHere,

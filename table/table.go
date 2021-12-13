@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,22 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package table
 
 import (
 	"context"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// Type , the type of table, store data in different ways.
+// Type is used to distinguish between different tables that store data in different ways.
 type Type int16
 
 const (
@@ -185,11 +185,6 @@ type Table interface {
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
@@ -250,3 +245,19 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+
+// CachedTable is a Table, and it has a UpdateLockForRead() method
+// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
+// And at the same time reload data from the original table.
+type CachedTable interface {
+	Table
+
+	Init(renewCh chan func()) error
+
+	// TryReadFromCache checks if the cache table is readable.
+	TryReadFromCache(ts uint64) kv.MemBuffer
+
+	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// you need to update the lock information and read the data from the original table
+	UpdateLockForRead(store kv.Storage, ts uint64) error
+}

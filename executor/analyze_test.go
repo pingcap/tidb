@@ -20,17 +20,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -309,7 +310,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	c.Assert(err, IsNil)
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
-	executor.RandSeed = 123
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -327,7 +328,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 
-	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo)
+	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo, true, nil)
 	var colsInfo []*model.ColumnInfo
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
@@ -370,7 +371,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		samples := mockExec.Collectors[i].Samples
 		c.Assert(len(samples), Equals, 20)
 		for j := 1; j < 20; j++ {
-			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
+			cmp, err := samples[j].Value.Compare(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value, collate.GetBinaryCollator())
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Greater, 0)
 		}
@@ -380,7 +381,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
 	for i := 0; i < len(hg.Buckets); i++ {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
-		cmp, err := upper.CompareDatum(sc, lower)
+		cmp, err := upper.Compare(sc, lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
 			return false, err
 		}
@@ -388,7 +389,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 			continue
 		}
 		previousUpper := hg.GetUpper(i - 1)
-		cmp, err = lower.CompareDatum(sc, previousUpper)
+		cmp, err = lower.Compare(sc, previousUpper, collate.GetBinaryCollator())
 		if cmp <= 0 || err != nil {
 			return false, err
 		}
@@ -418,7 +419,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	dom.SetStatsUpdating(true)
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
-	executor.RandSeed = 123
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1131,4 +1132,31 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	s3Str := rows[0][1].(string)
 	c.Assert(s3Str, Equals, s2Str)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
+}
+
+func (s *testSuite10) TestAdjustSampleRateNote(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	statsHandle := domain.GetDomain(tk.Se.(sessionctx.Context)).StatsHandle()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index index_a(a))")
+	c.Assert(statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()), IsNil)
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 220000 where table_id=%d", tid))
+	c.Assert(statsHandle.Update(is), IsNil)
+	result := tk.MustQuery("show stats_meta where table_name = 't'")
+	c.Assert(result.Rows()[0][5], Equals, "220000")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t."))
+	tk.MustExec("insert into t values(1),(1),(1)")
+	c.Assert(statsHandle.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(statsHandle.Update(is), IsNil)
+	result = tk.MustQuery("show stats_meta where table_name = 't'")
+	c.Assert(result.Rows()[0][5], Equals, "3")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
 }

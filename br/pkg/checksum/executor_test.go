@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"

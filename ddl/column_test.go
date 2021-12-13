@@ -22,14 +22,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -46,14 +46,15 @@ type testColumnSuite struct {
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_column")
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 
-	s.dbInfo = testSchemaInfo(c, d, "test_column")
+	s.dbInfo, err = testSchemaInfo(d, "test_column")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 	c.Assert(d.Stop(), IsNil)
 }
@@ -149,7 +150,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
@@ -178,25 +179,26 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func (s *testColumnSuite) TestColumnAAA(c *C) {
-	d := testNewDDLAndStart(
+func (s *testColumnSuite) TestColumnBasic(c *C) {
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -208,7 +210,7 @@ func (s *testColumnSuite) TestColumnAAA(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	i := int64(0)
@@ -836,16 +838,17 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -905,7 +908,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn(context.Background())
@@ -924,16 +927,17 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestAddColumns(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -999,7 +1003,7 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1009,16 +1013,17 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1085,16 +1090,17 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumns(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
-	tblInfo := testTableInfo(c, d, "t2", 4)
+	c.Assert(err, IsNil)
+	tblInfo, err := testTableInfo(d, "t2", 4)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -1154,12 +1160,12 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	ctx := testNewContext(d)
 
 	defer func() {
@@ -1222,12 +1228,12 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 }
 
 func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
 	// cause go routine in TiDB leak test.
 	defer func() {

@@ -17,11 +17,11 @@ package admin_test
 import (
 	"testing"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/stretchr/testify/require"
@@ -210,7 +210,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{-1})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*DDL Job:-1 not found", errs[0].Error())
+	require.Regexp(t, "DDL Job:-1 not found$", errs[0].Error())
 
 	// test cancel finish job.
 	job := &model.Job{
@@ -224,7 +224,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{100})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*This job:100 is finished, so can't be cancelled", errs[0].Error())
+	require.Regexp(t, "This job:100 is finished, so can't be cancelled$", errs[0].Error())
 
 	// test can't cancelable job.
 	job.Type = model.ActionDropIndex
@@ -236,7 +236,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{101})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*This job:101 is almost finished, can't be cancelled now", errs[0].Error())
+	require.Regexp(t, "This job:101 is almost finished, can't be cancelled now$", errs[0].Error())
 
 	// When both types of jobs exist in the DDL queue,
 	// we first cancel the job with a larger ID.

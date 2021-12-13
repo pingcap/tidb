@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -155,7 +155,8 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if indexHandle.Compare(insertionHandle) != 0 {
+		// NOTE: handle type can be different, see issue 29520
+		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
 			return errors.Errorf("inconsistent handles in row and index insertions. index handle = %v, "+
 				"row handle = %v, index = %+v, row = %+v",
 				indexHandle, insertionHandle, m, rowInsertion)
@@ -323,7 +324,8 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 ) error {
-	for i, decodedMutationDatum := range indexData {
+	for i := range indexData {
+		decodedMutationDatum := indexData[i]
 		expectedDatum := input[indexInfo.Columns[i].Offset]
 
 		tablecodec.TruncateIndexValue(

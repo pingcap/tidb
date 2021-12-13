@@ -15,8 +15,8 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -38,9 +38,10 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
-	// keep the original coercibility, charset and collation values after folding
+	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
 	e.GetType().Charset, e.GetType().Collate = expr.GetType().Charset, expr.GetType().Collate
+	e.SetRepertoire(expr.Repertoire())
 	return e
 }
 
@@ -142,7 +143,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 			foldedExpr.GetType().Decimal = expr.GetType().Decimal
 			return foldedExpr, isDeferredConst
 		}
-		return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
+		return foldedExpr, isDeferredConst
 	}
 	return expr, isDeferredConst
 }
@@ -153,7 +154,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return function(x)
 		}
 

@@ -23,10 +23,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -554,7 +554,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
-		return 1.0 / float64(idx.TotalRowCount()), nil
+		return 1.0 / idx.TotalRowCount(), nil
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
@@ -669,9 +669,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(idx.TotalRowCount())
+			selectivity = selectivity * count / idx.TotalRowCount()
 		}
-		totalCount += selectivity * float64(idx.TotalRowCount())
+		totalCount += selectivity * idx.TotalRowCount()
 	}
 	if totalCount > idx.TotalRowCount() {
 		totalCount = idx.TotalRowCount()
@@ -695,7 +695,10 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 		HistColl: pseudoHistColl,
 	}
 	for _, col := range tblInfo.Columns {
-		if col.State == model.StatePublic {
+		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
+		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
+		// Thus we don't create pseudo stats for it.
+		if col.State == model.StatePublic && !col.Hidden {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,

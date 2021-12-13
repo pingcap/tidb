@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -305,6 +306,9 @@ type LogicalPlan interface {
 
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
+
+	// buildLogicalPlanTrace clone necessary information from LogicalPlan
+	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -375,6 +379,15 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 // ExplainInfo implements Plan interface.
 func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
+}
+
+// buildLogicalPlanTrace implements LogicalPlan
+func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
+	}
+	return planTrace
 }
 
 type basePhysicalPlan struct {

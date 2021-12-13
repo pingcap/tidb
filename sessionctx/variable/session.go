@@ -16,7 +16,6 @@ package variable
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -30,22 +29,24 @@ import (
 	"sync/atomic"
 	"time"
 
+	utilMath "github.com/pingcap/tidb/util/math"
+
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -481,6 +482,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
+		mu     sync.Mutex
 		lastTS uint64
 		taskID int64
 	}
@@ -713,6 +715,9 @@ type SessionVars struct {
 	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
 	EnableAlterPlacement bool
 
+	// EnablePlacementChecks indicates whether a user can check validation of placement.
+	EnablePlacementChecks bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -761,8 +766,8 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
-	// use noop funcs or not
-	EnableNoopFuncs bool
+	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
+	NoopFuncsMode int
 
 	// StartTime is the start time of the last query.
 	StartTime time.Time
@@ -922,17 +927,17 @@ type SessionVars struct {
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
 
-	// The temporary table size threshold
-	// In MySQL, when a temporary table exceed this size, it spills to disk.
-	// In TiDB, as we do not support spill to disk for now, an error is reported.
-	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	// The temporary table size threshold, which is different from MySQL. See https://github.com/pingcap/tidb/issues/28691.
 	TMPTableSize int64
-
-	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
-	EnableGlobalTemporaryTable bool
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
+	EnablePseudoForOutdatedStats bool
+
+	// RegardNULLAsPoint if regard NULL as Point
+	RegardNULLAsPoint bool
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
@@ -947,11 +952,20 @@ type SessionVars struct {
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
-	// cached is used to optimize the object allocation.
+	// ReadStaleness indicates the staleness duration for the following query
+	ReadStaleness time.Duration
+
+	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// Rng stores the rand_seed1 and rand_seed2 for Rand() function
+	Rng *utilMath.MysqlRng
+
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
 
 	// EnableMutationChecker indicates whether to check data consistency for mutations
 	EnableMutationChecker bool
@@ -967,6 +981,8 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
 // startTs is different.
 func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	s.mppTaskIDAllocator.mu.Lock()
+	defer s.mppTaskIDAllocator.mu.Unlock()
 	if s.mppTaskIDAllocator.lastTS == startTS {
 		s.mppTaskIDAllocator.taskID++
 		return s.mppTaskIDAllocator.taskID
@@ -1147,7 +1163,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
@@ -1182,10 +1198,11 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTMPTableSize,
-		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
+		EnablePlacementChecks:       DefEnablePlacementCheck,
+		Rng:                         utilMath.NewWithTime(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1257,6 +1274,7 @@ func NewSessionVars() *SessionVars {
 	if !EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
+	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
 }
 
@@ -1304,6 +1322,16 @@ func (s *SessionVars) GetEnableIndexMerge() bool {
 // SetEnableIndexMerge set SessionVars.enableIndexMerge.
 func (s *SessionVars) SetEnableIndexMerge(val bool) {
 	s.enableIndexMerge = val
+}
+
+// GetEnablePseudoForOutdatedStats get EnablePseudoForOutdatedStats from SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
+	return s.EnablePseudoForOutdatedStats
+}
+
+// SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
+	s.EnablePseudoForOutdatedStats = val
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
@@ -1360,13 +1388,27 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	return
 }
 
+// GetParseParams gets the parse parameters from session variables.
+func (s *SessionVars) GetParseParams() []parser.ParseParam {
+	chs, coll := s.GetCharsetInfo()
+	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
+	if err != nil {
+		cli = ""
+	}
+	return []parser.ParseParam{
+		parser.CharsetConnection(chs),
+		parser.CollationConnection(coll),
+		parser.CharsetClient(cli),
+	}
+}
+
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	}
 }
 
@@ -1974,6 +2016,12 @@ const (
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
 	SlowLogBackoffDetail = "Backoff_Detail"
+	// SlowLogResultRows is the row count of the SQL result.
+	SlowLogResultRows = "Result_rows"
+	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
+	SlowLogIsExplicitTxn = "IsExplicitTxn"
+	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
+	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2008,6 +2056,9 @@ type SlowQueryLogItems struct {
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
+	ResultRows        int64
+	IsExplicitTxn     bool
+	IsWriteCacheTable bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2170,7 +2221,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
+	if s.StmtCtx.WaitLockLeaseTime > 0 {
+		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
+	}
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}
@@ -2300,67 +2356,4 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-type TemporaryTableSnapshotReader struct {
-	temporaryTableData TemporaryTableData
-}
-
-// Get gets the value for key k from snapshot.
-func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if s.temporaryTableData == nil {
-		return nil, kv.ErrNotExist
-	}
-
-	v, err := s.temporaryTableData.Get(ctx, k)
-	if err != nil {
-		return v, err
-	}
-
-	if len(v) == 0 {
-		return nil, kv.ErrNotExist
-	}
-
-	return v, nil
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		return &TemporaryTableSnapshotReader{nil}
-	}
-	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-type TemporaryTableTxnReader struct {
-	memBuffer kv.MemBuffer
-	snapshot  *TemporaryTableSnapshotReader
-}
-
-// Get gets the value for key k from txn.
-func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	v, err := s.memBuffer.Get(ctx, k)
-	if err == nil {
-		if len(v) == 0 {
-			return nil, kv.ErrNotExist
-		}
-
-		return v, nil
-	}
-
-	if !kv.IsErrNotFound(err) {
-		return v, err
-	}
-
-	return s.snapshot.Get(ctx, k)
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
-	return &TemporaryTableTxnReader{
-		memBuffer: txn.GetMemBuffer(),
-		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
-	}
 }

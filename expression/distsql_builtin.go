@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1049,6 +1049,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUnHexSig{base}
 	case tipb.ScalarFuncSig_Upper:
 		f = &builtinUpperSig{base}
+	case tipb.ScalarFuncSig_ToBinary:
+		f = &builtinInternalToBinarySig{base}
+	case tipb.ScalarFuncSig_FromBinary:
+		f = &builtinInternalFromBinarySig{base}
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)

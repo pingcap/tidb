@@ -50,7 +50,7 @@ func New(n int) []byte {
 		throw("out of memory")
 	}
 	// Interpret the C pointer as a pointer to a Go array, then slice.
-	return (*[MaxArrayLen]byte)(unsafe.Pointer(ptr))[:n:n]
+	return (*[MaxArrayLen]byte)(ptr)[:n:n]
 }
 
 // Free frees the specified slice.
