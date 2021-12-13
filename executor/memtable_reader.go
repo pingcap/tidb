@@ -997,3 +997,116 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	}
 	return row, nil
 }
+
+type tikvRegionPeersRetriever struct {
+	dummyCloser
+	extractor *plannercore.TikvRegionPeersExtractor
+	retrieved bool
+}
+
+func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+	e.retrieved = true
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	if len(e.extractor.StoreIDs) < 1 && len(e.extractor.RegionIDs) < 1 {
+		regionsInfo, err := tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return nil, err
+		}
+		return e.packTiKVRegionPeersRows(regionsInfo.Regions)
+	}
+
+	var regionsInfo, regionsInfoByStoreID, regionsInfoByRegionID []helper.RegionInfo
+	regionMap := make(map[int64]bool)
+	if len(e.extractor.StoreIDs) > 0 {
+		for _, storeID := range e.extractor.StoreIDs {
+			regionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
+			if err != nil {
+				return nil, err
+			}
+			// remove dup region
+			for _, region := range regionsInfo.Regions {
+				if !regionMap[region.ID] {
+					regionMap[region.ID] = true
+					regionsInfoByStoreID = append(regionsInfoByStoreID, region)
+				}
+			}
+		}
+		if len(e.extractor.RegionIDs) < 1 {
+			return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
+		}
+	}
+
+	if len(e.extractor.RegionIDs) > 0 {
+		for _, regionID := range e.extractor.RegionIDs {
+			regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+			if err != nil {
+				return nil, err
+			}
+			regionsInfoByRegionID = append(regionsInfoByRegionID, *regionInfo)
+		}
+		if len(e.extractor.StoreIDs) < 1 {
+			return e.packTiKVRegionPeersRows(regionsInfoByRegionID)
+		}
+	}
+
+	// intersect
+	for _, region := range regionsInfoByRegionID {
+		if regionMap[region.ID] {
+			regionsInfo = append(regionsInfo, region)
+		}
+	}
+	return e.packTiKVRegionPeersRows(regionsInfo)
+}
+
+func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(regionsInfo []helper.RegionInfo) ([][]types.Datum, error) {
+	var rows [][]types.Datum
+	for _, region := range regionsInfo {
+		records := make([][]types.Datum, 0, len(region.Peers))
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range region.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64, len(region.DownPeers))
+		for _, peerStat := range region.DownPeers {
+			downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
+		}
+		for _, peer := range region.Peers {
+			row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
+			row[0].SetInt64(region.ID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
+			if peer.IsLearner {
+				row[3].SetInt64(1)
+			} else {
+				row[3].SetInt64(0)
+			}
+			if peer.ID == region.Leader.ID {
+				row[4].SetInt64(1)
+			} else {
+				row[4].SetInt64(0)
+			}
+			if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[5].SetString(downPeer, mysql.DefaultCollationName)
+				row[6].SetInt64(downSec)
+			} else if pendingPeerIDSet.Exist(peer.ID) {
+				row[5].SetString(pendingPeer, mysql.DefaultCollationName)
+			} else {
+				row[5].SetString(normalPeer, mysql.DefaultCollationName)
+			}
+			records = append(records, row)
+		}
+		rows = append(rows, records...)
+	}
+	return rows, nil
+}
