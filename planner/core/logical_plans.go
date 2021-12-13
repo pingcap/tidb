@@ -1309,6 +1309,9 @@ type LogicalCTETable struct {
 	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
+
+	// seedSchema is only used in predicateColumnCollector to get column mapping
+	seedSchema *expression.Schema
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

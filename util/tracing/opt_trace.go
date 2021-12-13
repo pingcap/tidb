@@ -87,9 +87,22 @@ type LogicalRuleOptimizeTraceStep struct {
 
 // CETraceRecord records an expression and related cardinality estimation result.
 type CETraceRecord struct {
-	TableID   int64
-	TableName string
-	Type      string
-	Expr      string
-	RowCount  uint64
+	TableID   int64  `json:"-"`
+	TableName string `json:"table_name"`
+	Type      string `json:"type"`
+	Expr      string `json:"expr"`
+	RowCount  uint64 `json:"row_count"`
+}
+
+// DedupCETrace deduplicate a slice of *CETraceRecord and return the deduplicated slice
+func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
+	ret := make([]*CETraceRecord, 0, len(records))
+	exists := make(map[CETraceRecord]struct{}, len(records))
+	for _, rec := range records {
+		if _, ok := exists[*rec]; !ok {
+			ret = append(ret, rec)
+			exists[*rec] = struct{}{}
+		}
+	}
+	return ret
 }
