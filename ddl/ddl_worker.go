@@ -838,8 +838,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(d, t, job)
-	case model.ActionAlterTablePartitionPolicy:
-		ver, err = onAlterTablePartitionOptions(d, t, job)
+	case model.ActionAlterTablePartitionPlacement:
+		ver, err = onAlterTablePartitionPlacement(t, job)
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionAlterCacheTable:
