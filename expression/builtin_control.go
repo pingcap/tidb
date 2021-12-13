@@ -157,7 +157,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		}
 	} else if resultFieldType.Tp == mysql.TypeDatetime {
 		maxDecimal := mathutil.Max(lhs.Decimal, rhs.Decimal)
-		resultFieldType.Flen = mysql.MaxDatetimeWidthNoFsp + mathutil.Max(lhs.Decimal, rhs.Decimal)
+		resultFieldType.Flen = mysql.MaxDatetimeWidthNoFsp + maxDecimal
 		if maxDecimal > 0 { //addiional '.' between time and fracs
 			resultFieldType.Flen += 1
 		}
