@@ -25,28 +25,25 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
-// TODO load idx histograms by need
-
 type StatsLoad struct {
 	sync.Mutex
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
-	workingColMap    map[model.TableColumnID]struct{}
+	workingColMap    map[model.TableColumnID][]chan model.TableColumnID
 }
 
 // NeededColumnTask represents one needed column with expire time.
 type NeededColumnTask struct {
 	TableColumnID model.TableColumnID
 	ToTimeout     time.Time
-	Wg            *sync.WaitGroup
+	ResultCh      chan model.TableColumnID
 }
 
 // SyncLoad sync waits loading of neededColumns and return false if timeout
@@ -56,19 +53,32 @@ func (h *Handle) SyncLoad(sc *stmtctx.StatementContext, neededColumns []model.Ta
 		return true
 	}
 	sc.StatsLoad.NeededColumns = missingColumns
-	sc.StatsLoad.Wg = &sync.WaitGroup{}
-	sc.StatsLoad.Wg.Add(len(missingColumns))
+	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(neededColumns))
+	defer close(sc.StatsLoad.ResultCh)
+	resultCheckMap := map[model.TableColumnID]struct{}{}
 	for _, col := range missingColumns {
-		h.appendNeededColumn(col, sc.StatsLoad.Wg, timeout)
+		h.appendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
+		resultCheckMap[col] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
+	timeoutTimer := timeutil.NewWrappedTimer(timeout)
+	defer timeoutTimer.Stop()
 	t := time.Now()
-	if util.WaitTimeout(sc.StatsLoad.Wg, timeout) {
-		metrics.SyncLoadTimeoutCounter.Inc()
-		return false
-	} else {
-		metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
-		return true
+	for {
+		select {
+		case result, ok := <-sc.StatsLoad.ResultCh:
+			if ok {
+				delete(resultCheckMap, result)
+				if len(resultCheckMap) == 0 {
+					metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
+					return true
+				}
+			}
+		case <-timeoutTimer.C():
+			timeoutTimer.SetRead()
+			metrics.SyncLoadTimeoutCounter.Inc()
+			return false
+		}
 	}
 }
 
@@ -93,13 +103,13 @@ func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []mo
 }
 
 // appendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
-func (h *Handle) appendNeededColumn(c model.TableColumnID, wg *sync.WaitGroup, timeout time.Duration) {
+func (h *Handle) appendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, timeout time.Duration) {
 	toTimout := time.Now().Local().Add(timeout)
-	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, Wg: wg}
+	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, ResultCh: resultCh}
 	h.StatsLoad.NeededColumnsCh <- colTask
 }
 
-var ErrExit = errors.New("Stop loading since domain is closed.")
+var errExit = errors.New("Stop loading since domain is closed.")
 
 // SubLoadWorker loads hist data for each column
 func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) error {
@@ -123,7 +133,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 		err := h.handleOneTask(reader, exit)
 		if err != nil {
 			switch err {
-			case ErrExit:
+			case errExit:
 				return nil
 			default:
 				time.Sleep(10 * time.Millisecond)
@@ -159,25 +169,25 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	}()
 	task, err0 := h.drainColTask(exit)
 	if err0 != nil && task == nil {
-		if err0 != ErrExit {
-			logutil.BgLogger().Fatal("Fail to drain task for stats loading.")
+		if err0 != errExit {
+			logutil.BgLogger().Error("Fail to drain task for stats loading.")
 		}
 		return err0
 	}
 	col := task.TableColumnID
 	// to avoid duplicated handling in concurrent scenario
-	if !h.setWorking(col) {
+	if !h.setWorking(col, task.ResultCh) {
 		return nil
 	}
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.tables[col.TableID]
 	if !ok {
-		task.Wg.Done()
+		task.ResultCh <- col
 		return nil
 	}
 	c, ok := tbl.Columns[col.ColumnID]
 	if !ok || c.Len() > 0 {
-		task.Wg.Done()
+		task.ResultCh <- col
 		return nil
 	}
 	t := time.Now()
@@ -188,7 +198,7 @@ func (h *Handle) handleOneTask(reader *statsReader, exit chan struct{}) error {
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if hist != nil && h.updateCachedColumn(col, hist) {
-		task.Wg.Done()
+		task.ResultCh <- col
 	}
 	h.finishWorking(col)
 	return nil
@@ -232,24 +242,25 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 
 // drainColTask will hang until a column task can return.
 func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
-	timeout := time.Nanosecond * 100
-	to := timeutil.NewGoodTimer(timeout)
+	timeout := time.Millisecond
+	to := timeutil.NewWrappedTimer(timeout)
 	for {
 		to.Reset(timeout)
-		select { // select ColumnsCh firstly since the priority
+		// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
+		select {
 		case task, ok := <-h.StatsLoad.NeededColumnsCh:
 			if !ok {
-				return nil, errors.New("drainColTask: cannot read from a closed ColumnsCh, maybe the chan is closed.")
+				return nil, errors.New("drainColTask: cannot read from a closed NeededColumnsCh, maybe the chan is closed.")
 			}
 			if time.Now().After(task.ToTimeout) {
-				h.StatsLoad.NeededColumnsCh <- task
+				h.StatsLoad.TimeoutColumnsCh <- task
 				continue
 			}
 			return task, nil
 		case <-to.C():
 			to.SetRead()
 			to.Reset(timeout)
-			select { // select TimeoutColumnsCh if there's no task from ColumnsCh currently
+			select {
 			case task, ok := <-h.StatsLoad.TimeoutColumnsCh:
 				if !ok {
 					return nil, errors.New("drainColTask: cannot read from a closed TimeoutColumnsCh, maybe the chan is closed.")
@@ -259,10 +270,10 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 				to.SetRead()
 				continue
 			case <-exit:
-				return nil, ErrExit
+				return nil, errExit
 			}
 		case <-exit:
-			return nil, ErrExit
+			return nil, errExit
 		}
 	}
 }
@@ -287,16 +298,17 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
 }
 
-func (h *Handle) setWorking(col model.TableColumnID) bool {
+func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	if h.StatsLoad.workingColMap == nil {
-		h.StatsLoad.workingColMap = map[model.TableColumnID]struct{}{}
-	}
-	if _, ok := h.StatsLoad.workingColMap[col]; ok {
+	chList, ok := h.StatsLoad.workingColMap[col]
+	if ok {
+		chList = append(chList, resultCh)
 		return false
 	} else {
-		h.StatsLoad.workingColMap[col] = struct{}{}
+		chList = []chan model.TableColumnID{}
+		chList = append(chList, resultCh)
+		h.StatsLoad.workingColMap[col] = chList
 		return true
 	}
 }
@@ -304,5 +316,10 @@ func (h *Handle) setWorking(col model.TableColumnID) bool {
 func (h *Handle) finishWorking(col model.TableColumnID) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
+	if chList, ok := h.StatsLoad.workingColMap[col]; ok {
+		for _, ch := range chList {
+			ch <- col
+		}
+	}
 	delete(h.StatsLoad.workingColMap, col)
 }

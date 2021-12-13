@@ -34,6 +34,10 @@ import (
 type maxMinEliminator struct {
 }
 
+func (a *maxMinEliminator) needStats() bool {
+	return false
+}
+
 func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return a.eliminateMaxMin(p), nil
 }

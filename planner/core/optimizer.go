@@ -127,6 +127,7 @@ func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 type logicalOptRule interface {
 	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
+	needStats() bool
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
@@ -266,29 +267,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
-	var flagBeforeStats = flag
-	var flagAfterStats uint64 = 0
-	for _, flg := range flagRulesAfterStats {
-		if flagBeforeStats&flg > 0 {
-			flagBeforeStats -= flg
-			flagAfterStats |= flg
-		}
-	}
-	logic, err := logicalOptimize(ctx, flagBeforeStats, logic)
-	if err != nil {
-		return nil, 0, err
-	}
-	ok := SyncLoadNeededColumns(logic, sctx)
-	if !ok {
-		err0 := errors.New("Timeout when sync-load histograms for needed columns.")
-		if config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err0)
-			sctx.GetSessionVars().StmtCtx.StatsLoad.Fallback = true
-		} else {
-			return nil, 0, err0
-		}
-	}
-	logic, err = logicalOptimize(ctx, flagAfterStats, logic)
+	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -307,29 +286,37 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	return finalPlan, cost, nil
 }
 
-// SyncLoadNeededColumns sends column-hist request and sync-wait until timeout
-func SyncLoadNeededColumns(plan LogicalPlan, sctx sessionctx.Context) bool {
-	if sctx.GetSessionVars().InRestrictedSQL {
-		return true
+// SyncLoadColumnFullStats sends columns' full-stats request and sync-wait until timeout
+func SyncLoadColumnFullStats(plan LogicalPlan) (bool, error) {
+	if plan.SCtx().GetSessionVars().InRestrictedSQL {
+		return true, nil
 	}
 	syncWait := config.GetGlobalConfig().Stats.SyncLoadWait
 	if syncWait <= 0 {
-		return true
+		return true, nil
 	}
 	neededColumns := CollectHistColumns(plan)
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	hintMaxExecutionTime := stmtCtx.MaxExecutionTime
 	if hintMaxExecutionTime == 0 {
 		hintMaxExecutionTime = math.MaxInt
 	}
-	sessMaxExecutionTime := sctx.GetSessionVars().MaxExecutionTime
+	sessMaxExecutionTime := plan.SCtx().GetSessionVars().MaxExecutionTime
 	if sessMaxExecutionTime == 0 {
 		sessMaxExecutionTime = math.MaxInt
 	}
 	waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
 	var timeout = time.Duration(waitTime) * time.Millisecond
 	stmtCtx.StatsLoad.Timeout = timeout
-	return domain.GetDomain(sctx).StatsHandle().SyncLoad(stmtCtx, neededColumns, timeout)
+	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad(stmtCtx, neededColumns, timeout)
+	err := errors.New("Timeout when sync-load full stats for needed columns.")
+	if !success && config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
+		stmtCtx.AppendWarning(err)
+		stmtCtx.StatsLoad.Fallback = true
+		return false, err
+	} else {
+		return true, nil
+	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -439,6 +426,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}()
 	}
 	var err error
+	fullStatsLoaded := false
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -447,6 +435,14 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 			continue
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		// sync-load full stats before the first stats-needed rule applied
+		if !fullStatsLoaded && rule.needStats() {
+			_, err = SyncLoadColumnFullStats(logic)
+			if err != nil {
+				return nil, err
+			}
+			fullStatsLoaded = true
+		}
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err

@@ -25,6 +25,10 @@ import (
 type outerJoinEliminator struct {
 }
 
+func (o *outerJoinEliminator) needStats() bool {
+	return false
+}
+
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
 // 1. outer join elimination: For example left outer join, if the parent only use the
 //    columns from left table and the join key of right table(the inner table) is a unique

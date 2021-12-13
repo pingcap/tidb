@@ -50,6 +50,10 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 type joinReOrderSolver struct {
 }
 
+func (s *joinReOrderSolver) needStats() bool {
+	return true
+}
+
 type jrNode struct {
 	p       LogicalPlan
 	cumCost float64

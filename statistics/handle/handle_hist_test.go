@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testkit"
+	"math"
 	"time"
 )
 
@@ -55,7 +56,8 @@ func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
-	rs := h.SyncLoad(stmtCtx, neededColumns, time.Hour)
+	timeout := time.Nanosecond * math.MaxInt
+	rs := h.SyncLoad(stmtCtx, neededColumns, timeout)
 	c.Assert(rs, Equals, true)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram

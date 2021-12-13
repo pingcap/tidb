@@ -26,6 +26,10 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
+func (s *pushDownTopNOptimizer) needStats() bool {
+	return false
+}
+
 func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	return p.pushDownTopN(nil), nil
 }

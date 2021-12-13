@@ -31,6 +31,10 @@ type aggregationEliminator struct {
 	aggregationEliminateChecker
 }
 
+func (a *aggregationEliminator) needStats() bool {
+	return false
+}
+
 type aggregationEliminateChecker struct {
 }
 

@@ -14,7 +14,10 @@
 
 package core
 
-import "github.com/pingcap/tidb/parser/model"
+import (
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/model"
+)
 
 // CollectHistColumns collects hist-needed columns from plan
 func CollectHistColumns(plan LogicalPlan) []model.TableColumnID {
@@ -34,12 +37,16 @@ func collectColumnsFromPlan(plan LogicalPlan, neededColumns map[model.TableColum
 	switch x := plan.(type) {
 	case *DataSource:
 		tblID := x.TableInfo().ID
-		for _, col := range x.Schema().Columns {
+		columns := expression.ExtractColumnsFromExpressions(nil, x.pushedDownConds, nil)
+		for _, col := range columns {
 			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
 			neededColumns[tblColID] = struct{}{}
 		}
-		// TODO collect idx columns
+		// TODO collect idx columns?
 	case *LogicalCTE:
-		// TODO
+		collectColumnsFromPlan(x.cte.seedPartLogicalPlan, neededColumns)
+		if x.cte.recursivePartLogicalPlan != nil {
+			collectColumnsFromPlan(x.cte.recursivePartLogicalPlan, neededColumns)
+		}
 	}
 }
