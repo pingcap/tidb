@@ -242,6 +242,18 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return ec, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
+		// We should only aggregate the `then expression`,
+		// case ... when ... expression will rewrite to:
+		// args:  eq scalar func(args: value, condition1), result1,
+		//        eq scalar func(args: value, condition2), result2,
+		//        ...
+		//        else clause
+		// Or
+		// args:  condition1, result1,
+		//        condition2, result2,
+		//        ...
+		//        else clause
+		// so, the odd index arguments will be the `then expression`.
 		if argTps[1] == types.ETString {
 			fieldArgs := make([]Expression, 0)
 			for i := 1; i < len(args); i += 2 {

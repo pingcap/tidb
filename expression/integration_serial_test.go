@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/placement"
