@@ -30,6 +30,10 @@ var AssertRecordsKey stringutil.StringerStr = "assertTxnManagerRecords"
 // Only for test
 var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 
+// AssertTxnInfoSchemaAfterRetryKey is used to set the expected infoschema that should be check in failPoint after retry
+// Only for test
+var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
+
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
 	records, ok := sctx.Value(AssertRecordsKey).(map[string]interface{})

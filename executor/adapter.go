@@ -263,6 +263,12 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		a.PsStmt.Executor = newExecutor
 	}
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
+
+	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
+	})
+
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
 		return nil, err
@@ -300,6 +306,10 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	}
 
 	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
+		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
+		}
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
 	})
@@ -759,6 +769,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
+
+	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
+	})
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err

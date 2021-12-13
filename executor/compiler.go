@@ -68,8 +68,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
-	failpoint.Inject("assertTxnManagerAfterCompile", func() {
-		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerAfterCompile", true)
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
 	})
 
