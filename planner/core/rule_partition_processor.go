@@ -1396,7 +1396,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	partitionNameSet := make(set.StringSet)
-	usedDefinition := make(map[int64]model.PartitionDefinition, 0)
+	usedDefinition := make(map[int64]model.PartitionDefinition)
 	for _, r := range or {
 		for i := r.start; i < r.end; i++ {
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
@@ -1607,7 +1607,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 				if i > 0 {
 					buffer.WriteString(",")
 				}
-				buffer.WriteString(fmt.Sprintf("%s", u.Name))
+				buffer.WriteString(u.Name.String())
 			}
 			buffer.WriteString("] after partition pruning")
 			return buffer.String()

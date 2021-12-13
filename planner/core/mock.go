@@ -470,6 +470,7 @@ func MockRangePartitionTable() *model.TableInfo {
 	return tableInfo
 }
 
+// MockHashPartitionTable mocks a hash partition table for test
 func MockHashPartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{
@@ -505,6 +506,7 @@ func MockHashPartitionTable() *model.TableInfo {
 	return tableInfo
 }
 
+// MockListPartitionTable mocks a list partition table for test
 func MockListPartitionTable() *model.TableInfo {
 	definitions := []model.PartitionDefinition{
 		{

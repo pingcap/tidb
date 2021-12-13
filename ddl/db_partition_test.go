@@ -1304,18 +1304,6 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
-func (s *testIntegrationSuite5) TestTry(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t (x int) partition by hash(x) partitions 4;")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	p := tbl.Meta().Partition
-	fmt.Println(p)
-}
-
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
