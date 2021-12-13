@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -280,8 +279,6 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags &= ^(uint64(1<<13) | uint64(1<<14))
 		lp, err = plannercore.LogicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		logutil.BgLogger().Info("sql is ", zap.String("sql", tt.sql))
-		logutil.BgLogger().Info("after opt", zap.String("lp", plannercore.ToString(lp)))
 		checkColumnStatsUsage(t, is, lp, true, tt.res, comment)
 	}
 }
