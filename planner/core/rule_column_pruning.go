@@ -309,7 +309,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] && !exprUsed[i] {
+		// if ds has a shard index, it can't prune the generated column of shard index
+		// so add the new condtion `!ds.containExprPrefixUk`
+		if !used[i] && !exprUsed[i] && !ds.containExprPrefixUk {
 			prunedColumns = append(prunedColumns, ds.schema.Columns[i])
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)

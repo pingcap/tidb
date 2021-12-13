@@ -23,11 +23,20 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 type ppdSolver struct{}
+
+type ExprPrefixAdder struct {
+	sctx      sessionctx.Context
+	OrigConds []expression.Expression
+	cols      []*expression.Column
+	lengths   []int
+}
 
 func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil, opt)
@@ -126,6 +135,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.ctx, predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
+	predicates = ds.AddPrefix4ShardIndexes(ds.ctx, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
@@ -726,3 +736,120 @@ func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalS
 	}
 	opt.appendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
+
+/**
+  Add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
+  It transforms the sql "SELECT * FROM test WHERE a = 10" to
+  "SELECT * FROM test WHERE tidb_shard(a) = val AND a = 10", val is the value of tidb_shard(10).
+  It also transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
+  "SELECT * FROM test WHERE tidb_shard(a) = val1 AND a = 10 OR tidb_shard(a) = val2 AND a = 20"
+
+  @param[in] conds            the original condtion of this datasource
+
+  @retval - the new condition after adding expression prefix
+*/
+func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expression.Expression) []expression.Expression {
+	if !ds.containExprPrefixUk || ds.addedExprPrefixCond {
+		// todo: len(conds) == 0 and  need return
+		return conds
+	}
+
+	newConds := make([]expression.Expression, 0, len(conds))
+	newConds = append(newConds, conds...)
+
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() || !path.IsUkShardIndex() {
+			continue
+		}
+		newConds, _ = ds.AddExprPrefixCond(sc, path, newConds)
+	}
+
+	return newConds
+}
+
+func (ds *DataSource) AddExprPrefixCond(sc sessionctx.Context, path *util.AccessPath,
+	conds []expression.Expression) ([]expression.Expression, error) {
+	IdxCols, IdxColLens :=
+		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	if len(IdxCols) == 0 {
+		return conds, nil
+	}
+
+	adder := &ExprPrefixAdder{
+		sctx:      sc,
+		OrigConds: conds,
+		cols:      IdxCols,
+		lengths:   IdxColLens,
+	}
+
+	return adder.AddExprPrefix4ShardIndex()
+}
+
+/**
+  if original condition is a LogicOr expression, such as `WHERE a = 1 OR a = 10`,
+  call the function AddExprPrefix4DNFCond to add prefix expression tidb_shard(a) = xxx for shard index.
+  Otherwise, if the condition is  `WHERE a = 1`, `WHERE a = 1 AND b = 10`, `WHERE a IN (1, 2, 3)`......,
+  call the function AddExprPrefix4CNFCond to add prefix expression for shard index.
+*/
+func (adder *ExprPrefixAdder) AddExprPrefix4ShardIndex() ([]expression.Expression, error) {
+	if len(adder.OrigConds) == 1 {
+		if sf, ok := adder.OrigConds[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			return adder.AddExprPrefix4DNFCond(sf)
+		}
+	}
+	return adder.AddExprPrefix4CNFCond(adder.OrigConds)
+}
+
+/**
+  add the prefix expression for CNF condition, e.g. `WHERE a = 1`, `WHERE a = 1 AND b = 10`, ......
+
+  @param[in] conds		the original condtion of the datasoure. e.g. `WHERE t1.a = 1 AND t1.b = 10 AND t2.a = 20`.
+  						if current datasource is `t1`, conds is {t1.a = 1, t1.b = 10}. if current datasource is
+						`t2`, conds is {t2.a = 20}
+
+  @return 	 - 			the new condition after adding expression prefix
+*/
+func (adder *ExprPrefixAdder) AddExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
+
+	newCondtionds, _ := ranger.AddExpr4EqAndInCondition(adder.sctx,
+		conds, adder.cols, adder.lengths)
+
+	return newCondtionds, nil
+}
+
+/**
+  add the prefix expression for DNF condition, e.g. `WHERE a = 1 OR a = 10`, ......
+  The condition returned is `WHERE (tidb_shard(a) = 214 ADN a = 1) OR (tidb_shard(a) = 142 ADN a = 10)`
+
+  @param[in] condition		the original condtion of the datasoure. e.g. `WHERE a = 1 OR a = 10`.
+							condtion is `a = 1 OR a = 10`
+
+  @return 	 - 				the new condition after adding expression prefix. It's still a LogicOr expression.
+*/
+func (adder *ExprPrefixAdder) AddExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
+
+	dnfItems := expression.FlattenDNFConditions(condition)
+	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
+
+	for _, item := range dnfItems {
+		if sf, ok := item.(*expression.ScalarFunction); ok {
+			var accesses []expression.Expression
+			if sf.FuncName.L == ast.LogicAnd {
+				cnfItems := expression.FlattenCNFConditions(sf)
+				accesses, _ = adder.AddExprPrefix4CNFCond(cnfItems)
+				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
+			} else if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+				// only add prefix expression for EQ or IN function
+				accesses, _ = adder.AddExprPrefix4CNFCond([]expression.Expression{sf})
+				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
+			} else {
+				newAccessItems = append(newAccessItems, item)
+			}
+		} else {
+			newAccessItems = append(newAccessItems, item)
+		}
+	}
+
+	return []expression.Expression{expression.ComposeDNFCondition(adder.sctx, newAccessItems...)}, nil
+}
+

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -683,4 +684,35 @@ func SortColumns(cols []*Column) []*Column {
 		return sorted[i].UniqueID < sorted[j].UniqueID
 	})
 	return sorted
+}
+
+func (col *Column) InColumnArray(cols []*Column) bool {
+	for _, c := range cols {
+		if col.Equal(nil, c) {
+			return true
+		}
+	}
+	return false
+}
+
+func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
+	if virtualExpr == nil {
+		return false
+	}
+
+	f, ok := virtualExpr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+
+	if f.FuncName.L != ast.TidbShard {
+		return false
+	}
+
+	return true
+}
+
+func IndexColToExpressionCol(colInfos []*model.ColumnInfo, cols []*Column,
+	col *model.IndexColumn) *Column {
+	return indexCol2Col(colInfos, cols, col)
 }

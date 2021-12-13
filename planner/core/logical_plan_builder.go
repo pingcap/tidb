@@ -4226,6 +4226,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
+	// check whether the path's index has a tidb_shard() prefix and the index column count more than 1
+	// e.g. index(tidb_shard(a), a)
+	for _, path := range ds.possibleAccessPaths {
+		if !path.IsTablePath() {
+			col := expression.IndexColToExpressionCol(ds.Columns, ds.schema.Columns, path.Index.Columns[0])
+			if col != nil && expression.GcColumnExprIsTidbShard(col.VirtualExpr) && len(path.Index.Columns) > 1 {
+				path.IsShardIndexPath = true
+				ds.containExprPrefixUk = true
+			}
+		}
+	}
+
 	return result, nil
 }
 

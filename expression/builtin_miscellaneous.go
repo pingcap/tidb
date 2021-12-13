@@ -1304,3 +1304,49 @@ func swapStringUUID(str string) string {
 	copy(buf[18:], str[18:])
 	return string(buf)
 }
+
+type tidbShardFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 4 //64 bit unsigned
+	bf.tp.Flag |= mysql.UnsignedFlag
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinTidbShardSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
+	return sig, nil
+}
+
+type builtinTidbShardSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTidbShardSig) Clone() builtinFunc {
+	newSig := &builtinTidbShardSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals tidb_shard(int64).
+func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
+	shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	var hashed uint64
+	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
+		return 0, true, err
+	}
+	hashed = hashed % 256
+	return int64(hashed), false, nil
+}
