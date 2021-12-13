@@ -76,27 +76,6 @@ func TestCodec(t *testing.T) {
 	}
 }
 
-func TestEstimateTypeWidth(t *testing.T) {
-	t.Parallel()
-
-	var colType *types.FieldType
-
-	colType = &types.FieldType{Tp: mysql.TypeLonglong}
-	require.Equal(t, 8, EstimateTypeWidth(colType)) // fixed-witch type
-
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 31}
-	require.Equal(t, 31, EstimateTypeWidth(colType)) // colLen <= 32
-
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 999}
-	require.Equal(t, 515, EstimateTypeWidth(colType)) // colLen < 1000
-
-	colType = &types.FieldType{Tp: mysql.TypeString, Flen: 2000}
-	require.Equal(t, 516, EstimateTypeWidth(colType)) // colLen < 1000
-
-	colType = &types.FieldType{Tp: mysql.TypeString}
-	require.Equal(t, 32, EstimateTypeWidth(colType)) // value after guessing
-}
-
 func BenchmarkEncodeChunk(b *testing.B) {
 	numCols := 4
 	numRows := 1024
