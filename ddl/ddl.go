@@ -423,26 +423,24 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				pollTiflashContext.mu.Unlock()
 				if id != -1 {
 					sctx, _ := d.sessPool.get()
-					log.Info("Handle UpdateTableReplicaInfo", zap.Int64("tid", id))
 					err := d.UpdateTableReplicaInfo(sctx, id, avail)
 					if err != nil {
-						d.sessPool.put(sctx)
-						log.Info("Error Handle UpdateTableReplicaInfo", zap.Int64("tid", id), zap.Error(err))
+						// This may because some table no longer exists, so we don't retry.
+						log.Warn("Error Handle UpdateTableReplicaInfo", zap.Int64("tid", id), zap.Error(err))
 					} else {
-						d.sessPool.put(sctx)
 						log.Info("Finish Handle UpdateTableReplicaInfo", zap.Int64("tid", id))
-						pollTiflashContext.mu.Lock()
-						delete(pollTiflashContext.UpdateMap, id)
-						pollTiflashContext.mu.Unlock()
-						log.Info("Removed UpdateTableReplicaInfo", zap.Int64("tid", id))
 					}
+					d.sessPool.put(sctx)
+					pollTiflashContext.mu.Lock()
+					delete(pollTiflashContext.UpdateMap, id)
+					pollTiflashContext.mu.Unlock()
 				} else {
 					select {
 					case <-d.ctx.Done():
 						log.Info("Quit consumer")
 						return
 					case <-time.After(100*time.Millisecond):
-						log.Info("Sleep consumer")
+						//log.Info("Sleep consumer")
 					}
 				}
 			}
