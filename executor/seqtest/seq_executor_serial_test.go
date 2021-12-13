@@ -14,7 +14,7 @@
 
 // Note: All the tests in this file will be executed sequentially.
 
-package executor_test
+package executor
 
 import (
 	"bytes"
@@ -671,7 +671,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	keyword := "pickAndExecTask"
 	require.NoError(t, rs.Close())
 	time.Sleep(time.Millisecond * 10)
-	require.False(t, checkGoroutineExists(keyword))
+	require.False(t, CheckGoroutineExists(keyword))
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -691,9 +691,9 @@ func TestIndexMergeReaderClose(t *testing.T) {
 	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"))
 	require.Error(t, err)
-	require.False(t, checkGoroutineExists("fetchLoop"))
-	require.False(t, checkGoroutineExists("fetchHandles"))
-	require.False(t, checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"))
+	require.False(t, CheckGoroutineExists("fetchLoop"))
+	require.False(t, CheckGoroutineExists("fetchHandles"))
+	require.False(t, CheckGoroutineExists("waitPartialWorkersAndCloseFetchChan"))
 }
 
 func TestParallelHashAggClose(t *testing.T) {
@@ -747,7 +747,7 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	require.EqualError(t, err, "HashAggExec.unparallelExec error")
 }
 
-func checkGoroutineExists(keyword string) bool {
+func CheckGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
 	err := profile.WriteTo(buf, 1)
