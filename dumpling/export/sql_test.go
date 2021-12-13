@@ -239,6 +239,18 @@ func TestBuildOrderByClause(t *testing.T) {
 		require.NoError(t, err, comment)
 		require.Equal(t, "", orderByClause, comment)
 	}
+
+	// Test build OrderByClause with retry
+	baseConn = newBaseConn(conn, true, func(conn *sql.Conn, b bool) (*sql.Conn, error) {
+		return conn, nil
+	})
+	query := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)
+	mock.ExpectQuery(query).WillReturnError(errors.New("invalid connection"))
+	mock.ExpectQuery(query).WillReturnError(errors.New("invalid connection"))
+	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows(showIndexHeaders).AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
+	orderByClause, err = buildOrderByClause(tctx, mockConf, baseConn, database, table, false)
+	require.NoError(t, err)
+	require.Equal(t, "ORDER BY `id`", orderByClause)
 }
 
 func TestBuildSelectField(t *testing.T) {
@@ -287,6 +299,21 @@ func TestBuildSelectField(t *testing.T) {
 
 	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
 	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// Test build SelectField with retry
+	baseConn = newBaseConn(conn, true, func(conn *sql.Conn, b bool) (*sql.Conn, error) {
+		return conn, nil
+	})
+	mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnError(errors.New("invalid connection"))
+	mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnError(errors.New("invalid connection"))
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+
+	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
+	require.Equal(t, "*", selectedField)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

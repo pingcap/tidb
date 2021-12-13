@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
@@ -440,6 +441,9 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 		if err == nil {
 			err = rows.Close()
 		}
+		failpoint.Inject("ChaosBrokenMetaConn", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("connection is closed"))
+		})
 		return errors.Annotatef(err, "sql: %s", query)
 	}, func() {
 		colTypes = nil
