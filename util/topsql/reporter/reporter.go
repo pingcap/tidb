@@ -119,7 +119,7 @@ type planBinaryDecodeFunc func(string) (string, error)
 type RemoteTopSQLReporter struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	datasink DataSink
+	dataSink DataSink
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -144,12 +144,12 @@ type SQLMeta struct {
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(client DataSink) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(dataSink DataSink) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:                     ctx,
 		cancel:                  cancel,
-		datasink:                client,
+		dataSink:                dataSink,
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
 	}
@@ -237,7 +237,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	tsr.datasink.Close()
+	tsr.dataSink.Close()
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -562,5 +562,5 @@ func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
 		}
 	})
 	deadline := time.Now().Add(timeout)
-	tsr.datasink.Send(data, deadline)
+	tsr.dataSink.Send(data, deadline)
 }

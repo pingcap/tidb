@@ -48,6 +48,7 @@ func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataS
 	return dataSink
 }
 
+// run will return when ds.sendTaskCh is closed.
 func (ds *SingleTargetDataSink) run() {
 	for task := range ds.sendTaskCh {
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
@@ -79,7 +80,7 @@ func (ds *SingleTargetDataSink) Send(data ReportData, deadline time.Time) {
 		// sent successfully
 	default:
 		ignoreReportChannelFullCounter.Inc()
-		logutil.BgLogger().Warn("[top-sql] the channel of single target datasink is full")
+		logutil.BgLogger().Warn("[top-sql] the channel of single target dataSink is full")
 	}
 }
 
@@ -103,7 +104,7 @@ func (ds *SingleTargetDataSink) Close() {
 	}
 	err := ds.conn.Close()
 	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] single target datasink close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
 	}
 	ds.conn = nil
 }
@@ -257,7 +258,7 @@ func (ds *SingleTargetDataSink) tryEstablishConnection(ctx context.Context, targ
 
 	if ds.conn != nil {
 		err := ds.conn.Close()
-		logutil.BgLogger().Warn("[top-sql] grpc datasink close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] grpc dataSink close connection failed", zap.Error(err))
 	}
 
 	ds.conn, err = ds.dial(ctx, targetRPCAddr)
