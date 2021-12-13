@@ -17,7 +17,6 @@ package statistics
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
 	"math"
 	"sort"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
