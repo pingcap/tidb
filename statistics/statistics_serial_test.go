@@ -76,8 +76,9 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	return b.Count, b.Hist(), cms, nil
 }
 
-func SubTestBuild(s *testStatisticsSamples) func(*testing.T) {
+func SubTestBuild() func(*testing.T) {
 	return func(t *testing.T) {
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		topNCount := 20
 		ctx := mock.NewContext()
@@ -208,8 +209,9 @@ func SubTestBuild(s *testStatisticsSamples) func(*testing.T) {
 	}
 }
 
-func SubTestHistogramProtoConversion(s *testStatisticsSamples) func(*testing.T) {
+func SubTestHistogramProtoConversion() func(*testing.T) {
 	return func(t *testing.T) {
+		s := createTestStatisticsSamples(t)
 		ctx := mock.NewContext()
 		require.NoError(t, s.rc.Close())
 		tblCount, col, _, err := buildIndex(ctx, 256, 1, s.rc)

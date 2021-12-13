@@ -18,8 +18,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"go.uber.org/zap"
 )
 
 var (
@@ -66,6 +68,15 @@ var supportedCollationNames = map[string]struct{}{
 	CollationASCII:   {},
 	CollationLatin1:  {},
 	CollationBin:     {},
+}
+
+// TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
+var TiFlashSupportedCharsets = map[string]struct{}{
+	CharsetUTF8:    {},
+	CharsetUTF8MB4: {},
+	CharsetASCII:   {},
+	CharsetLatin1:  {},
+	CharsetBin:     {},
 }
 
 // GetSupportedCharsets gets descriptions for all charsets supported so far.
@@ -148,7 +159,12 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 	if collation, ok := collationsIDMap[coID]; ok {
 		return collation.CharsetName, collation.Name, nil
 	}
-	return "", "", errors.Errorf("Unknown charset id %d", coID)
+
+	log.Warn(
+		"unable to get collation name from collation ID, return default charset and collation instead",
+		zap.Int("ID", coID),
+		zap.Stack("stack"))
+	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
 // GetCollations returns a list for all collations.

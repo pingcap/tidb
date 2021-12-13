@@ -214,6 +214,9 @@ const (
 
 	// TiDBReadStaleness indicates the staleness duration for following statement
 	TiDBReadStaleness = "tidb_read_staleness"
+
+	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
+	TiDBEnablePaging = "tidb_enable_paging"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -595,6 +598,9 @@ const (
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
+	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
+	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
+
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 )
@@ -672,7 +678,7 @@ const (
 	DefMaxChunkSize                       = 1024
 	DefDMLBatchSize                       = 0
 	DefMaxPreparedStmtCount               = -1
-	DefWaitTimeout                        = 0
+	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
@@ -764,11 +770,13 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
-	DefTiDBTSOClientBatchMaxWaitTime      = 0 // 0ms
+	DefTiDBTSOClientBatchMaxWaitTime      = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy         = false
 	DefTiDBEnableOrderedResultMode        = false
 	DefTiDBEnablePseudoForOutdatedStats   = true
+	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
+	DefTimestamp                          = "0"
 )
 
 // Process global variables.
@@ -801,7 +809,7 @@ var (
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval = atomic.NewInt64(DefTiDBTSOClientBatchMaxWaitTime)
+	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -113,7 +114,7 @@ func TestDumpTextValue(t *testing.T) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := &resultEncoder{}
+	dp := newResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -603,5 +604,6 @@ func newTestConfig() *config.Config {
 	cfg.Host = "127.0.0.1"
 	cfg.Status.StatusHost = "127.0.0.1"
 	cfg.Security.AutoTLS = false
+	cfg.Socket = ""
 	return cfg
 }

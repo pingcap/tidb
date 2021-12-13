@@ -434,7 +434,6 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.preCheckRequirements,
 		rc.restoreTables,
 		rc.fullCompact,
-		rc.switchToNormalMode,
 		rc.cleanCheckpoints,
 	}
 
@@ -788,6 +787,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		os.Exit(0)
 	})
 
+	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
@@ -871,7 +871,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 	for tableName, engineIDs := range targetTables {
 		for _, engineID := range engineIDs {
 			_, eID := backend.MakeUUID(tableName, engineID)
-			file := local.File{UUID: eID}
+			file := local.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
 				log.L().Error("can't find local file",
@@ -994,7 +994,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *Controller) listenCheckpointUpdates() {
-	rc.checkpointsWg.Add(1)
+	defer rc.checkpointsWg.Done()
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
@@ -1083,7 +1083,6 @@ func (rc *Controller) listenCheckpointUpdates() {
 			}
 		})
 	}
-	rc.checkpointsWg.Done()
 }
 
 // buildRunPeriodicActionAndCancelFunc build the runPeriodicAction func and a cancel func
@@ -1113,10 +1112,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				log.L().Info("switch to normal mode")
-				if err := rc.switchToNormalMode(ctx); err != nil {
-					log.L().Warn("switch tikv to normal mode failed", zap.Error(err))
-				}
+				rc.switchToNormalMode(ctx)
 			}
 		})
 		switchModeChan = switchModeTicker.C
@@ -1267,7 +1263,6 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer pdCli.Close()
 
 	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
 	ttl := int64(pauseGCTTLForDupeRes / time.Second)
@@ -1283,10 +1278,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		}
 		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		if newMinSafePoint <= minSafePoint {
@@ -1302,11 +1299,13 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		)
 	}
 	if !paused {
+		pdCli.Close()
 		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
 	}
 
 	exitCh := make(chan struct{})
 	go func(safePoint uint64) {
+		defer pdCli.Close()
 		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
@@ -1491,7 +1490,7 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.Columns)
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1683,12 +1682,13 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 }
 
 func (rc *Controller) switchToImportMode(ctx context.Context) {
+	log.L().Info("switch to import mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
-func (rc *Controller) switchToNormalMode(ctx context.Context) error {
+func (rc *Controller) switchToNormalMode(ctx context.Context) {
+	log.L().Info("switch to normal mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
-	return nil
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
@@ -1968,6 +1968,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
+	err = rc.checkCSVHeader(ctx, rc.dbMetas)
+	if err != nil {
+		return err
+	}
+
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -2301,6 +2306,16 @@ func (cr *chunkRestore) encodeLoop(
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
+	// filteredColumns is column names that excluded ignored columns
+	// WARN: this might be not correct when different SQL statements contains different fields,
+	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
+	// so this should be ok.
+	var filteredColumns []string
+	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
+	if err1 != nil {
+		err = err1
+		return
+	}
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -2331,6 +2346,26 @@ func (cr *chunkRestore) encodeLoop(
 							return
 						}
 					}
+					filteredColumns = columnNames
+					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
+						filteredColumns = make([]string, 0, len(columnNames))
+						ignoreColsMap := ignoreColumns.ColumnsMap()
+						if len(columnNames) > 0 {
+							for _, c := range columnNames {
+								if _, ok := ignoreColsMap[c]; !ok {
+									filteredColumns = append(filteredColumns, c)
+								}
+							}
+						} else {
+							// init column names by table schema
+							// after filtered out some columns, we must explicitly set the columns for TiDB backend
+							for _, col := range t.tableInfo.Core.Columns {
+								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
+									filteredColumns = append(filteredColumns, col.Name.O)
+								}
+							}
+						}
+					}
 					initializedColumns = true
 				}
 			case io.EOF:
@@ -2349,7 +2384,7 @@ func (cr *chunkRestore) encodeLoop(
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				hasIgnoredEncodeErr = true
@@ -2364,7 +2399,7 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))

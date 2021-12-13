@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -159,9 +160,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			useBinding = false
 		}
 	}
-	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
-		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
-		useBinding = false
+	if ok {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
 	}
 
 	var names types.NameSlice
@@ -233,7 +235,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	defer func() {
 		sessVars.StmtCtx.StmtHints = savedStmtHints
 	}()
-	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil {
+	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
+		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
 		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
@@ -500,13 +503,24 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 // useMaxTS returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
+//  3. not a cache table.
 func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
-
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
+	if !ok {
+		return false
+	}
+	noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+	if !noSecondRead {
+		return false
+	}
+
+	if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+		return false
+	}
+	return true
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -944,12 +945,12 @@ func TestCutOneError(t *testing.T) {
 	var b []byte
 	_, _, err := CutOne(b)
 	require.Error(t, err)
-	require.Regexp(t, "invalid encoded key", err.Error())
+	require.EqualError(t, err, "invalid encoded key")
 
 	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
 	_, _, err = CutOne(b)
 	require.Error(t, err)
-	require.Regexp(t, "invalid encoded key.*", err.Error())
+	require.Regexp(t, "^invalid encoded key", err.Error())
 }
 
 func TestSetRawValues(t *testing.T) {
@@ -987,7 +988,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 				require.True(t, expect.IsNull())
 			} else {
 				if got.Kind() != types.KindMysqlDecimal {
-					cmp, err := got.CompareDatum(sc, &expect)
+					cmp, err := got.Compare(sc, &expect, collate.GetCollator(tp.Collate))
 					require.NoError(t, err)
 					require.Equalf(t, 0, cmp, "expect: %v, got %v", expect, got)
 				} else {
@@ -1110,7 +1111,7 @@ func TestDecodeRange(t *testing.T) {
 	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
 	require.NoError(t, err)
 	for i, datum := range datums1 {
-		cmp, err := datum.CompareDatum(nil, &datums[i])
+		cmp, err := datum.Compare(nil, &datums[i], collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}

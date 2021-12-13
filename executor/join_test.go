@@ -656,6 +656,39 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
 }
 
+func (s *testSuiteWithData) TestUsingAndNaturalJoinSchema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1 (c int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("create table t3 (b int, c int);")
+	tk.MustExec("create table t4 (y int, c int);")
+
+	tk.MustExec("insert into t1 values (10,1);")
+	tk.MustExec("insert into t1 values (3 ,1);")
+	tk.MustExec("insert into t1 values (3 ,2);")
+	tk.MustExec("insert into t2 values (2, 1);")
+	tk.MustExec("insert into t3 values (1, 3);")
+	tk.MustExec("insert into t3 values (1,10);")
+	tk.MustExec("insert into t4 values (11,3);")
+	tk.MustExec("insert into t4 values (2, 3);")
+
+	var input []string
+	var output []struct {
+		SQL string
+		Res []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+}
+
 func (s *testSuiteWithData) TestNaturalJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2609,4 +2642,40 @@ func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
 	tk.MustExec("set @@session.time_zone = '+10:00';")
 	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows())
 	tk.MustExec("set @@session.time_zone = @tmp;")
+}
+
+func (s *testSuiteJoinSerial) TestIssue30211(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int, index(a));")
+	tk.MustExec("create table t2(a int, index(a));")
+	func() {
+		fpName := "github.com/pingcap/tidb/executor/TestIssue30211"
+		c.Assert(failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable(fpName), IsNil)
+		}()
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
+		c.Assert(err, Matches, "failpoint panic: TestIssue30211 IndexJoinPanic")
+
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
+		c.Assert(err, Matches, "failpoint panic: TestIssue30211 IndexJoinPanic")
+	}()
+	tk.MustExec("insert into t1 values(1),(2);")
+	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
+	tk.MustExec("set @@tidb_mem_quota_query=8000;")
+	tk.MustExec("set tidb_index_join_batch_size = 1;")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
+	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
+	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
+	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
+	c.Assert(strings.Contains(err, "Out Of Memory Quota"), IsTrue)
 }

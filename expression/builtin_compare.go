@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -477,6 +478,14 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		greastInitUnsignedFlag := false
+		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		}
+
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -744,6 +753,14 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	switch tp {
 	case types.ETInt:
+		// adjust unsigned flag
+		leastInitUnsignedFlag := true
+		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
+			bf.tp.Flag |= mysql.UnsignedFlag
+		} else {
+			bf.tp.Flag &= ^mysql.UnsignedFlag
+		}
+
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -1378,7 +1395,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.CompareDatum(sc, &con.Value)
+	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1460,11 +1477,14 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 		// here and skip this refine operation in all other cases for safety.
 		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
-			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+			ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 			RemoveMutableConst(ctx, args)
 		} else {
 			return args
 		}
+	} else if ctx.GetSessionVars().StmtCtx.SkipPlanCache {
+		// We should remove the mutable constant for correctness, because its value may be changed.
+		RemoveMutableConst(ctx, args)
 	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
@@ -2875,4 +2895,16 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
+}
+
+// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
+// For greatest, returns unsigned result if there is at least one argument is unsigned.
+// For least, returns signed result if there is at least one argument is signed.
+func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
+	for _, arg := range args {
+		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
+			return false
+		}
+	}
+	return true
 }

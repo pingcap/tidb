@@ -67,6 +67,12 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
+meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
+if [ "$meta_count" -ne "2" ];then
+    echo "TEST: [$TEST_NAME] failed!"
+    exit 1
+fi
+
 # Test BR DDL query string
 echo "testing DDL query..."
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE TABLE'
