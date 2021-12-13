@@ -89,7 +89,7 @@ func TestParseKey(t *testing.T) {
 	for _, tt := range testNotSupportKey {
 		_, err := ParseKey("notSupport", tt.any)
 		require.Error(t, err)
-		require.Regexp(t, "unknown format.*", err.Error())
+		require.Regexp(t, "^unknown format", err.Error())
 	}
 }
 

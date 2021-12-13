@@ -168,19 +168,17 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	innerCh := make(chan *indexHashJoinTask, concurrency)
 	if e.keepOuterOrder {
 		e.taskCh = make(chan *indexHashJoinTask, concurrency)
+		// When `keepOuterOrder` is true, each task holds their own `resultCh`
+		// individually, thus we do not need a global resultCh.
+		e.resultCh = nil
+	} else {
+		e.resultCh = make(chan *indexHashJoinResult, concurrency)
 	}
+	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
-	if !e.keepOuterOrder {
-		e.resultCh = make(chan *indexHashJoinResult, concurrency)
-	} else {
-		// When `keepOuterOrder` is true, each task holds their own `resultCh`
-		// individually, thus we do not need a global resultCh.
-		e.resultCh = nil
-	}
-	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := 0; i < concurrency; i++ {
 		if !e.keepOuterOrder {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -337,6 +335,7 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
+		failpoint.Inject("TestIssue30211", nil)
 		task, err := ow.buildTask(ctx)
 		failpoint.Inject("testIndexHashJoinOuterWorkerErr", func() {
 			err = errors.New("mockIndexHashJoinOuterWorkerErr")

@@ -285,11 +285,11 @@ func TestArithmeticMultiply(t *testing.T) {
 		},
 		{
 			args:   []interface{}{int64(-1), int64(math.MinInt64)},
-			expect: []interface{}{nil, ".*BIGINT value is out of range in '\\(-1 \\* -9223372036854775808\\)'"},
+			expect: []interface{}{nil, "BIGINT value is out of range in '\\(-1 \\* -9223372036854775808\\)'$"},
 		},
 		{
 			args:   []interface{}{int64(math.MinInt64), int64(-1)},
-			expect: []interface{}{nil, ".*BIGINT value is out of range in '\\(-9223372036854775808 \\* -1\\)'"},
+			expect: []interface{}{nil, "BIGINT value is out of range in '\\(-9223372036854775808 \\* -1\\)'$"},
 		},
 		{
 			args:   []interface{}{uint64(11), uint64(11)},
@@ -322,6 +322,7 @@ func TestArithmeticMultiply(t *testing.T) {
 			require.NoError(t, err)
 			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
+			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
 		}
 	}
@@ -507,6 +508,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 			require.NoError(t, err)
 			trequire.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
 		} else {
+			require.Error(t, err)
 			require.Regexp(t, tc.expect[1], err.Error())
 		}
 	}

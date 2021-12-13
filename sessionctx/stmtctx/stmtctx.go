@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
@@ -67,29 +66,29 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue              bool
-	InInsertStmt                 bool
-	InUpdateStmt                 bool
-	InDeleteStmt                 bool
-	InSelectStmt                 bool
-	InLoadDataStmt               bool
-	InExplainStmt                bool
-	InCreateOrAlterStmt          bool
-	IgnoreTruncate               bool
-	IgnoreZeroInDate             bool
-	DupKeyAsWarning              bool
-	BadNullAsWarning             bool
-	DividedByZeroAsWarning       bool
-	TruncateAsWarning            bool
-	OverflowAsWarning            bool
-	InShowWarning                bool
-	UseCache                     bool
-	BatchCheck                   bool
-	InNullRejectCheck            bool
-	AllowInvalidDate             bool
-	IgnoreNoPartition            bool
-	MaybeOverOptimized4PlanCache bool
-	IgnoreExplainIDSuffix        bool
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
+	SkipPlanCache          bool
+	IgnoreExplainIDSuffix  bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -173,12 +172,7 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
-	// resourceGroupTagWithRow cache for the current statement resource group tag (with `Row` label).
-	resourceGroupTagWithRow atomic.Value
-	// resourceGroupTagWithIndex cache for the current statement resource group tag (with `Index` label).
-	resourceGroupTagWithIndex atomic.Value
-	// resourceGroupTagWithUnknown cache for the current statement resource group tag (with `Unknown` label).
-	resourceGroupTagWithUnknown atomic.Value
+
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
@@ -199,10 +193,17 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
-	// EnableOptimizeTrace indicates whether the statement is enable optimize trace
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -288,45 +289,18 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
 func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
 	return func(req *tikvrpc.Request) {
-		req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-}
-
-// GetResourceGroupTagByLabel gets the resource group of the statement based on the label.
-func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupTagLabel) []byte {
-	switch label {
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
-		v := sc.resourceGroupTagWithRow.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex:
-		v := sc.resourceGroupTagWithIndex.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown:
-		v := sc.resourceGroupTagWithUnknown.Load()
-		if v != nil {
-			return v.([]byte)
-		}
-	}
-	normalized, sqlDigest := sc.SQLDigest()
-	if len(normalized) == 0 {
-		return nil
-	}
-	newTag := resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
-	switch label {
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:
-		sc.resourceGroupTagWithRow.Store(newTag)
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex:
-		sc.resourceGroupTagWithIndex.Store(newTag)
-	case tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown:
-		sc.resourceGroupTagWithUnknown.Store(newTag)
-	}
-	return newTag
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -2129,6 +2130,27 @@ func TestLoadDataEscape(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
+func TestLoadDataWithLongContent(t *testing.T) {
+	e := &executor.LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
+		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
+	}
+	tests := []struct {
+		content       string
+		inQuoter      bool
+		expectedIndex int
+	}{
+		{"123,123\n123,123", false, 7},
+		{"123123\\n123123", false, -1},
+		{"123123\n123123", true, -1},
+		{"123123\n123123\"\n", true, 14},
+	}
+
+	for _, tt := range tests {
+		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
+	}
+}
+
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
@@ -2424,8 +2446,13 @@ func TestInsertCalculatedValue(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a json not null, b int)")
+	// TODO: MySQL reports 3156 instead of ErrTruncatedWrongValueForField.
+	tk.MustGetErrCode("insert into t value (a,a->'$')", mysql.ErrTruncatedWrongValueForField)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a json not null, b varchar(10))")
 	tk.MustExec("insert into t value (a,a->'$')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("null 0"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("null null"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json, b int, c int as (a->'$.a'))")

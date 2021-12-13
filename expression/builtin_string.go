@@ -289,7 +289,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -365,7 +365,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -1152,14 +1152,8 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	// if expr is binary string and convert meet error, we should return NULL.
 	if types.IsBinaryStr(b.args[0].GetType()) {
-		target, _, err := transform.String(encoding.NewEncoder(), expr)
-		if err != nil {
-			return "", true, err
-		}
-
-		// we should convert target into utf8 internal.
-		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
-		return exprInternal, false, nil
+		exprInternal, _, err := transform.String(encoding.NewDecoder(), expr)
+		return exprInternal, err != nil, nil
 	}
 	if types.IsBinaryStr(b.tp) {
 		enc := charset.NewEncoding(b.args[0].GetType().Charset)

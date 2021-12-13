@@ -286,6 +286,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
+	c.SetRepertoire(sf.Repertoire())
 	return c
 }
 
@@ -443,6 +444,12 @@ func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
+	}
+	// Cast is a special case. The RetType should also be considered as an argument.
+	// Please see `newFunctionImpl()` for detail.
+	if sf.FuncName.L == ast.Cast {
+		evalTp := sf.RetType.EvalType()
+		sf.hashcode = append(sf.hashcode, byte(evalTp))
 	}
 }
 

@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -68,6 +70,23 @@ func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
+func testCreateSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateSchema,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{dbInfo},
+	}
+	err := d.doDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVerT(t, ctx)
+	dbInfo.State = model.StatePublic
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	dbInfo.State = model.StateNone
+	return job
+}
+
 func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	return &model.Job{
 		SchemaID:   dbInfo.ID,
@@ -81,6 +100,14 @@ func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) 
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	ver := getSchemaVer(c, ctx)
+	return job, ver
+}
+
+func testDropSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+	job := buildDropSchemaJob(dbInfo)
+	err := d.doDDLJob(ctx, job)
+	require.NoError(t, err)
+	ver := getSchemaVerT(t, ctx)
 	return job, ver
 }
 
@@ -152,7 +179,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
-	tblInfo1 := testTableInfo(c, d, "t", 3)
+	tblInfo1, err := testTableInfo(d, "t", 3)
+	c.Assert(err, IsNil)
 	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
 	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(c, d, tJob1, true)
@@ -162,7 +190,8 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with 1034 records.
-	tblInfo2 := testTableInfo(c, d, "t1", 3)
+	tblInfo2, err := testTableInfo(d, "t1", 3)
+	c.Assert(err, IsNil)
 	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
 	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(c, d, tJob2, true)

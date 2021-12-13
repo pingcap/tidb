@@ -153,8 +153,12 @@ func PessimisticLock(pk []byte, key []byte, startTs uint64, lockTTL uint64, forU
 // PrewriteOptimistic raises optimistic prewrite requests on store
 func PrewriteOptimistic(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
 	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, store *TestStore) error {
+	op := kvrpcpb.Op_Put
+	if value == nil {
+		op = kvrpcpb.Op_Del
+	}
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:      []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Put, key, value)},
+		Mutations:      []*kvrpcpb.Mutation{newMutation(op, key, value)},
 		PrimaryLock:    pk,
 		StartVersion:   startTs,
 		LockTtl:        lockTTL,
@@ -416,21 +420,19 @@ func MustGetVal(key, val []byte, startTs uint64, store *TestStore) {
 }
 
 func MustGetErr(key []byte, startTs uint64, store *TestStore) {
-	_, err := kvGet(key, startTs, store)
+	_, err := kvGet(key, startTs, nil, nil, store)
 	require.Error(store.t, err)
 }
 
-func kvGet(key []byte, readTs uint64, store *TestStore) ([]byte, error) {
-	err := store.MvccStore.CheckKeysLock(readTs, nil, key)
-	if err != nil {
-		return nil, err
-	}
-	getVal, err := store.newReqCtx().getDBReader().Get(key, readTs)
-	return getVal, err
+func kvGet(key []byte, readTs uint64, resolved, committed []uint64, store *TestStore) ([]byte, error) {
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = resolved
+	reqCtx.rpcCtx.CommittedLocks = committed
+	return store.MvccStore.Get(reqCtx, key, readTs)
 }
 
 func MustGet(key []byte, readTs uint64, store *TestStore) (val []byte) {
-	val, err := kvGet(key, readTs, store)
+	val, err := kvGet(key, readTs, nil, nil, store)
 	require.NoError(store.t, err)
 	return val
 }
@@ -1549,4 +1551,101 @@ func TestAsyncCommitPrewrite(t *testing.T) {
 	require.True(t, secLock.UseAsyncCommit)
 	require.Greater(t, secLock.MinCommitTS, uint64(0))
 	require.Equal(t, 0, bytes.Compare(secLock.Value, secVal2))
+}
+
+func TestAccessCommittedLocks(t *testing.T) {
+	t.Parallel()
+	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer close()
+
+	k0 := []byte("t0")
+	v0 := []byte("v0")
+	MustLoad(10, 20, store, "t0:v0")
+	// delete
+	MustPrewriteDelete(k0, k0, 30, store)
+	MustGetErr(k0, 40, store)
+	// meet lock
+	val, err := kvGet(k0, 40, []uint64{20}, nil, store)
+	require.Error(store.t, err)
+	require.Nil(store.t, val)
+	val, err = kvGet(k0, 40, []uint64{20}, []uint64{20}, store)
+	require.Error(store.t, err)
+	require.Nil(store.t, val)
+	// ignore lock
+	val, err = kvGet(k0, 40, []uint64{30}, nil, store)
+	require.NoError(store.t, err)
+	require.Equal(store.t, v0, val)
+	// access lock
+	val, err = kvGet(k0, 40, nil, []uint64{30}, store)
+	require.NoError(store.t, err)
+	require.Nil(store.t, val)
+
+	k1 := []byte("t1")
+	v1 := []byte("v1")
+	// put
+	MustPrewritePut(k1, k1, v1, 50, store)
+	// ignore lock
+	val, err = kvGet(k1, 60, []uint64{50}, nil, store)
+	require.NoError(store.t, err)
+	require.Len(store.t, val, 0)
+	// access lock
+	val, err = kvGet(k1, 60, nil, []uint64{50}, store)
+	require.NoError(store.t, err)
+	require.Equal(store.t, v1, val)
+
+	// locked
+	k2 := []byte("t2")
+	v2 := []byte("v2")
+	MustPrewritePut(k2, k2, v2, 70, store)
+
+	// lock for ingore
+	k3 := []byte("t3")
+	v3 := []byte("v3")
+	MustPrewritePut(k3, k3, v3, 80, store)
+
+	// No lock
+	k4 := []byte("t4")
+	v4 := []byte("v4")
+	MustLoad(80, 90, store, "t4:v4")
+
+	keys := [][]byte{k0, k1, k2, k3, k4}
+	expected := []struct {
+		key []byte
+		val []byte
+		err bool
+	}{{k1, v1, false}, {k2, nil, true}, {k4, v4, false}}
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = []uint64{80}
+	reqCtx.rpcCtx.CommittedLocks = []uint64{30, 50}
+	pairs := store.MvccStore.BatchGet(reqCtx, keys, 100)
+	require.Equal(store.t, len(expected), len(pairs))
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Equal(store.t, pair.Key, e.key)
+		require.Equal(store.t, pair.Value, e.val)
+		if e.err {
+			require.NotNil(store.t, pair.Error)
+		} else {
+			require.Nil(store.t, pair.Error)
+		}
+	}
+
+	scanReq := &kvrpcpb.ScanRequest{
+		StartKey: []byte("t0"),
+		EndKey:   []byte("t5"),
+		Limit:    100,
+		Version:  100,
+	}
+	pairs = store.MvccStore.Scan(reqCtx, scanReq)
+	require.Equal(store.t, len(expected), len(pairs))
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Equal(store.t, pair.Key, e.key)
+		require.Equal(store.t, pair.Value, e.val)
+		if e.err {
+			require.NotNil(store.t, pair.Error)
+		} else {
+			require.Nil(store.t, pair.Error)
+		}
+	}
 }
