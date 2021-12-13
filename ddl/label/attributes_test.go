@@ -173,7 +173,7 @@ func TestAddLabels(t *testing.T) {
 			"conflict attributes",
 			l3,
 			l2,
-			ErrConflictingAttributes,
+			nil,
 		},
 	}
 
