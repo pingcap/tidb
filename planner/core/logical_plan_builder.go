@@ -3871,7 +3871,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -4204,12 +4204,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			result = us
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
+				startTS := txn.StartTS()
+				store := b.ctx.GetStore()
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
+					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}

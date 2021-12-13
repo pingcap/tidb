@@ -112,6 +112,66 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select count(*) from t a , t b, t c",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			assertRuleName: "aggregation_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "agg[6] pushed down across join[5], and join right path becomes agg[8]",
+					assertReason: "agg[6]'s functions[count(Column#38)] are decomposable with join",
+				},
+			},
+		},
+		{
+			sql:            "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b) x group by c2",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagPushDownAgg},
+			assertRuleName: "aggregation_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "agg[8] pushed down, and union[5]'s children changed into[[id:11,tp:Aggregation],[id:12,tp:Aggregation]]",
+					assertReason: "agg[8] functions[sum(Column#28)] are decomposable with union",
+				},
+				{
+					assertAction: "proj[6] is eliminated, and agg[11]'s functions changed into[sum(test.t.c),firstrow(test.t.d)]",
+					assertReason: "Proj[6] is directly below an agg[11] and has no side effects",
+				},
+				{
+					assertAction: "proj[7] is eliminated, and agg[12]'s functions changed into[sum(test.t.a),firstrow(test.t.b)]",
+					assertReason: "Proj[7] is directly below an agg[12] and has no side effects",
+				},
+			},
+		},
+		{
+			sql:            "select max(a)-min(a) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add sort[8],add limit[9] during eliminating agg[4] max function",
+					assertReason: "agg[4] has only one function[max] without group by, the columns in agg[4] should be sorted",
+				},
+				{
+					assertAction: "add sort[10],add limit[11] during eliminating agg[6] min function",
+					assertReason: "agg[6] has only one function[min] without group by, the columns in agg[6] should be sorted",
+				},
+				{
+					assertAction: "agg[2] splited into aggs[4,6], and add joins[12] to connect them during eliminating agg[2] multi min/max functions",
+					assertReason: "each column is sorted and can benefit from index/primary key in agg[4,6] and none of them has group by clause",
+				},
+			},
+		},
+		{
+			sql:            "select max(e) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add selection[4],add sort[5],add limit[6] during eliminating agg[2] max function",
+					assertReason: "agg[2] has only one function[max] without group by, the columns in agg[2] shouldn't be NULL and needs NULL to be filtered out, the columns in agg[2] should be sorted",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
@@ -123,6 +183,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		c.Assert(err, IsNil, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		sctx.GetSessionVars().AllowAggPushDown = true
 		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
