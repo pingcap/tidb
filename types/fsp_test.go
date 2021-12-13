@@ -73,13 +73,13 @@ func TestParseFrac(t *testing.T) {
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "Invalid fsp .*", err.Error())
+	require.Regexp(t, "^Invalid fsp ", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
 	require.Equal(t, 0, obtained)
 	require.False(t, overflow)
 	require.Error(t, err)
-	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
+	require.Regexp(t, "^strconv.ParseInt:", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
 	require.Equal(t, 123500, obtained)

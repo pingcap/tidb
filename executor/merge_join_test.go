@@ -848,7 +848,6 @@ func (s *testSuiteJoin3) TestVectorizedShuffleMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_merge_join_concurrency = 4;")
 	tk.MustExec("use test")
-	tk.MustExec("use test")
 	existTableMap := make(map[string]struct{})
 	runTest := func(ts1, ts2 []int) {
 		getTable := func(prefix string, ts []int) string {

@@ -30,13 +30,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-)
-
-// error definitions.
-var (
-	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.
@@ -189,6 +183,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildCastFunction(ctx, args[0], retType), nil
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
+	case InternalFuncFromBinary:
+		return BuildFromBinaryFunction(ctx, args[0], retType), nil
+	case InternalFuncToBinary:
+		return BuildToBinaryFunction(ctx, args[0]), nil
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -286,8 +284,9 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
 	}
-	c.SetCharsetAndCollation(sf.CharsetAndCollation(sf.GetCtx()))
+	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
+	c.SetRepertoire(sf.Repertoire())
 	return c
 }
 
@@ -370,6 +369,14 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
+			if ctx := sf.GetCtx(); ctx != nil {
+				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+					if sc.TruncateAsWarning {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						err = nil
+					}
+				}
+			}
 		} else {
 			res = str
 		}
@@ -437,6 +444,12 @@ func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
+	}
+	// Cast is a special case. The RetType should also be considered as an argument.
+	// Please see `newFunctionImpl()` for detail.
+	if sf.FuncName.L == ast.Cast {
+		evalTp := sf.RetType.EvalType()
+		sf.hashcode = append(sf.hashcode, byte(evalTp))
 	}
 }
 
@@ -558,12 +571,12 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 	sf.Function.SetCoercibility(val)
 }
 
-// CharsetAndCollation ...
-func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	return sf.Function.CharsetAndCollation(ctx)
+// CharsetAndCollation gets charset and collation.
+func (sf *ScalarFunction) CharsetAndCollation() (string, string) {
+	return sf.Function.CharsetAndCollation()
 }
 
-// SetCharsetAndCollation ...
+// SetCharsetAndCollation sets charset and collation.
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }

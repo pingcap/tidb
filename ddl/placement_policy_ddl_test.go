@@ -60,14 +60,17 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	}()
 
 	ctx := context.Background()
-	d := testNewDDLAndStart(ctx, c, WithStore(store))
+	d, err := testNewDDLAndStart(ctx, WithStore(store))
+	c.Assert(err, IsNil)
 	sctx := testNewContext(d)
 
-	db1 := testSchemaInfo(c, d, "db1")
+	db1, err := testSchemaInfo(d, "db1")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, sctx, d, db1)
 	db1.State = model.StatePublic
 
-	db2 := testSchemaInfo(c, d, "db2")
+	db2, err := testSchemaInfo(d, "db2")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, sctx, d, db2)
 	db2.State = model.StatePublic
 
@@ -83,25 +86,29 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	testCreatePlacementPolicy(c, sctx, d, p4)
 	testCreatePlacementPolicy(c, sctx, d, p5)
 
-	t1 := testTableInfo(c, d, "t1", 1)
+	t1, err := testTableInfo(d, "t1", 1)
+	c.Assert(err, IsNil)
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(c, sctx, d, db1, t1)
 	t1.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t1)
 
-	t2 := testTableInfo(c, d, "t2", 1)
+	t2, err := testTableInfo(d, "t2", 1)
+	c.Assert(err, IsNil)
 	t2.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(c, sctx, d, db2, t2)
 	t2.State = model.StatePublic
 	db2.Tables = append(db2.Tables, t2)
 
-	t3 := testTableInfo(c, d, "t3", 1)
+	t3, err := testTableInfo(d, "t3", 1)
+	c.Assert(err, IsNil)
 	t3.PlacementPolicyRef = &model.PolicyRefInfo{ID: p2.ID, Name: p2.Name}
 	testCreateTable(c, sctx, d, db1, t3)
 	t3.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t3)
 
-	dbP := testSchemaInfo(c, d, "db_p")
+	dbP, err := testSchemaInfo(d, "db_p")
+	c.Assert(err, IsNil)
 	dbP.PlacementPolicyRef = &model.PolicyRefInfo{ID: p4.ID, Name: p4.Name}
 	dbP.State = model.StatePublic
 	testCreateSchema(c, sctx, d, dbP)
@@ -112,7 +119,7 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	t4.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t4)
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		nil,
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},

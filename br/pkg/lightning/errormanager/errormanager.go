@@ -1,9 +1,24 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package errormanager
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -81,12 +96,11 @@ const (
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 
-	// not sure if we really want to DISTINCT.
-	// having DISTINCT requires TiDB to introduce a HashAgg in memory but reduces response size.
 	selectConflictKeys = `
-		SELECT DISTINCT raw_handle, raw_row
+		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + conflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ?;
+		WHERE table_name = ? AND _tidb_rowid > ?
+		ORDER BY _tidb_rowid LIMIT ?;
 	`
 )
 
@@ -95,6 +109,11 @@ type ErrorManager struct {
 	taskID         int64
 	schemaEscaped  string
 	remainingError config.MaxError
+	dupResolution  config.DuplicateResolutionAlgorithm
+}
+
+func (em *ErrorManager) TypeErrorsRemain() int64 {
+	return em.remainingError.Type.Load()
 }
 
 // New creates a new error manager.
@@ -102,6 +121,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		remainingError: cfg.App.MaxError,
+		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -112,7 +132,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil {
+	if em.db == nil || (em.remainingError.Type.Load() == 0 && em.dupResolution == config.DupeResAlgNone) {
 		return nil
 	}
 
@@ -121,15 +141,21 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		Logger: log.L(),
 	}
 
-	sqls := [][2]string{
-		{"create task info schema", createSchema},
-		{"create syntax error table", createSyntaxErrorTable},
-		{"create type error table", createTypeErrorTable},
-		{"create conflict error table", createConflictErrorTable},
+	sqls := make([][2]string, 0)
+	sqls = append(sqls, [2]string{"create task info schema", createSchema})
+	if em.remainingError.Syntax.Load() > 0 {
+		sqls = append(sqls, [2]string{"create syntax error table", createSyntaxErrorTable})
+	}
+	if em.remainingError.Type.Load() > 0 {
+		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
+	}
+	if em.dupResolution != config.DupeResAlgNone && em.remainingError.Conflict.Load() > 0 {
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 
 	for _, sql := range sqls {
-		err := exec.Exec(ctx, sql[0], fmt.Sprintf(sql[1], em.schemaEscaped))
+		// trim spaces for unit test pattern matching
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
 		if err != nil {
 			return err
 		}
@@ -149,6 +175,11 @@ func (em *ErrorManager) RecordTypeError(
 	rowText string,
 	encodeErr error,
 ) error {
+	// elide the encode error if needed.
+	if em.remainingError.Type.Dec() < 0 {
+		return encodeErr
+	}
+
 	if em.db != nil {
 		errMsg := encodeErr.Error()
 		logger = logger.With(
@@ -173,11 +204,6 @@ func (em *ErrorManager) RecordTypeError(
 		); err != nil {
 			return multierr.Append(encodeErr, err)
 		}
-	}
-
-	// elide the encode error if needed.
-	if em.remainingError.Type.Dec() < 0 {
-		return encodeErr
 	}
 	return nil
 }
@@ -272,28 +298,28 @@ func (em *ErrorManager) RecordIndexConflictError(
 
 // GetConflictKeys obtains all (distinct) conflicting rows (handle and their
 // values) from the current error report.
-func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string) ([][2][]byte, error) {
+func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, prevRowID int64, limit int) (handleRows [][2][]byte, lastRowID int64, err error) {
 	if em.db == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	rows, err := em.db.QueryContext(
 		ctx,
 		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
-		em.taskID,
 		tableName,
+		prevRowID,
+		limit,
 	)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	defer rows.Close()
 
-	var handleRows [][2][]byte
 	for rows.Next() {
 		var handleRow [2][]byte
-		if err := rows.Scan(&handleRow[0], &handleRow[1]); err != nil {
-			return nil, errors.Trace(err)
+		if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+			return nil, 0, errors.Trace(err)
 		}
 		handleRows = append(handleRows, handleRow)
 	}
-	return handleRows, errors.Trace(rows.Err())
+	return handleRows, lastRowID, errors.Trace(rows.Err())
 }

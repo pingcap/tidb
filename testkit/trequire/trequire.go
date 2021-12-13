@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package trequire
@@ -21,13 +22,14 @@ import (
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
-// DatumEqual verifies that the actual value is equal to the expected value.
+// DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
 func DatumEqual(t *testing.T, expected, actual types.Datum, msgAndArgs ...interface{}) {
 	sc := new(stmtctx.StatementContext)
-	res, err := actual.CompareDatum(sc, &expected)
+	res, err := actual.Compare(sc, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
 }
