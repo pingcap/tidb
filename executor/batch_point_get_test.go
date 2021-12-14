@@ -30,8 +30,6 @@ import (
 )
 
 func TestBatchPointGetExec(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -80,8 +78,6 @@ func TestBatchPointGetExec(t *testing.T) {
 }
 
 func TestBatchPointGetInTxn(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -112,8 +108,6 @@ func TestBatchPointGetInTxn(t *testing.T) {
 }
 
 func TestBatchPointGetCache(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -128,8 +122,6 @@ func TestBatchPointGetCache(t *testing.T) {
 }
 
 func TestIssue18843(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -145,8 +137,6 @@ func TestIssue18843(t *testing.T) {
 }
 
 func TestIssue24562(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -160,8 +150,6 @@ func TestIssue24562(t *testing.T) {
 }
 
 func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -177,8 +165,6 @@ func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
 }
 
 func TestBatchPointGetLockExistKey(t *testing.T) {
-	t.Parallel()
-
 	var wg sync.WaitGroup
 	errCh := make(chan error)
 	store, clean := testkit.CreateMockStore(t)
@@ -324,8 +310,6 @@ func TestBatchPointGetLockExistKey(t *testing.T) {
 }
 
 func TestBatchPointGetIssue25167(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

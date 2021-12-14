@@ -22,7 +22,6 @@ import (
 )
 
 func TestInsertAndDelete(t *testing.T) {
-	t.Parallel()
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
 	}

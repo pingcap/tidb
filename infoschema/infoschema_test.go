@@ -38,8 +38,6 @@ import (
 )
 
 func TestBasic(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -212,8 +210,6 @@ func TestBasic(t *testing.T) {
 }
 
 func TestMockInfoSchema(t *testing.T) {
-	t.Parallel()
-
 	tblID := int64(1234)
 	tblName := model.NewCIStr("tbl_m")
 	tableInfo := &model.TableInfo{
@@ -250,8 +246,6 @@ func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction
 
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func TestInfoTables(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -317,8 +311,6 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 func TestGetBundle(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -394,8 +386,6 @@ func TestGetBundle(t *testing.T) {
 }
 
 func TestLocalTemporaryTables(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
