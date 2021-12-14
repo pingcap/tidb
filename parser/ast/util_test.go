@@ -26,7 +26,6 @@ import (
 )
 
 func TestCacheable(t *testing.T) {
-	t.Parallel()
 	// test non-SelectStmt
 	var stmt Node = &DeleteStmt{}
 	require.False(t, IsReadOnly(stmt))
@@ -76,7 +75,6 @@ func TestCacheable(t *testing.T) {
 }
 
 func TestUnionReadOnly(t *testing.T) {
-	t.Parallel()
 	selectReadOnly := &SelectStmt{}
 	selectForUpdate := &SelectStmt{
 		LockInfo: &SelectLockInfo{LockType: SelectLockForUpdate},

@@ -133,7 +133,6 @@ func mockHistogram(lower, num int64) *Histogram {
 }
 
 func TestMergeHistogram(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		leftLower  int64
 		leftNum    int64
@@ -189,7 +188,6 @@ func TestMergeHistogram(t *testing.T) {
 }
 
 func TestPseudoTable(t *testing.T) {
-	t.Parallel()
 	ti := &model.TableInfo{}
 	colInfo := &model.ColumnInfo{
 		ID:        1,
@@ -232,7 +230,6 @@ func buildCMSketch(values []types.Datum) *CMSketch {
 
 func SubTestColumnRange() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
@@ -311,7 +308,6 @@ func SubTestColumnRange() func(*testing.T) {
 
 func SubTestIntColumnRanges() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
@@ -405,7 +401,6 @@ func SubTestIntColumnRanges() func(*testing.T) {
 
 func SubTestIndexRanges() func(*testing.T) {
 	return func(t *testing.T) {
-		t.Parallel()
 		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()

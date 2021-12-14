@@ -53,7 +53,6 @@ import (
 )
 
 func TestAnalyzePartition(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -121,7 +120,6 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestAnalyzeReplicaReadFollower(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -135,7 +133,6 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 }
 
 func TestClusterIndexAnalyze(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -168,7 +165,6 @@ func TestClusterIndexAnalyze(t *testing.T) {
 }
 
 func TestAnalyzeRestrict(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -182,7 +178,6 @@ func TestAnalyzeRestrict(t *testing.T) {
 }
 
 func TestAnalyzeParameters(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	dom, err := session.BootstrapSession(store)
@@ -244,7 +239,6 @@ func TestAnalyzeParameters(t *testing.T) {
 }
 
 func TestAnalyzeTooLongColumns(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	dom, err := session.BootstrapSession(store)
@@ -268,7 +262,6 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
-	t.Parallel()
 	_ = checkHistogram
 	t.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
@@ -318,7 +311,6 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 }
 
 func TestAnalyzeFastSample(t *testing.T) {
-	t.Parallel()
 	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -426,7 +418,6 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func TestFastAnalyze(t *testing.T) {
-	t.Parallel()
 	t.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
 	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
@@ -547,7 +538,6 @@ func TestFastAnalyze(t *testing.T) {
 }
 
 func TestIssue15993(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -561,7 +551,6 @@ func TestIssue15993(t *testing.T) {
 }
 
 func TestIssue15751(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -576,7 +565,6 @@ func TestIssue15751(t *testing.T) {
 }
 
 func TestIssue15752(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -615,7 +603,6 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 }
 
 func TestFastAnalyzeRetryRowCount(t *testing.T) {
-	t.Parallel()
 	cli := &regionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -663,7 +650,6 @@ func TestFastAnalyzeRetryRowCount(t *testing.T) {
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -679,7 +665,6 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 }
 
 func TestExtractTopN(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	dom, err := session.BootstrapSession(store)
@@ -735,7 +720,6 @@ func TestExtractTopN(t *testing.T) {
 }
 
 func TestHashInTopN(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	dom, err := session.BootstrapSession(store)
@@ -778,7 +762,6 @@ func TestHashInTopN(t *testing.T) {
 }
 
 func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -831,7 +814,6 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
-	t.Parallel()
 	t.Skip("skip race test")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -870,7 +852,6 @@ func TestDefaultValForAnalyze(t *testing.T) {
 }
 
 func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T) {
-	t.Parallel()
 	t.Skip("unstable, skip it and fix it before 20210624")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -904,7 +885,6 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 }
 
 func TestSnapshotAnalyze(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -954,7 +934,6 @@ func TestSnapshotAnalyze(t *testing.T) {
 }
 
 func TestAdjustSampleRateNote(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
