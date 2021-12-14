@@ -48,6 +48,27 @@ func clearAllBundles(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testDBSuite6) TestPlacementFollowers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustGetErrMsg("create placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
+
+    tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("create placement policy x FOLLOWERS=4")
+	tk.MustGetErrMsg("alter placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustGetErrMsg("create table t1 (a int) followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) followers=4;")
+	tk.MustGetErrMsg("alter table t1 followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
+
+//	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8238 Placement policy 'X' already exists"))
+}
+
 func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
