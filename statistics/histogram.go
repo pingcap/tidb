@@ -1074,7 +1074,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	}
 	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
 		if sc.StatsLoad.FullStatsLoaded {
-			logutil.BgLogger().Warn("Hist for column %v should already be loaded as sync but not found.",
+			logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 				zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 		}
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})

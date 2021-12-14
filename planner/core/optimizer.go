@@ -339,8 +339,8 @@ func SyncLoadColumnFullStats(plan LogicalPlan) (bool, error) {
 	var timeout = time.Duration(waitTime) * time.Millisecond
 	stmtCtx.StatsLoad.Timeout = timeout
 	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad(stmtCtx, neededColumns, timeout)
-	err := errors.New("Timeout when sync-load full stats for needed columns.")
 	if !success && config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
+		err := errors.New("Timeout when sync-load full stats for needed columns.")
 		stmtCtx.AppendWarning(err)
 		stmtCtx.StatsLoad.Fallback = true
 		return false, err

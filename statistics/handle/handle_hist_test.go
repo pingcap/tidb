@@ -63,6 +63,8 @@ func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	c.Assert(hg.Len()+topn.Num(), Greater, 0)
+
+	// TODO partition table
 }
 
 func (s *testStatsSuite) TestConcurrentLoadHistTimeout(c *C) {
