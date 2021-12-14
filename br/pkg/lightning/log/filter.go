@@ -50,8 +50,8 @@ func (f *FilterCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	for i := range f.filters {
 		// Caller.Function is a package path-qualified function name.
 		if strings.Contains(entry.Caller.Function, f.filters[i]) {
-			return nil
+			return f.Core.Write(entry, fields)
 		}
 	}
-	return f.Core.Write(entry, fields)
+	return nil
 }
