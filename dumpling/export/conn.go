@@ -12,14 +12,6 @@ import (
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
-// DBProvider providers BaseDB instance.
-type DBProvider interface {
-	Apply() (*BaseConn, error)
-}
-
-// DefaultDBProviderImpl is default DBProvider implement.
-type DefaultDBProviderImpl struct{}
-
 // BaseConn wraps connection instance.
 type BaseConn struct {
 	DBConn *sql.Conn
