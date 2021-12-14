@@ -87,7 +87,8 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
 	flags.Uint32(flagConcurrency, 4, "The size of thread pool on BR that executes tasks, " +
-		"this value should increased when backup large amount of table + index")
+		"one task represents one table range(or one index range) according to backup schemas. if had one table with a PK field." +
+		"then got two tasks to backup this table. this value should increase if you have lots of tables or indices to backup.")
 
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
