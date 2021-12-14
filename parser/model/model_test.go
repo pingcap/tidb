@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/stretchr/testify/require"
@@ -134,6 +135,8 @@ func TestModelBasic(t *testing.T) {
 
 	extraPK := NewExtraHandleColInfo()
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
+	require.Equal(t, charset.CharsetBin, extraPK.Charset)
+	require.Equal(t, charset.CollationBin, extraPK.Collate)
 }
 
 func TestJobStartTime(t *testing.T) {
@@ -299,7 +302,7 @@ func TestString(t *testing.T) {
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
-		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
+		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 
@@ -366,7 +369,7 @@ func TestDefaultValue(t *testing.T) {
 	err = newBitCol.SetDefaultValue(1)
 	// Only string type is allowed in BIT column.
 	require.Error(t, err)
-	require.Regexp(t, ".*Invalid default value.*", err.Error())
+	require.Contains(t, err.Error(), "Invalid default value")
 	require.Equal(t, 1, newBitCol.GetDefaultValue())
 	err = newBitCol.SetDefaultValue(randBitStr)
 	require.NoError(t, err)

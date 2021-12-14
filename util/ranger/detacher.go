@@ -98,7 +98,7 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 // in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
 // Since combining `x >= 2` and `x <= 2` can lead to an eq condition `x = 2`, we take le/ge/lt/gt into consideration.
-func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -109,7 +109,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 		dnfItems := expression.FlattenDNFConditions(f)
 		offset := int(-1)
 		for _, dnfItem := range dnfItems {
-			curOffset := getPotentialEqOrInColOffset(dnfItem, cols)
+			curOffset := getPotentialEqOrInColOffset(sctx, dnfItem, cols)
 			if curOffset == -1 {
 				return -1
 			}
@@ -129,7 +129,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1
@@ -151,7 +151,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
 					return -1
 				}
 				for i, col := range cols {
@@ -448,7 +448,8 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 		if !left.start || right.start || left.excl || right.excl {
 			return nil
 		}
-		cmp, err := left.value.CompareDatum(sc, &right.value)
+		// Since the point's collations are equal to the column's collation, we can use any of them.
+		cmp, err := left.value.Compare(sc, &right.value, collate.GetCollator(left.value.Collation()))
 		if err != nil || cmp != 0 {
 			return nil
 		}
@@ -517,7 +518,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
-		offset := getPotentialEqOrInColOffset(cond, cols)
+		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
 		if offset == -1 {
 			continue
@@ -532,7 +533,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond))
+		points[offset] = rb.intersection(points[offset], rb.build(cond), collate.GetCollator(cols[offset].GetType().Collate))
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
@@ -715,7 +716,8 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil
 	}
-	cmp, err := lhs.value.CompareDatum(sc, rhs.value)
+	// binary collator may not the best choice, but it can make sure the result is correct.
+	cmp, err := lhs.value.Compare(sc, rhs.value, collate.GetBinaryCollator())
 	if err != nil {
 		return false, err
 	}

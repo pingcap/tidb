@@ -1037,8 +1037,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	var err1 error
-	f, err1 = ProduceFloatWithSpecifiedTp(f, target, sc)
+	f, err1 := ProduceFloatWithSpecifiedTp(f, target, sc)
 	if err == nil && err1 != nil {
 		err = err1
 	}
@@ -1052,6 +1051,12 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 
 // ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
 func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.StatementContext) (_ float64, err error) {
+	if math.IsNaN(f) {
+		return 0, overflow(f, target.Tp)
+	}
+	if math.IsInf(f, 0) {
+		return f, overflow(f, target.Tp)
+	}
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
@@ -1268,7 +1273,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	case KindMysqlTime:
 		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
 		if err != nil {
-			ret.SetMysqlTime(ZeroTimestamp)
+			// t might be an invalid Timestamp, but should still be comparable, since same representation (KindMysqlTime)
+			ret.SetMysqlTime(t)
 			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
@@ -2175,7 +2181,8 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].CompareDatum(ds.sc, &ds.datums[j])
+	// TODO: set collation explicitly when rewrites feedback.
+	cmp, err := ds.datums[i].Compare(ds.sc, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
 	if err != nil {
 		ds.err = errors.Trace(err)
 		return true
@@ -2357,7 +2364,7 @@ func ChangeReverseResultByUpperLowerBound(
 		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
 	}
 	bound := getDatumBound(&resRetType, rType)
-	cmp, err := d.CompareDatum(sc, &bound)
+	cmp, err := d.Compare(sc, &bound, collate.GetCollator(resRetType.Collate))
 	if err != nil {
 		return d, err
 	}

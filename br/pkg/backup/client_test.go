@@ -70,6 +70,13 @@ func (r *testBackup) SetUpSuite(c *C) {
 
 }
 
+func (r *testBackup) resetStorage(c *C) {
+	var err error
+	base := c.MkDir()
+	r.storage, err = storage.NewLocalStorage(base)
+	c.Assert(err, IsNil)
+}
+
 func (r *testBackup) TestGetTS(c *C) {
 	var (
 		err error
@@ -334,4 +341,31 @@ func (r *testBackup) TestskipUnsupportedDDLJob(c *C) {
 	err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
 	c.Assert(err, IsNil)
 	c.Assert(len(allDDLJobs), Equals, 8)
+}
+
+func (r *testBackup) TestCheckBackupIsLocked(c *C) {
+	ctx := context.Background()
+
+	r.resetStorage(c)
+	// check passed with an empty storage
+	err := backup.CheckBackupStorageIsLocked(ctx, r.storage)
+	c.Assert(err, IsNil)
+
+	// check passed with only a lock file
+	err = r.storage.WriteFile(ctx, metautil.LockFile, nil)
+	c.Assert(err, IsNil)
+	err = backup.CheckBackupStorageIsLocked(ctx, r.storage)
+	c.Assert(err, IsNil)
+
+	// check passed with a lock file and other non-sst files.
+	err = r.storage.WriteFile(ctx, "1.txt", nil)
+	c.Assert(err, IsNil)
+	err = backup.CheckBackupStorageIsLocked(ctx, r.storage)
+	c.Assert(err, IsNil)
+
+	// check failed
+	err = r.storage.WriteFile(ctx, "1.sst", nil)
+	c.Assert(err, IsNil)
+	err = backup.CheckBackupStorageIsLocked(ctx, r.storage)
+	c.Assert(err, ErrorMatches, "backup lock file and sst file exist in(.+)")
 }

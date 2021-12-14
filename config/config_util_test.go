@@ -35,7 +35,7 @@ func TestCloneConf(t *testing.T) {
 
 	c1.Store = "abc"
 	c1.Port = 2333
-	c1.Log.EnableSlowLog = !c1.Log.EnableSlowLog
+	c1.Log.EnableSlowLog.Store(!c1.Log.EnableSlowLog.Load())
 	c1.RepairTableList = append(c1.RepairTableList, "abc")
 	require.NotEqual(t, c2.Store, c1.Store)
 	require.NotEqual(t, c2.Port, c1.Port)
