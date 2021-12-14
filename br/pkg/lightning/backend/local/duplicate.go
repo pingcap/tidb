@@ -366,6 +366,9 @@ func (s *RemoteDupKVStream) tryRecv() error {
 		}
 		return err
 	}
+	if resp.RegionError != nil {
+		return errors.Errorf("meet region error in duplicate detect response: %s", resp.RegionError.String())
+	}
 	if resp.KeyError != nil {
 		return errors.Errorf("meet key error in duplicate detect response: %s", resp.KeyError.Message)
 	}
@@ -374,7 +377,7 @@ func (s *RemoteDupKVStream) tryRecv() error {
 }
 
 func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
-	if len(s.kvs) == 0 {
+	for len(s.kvs) == 0 {
 		if s.atEOF {
 			return nil, nil, io.EOF
 		}
