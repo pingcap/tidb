@@ -77,7 +77,6 @@ func TestCompareCol2Len(t *testing.T) {
 }
 
 func TestOnlyPointRange(t *testing.T) {
-	t.Parallel()
 	sctx := core.MockContext()
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()

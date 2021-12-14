@@ -32,7 +32,6 @@ import (
 )
 
 func TestDatabase(t *testing.T) {
-	t.Parallel()
 	fc := funcs[ast.Database]
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
@@ -58,7 +57,6 @@ func TestDatabase(t *testing.T) {
 }
 
 func TestFoundRows(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.LastFoundRows = 2
@@ -72,7 +70,6 @@ func TestFoundRows(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
@@ -87,7 +84,6 @@ func TestUser(t *testing.T) {
 }
 
 func TestCurrentUser(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
@@ -102,7 +98,6 @@ func TestCurrentUser(t *testing.T) {
 }
 
 func TestCurrentRole(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	fc := funcs[ast.CurrentRole]
 	f, err := fc.getFunction(ctx, nil)
@@ -128,7 +123,6 @@ func TestCurrentRole(t *testing.T) {
 }
 
 func TestConnectionID(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ConnectionID = uint64(1)
@@ -143,7 +137,6 @@ func TestConnectionID(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(ctx, nil)
@@ -155,7 +148,6 @@ func TestVersion(t *testing.T) {
 }
 
 func TestBenchMark(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		LoopCount  int
@@ -197,7 +189,6 @@ func TestBenchMark(t *testing.T) {
 }
 
 func TestCharset(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
@@ -207,7 +198,6 @@ func TestCharset(t *testing.T) {
 }
 
 func TestCoercibility(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Coercibility]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
@@ -216,7 +206,6 @@ func TestCoercibility(t *testing.T) {
 }
 
 func TestCollation(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Collation]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
@@ -226,7 +215,6 @@ func TestCollation(t *testing.T) {
 }
 
 func TestRowCount(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.PrevAffectedRows = 10
@@ -246,7 +234,6 @@ func TestRowCount(t *testing.T) {
 
 // TestTiDBVersion for tidb_server().
 func TestTiDBVersion(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
 	require.NoError(t, err)
@@ -256,7 +243,6 @@ func TestTiDBVersion(t *testing.T) {
 }
 
 func TestLastInsertID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
@@ -313,7 +299,6 @@ func TestLastInsertID(t *testing.T) {
 }
 
 func TestFormatBytes(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
@@ -343,7 +328,6 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestFormatNanoTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
