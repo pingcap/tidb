@@ -288,7 +288,6 @@ func (s *s3Suite) TestS3Storage(c *C) {
 		_, err := New(ctx, s3, &ExternalStorageOptions{
 			SendCredentials:  test.sendCredential,
 			CheckPermissions: test.hackPermission,
-			SkipCheckPath:    true,
 		})
 		if test.errReturn {
 			c.Assert(err, NotNil)
@@ -414,7 +413,7 @@ func (s *s3Suite) TestS3Storage(c *C) {
 func (s *s3Suite) TestS3URI(c *C) {
 	backend, err := ParseBackend("s3://bucket/prefix/", nil)
 	c.Assert(err, IsNil)
-	storage, err := New(context.Background(), backend, &ExternalStorageOptions{SkipCheckPath: true})
+	storage, err := New(context.Background(), backend, &ExternalStorageOptions{})
 	c.Assert(err, IsNil)
 	c.Assert(storage.URI(), Equals, "s3://bucket/prefix/")
 }

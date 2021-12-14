@@ -367,6 +367,17 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
+=======
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
+
+	if err = cfg.parseCipherInfo(flags); err != nil {
+		return errors.Trace(err)
+	}
+
+>>>>>>> 4b48e55ae... lightning: Add source dir existence check for s3 (#30674)
 	return cfg.normalizePDURLs()
 }
 
@@ -431,7 +442,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 
