@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,12 +35,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -165,6 +166,16 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+
+	// If the warn is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
@@ -423,11 +434,8 @@ func init() {
 	}
 }
 
-// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
-// Otherwise calling information schema will cause import cycle problem.
-type SequenceSchema interface {
-	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
-}
+// GetSequenceByName could be used in expression package without import cycle problem.
+var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
@@ -439,7 +447,7 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Config, autoReload bool, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
 	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
 		if !autoTLS {
@@ -450,7 +458,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 		tempStoragePath := config.GetGlobalConfig().TempStoragePath
 		cert = filepath.Join(tempStoragePath, "/cert.pem")
 		key = filepath.Join(tempStoragePath, "/key.pem")
-		err = createTLSCertificates(cert, key)
+		err = createTLSCertificates(cert, key, rsaKeySize)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
 			return
@@ -512,12 +520,29 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 			}
 		}
 	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
 	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
 		MinVersion:   minTLSVersion,
+		CipherSuites: cipherSuites,
 	}
 	return
 }
@@ -566,6 +591,14 @@ func initInternalClient() {
 	}
 }
 
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
+}
+
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
 func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
@@ -589,8 +622,8 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
-func createTLSCertificates(certpath string, keypath string) error {
-	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
 	if err != nil {
 		return err
 	}
@@ -648,6 +681,7 @@ func createTLSCertificates(certpath string, keypath string) error {
 		return err
 	}
 
-	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath), zap.Duration("validity", certValidity))
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
 }

@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package session
 
@@ -23,7 +24,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -37,13 +37,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -72,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
@@ -107,17 +109,7 @@ var (
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
 	telemetryCTEUsage = metrics.TelemetrySQLCTECnt
-
-	tiKVGCAutoConcurrency = "tikv_gc_auto_concurrency"
 )
-
-var gcVariableMap = map[string]string{
-	variable.TiDBGCRunInterval:  "tikv_gc_run_interval",
-	variable.TiDBGCLifetime:     "tikv_gc_life_time",
-	variable.TiDBGCConcurrency:  "tikv_gc_concurrency",
-	variable.TiDBGCEnable:       "tikv_gc_enable",
-	variable.TiDBGCScanLockMode: "tikv_gc_scan_lock_mode",
-}
 
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
@@ -153,6 +145,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
+	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
 	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
@@ -168,9 +161,7 @@ type Session interface {
 	ClearDiskFullOpt()
 }
 
-var (
-	_ Session = (*session)(nil)
-)
+var _ Session = (*session)(nil)
 
 type stmtRecord struct {
 	st      sqlexec.Statement
@@ -553,7 +544,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
+	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
@@ -630,9 +621,9 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 			value := iter.Value()
 			if len(value) == 0 {
-				err = sessionData.Delete(key)
+				err = sessionData.DeleteTableKey(tblID, key)
 			} else {
-				err = sessionData.Set(key, iter.Value())
+				err = sessionData.SetTableKey(tblID, key, iter.Value())
 			}
 
 			if err != nil {
@@ -678,7 +669,13 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags t
 // of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
 // and the server is only responsible for handling the error correctly. It does not need to log.
 func errIsNoisy(err error) bool {
-	return kv.ErrKeyExists.Equal(err)
+	if kv.ErrKeyExists.Equal(err) {
+		return true
+	}
+	if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+		return true
+	}
+	return false
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -927,7 +924,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i))
 			}
+			_, digest := s.sessionVars.StmtCtx.SQLDigest()
+			s.txn.onStmtStart(digest.String())
 			_, err = st.Exec(ctx)
+			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
 				break
@@ -1036,9 +1036,10 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, alloc chunk.Allocator) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	var req *chunk.Chunk
+	req = rs.NewChunk(alloc)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
@@ -1074,48 +1075,20 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 	return value, nil
 }
 
-var gcVariableComments = map[string]string{
-	variable.TiDBGCRunInterval:  "GC run interval, at least 10m, in Go format.",
-	variable.TiDBGCLifetime:     "All versions within life time will not be collected by GC, at least 10m, in Go format.",
-	variable.TiDBGCConcurrency:  "How many goroutines used to do GC parallel, [1, 128], default 2",
-	variable.TiDBGCEnable:       "Current GC enable status",
-	tiKVGCAutoConcurrency:       "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
-	variable.TiDBGCScanLockMode: "Mode of scanning locks, \"physical\" or \"legacy\"",
-}
-
-// replaceTableValue executes restricted sql updates the variable value
-func (s *session) replaceTableValue(ctx context.Context, tblName string, varName, val string) error {
-	if tblName == mysql.TiDBTable { // maintain comment metadata
-		comment := gcVariableComments[varName]
-		stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, mysql.SystemDB, tblName, varName, val, comment)
-		if err != nil {
-			return err
-		}
-		_, _, err = s.ExecRestrictedStmt(ctx, stmt)
-		return err
-	}
-	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, tblName, varName, val)
+// replaceGlobalVariablesTableValue executes restricted sql updates the variable value
+// It will then notify the etcd channel that the value has changed.
+func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
+	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
 	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
-	domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+	domain.GetDomain(s).NotifyUpdateSysVarCache()
 	return err
-}
-
-func (s *session) varFromTiDBTable(name string) bool {
-	switch name {
-	case variable.TiDBGCConcurrency, variable.TiDBGCEnable, variable.TiDBGCRunInterval, variable.TiDBGCLifetime, variable.TiDBGCScanLockMode:
-		return true
-	}
-	return false
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
-	if name == variable.TiDBSlowLogMasking {
-		name = variable.TiDBRedactLog
-	}
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
@@ -1130,7 +1103,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
-	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, name)
+	sysVar, err := domain.GetDomain(s).GetGlobalVar(name)
 	if err != nil {
 		// The sysvar exists, but there is no cache entry yet.
 		// This might be because the sysvar was only recently registered.
@@ -1142,11 +1115,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return sv.Value, nil
 		}
 	}
-	// Fetch mysql.tidb values if required
-	if s.varFromTiDBTable(name) {
-		return s.getTiDBTableValue(name, sysVar)
-	}
-	return sysVar, nil
+	// It might have been written from an earlier TiDB version, so we should do type validation
+	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
+	return sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1161,8 +1132,10 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
-
-	return s.updateGlobalSysVar(sv, value)
+	if sv.GlobalConfigName != "" {
+		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
+	}
+	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
 // SetGlobalSysVarOnly updates the sysvar, but does not call the validation function or update aliases.
@@ -1175,98 +1148,27 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
 	}
-	return s.updateGlobalSysVar(sv, value)
+	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
-func (s *session) updateGlobalSysVar(sv *variable.SysVar, value string) error {
-	// update mysql.tidb if required.
-	if s.varFromTiDBTable(sv.Name) {
-		if err := s.setTiDBTableValue(sv.Name, value); err != nil {
-			return err
-		}
+// SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
+func (s *session) SetTiDBTableValue(name, value, comment string) error {
+	stmt, err := s.ParseWithParams(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	if err != nil {
+		return err
 	}
-	return s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, sv.Name, value)
-}
-
-// setTiDBTableValue handles tikv_* sysvars which need to update mysql.tidb
-// for backwards compatibility. Validation has already been performed.
-func (s *session) setTiDBTableValue(name, val string) error {
-	if name == variable.TiDBGCConcurrency {
-		autoConcurrency := "false"
-		if val == "-1" {
-			autoConcurrency = "true"
-		}
-		err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency, autoConcurrency)
-		if err != nil {
-			return err
-		}
-	}
-	val = onOffToTrueFalse(val)
-	err := s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
+	_, _, err = s.ExecRestrictedStmt(context.TODO(), stmt)
 	return err
 }
 
-// In mysql.tidb the convention has been to store the string value "true"/"false",
-// but sysvars use the convention ON/OFF.
-func trueFalseToOnOff(str string) string {
-	if strings.EqualFold("true", str) {
-		return variable.On
-	} else if strings.EqualFold("false", str) {
-		return variable.Off
-	}
-	return str
-}
-
-// In mysql.tidb the convention has been to store the string value "true"/"false",
-// but sysvars use the convention ON/OFF.
-func onOffToTrueFalse(str string) string {
-	if strings.EqualFold("ON", str) {
-		return "true"
-	} else if strings.EqualFold("OFF", str) {
-		return "false"
-	}
-	return str
-}
-
-// getTiDBTableValue handles tikv_* sysvars which need
-// to read from mysql.tidb for backwards compatibility.
-func (s *session) getTiDBTableValue(name, val string) (string, error) {
-	if name == variable.TiDBGCConcurrency {
-		// Check if autoconcurrency is set
-		autoConcurrencyVal, err := s.getTableValue(context.TODO(), mysql.TiDBTable, tiKVGCAutoConcurrency)
-		if err == nil && strings.EqualFold(autoConcurrencyVal, "true") {
-			return "-1", nil // convention for "AUTO"
-		}
-	}
-	tblValue, err := s.getTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name])
-	if err != nil {
-		return val, nil // mysql.tidb value does not exist.
-	}
-	// Run validation on the tblValue. This will return an error if it can't be validated,
-	// but will also make it more consistent: disTribuTeD -> DISTRIBUTED etc
-	tblValue = trueFalseToOnOff(tblValue)
-	validatedVal, err := variable.GetSysVar(name).Validate(s.sessionVars, tblValue, variable.ScopeGlobal)
-	if err != nil {
-		logutil.Logger(context.Background()).Warn("restoring sysvar value since validating mysql.tidb value failed",
-			zap.Error(err),
-			zap.String("name", name),
-			zap.String("tblName", gcVariableMap[name]),
-			zap.String("tblValue", tblValue),
-			zap.String("restoredValue", val))
-		err = s.replaceTableValue(context.TODO(), mysql.TiDBTable, gcVariableMap[name], val)
-		return val, err
-	}
-	if validatedVal != val {
-		// The sysvar value is out of sync.
-		err = s.replaceTableValue(context.TODO(), mysql.GlobalVariablesTable, gcVariableMap[name], validatedVal)
-		return validatedVal, err
-	}
-	return validatedVal, nil
+// GetTiDBTableValue implements GlobalVarAccessor.GetTiDBTableValue interface.
+func (s *session) GetTiDBTableValue(name string) (string, error) {
+	return s.getTableValue(context.TODO(), mysql.TiDBTable, name)
 }
 
 var _ sqlexec.SQLParser = &session{}
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1277,7 +1179,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	tmp, warn, err := p.Parse(sql, charset, collation)
+	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	if len(tmp) == 1 {
 		s.cache[0] = tmp[0]
@@ -1428,9 +1330,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1481,11 +1382,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
 		err = errors.New("run multiple statements internally is not supported")
@@ -1606,7 +1506,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		}
 	}()
 	var rows []chunk.Row
-	rows, err = drainRecordSet(ctx, se, rs)
+	rows, err = drainRecordSet(ctx, se, rs, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1622,8 +1522,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.PrepareTxnCtx(ctx)
-	err := s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
 		return nil, err
 	}
 
@@ -1648,7 +1547,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	failpoint.Inject("mockStmtSlow", nil)
+	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
+		if strings.Contains(stmtNode.Text(), "/* sleep */") {
+			time.Sleep(time.Duration(val.(int)) * time.Millisecond)
+		}
+	})
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -1676,7 +1579,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	logStmt(stmt, s)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
+		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 				zap.Error(err),
@@ -1704,10 +1607,20 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
 	node := stmtNode.(ast.Node)
-	switch node.(type) {
+	switch v := node.(type) {
 	case *ast.SplitRegionStmt:
 		return nil
-	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
+	case *ast.SelectStmt:
+		// select lock statement needs start a transaction which will be conflict to stale read,
+		// we forbid select lock statement in stale read for now.
+		if v.LockInfo != nil {
+			return errors.New("select lock hasn't been supported in stale read yet")
+		}
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
+		return nil
+	case *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
 		if !planner.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
@@ -1726,7 +1639,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
-	executor.PlanRecreatorVarKey,
+	executor.PlanReplayerLoadVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -1827,10 +1740,10 @@ type execStmtResult struct {
 
 func (rs *execStmtResult) Close() error {
 	se := rs.se
-	if err := resetCTEStorageMap(se); err != nil {
+	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := rs.RecordSet.Close(); err != nil {
+	if err := resetCTEStorageMap(se); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
@@ -2120,9 +2033,11 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
-		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		readReplicaType := s.sessionVars.GetReplicaRead()
+		if readReplicaType.IsFollowerRead() {
+			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
+		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	}
 	return &s.txn, nil
 }
@@ -2168,13 +2083,14 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.sessionVars.CheckAndGetTxnScope()))
+	txn, err := s.store.Begin(tikv.WithTxnScope(s.sessionVars.CheckAndGetTxnScope()))
 	if err != nil {
 		return err
 	}
 	txn.SetVars(s.sessionVars.KVVars)
-	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := s.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
@@ -2186,6 +2102,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2211,7 +2128,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return err
 	}
 	txnScope := config.GetTxnScopeFromConfig()
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(txnScope).SetStartTS(startTS))
+	txn, err := s.store.Begin(tikv.WithTxnScope(txnScope), tikv.WithStartTS(startTS))
 	if err != nil {
 		return err
 	}
@@ -2231,6 +2148,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		IsStaleness: true,
 		TxnScope:    txnScope,
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2303,89 +2221,59 @@ func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	return authplugin, nil
 }
 
+// Auth validates a user using an authentication string and salt.
+// If the password fails, it will keep trying other users until exhausted.
+// This means it can not be refactored to use MatchIdentity yet.
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt, s.sessionVars.TLSConnectionState)
-	if success {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
+		return false
+	}
+	if pm.ConnectionVerification(authUser.Username, authUser.Hostname, authentication, salt, s.sessionVars.TLSConnectionState) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
-	} else if user.Hostname == variable.DefHostname {
-		return false
-	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
 	}
 	return false
+}
+
+// MatchIdentity finds the matching username + password in the MySQL privilege tables
+// for a username + hostname, since MySQL can have wildcards.
+func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
+	pm := privilege.GetPrivilegeManager(s)
+	var success bool
+	var skipNameResolve bool
+	var user = &auth.UserIdentity{}
+	varVal, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
+	if err == nil && variable.TiDBOptOn(varVal) {
+		skipNameResolve = true
+	}
+	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
+	if success {
+		return user, nil
+	}
+	// This error will not be returned to the user, access denied will be instead
+	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
 func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	pm := privilege.GetPrivilegeManager(s)
-
-	// Check IP or localhost.
-	var success bool
-	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
-	if success {
+	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	if err != nil {
+		return false
+	}
+	if pm.GetAuthWithoutVerification(authUser.Username, authUser.Hostname) {
+		user.AuthUsername = authUser.Username
+		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
 		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
 		return true
-	} else if user.Hostname == variable.DefHostname {
-		return false
-	}
-
-	// Check Hostname.
-	for _, addr := range s.getHostByIP(user.Hostname) {
-		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
-		if success {
-			s.sessionVars.User = &auth.UserIdentity{
-				Username:     user.Username,
-				Hostname:     addr,
-				AuthUsername: u,
-				AuthHostname: h,
-			}
-			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
-			return true
-		}
 	}
 	return false
-}
-
-func (s *session) getHostByIP(ip string) []string {
-	if ip == "127.0.0.1" {
-		return []string{variable.DefHostname}
-	}
-	skipNameResolve, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.SkipNameResolve)
-	if err == nil && variable.TiDBOptOn(skipNameResolve) {
-		return []string{ip} // user wants to skip name resolution
-	}
-	addrs, err := net.LookupAddr(ip)
-	if err != nil {
-		// These messages can be noisy.
-		// See: https://github.com/pingcap/tidb/pull/13989
-		logutil.BgLogger().Debug(
-			"net.LookupAddr returned an error during auth check",
-			zap.String("ip", ip),
-			zap.Error(err),
-		)
-		return []string{ip}
-	}
-	return addrs
 }
 
 // RefreshVars implements the sessionctx.Context interface.
@@ -2415,6 +2303,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		err = s.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
 }
@@ -2458,7 +2347,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(se *session) (bool, error) {
-	para, err := loadParameter(se, tidbNewCollationEnabled)
+	para, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}
@@ -2479,7 +2368,7 @@ func loadCollationParameter(se *session) (bool, error) {
 // version is v4.0.9.
 // See the comment upon the function `upgradeToVer54` for details.
 func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	_, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefMemoryQuotaQuery)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return 1 << 30, nil
@@ -2491,7 +2380,7 @@ func loadDefMemQuotaQuery(se *session) (int64, error) {
 }
 
 func loadDefOOMAction(se *session) (string, error) {
-	defOOMAction, err := loadParameter(se, tidbDefOOMAction)
+	defOOMAction, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbDefOOMAction)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return config.GetGlobalConfig().OOMAction, nil
@@ -2505,14 +2394,7 @@ func loadDefOOMAction(se *session) (string, error) {
 	return defOOMAction, nil
 }
 
-var (
-	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
-)
-
-// loadParameter loads read-only parameter from mysql.tidb
-func loadParameter(se *session, name string) (string, error) {
-	return se.getTableValue(context.TODO(), mysql.TiDBTable, name)
-}
+var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
@@ -2538,6 +2420,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2554,6 +2437,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
+		if cfg.Experimental.EnableNewCharset {
+			collate.EnableNewCharset()
+		}
 	}
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
@@ -2646,6 +2532,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	dom.PlanReplayerLoop()
+
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -2766,7 +2655,6 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		ver, err = t.GetBootstrapVersion()
 		return err
 	})
-
 	if err != nil {
 		logutil.BgLogger().Fatal("check bootstrapped failed",
 			zap.Error(err))
@@ -2810,7 +2698,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
-	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+	sessionCache, err := domain.GetDomain(s).GetSessionCache()
 	if err != nil {
 		return err
 	}
@@ -2866,6 +2754,14 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		return
 	}
 	if !s.txn.validOrPending() {
+		if s.GetSessionVars().StmtCtx.IsStaleness {
+			// Do nothing when StmtCtx.IsStaleness is true
+			// we don't need to request tso for stale read
+			return
+		}
+		failpoint.Inject("assertTSONotRequest", func() {
+			panic("tso shouldn't be requested")
+		})
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
@@ -2897,7 +2793,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(s.GetSessionVars().CheckAndGetTxnScope()).SetStartTS(startTS))
+	txn, err := s.store.Begin(tikv.WithTxnScope(s.GetSessionVars().CheckAndGetTxnScope()), tikv.WithStartTS(startTS))
 	if err != nil {
 		return err
 	}
@@ -2907,7 +2803,15 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
+}
+
+// GetSnapshotWithTS returns a snapshot with ts.
+func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
+	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
+	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	return snap
 }
 
 // GetStore gets the store of session.
@@ -3079,7 +2983,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
 }
 
-var _ telemetry.TemporaryTableFeatureChecker = &session{}
+var _ telemetry.TemporaryOrCacheTableFeatureChecker = &session{}
 
 // TemporaryTableExists is used by the telemetry package to avoid circle dependency.
 func (s *session) TemporaryTableExists() bool {
@@ -3087,6 +2991,19 @@ func (s *session) TemporaryTableExists() bool {
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CachedTableExists is used by the telemetry package to avoid circle dependency.
+func (s *session) CachedTableExists() bool {
+	is := domain.GetDomain(s).InfoSchema()
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return true
 			}
 		}
@@ -3114,7 +3031,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	}
 
 	// Override the infoschema if the session has temporary table.
-	return wrapWithTemporaryTable(s, is)
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
@@ -3124,24 +3041,7 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	}
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
-	return wrapWithTemporaryTable(s, is), nil
-}
-
-func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	// Already a wrapped one.
-	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return is
-	}
-	// No temporary table.
-	local := s.GetSessionVars().LocalTemporaryTables
-	if local == nil {
-		return is
-	}
-
-	return &infoschema.TemporaryTableAttachedInfoSchema{
-		InfoSchema:           is,
-		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
-	}
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
@@ -3164,4 +3064,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return s.builtinFunctionUsage
+}
+
+func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
+	return temptable.SessionSnapshotInterceptor(s)
 }

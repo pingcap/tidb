@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -62,6 +63,12 @@ run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 table_count=$(run_sql "use $DB; show tables;" | grep "Tables_in" | wc -l)
 if [ "$table_count" -ne "2" ];then
+    echo "TEST: [$TEST_NAME] failed!"
+    exit 1
+fi
+
+meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
+if [ "$meta_count" -ne "2" ];then
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
 fi

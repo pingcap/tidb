@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +29,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -52,6 +54,18 @@ func init() {
 	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
+
+	c := &charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+	}
+	charset.AddCharset(c)
+	for _, coll := range charset.GetCollations() {
+		if strings.EqualFold(coll.CharsetName, c.Name) {
+			charset.AddCollation(coll)
+		}
+	}
 }
 
 var mdb *sql.DB
@@ -446,7 +460,12 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	return os.WriteFile(t.statsFileName(tableName), js, 0644)
+	err = resp.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(t.statsFileName(tableName), js, 0600)
 }
 
 func (t *tester) commit() error {
@@ -545,7 +564,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0600)
 }
 
 func (t *tester) statsFileName(tableName string) string {

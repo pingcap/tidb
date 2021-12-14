@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,19 +17,19 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 )
 
 type columnPruner struct {
 }
 
-func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns)
 	return lp, err
 }
@@ -95,7 +96,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
 		}
-		if !used[i] {
+		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
 		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
@@ -136,7 +137,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 {
+			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
 				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
 			} else {
 				selfUsedCols = append(selfUsedCols, cols...)
@@ -148,7 +149,21 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	return child.PruneColumns(selfUsedCols)
+	err := child.PruneColumns(selfUsedCols)
+	if err != nil {
+		return err
+	}
+	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
+	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
+	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
+	// the last rule. So we specially handle this case here.
+	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
+		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
+			childOfChild := childProjection.children[0]
+			la.SetChildren(childOfChild)
+		}
+	}
+	return nil
 }
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
@@ -224,6 +239,23 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
+		}
+		// It's possible that the child operator adds extra columns to the schema.
+		// Currently, (*LogicalAggregation).PruneColumns() might do this.
+		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
+		for i, child := range p.Children() {
+			if p.schema.Len() < child.Schema().Len() {
+				schema := p.schema.Clone()
+				exprs := make([]expression.Expression, len(p.schema.Columns))
+				for j, col := range schema.Columns {
+					exprs[j] = col
+				}
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.ctx, p.blockOffset)
+				proj.SetSchema(schema)
+
+				proj.SetChildren(child)
+				p.children[i] = proj
 			}
 		}
 	}
@@ -303,6 +335,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) erro
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.names = append(p.names[:i], p.names[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}

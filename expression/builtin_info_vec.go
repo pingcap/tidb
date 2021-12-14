@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -113,7 +114,7 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.AuthIdentityString())
+		result.AppendString(data.User.String())
 	}
 	return nil
 }
@@ -167,7 +168,7 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.String())
+		result.AppendString(data.User.LoginString())
 	}
 	return nil
 }

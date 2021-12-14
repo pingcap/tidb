@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,9 +20,8 @@ import (
 	"math"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -6723,12 +6723,12 @@ var vecBuiltinTimeGeneratedCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinTimeEvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinTimeGeneratedCases)
+func TestVectorizedBuiltinTimeEvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinTimeGeneratedCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinTimeFuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinTimeGeneratedCases)
+func TestVectorizedBuiltinTimeFuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinTimeGeneratedCases)
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVecGenerated(b *testing.B) {

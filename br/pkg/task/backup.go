@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
@@ -160,7 +160,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return errors.Trace(err)
 }
 
-// ParseFromFlags parses the backup-related flags from the flag set.
+// parseCompressionFlags parses the backup-related flags from the flag set.
 func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	compressionStr, err := flags.GetString(flagCompressionType)
 	if err != nil {
@@ -316,6 +316,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		Concurrency:      defaultBackupConcurrency,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
+		CipherInfo:       &cfg.CipherInfo,
 	}
 	brVersion := g.GetVersion()
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
@@ -329,24 +330,29 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// Metafile size should be less than 64MB.
-	metawriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, cfg.UseBackupMetaV2)
+	metawriter := metautil.NewMetaWriter(client.GetStorage(),
+		metautil.MetaFileSize, cfg.UseBackupMetaV2, &cfg.CipherInfo)
+	// Hack way to update backupmeta.
+	metawriter.Update(func(m *backuppb.BackupMeta) {
+		m.StartVersion = req.StartVersion
+		m.EndVersion = req.EndVersion
+		m.IsRawKv = req.IsRawKv
+		m.ClusterId = req.ClusterId
+		m.ClusterVersion = clusterVersion
+		m.BrVersion = brVersion
+	})
 
 	// nothing to backup
 	if ranges == nil {
-		// Hack way to update backupmeta.
-		metawriter.StartWriteMetasAsync(ctx, metautil.AppendSchema)
-		metawriter.Update(func(m *backuppb.BackupMeta) {
-			m.StartVersion = req.StartVersion
-			m.EndVersion = req.EndVersion
-			m.IsRawKv = req.IsRawKv
-			m.ClusterId = req.ClusterId
-			m.ClusterVersion = clusterVersion
-			m.BrVersion = brVersion
-		})
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
-		return metawriter.FinishWriteMetas(ctx, metautil.AppendSchema)
+
+		err = metawriter.FlushBackupMeta(ctx)
+		if err == nil {
+			summary.SetSuccessStatus(true)
+		}
+		return err
 	}
 
 	if isIncrementalBackup {
@@ -431,15 +437,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	metawriter.Update(func(m *backuppb.BackupMeta) {
-		m.StartVersion = req.StartVersion
-		m.EndVersion = req.EndVersion
-		m.IsRawKv = req.IsRawKv
-		m.ClusterId = req.ClusterId
-		m.ClusterVersion = clusterVersion
-		m.BrVersion = brVersion
-	})
-
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	checksumProgress := int64(schemas.Len())
 	if skipChecksum {
@@ -460,18 +457,26 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	err = metawriter.FlushBackupMeta(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
 
 	if !skipChecksum {
 		// Check if checksum from files matches checksum from coprocessor.
-		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage())
+		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-
-	g.Record(summary.BackupDataSize, metawriter.ArchiveSize())
+	archiveSize := metawriter.ArchiveSize()
+	g.Record(summary.BackupDataSize, archiveSize)
+	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
+	g.Record("Size", archiveSize)
 	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 3s and notify the shell to kill s3 service.")

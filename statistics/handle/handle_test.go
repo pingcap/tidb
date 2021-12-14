@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,9 +26,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -46,6 +49,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
+// TODO replace cleanEnv with createTestKitAndDom in gc_series_test.go when migrate this file
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -60,6 +64,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
 
@@ -877,7 +882,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 }
 
 // nolint:unused
-func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
+func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
 	tk.MustExec("drop table if exists " + tblName)
@@ -901,19 +906,45 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 }
 
 // nolint:unused
-func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
-	delta := buckets/2 + 1
-	for _, isIdx := range []int{0, 1} {
-		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows()), Equals, topn)
-		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows())
+func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, db, t, p string, topn, buckets int) {
+	tbl, err := s.do.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(t))
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	physicalID := tblInfo.ID
+	if p != "global" {
+		for _, def := range tbl.Meta().GetPartitionInfo().Definitions {
+			if def.Name.L == p {
+				physicalID = def.ID
+			}
+		}
+	}
+	tblStats, err := s.do.StatsHandle().TableStatsFromStorage(tblInfo, physicalID, true, 0)
+	c.Assert(err, IsNil)
+
+	delta := buckets/2 + 10
+	for _, idxStats := range tblStats.Indices {
+		numTopN := idxStats.TopN.Num()
+		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
 		// we have to check the results by a range here.
-		c.Assert(numBuckets >= buckets-delta, IsTrue)
-		c.Assert(numBuckets <= buckets+delta, IsTrue)
+		c.Assert(numTopN, Equals, topn)
+		c.Assert(numBuckets, GreaterEqual, buckets-delta)
+		c.Assert(numBuckets, LessEqual, buckets+delta)
+	}
+	for _, colStats := range tblStats.Columns {
+		if len(colStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
+		numTopN := colStats.TopN.Num()
+		numBuckets := len(colStats.Buckets)
+		c.Assert(numTopN, Equals, topn)
+		c.Assert(numBuckets, GreaterEqual, buckets-delta)
+		c.Assert(numBuckets, LessEqual, buckets+delta)
 	}
 }
 
-func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
+func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -942,9 +973,9 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 		sql := fmt.Sprintf("analyze table test_gstats_opt with %v topn, %v buckets", ca.topn, ca.buckets)
 		if !ca.err {
 			tk.MustExec(sql)
-			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "global", ca.topn, ca.buckets)
-			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "p0", ca.topn, ca.buckets)
-			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "p1", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt", "global", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt", "p0", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt", "p1", ca.topn, ca.buckets)
 		} else {
 			err := tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
@@ -952,7 +983,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	}
 }
 
-func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
+func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -961,25 +992,25 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
 
 	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets, 1000 samples")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 2, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 1, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 2, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
 
 	// analyze a partition to let its options be different with others'
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 10 topn, 20 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 10, 20) // use new options
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 10, 20) // use new options
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 1, 50)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 100 topn, 200 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 100, 200)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 20 topn") // change back to 20 topn
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "global", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p0", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2", "p1", 100, 200)
 }
 
 func (s *testStatsSuite) TestGlobalStatsHealthy(c *C) {
@@ -2173,6 +2204,7 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
@@ -2866,6 +2898,27 @@ func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 	c.Assert(rows[0][5], Equals, "-1.000000")
 }
 
+func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(10) collate utf8mb4_unicode_ci);")
+	testKit.MustExec("insert into t values('abcdefghij');")
+	testKit.MustExec("insert into t values('abcdufghij');")
+	testKit.MustExec("analyze table t with 0 topn;")
+	do := s.do
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	c.Assert(err, IsNil)
+}
+
 func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -2956,6 +3009,25 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 	c.Assert(len(rows), Equals, lenRows)
 }
 
+func (s *testStatsSuite) TestIssues27147(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t add index idx((a+5));")
+	err := testKit.ExecToErr("analyze table t;")
+	c.Assert(err, Equals, nil)
+
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t1 add index idx((a+5));")
+	err = testKit.ExecToErr("analyze table t1;")
+	c.Assert(err, Equals, nil)
+}
+
 func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -3031,4 +3103,519 @@ func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithPrimaryKey(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int primary key)")
+	tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "a")
+	c.Assert(rows[1][3], Equals, "c")
+
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  a 0 1 2",
+			"test t  a 0 2 2",
+			"test t  c 0 1 1",
+			"test t  c 0 2 1"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 6 1 8 2 1",
+			"0 2 0 0 8 0 0", // column b is not analyzed
+			"0 3 9 0 9 2 1",
+		))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  a 0 0 3 1 3 5 0",
+			"test t  a 0 1 4 1 6 6 0",
+			"test t  c 0 0 4 1 3 6 0",
+			"test t  c 0 1 7 1 7 9 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithIndex(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
+	tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+	c.Assert(rows[2][3], Equals, "d")
+
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  b 0 1 3",
+			"test t  b 0 4 3",
+			"test t  c 0 6 4",
+			"test t  c 0 7 2",
+			"test t  d 0 1 3",
+			"test t  d 0 5 3",
+			"test t  idx_b_d 1 (1, 1) 3",
+			"test t  idx_b_d 1 (4, 5) 2"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 0 9 0 0", // column a is not analyzed
+			"0 2 5 0 9 2 1",
+			"0 3 4 1 8 2 -0.07",
+			"0 4 5 0 9 2 1",
+			"1 1 6 0 18 2 0"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  b 0 0 2 1 2 3 0",
+			"test t  b 0 1 3 1 5 5 0",
+			"test t  c 0 0 2 1 8 9 0",
+			"test t  d 0 0 2 1 2 3 0",
+			"test t  d 0 1 3 1 4 4 0",
+			"test t  idx_b_d 1 0 3 1 (2, 2) (4, 4) 0",
+			"test t  idx_b_d 1 1 4 1 (5, 5) (5, 5) 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
+	tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+	c.Assert(rows[2][3], Equals, "d")
+
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  PRIMARY 1 (1, 1) 1",
+			"test t  PRIMARY 1 (2, 2) 1",
+			"test t  b 0 1 1",
+			"test t  b 0 2 1",
+			"test t  c 0 6 4",
+			"test t  c 0 7 2",
+			"test t  d 0 1 1",
+			"test t  d 0 2 1"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 0 9 0 0", // column a is not analyzed
+			"0 2 9 0 9 2 1",
+			"0 3 4 1 8 2 -0.07",
+			"0 4 9 0 9 2 1",
+			"1 1 9 0 18 2 0"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  PRIMARY 1 0 4 1 (3, 3) (6, 6) 0",
+			"test t  PRIMARY 1 1 7 1 (7, 7) (9, 9) 0",
+			"test t  b 0 0 4 1 3 6 0",
+			"test t  b 0 1 7 1 7 9 0",
+			"test t  c 0 0 2 1 8 9 0",
+			"test t  d 0 0 4 1 3 6 0",
+			"test t  d 0 1 7 1 7 9 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsError(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn` currently
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	err := tk.ExecToErr("analyze table t columns a")
+	c.Assert(err.Error(), Equals, "Only the analyze version 2 supports analyzing the specified columns")
+
+	// invalid column
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	err = tk.ExecToErr("analyze table t columns c")
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrAnalyzeMissColumn))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithDynamicPartitionTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	defs := tbl.Meta().Partition.Definitions
+	p0ID := defs[0].ID
+	p1ID := defs[1].ID
+
+	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 6)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t", "global", "a"})
+	c.Assert(rows[1][:4], DeepEquals, []interface{}{"test", "t", "global", "c"})
+	c.Assert(rows[2][:4], DeepEquals, []interface{}{"test", "t", "p0", "a"})
+	c.Assert(rows[3][:4], DeepEquals, []interface{}{"test", "t", "p0", "c"})
+	c.Assert(rows[4][:4], DeepEquals, []interface{}{"test", "t", "p1", "a"})
+	c.Assert(rows[5][:4], DeepEquals, []interface{}{"test", "t", "p1", "c"})
+
+	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+	c.Assert(append(rows[0][:3], rows[0][4:]...), DeepEquals, []interface{}{"test", "t", "global", "0", "20"})
+	c.Assert(append(rows[1][:3], rows[1][4:]...), DeepEquals, []interface{}{"test", "t", "p0", "0", "9"})
+	c.Assert(append(rows[2][:3], rows[2][4:]...), DeepEquals, []interface{}{"test", "t", "p1", "0", "11"})
+
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t global a 0 16 4",
+			"test t global a 0 5 3",
+			"test t global c 0 1 3",
+			"test t global c 0 14 3",
+			"test t p0 a 0 4 2",
+			"test t p0 a 0 5 3",
+			"test t p0 c 0 1 3",
+			"test t p0 c 0 2 2",
+			"test t p1 a 0 16 4",
+			"test t p1 a 0 17 2",
+			"test t p1 c 0 13 2",
+			"test t p1 c 0 14 3"))
+
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t global idx 1 1 3",
+			"test t global idx 1 14 3",
+			"test t p0 idx 1 1 3",
+			"test t p0 idx 1 2 2",
+			"test t p1 idx 1 13 2",
+			"test t p1 idx 1 14 3"))
+
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t global a 0 0 5 2 1 4 0",
+			"test t global a 0 1 12 2 17 17 0",
+			"test t global c 0 0 6 1 2 6 0",
+			"test t global c 0 1 14 2 13 13 0",
+			"test t p0 a 0 0 2 1 1 2 0",
+			"test t p0 a 0 1 3 1 3 3 0",
+			"test t p0 c 0 0 3 1 3 5 0",
+			"test t p0 c 0 1 4 1 6 6 0",
+			"test t p1 a 0 0 3 1 11 13 0",
+			"test t p1 a 0 1 5 1 14 15 0",
+			"test t p1 c 0 0 4 1 7 10 0",
+			"test t p1 c 0 1 6 1 11 12 0"))
+
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t global idx 1 0 6 1 2 6 0",
+			"test t global idx 1 1 14 2 13 13 0",
+			"test t p0 idx 1 0 3 1 3 5 0",
+			"test t p0 idx 1 1 4 1 6 6 0",
+			"test t p1 idx 1 0 4 1 7 10 0",
+			"test t p1 idx 1 1 6 1 11 12 0"))
+
+	tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
+		testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, a
+			fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // global, c
+			fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // global, idx
+			fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
+			fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),    // p0, b, not analyzed
+			fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),    // p0, c
+			fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),    // p0, idx
+			fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID),   // p1, a
+			fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID),   // p1, b, not analyzed
+			fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID),   // p1, c
+			fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID),   // p1, idx
+		))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithStaticPartitionTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	defs := tbl.Meta().Partition.Definitions
+	p0ID := defs[0].ID
+	p1ID := defs[1].ID
+
+	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t", "p0", "a"})
+	c.Assert(rows[1][:4], DeepEquals, []interface{}{"test", "t", "p0", "c"})
+	c.Assert(rows[2][:4], DeepEquals, []interface{}{"test", "t", "p1", "a"})
+	c.Assert(rows[3][:4], DeepEquals, []interface{}{"test", "t", "p1", "c"})
+
+	rows = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(append(rows[0][:3], rows[0][4:]...), DeepEquals, []interface{}{"test", "t", "p0", "0", "9"})
+	c.Assert(append(rows[1][:3], rows[1][4:]...), DeepEquals, []interface{}{"test", "t", "p1", "0", "11"})
+
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t p0 a 0 4 2",
+			"test t p0 a 0 5 3",
+			"test t p0 c 0 1 3",
+			"test t p0 c 0 2 2",
+			"test t p1 a 0 16 4",
+			"test t p1 a 0 17 2",
+			"test t p1 c 0 13 2",
+			"test t p1 c 0 14 3"))
+
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t p0 idx 1 1 3",
+			"test t p0 idx 1 2 2",
+			"test t p1 idx 1 13 2",
+			"test t p1 idx 1 14 3"))
+
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 0").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t p0 a 0 0 2 1 1 2 0",
+			"test t p0 a 0 1 3 1 3 3 0",
+			"test t p0 c 0 0 3 1 3 5 0",
+			"test t p0 c 0 1 4 1 6 6 0",
+			"test t p1 a 0 0 3 1 11 13 0",
+			"test t p1 a 0 1 5 1 14 15 0",
+			"test t p1 c 0 0 4 1 7 10 0",
+			"test t p1 c 0 1 6 1 11 12 0"))
+
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and is_index = 1").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t p0 idx 1 0 3 1 3 5 0",
+			"test t p0 idx 1 1 4 1 6 6 0",
+			"test t p1 idx 1 0 4 1 7 10 0",
+			"test t p1 idx 1 1 6 1 11 12 0"))
+
+	tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
+		testkit.Rows(fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID), // p0, a
+			fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),  // p0, b, not analyzed
+			fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),  // p0, c
+			fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),  // p0, idx
+			fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID), // p1, a
+			fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID), // p1, b, not analyzed
+			fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID), // p1, c
+			fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID), // p1, idx
+		))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithExtendedStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_enable_extended_stats = on")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
+	tk.MustExec("insert into t values (5,1,1), (4,2,2), (3,3,3), (2,4,4), (1,5,5)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 5"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  b 0 1 1",
+			"test t  b 0 2 1",
+			"test t  c 0 1 1",
+			"test t  c 0 2 1"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 0 5 0 0", // column a is not analyzed
+			"0 2 5 0 5 2 1",
+			"0 3 5 0 5 2 1",
+		))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  b 0 0 2 1 3 4 0",
+			"test t  b 0 1 3 1 5 5 0",
+			"test t  c 0 0 2 1 3 4 0",
+			"test t  c 0 1 3 1 5 5 0"))
+	rows = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:len(rows[0])-1], DeepEquals, []interface{}{"test", "t", "s1", "[b,c]", "correlation", "1.000000"})
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithVirtualColumnIndex(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
+	tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
+	// virtual column c is skipped when dumping stats into disk, so only the stats of column b are updated
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][3], Equals, "b")
+
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  b 0 4 2",
+			"test t  b 0 5 3",
+			"test t  idx 1 5 2",
+			"test t  idx 1 6 3"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 0 0 0", // column a is not analyzed
+			"0 2 5 1 2 1",
+			"0 3 0 0 0 0", // column c is not analyzed
+			"1 1 5 1 2 0"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  b 0 0 2 1 1 2 0",
+			"test t  b 0 1 3 1 3 3 0",
+			"test t  idx 1 0 2 1 2 3 0",
+			"test t  idx 1 1 3 1 4 4 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsAfterAnalyzeAll(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t (a,b) values (1,1), (1,1), (2,2), (2,2), (3,3), (4,4)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 6"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  a 0 1 2",
+			"test t  a 0 2 2",
+			"test t  b 0 1 2",
+			"test t  b 0 2 2"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 4 0 6 2 1",
+			"0 2 4 0 6 2 1"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  a 0 0 2 1 3 4 0",
+			"test t  b 0 0 2 1 3 4 0"))
+
+	tk.MustExec("insert into t (a,b) values (1,1), (6,6)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+	// Column a is not analyzed in second ANALYZE. We keep the outdated stats of column a rather than delete them.
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 8"))
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_idx, value, count
+		testkit.Rows("test t  a 0 1 2",
+			"test t  a 0 2 2",
+			"test t  b 0 1 3",
+			"test t  b 0 2 2"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 4 0 8 2 1", // tot_col_size of column a is updated to 8 by DumpStatsDeltaToKV
+			"0 2 5 0 8 2 0.76"))
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+		// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+		testkit.Rows("test t  a 0 0 2 1 3 4 0",
+			"test t  b 0 0 2 1 3 4 0",
+			"test t  b 0 1 3 1 6 6 0"))
+	tk.MustQuery(fmt.Sprintf("select hist_id from mysql.stats_histograms where version = (select version from mysql.stats_meta where table_id = %d)", tblID)).Check(testkit.Rows("2"))
 }

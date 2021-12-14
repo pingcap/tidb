@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,20 +17,14 @@ package kv
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-type kvSuite struct{}
+func TestSession(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&kvSuite{})
-
-func TestKV(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *kvSuite) TestSession(c *C) {
 	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890, RowFormatVersion: "1"})
 	_, err := session.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

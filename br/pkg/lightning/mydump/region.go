@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,7 +30,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+const (
+	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+	// the increment ratio of large CSV file size threshold by `region-split-size`
+	largeCSVLowerThresholdRation = 10
+)
 
 type TableRegion struct {
 	EngineID int32
@@ -267,7 +272,10 @@ func makeSourceFileRegion(
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
-	if isCsvFile && dataFileSize > int64(cfg.Mydumper.MaxRegionSize) && cfg.Mydumper.StrictFormat {
+	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
+	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
+	// avoid split a lot of small chunks.
+	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize+cfg.Mydumper.MaxRegionSize/largeCSVLowerThresholdRation) {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
@@ -351,13 +359,24 @@ func SplitLargeFile(
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		parser := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return 0, nil, nil, err
+		}
+		parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, true, charsetConvertor)
+		if err != nil {
+			return 0, nil, nil, err
+		}
 		if err = parser.ReadColumns(); err != nil {
 			return 0, nil, nil, err
 		}
 		columns = parser.Columns()
 		startOffset, _ = parser.Pos()
 		endOffset = startOffset + maxRegionSize
+		if endOffset > dataFile.FileMeta.FileSize {
+			endOffset = dataFile.FileMeta.FileSize
+		}
 	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor
@@ -367,7 +386,15 @@ func SplitLargeFile(
 			if err != nil {
 				return 0, nil, nil, err
 			}
-			parser := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false)
+			// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+			charsetConvertor, err := NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+			if err != nil {
+				return 0, nil, nil, err
+			}
+			parser, err := NewCSVParser(&cfg.Mydumper.CSV, r, int64(cfg.Mydumper.ReadBlockSize), ioWorker, false, charsetConvertor)
+			if err != nil {
+				return 0, nil, nil, err
+			}
 			if err = parser.SetPos(endOffset, prevRowIDMax); err != nil {
 				return 0, nil, nil, err
 			}

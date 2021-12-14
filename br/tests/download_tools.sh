@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -17,7 +18,7 @@
 
 set -eu
 
-BIN="$(dirname "$0")/../bin"
+BIN="$(dirname "$0")/../../bin"
 
 if [ "$(uname -s)" != Linux ]; then
     echo 'Can only automatically download binaries on Linux.'

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,8 +18,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"
@@ -27,8 +29,18 @@ import (
 const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
-
 	ruleType = "key-range"
+)
+
+const (
+	// RuleIndexDefault is the default index for a rule.
+	RuleIndexDefault int = iota
+	// RuleIndexDatabase is the index for a rule of database.
+	RuleIndexDatabase
+	// RuleIndexTable is the index for a rule of table.
+	RuleIndexTable
+	// RuleIndexPartition is the index for a rule of partition.
+	RuleIndexPartition
 )
 
 var (
@@ -42,10 +54,11 @@ var (
 
 // Rule is used to establish the relationship between labels and a key range.
 type Rule struct {
-	ID       string      `json:"id"`
-	Labels   Labels      `json:"labels"`
-	RuleType string      `json:"rule_type"`
-	Rule     interface{} `json:"rule"`
+	ID       string        `json:"id"`
+	Index    int           `json:"index"`
+	Labels   Labels        `json:"labels"`
+	RuleType string        `json:"rule_type"`
+	Data     []interface{} `json:"data"`
 }
 
 // NewRule creates a rule.
@@ -55,6 +68,10 @@ func NewRule() *Rule {
 
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
 func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
+	if spec.Default {
+		r.Labels = []Label{}
+		return nil
+	}
 	// construct a string list
 	attrBytes := []byte("[" + spec.Attributes + "]")
 	attributes := []string{}
@@ -62,8 +79,8 @@ func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 	if err != nil {
 		return err
 	}
-	r.Labels = NewLabels(attributes)
-	return nil
+	r.Labels, err = NewLabels(attributes)
+	return err
 }
 
 // String implements fmt.Stringer.
@@ -82,18 +99,60 @@ func (r *Rule) Clone() *Rule {
 	return newRule
 }
 
-// ResetTable will reset the label rule for a table with a given ID and names.
-func (r *Rule) ResetTable(id int64, dbName, tableName string) *Rule {
-	r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
-	r.Labels = append(r.Labels, []Label{
-		{Key: dbKey, Value: dbName},
-		{Key: tableKey, Value: tableName},
-	}...)
+// Reset will reset the label rule for a table/partition with a given ID and names.
+func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
+	isPartition := partName != ""
+	if isPartition {
+		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
+	} else {
+		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
+	}
+	if len(r.Labels) == 0 {
+		return r
+	}
+	var hasDBKey, hasTableKey, hasPartitionKey bool
+	for i := range r.Labels {
+		switch r.Labels[i].Key {
+		case dbKey:
+			r.Labels[i].Value = dbName
+			hasDBKey = true
+		case tableKey:
+			r.Labels[i].Value = tableName
+			hasTableKey = true
+		case partitionKey:
+			if isPartition {
+				r.Labels[i].Value = partName
+				hasPartitionKey = true
+			}
+		default:
+		}
+	}
 
+	if !hasDBKey {
+		r.Labels = append(r.Labels, Label{Key: dbKey, Value: dbName})
+	}
+
+	if !hasTableKey {
+		r.Labels = append(r.Labels, Label{Key: tableKey, Value: tableName})
+	}
+
+	if isPartition && !hasPartitionKey {
+		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
+	}
 	r.RuleType = ruleType
-	r.Rule = map[string]string{
-		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
-		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
+	r.Data = []interface{}{}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for i := 0; i < len(ids); i++ {
+		data := map[string]string{
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
+		}
+		r.Data = append(r.Data, data)
+	}
+	// We may support more types later.
+	r.Index = RuleIndexTable
+	if isPartition {
+		r.Index = RuleIndexPartition
 	}
 	return r
 }

@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/server/config"
 	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -80,15 +82,36 @@ type pdClient struct {
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store
+
+	// FIXME when config changed during the lifetime of pdClient,
+	// 	this may mislead the scatter.
+	needScatterVal  bool
+	needScatterInit sync.Once
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
 func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
-	return &pdClient{
+	cli := &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
 	}
+	return cli
+}
+
+func (c *pdClient) needScatter(ctx context.Context) bool {
+	c.needScatterInit.Do(func() {
+		var err error
+		c.needScatterVal, err = c.checkNeedScatter(ctx)
+		if err != nil {
+			log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+			c.needScatterVal = true
+		}
+		if !c.needScatterVal {
+			log.Info("skipping scatter because the replica number isn't less than store count.")
+		}
+	})
+	return c.needScatterVal
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -282,7 +305,7 @@ func (c *pdClient) sendSplitRegionRequest(
 			return nil, multierr.Append(splitErrors, err)
 		}
 		if resp.RegionError != nil {
-			log.Error("fail to split region",
+			log.Warn("fail to split region",
 				logutil.Region(regionInfo.Region),
 				zap.Stringer("regionErr", resp.RegionError))
 			splitErrors = multierr.Append(splitErrors,
@@ -374,7 +397,60 @@ func (c *pdClient) BatchSplitRegions(
 	return newRegions, err
 }
 
+func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
+	stores, err := conn.GetAllTiKVStores(ctx, c.client, conn.SkipTiFlash)
+	if err != nil {
+		return 0, err
+	}
+	return len(stores), err
+}
+
+func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
+	api := c.getPDAPIAddr()
+	configAPI := api + "/pd/api/v1/config"
+	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	res, err := httputil.NewClient(c.tlsConf).Do(req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
+	var conf config.Config
+	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return int(conf.Replication.MaxReplicas), nil
+}
+
+func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
+	storeCount, err := c.getStoreCount(ctx)
+	if err != nil {
+		return false, err
+	}
+	maxReplica, err := c.getMaxReplica(ctx)
+	if err != nil {
+		return false, err
+	}
+	log.Info("checking whether need to scatter", zap.Int("store", storeCount), zap.Int("max-replica", maxReplica))
+	// Skipping scatter may lead to leader unbalanced,
+	// currently, we skip scatter only when:
+	//   1. max-replica > store-count (Probably a misconfigured or playground cluster.)
+	//   2. store-count == 1 (No meaning for scattering.)
+	// We can still omit scatter when `max-replica == store-count`, if we create a BalanceLeader operator here,
+	//   however, there isn't evidence for transform leader is much faster than scattering empty regions.
+	return storeCount >= maxReplica && storeCount > 1, nil
+}
+
 func (c *pdClient) ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error {
+	if !c.needScatter(ctx) {
+		return nil
+	}
 	return c.client.ScatterRegion(ctx, regionInfo.Region.GetId())
 }
 
@@ -411,11 +487,15 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
-	res.Body.Close()
 	err = json.Unmarshal(b, &rule)
 	if err != nil {
 		return rule, errors.Trace(err)
@@ -500,12 +580,15 @@ func checkRegionEpoch(new, old *RegionInfo) bool {
 		new.Region.GetRegionEpoch().GetConfVer() == old.Region.GetRegionEpoch().GetConfVer()
 }
 
-type scatterBackoffer struct {
+// exponentialBackoffer trivially retry any errors it meets.
+// It's useful when the caller has handled the errors but
+// only want to a more semantic backoff implementation.
+type exponentialBackoffer struct {
 	attempt     int
 	baseBackoff time.Duration
 }
 
-func (b *scatterBackoffer) exponentialBackoff() time.Duration {
+func (b *exponentialBackoffer) exponentialBackoff() time.Duration {
 	bo := b.baseBackoff
 	b.attempt--
 	if b.attempt == 0 {
@@ -515,13 +598,7 @@ func (b *scatterBackoffer) exponentialBackoff() time.Duration {
 	return bo
 }
 
-func (b *scatterBackoffer) giveUp() time.Duration {
-	b.attempt = 0
-	return 0
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *scatterBackoffer) NextBackoff(err error) time.Duration {
+func pdErrorCanRetry(err error) bool {
 	// There are 3 type of reason that PD would reject a `scatter` request:
 	// (1) region %d has no leader
 	// (2) region %d is hot
@@ -531,20 +608,19 @@ func (b *scatterBackoffer) NextBackoff(err error) time.Duration {
 	// (1) and (3) might happen, and should be retried.
 	grpcErr := status.Convert(err)
 	if grpcErr == nil {
-		return b.giveUp()
+		return false
 	}
-	if strings.Contains(grpcErr.Message(), "is not fully replicated") {
-		log.Info("scatter region failed, retring", logutil.ShortError(err), zap.Int("attempt-remain", b.attempt))
-		return b.exponentialBackoff()
-	}
-	if strings.Contains(grpcErr.Message(), "has no leader") {
-		log.Info("scatter region failed, retring", logutil.ShortError(err), zap.Int("attempt-remain", b.attempt))
-		return b.exponentialBackoff()
-	}
-	return b.giveUp()
+	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
+		strings.Contains(grpcErr.Message(), "has no leader")
+}
+
+// NextBackoff returns a duration to wait before retrying again.
+func (b *exponentialBackoffer) NextBackoff(error) time.Duration {
+	// trivially exponential back off, because we have handled the error at upper level.
+	return b.exponentialBackoff()
 }
 
 // Attempt returns the remain attempt times
-func (b *scatterBackoffer) Attempt() int {
+func (b *exponentialBackoffer) Attempt() int {
 	return b.attempt
 }

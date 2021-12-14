@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
@@ -33,11 +36,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/types"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -58,7 +58,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/table/tables"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/pd/server/api"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -738,30 +745,124 @@ func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp := &checkpoints.ChunkCheckpoint{}
-	c.Assert(s.tr.initializeColumns(nil, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{0, 1, 2, -1})
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b", "c", "a"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 0, 1, -1})
+	defer func() {
+		s.tr.ignoreColumns = nil
+	}()
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{-1, 0, -1, -1})
+	cases := []struct {
+		columns             []string
+		ignoreColumns       map[string]struct{}
+		expectedPermutation []int
+		errPat              string
+	}{
+		{
+			nil,
+			nil,
+			[]int{0, 1, 2, -1},
+			"",
+		},
+		{
+			nil,
+			map[string]struct{}{"b": {}},
+			[]int{0, -1, 2, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			nil,
+			[]int{2, 0, 1, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			map[string]struct{}{"b": {}},
+			[]int{2, -1, 1, -1},
+			"",
+		},
+		{
+			[]string{"b"},
+			nil,
+			[]int{-1, 0, -1, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			nil,
+			[]int{2, 1, 3, 0},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			map[string]struct{}{"b": {}, "_tidb_rowid": {}},
+			[]int{2, -1, 3, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[d\]`,
+		},
+		{
+			[]string{"e", "b", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[e d\]`,
+		},
+	}
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 1, 3, 0})
+	for _, testCase := range cases {
+		ccp.ColumnPermutation = nil
+		s.tr.ignoreColumns = testCase.ignoreColumns
+		err := s.tr.initializeColumns(testCase.columns, ccp)
+		if len(testCase.errPat) > 0 {
+			c.Assert(err, NotNil)
+			c.Assert(err, ErrorMatches, testCase.errPat)
+		} else {
+			c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+		}
+	}
+}
 
-	ccp.ColumnPermutation = nil
-	err := s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[d\]`)
+func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	se := tmock.NewContext()
 
-	ccp.ColumnPermutation = nil
-	err = s.tr.initializeColumns([]string{"e", "b", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[e d\]`)
+	cases := []struct {
+		schema              string
+		columns             []string
+		expectedPermutation []int
+	}{
+		{
+			"CREATE TABLE `table` (a INT, b INT, C INT, d INT AS (a * 2))",
+			[]string{"b", "c", "a"},
+			[]int{2, 0, 1, -1, -1},
+		},
+		// all generated columns and none input columns
+		{
+			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', a))) stored)",
+			[]string{},
+			[]int{-1, -1, -1},
+		},
+	}
+
+	for _, testCase := range cases {
+		node, err := p.ParseOneStmt(testCase.schema, "", "")
+		c.Assert(err, IsNil)
+		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+		c.Assert(err, IsNil)
+		core.State = model.StatePublic
+		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		c.Assert(err, IsNil)
+		ccp := &checkpoints.ChunkCheckpoint{}
+
+		err = s.tr.initializeColumns(testCase.columns, ccp)
+		c.Assert(err, IsNil)
+		c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+	}
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
@@ -848,9 +949,12 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -861,7 +965,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -880,9 +984,12 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -893,7 +1000,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
@@ -964,13 +1071,17 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		diskQuotaLock:     newDiskQuotaLock(),
 	}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
-	exec := mock.NewMockSQLExecutor(controller)
-	g.EXPECT().GetSQLExecutor().Return(exec).AnyTimes()
-	exec.EXPECT().ObtainStringWithLog(gomock.Any(), "SELECT version()", gomock.Any(), gomock.Any()).
-		Return("5.7.25-TiDB-v5.0.1", nil).AnyTimes()
+	db, sqlMock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
+		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
@@ -987,6 +1098,37 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 
 	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	c.Assert(tableFinished-tableFinishedBase, Equals, float64(1))
+}
+
+func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+	}()
+
+	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+		Name:   "test",
+		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
+	}})
+	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+
+	saveCpCh := make(chan saveCp)
+
+	rc := &Controller{
+		saveCpCh:      saveCpCh,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+	}
+	rc.checkpointsWg.Add(1)
+	go rc.listenCheckpointUpdates()
+
+	start := time.Now()
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	c.Assert(err, IsNil)
+	elapsed := time.Since(start)
+	c.Assert(elapsed, GreaterEqual, time.Millisecond*100)
+
+	close(saveCpCh)
+	rc.checkpointsWg.Wait()
 }
 
 var _ = Suite(&chunkRestoreSuite{})
@@ -1187,6 +1329,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	c.Assert(kvs, HasLen, 1)
 	c.Assert(kvs[0].rowID, Equals, int64(19))
 	c.Assert(kvs[0].offset, Equals, int64(36))
+	c.Assert(kvs[0].columns, DeepEquals, []string(nil))
 
 	kvs = <-kvsCh
 	c.Assert(len(kvs), Equals, 0)
@@ -1252,12 +1395,14 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit(c *C) {
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
 	w := worker.NewPool(ctx, 1, "io")
-	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	c.Assert(err, IsNil)
 	s.cr.parser = p
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	c.Assert(failpoint.Enable(
 		"github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size", "return(110000000)"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size")
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 
@@ -1307,7 +1452,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 	dir := c.MkDir()
 	fileName := "db.table.000.csv"
-	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0o644)
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2\r\n4,5,6,7\r\n"), 0o644)
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(dir)
@@ -1315,12 +1460,14 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	ctx := context.Background()
 	cfg := config.NewConfig()
-	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	errorMgr := errormanager.New(nil, cfg)
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
 	w := worker.NewPool(ctx, 5, "io")
-	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	c.Assert(err, IsNil)
 
 	err = s.cr.parser.Close()
 	c.Assert(err, IsNil)
@@ -1328,17 +1475,121 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errorMgr).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
 			Timestamp: 1234567895,
 		})
 	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
+	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2")
 	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
+	cases := []struct {
+		s             string
+		ignoreColumns []*config.IgnoreColumns
+		kvs           deliveredKVs
+		header        bool
+	}{
+		{
+			"1,2,3\r\n4,5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "table",
+					Columns: []string{"a"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  6,
+				columns: []string{"b", "c"},
+			},
+			false,
+		},
+		{
+			"b,c\r\n2,3\r\n5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					TableFilter: []string{"db*.tab*"},
+					Columns:     []string{"b"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  9,
+				columns: []string{"c"},
+			},
+			true,
+		},
+	}
+
+	for _, cs := range cases {
+		// reset test
+		s.SetUpTest(c)
+		s.testEncodeLoopIgnoreColumnsCSV(c, cs.s, cs.ignoreColumns, cs.kvs, cs.header)
+	}
+}
+
+func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
+	c *C,
+	f string,
+	ignoreColumns []*config.IgnoreColumns,
+	deliverKV deliveredKVs,
+	header bool,
+) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte(f), 0o644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	cfg.Mydumper.IgnoreColumns = ignoreColumns
+	cfg.Mydumper.CSV.Header = header
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	c.Assert(err, IsNil)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
+		s.tr.encTable,
+		&kv.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		})
+	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, IsNil)
+	c.Assert(kvsCh, HasLen, 2)
+
+	kvs := <-kvsCh
+	c.Assert(kvs, HasLen, 2)
+	c.Assert(kvs[0].rowID, Equals, deliverKV.rowID)
+	c.Assert(kvs[0].offset, Equals, deliverKV.offset)
+	c.Assert(kvs[0].columns, DeepEquals, deliverKV.columns)
+
+	kvs = <-kvsCh
+	c.Assert(len(kvs), Equals, 0)
 }
 
 func (s *chunkRestoreSuite) TestRestore(c *C) {
@@ -1503,8 +1754,23 @@ func (s *restoreSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	// before restore, if sysVars is initialized by other test, the time_zone should be default value
+	if len(s.rc.sysVars) > 0 {
+		tz, ok := s.rc.sysVars["time_zone"]
+		c.Assert(ok, IsTrue)
+		c.Assert(tz, Equals, "SYSTEM")
+	}
+
+	s.rc.cfg.TiDB.Vars = map[string]string{
+		"time_zone": "UTC",
+	}
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, IsNil)
+
+	// test after restore schema, sysVars has been updated
+	tz, ok := s.rc.sysVars["time_zone"]
+	c.Assert(ok, IsTrue)
+	c.Assert(tz, Equals, "UTC")
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
@@ -1597,7 +1863,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "24"
+							"available": "24"
 						}
 					}
 				]
@@ -1605,7 +1871,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster capacity is rich(.*)",
+			"(.*)Cluster available is rich(.*)",
 			true,
 			0,
 		},
@@ -1618,7 +1884,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "15"
+							"available": "15"
 						}
 					}
 				]
@@ -1668,12 +1934,136 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
-		err = rc.ClusterResource(ctx, sourceSize)
+		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
+
+		server.Close()
+	}
+}
+
+type mockTaskMetaMgr struct {
+	taskMetaMgr
+}
+
+func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	_, err := action([]taskMeta{{
+		taskID: 1,
+		pdCfgs: "",
+		status: taskMetaStatusInitial,
+		state:  taskStateNormal,
+	}})
+	return err
+}
+
+func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
+	type testCase struct {
+		stores         api.StoresInfo
+		emptyRegions   api.RegionsInfo
+		expectMsgs     []string
+		expectResult   bool
+		expectErrorCnt int
+	}
+
+	makeRegions := func(regionCnt int, storeID uint64) []api.RegionInfo {
+		var regions []api.RegionInfo
+		for i := 0; i < regionCnt; i++ {
+			regions = append(regions, api.RegionInfo{Peers: []api.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+		}
+		return regions
+	}
+
+	testCases := []testCase{
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 200}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
+			},
+			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
+			expectResult:   true,
+			expectErrorCnt: 0,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 2000}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3100}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append(append(append([]api.RegionInfo(nil),
+					makeRegions(600, 1)...),
+					makeRegions(300, 2)...),
+					makeRegions(1200, 3)...),
+			},
+			expectMsgs: []string{
+				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
+				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
+				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
+			},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 1200}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3000}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 0}},
+				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 2800}},
+				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+	}
+
+	mustMarshal := func(v interface{}) []byte {
+		data, err := json.Marshal(v)
+		c.Assert(err, IsNil)
+		return data
+	}
+
+	for _, ca := range testCases {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var err error
+			if req.URL.Path == pdStores {
+				_, err = w.Write(mustMarshal(ca.stores))
+			} else if req.URL.Path == pdEmptyRegions {
+				_, err = w.Write(mustMarshal(ca.emptyRegions))
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			c.Assert(err, IsNil)
+		}))
+
+		tls := common.NewTLSFromMockServer(server)
+		template := NewSimpleTemplate()
+
+		url := strings.TrimPrefix(server.URL, "https://")
+		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
+		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
+
+		err := rc.checkClusterRegion(context.Background())
+		c.Assert(err, IsNil)
+		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
+		c.Assert(template.Success(), Equals, ca.expectResult)
+
+		for _, expectMsg := range ca.expectMsgs {
+			c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, expectMsg)
+		}
 
 		server.Close()
 	}
@@ -1718,7 +2108,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		{
 			false,
 			"(.*)large csv: /testPath file exists(.*)",
-			false,
+			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
 				{
@@ -1752,6 +2142,54 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
 	}
+}
+func (s *tableRestoreSuite) TestEstimate(c *C) {
+	ctx := context.Background()
+	controller := gomock.NewController(c)
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	idAlloc := kv.NewPanickingAllocators(0)
+	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
+	c.Assert(err, IsNil)
+
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+		SQLMode:        s.cfg.TiDB.SQLMode,
+		Timestamp:      0,
+		AutoRandomSeed: 0,
+	})).AnyTimes()
+	importer := backend.MakeBackend(mockBackend)
+	s.cfg.TikvImporter.Backend = config.BackendLocal
+
+	template := NewSimpleTemplate()
+	rc := &Controller{
+		cfg:           s.cfg,
+		checkTemplate: template,
+		store:         s.store,
+		backend:       importer,
+		dbMetas: []*mydump.MDDatabaseMeta{
+			{
+				Name:   "db1",
+				Tables: []*mydump.MDTableMeta{s.tableMeta},
+			},
+		},
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": s.dbInfo,
+		},
+		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+	}
+	source, err := rc.estimateSourceData(ctx)
+	// Because this file is small than region split size so we does not sample it.
+	c.Assert(err, IsNil)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
+	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(source, Greater, s.tableMeta.TotalSize)
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
@@ -2077,6 +2515,65 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 				},
 			},
 		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check the first file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type: mydump.SourceTypeIgnore,
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, ca := range cases {
@@ -2110,6 +2607,86 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			c.Assert(msgs[0], Matches, ca.expectMsg)
 		}
 	}
+}
+
+func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize:          config.ReadBlockSize,
+			DataCharacterSet:       "gb18030",
+			DataInvalidCharReplace: string(utf8.RuneError),
+			CSV: config.CSVConfig{
+				Separator:       "，",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            `\N`,
+				BackslashEscape: true,
+				TrimLastSep:     false,
+			},
+			IgnoreColumns: nil,
+		},
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+	c.Assert(err, IsNil)
+	mockStore, err := storage.NewLocalStorage(c.MkDir())
+	c.Assert(err, IsNil)
+	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	csvFile := "db1.gbk_table.csv"
+	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
+	c.Assert(err, IsNil)
+
+	rc := &Controller{
+		cfg:           cfg,
+		checkTemplate: NewSimpleTemplate(),
+		store:         mockStore,
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": {
+				Name: "db1",
+				Tables: map[string]*checkpoints.TidbTableInfo{
+					"gbk_table": {
+						ID:   1,
+						DB:   "db1",
+						Name: "gbk_table",
+						Core: &model.TableInfo{
+							Columns: []*model.ColumnInfo{
+								{
+									Name: model.NewCIStr("colA"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+								{
+									Name: model.NewCIStr("colB"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		ioWorkers: worker.NewPool(ctx, 1, "io"),
+	}
+	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+		DB:   "db1",
+		Name: "gbk_table",
+		DataFiles: []mydump.FileInfo{
+			{
+				FileMeta: mydump.SourceFileMeta{
+					FileSize: 1 * units.TiB,
+					Path:     csvFile,
+					Type:     mydump.SourceTypeCSV,
+				},
+			},
+		},
+	})
+	c.Assert(err, IsNil)
+	c.Assert(msgs, HasLen, 0)
 }
 
 type testChecksumMgr struct {

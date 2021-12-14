@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -77,7 +78,6 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	for _, f := range fields {
 		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
-
 	return chk
 }
 
@@ -129,6 +129,15 @@ func renewEmpty(chk *Chunk) *Chunk {
 		copy(newChk.sel, chk.sel)
 	}
 	return newChk
+}
+
+func (c *Chunk) resetForReuse() {
+	for i := 0; i < len(c.columns); i++ {
+		c.columns[i] = nil
+	}
+	columns := c.columns[:0]
+	// Keep only the empty columns array space, reset other fields.
+	*c = Chunk{columns: columns}
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in bytes.

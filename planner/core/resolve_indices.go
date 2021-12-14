@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -599,9 +600,12 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-		if err != nil {
-			return err
+		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
+		if asgn.Expr != nil {
+			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, set := range p.SetList {

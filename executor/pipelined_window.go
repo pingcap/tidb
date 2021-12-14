@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -178,7 +179,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		var drained, samePartition bool
 		drained, err = e.fetchChild(ctx)
 		if err != nil {
-			err = errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// we return immediately to use a combination of true newPartition but 0 in e.rowToConsume to indicate the data source is drained,
 		if drained {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -20,7 +21,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -81,6 +82,7 @@ type Client struct {
 
 	restoreStores []uint64
 
+	cipher             *backuppb.CipherInfo
 	storage            storage.ExternalStorage
 	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
@@ -133,6 +135,10 @@ func (rc *Client) SetRateLimit(rateLimit uint64) {
 	rc.rateLimit = rateLimit
 }
 
+func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
+	rc.cipher = crypter
+}
+
 // SetStorage set ExternalStorage for client.
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
@@ -169,7 +175,12 @@ func (rc *Client) Close() {
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *Client) InitBackupMeta(c context.Context, backupMeta *backuppb.BackupMeta, backend *backuppb.StorageBackend, externalStorage storage.ExternalStorage, reader *metautil.MetaReader) error {
+func (rc *Client) InitBackupMeta(
+	c context.Context,
+	backupMeta *backuppb.BackupMeta,
+	backend *backuppb.StorageBackend,
+	externalStorage storage.ExternalStorage,
+	reader *metautil.MetaReader) error {
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -295,7 +306,7 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 		idx := i % len(pdAddrs)
 		i++
 		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 }
 
 // GetPlacementRules return the current placement rules.
@@ -308,7 +319,7 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pl
 		i++
 		placementRules, err = pdutil.GetPlacementRules(ctx, pdAddrs[idx], rc.tlsConf)
 		return errors.Trace(err)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 	return placementRules, errors.Trace(errRetry)
 }
 
@@ -396,11 +407,12 @@ func (rc *Client) createTable(
 	dom *domain.Domain,
 	table *metautil.Table,
 	newTS uint64,
+	ddlTables map[UniqueTableName]bool,
 ) (CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table)
+		err := db.CreateTable(ctx, table, ddlTables)
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -439,6 +451,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
+	ddlTables := rc.DDLJobsMap()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -452,7 +465,7 @@ func (rc *Client) GoCreateTables(
 			return c.Err()
 		default:
 		}
-		rt, err := rc.createTable(c, db, dom, t, newTS)
+		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Error(err),
@@ -624,7 +637,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules)
+				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
 			})
 	}
 
@@ -665,7 +678,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule())
+				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -741,6 +754,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			gctx,
 			store.GetAddress(),
 			opt,
+			grpc.WithBlock(),
+			grpc.FailOnNonTempDialError(true),
 			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 			// we don't need to set keepalive timeout here, because the connection lives
 			// at most 5s. (shorter than minimal value for keepalive time!)
@@ -777,17 +792,25 @@ func (rc *Client) GoValidateChecksum(
 ) <-chan struct{} {
 	log.Info("Start to validate checksum")
 	outCh := make(chan struct{}, 1)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	loadStatCh := make(chan *CreatedTable, 1024)
+	// run the stat loader
+	go func() {
+		defer wg.Done()
+		rc.updateMetaAndLoadStats(ctx, loadStatCh)
+	}()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go func() {
-		wg, ectx := errgroup.WithContext(ctx)
+		eg, ectx := errgroup.WithContext(ctx)
 		defer func() {
-			log.Info("all checksum ended")
-			if err := wg.Wait(); err != nil {
+			if err := eg.Wait(); err != nil {
 				errCh <- err
 			}
-			outCh <- struct{}{}
-			close(outCh)
+			close(loadStatCh)
+			wg.Done()
 		}()
+
 		for {
 			select {
 			// if we use ectx here, maybe canceled will mask real error.
@@ -797,14 +820,14 @@ func (rc *Client) GoValidateChecksum(
 				if !ok {
 					return
 				}
-				workers.ApplyOnErrorGroup(wg, func() error {
+
+				workers.ApplyOnErrorGroup(eg, func() error {
 					start := time.Now()
 					defer func() {
 						elapsed := time.Since(start)
-						summary.CollectDuration("restore checksum", elapsed)
 						summary.CollectSuccessUnit("table checksum", 1, elapsed)
 					}()
-					err := rc.execChecksum(ectx, tbl, kvClient, concurrency)
+					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -814,10 +837,21 @@ func (rc *Client) GoValidateChecksum(
 			}
 		}
 	}()
+	go func() {
+		wg.Wait()
+		log.Info("all checksum ended")
+		close(outCh)
+	}()
 	return outCh
 }
 
-func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient kv.Client, concurrency uint) error {
+func (rc *Client) execChecksum(
+	ctx context.Context,
+	tbl CreatedTable,
+	kvClient kv.Client,
+	concurrency uint,
+	loadStatCh chan<- *CreatedTable,
+) error {
 	logger := log.With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
@@ -866,16 +900,49 @@ func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient k
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	if table.Stats != nil {
-		logger.Info("start loads analyze after validate checksum",
-			zap.Int64("old id", tbl.OldTable.Info.ID),
-			zap.Int64("new id", tbl.Table.ID),
-		)
-		if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-			logger.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+
+	loadStatCh <- &tbl
+	return nil
+}
+
+func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tbl, ok := <-input:
+			if !ok {
+				return
+			}
+
+			// Not need to return err when failed because of update analysis-meta
+			restoreTS, err := rc.GetTS(ctx)
+			if err != nil {
+				log.Error("getTS failed", zap.Error(err))
+			} else {
+				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
+				if err != nil {
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+				}
+			}
+
+			table := tbl.OldTable
+			if table.Stats != nil {
+				log.Info("start loads analyze after validate checksum",
+					zap.Int64("old id", tbl.OldTable.Info.ID),
+					zap.Int64("new id", tbl.Table.ID),
+				)
+				start := time.Now()
+				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
+					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+				}
+				log.Info("restore stat done",
+					zap.String("table", table.Info.Name.L),
+					zap.String("db", table.DB.Name.L),
+					zap.Duration("cost", time.Since(start)))
+			}
 		}
 	}
-	return nil
 }
 
 const (
@@ -1050,6 +1117,24 @@ func (rc *Client) EnableSkipCreateSQL() {
 // IsSkipCreateSQL returns whether we need skip create schema and tables in restore.
 func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
+}
+
+// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
+// if we execute some DDLs before create table.
+// we may get two situation that need to rebase auto increment/random id.
+// 1. truncate table: truncate will generate new id cache.
+// 2. create table/create and rename table: the first create table will lock down the id cache.
+// because we cannot create onExistReplace table.
+// so the final create DDL with the correct auto increment/random id won't be executed.
+func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
+	m := make(map[UniqueTableName]bool)
+	for _, job := range rc.ddlJobs {
+		switch job.Type {
+		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
+			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
+		}
+	}
+	return m
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.

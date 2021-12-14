@@ -8,15 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package session_test
 
 import (
-	"sync"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -54,12 +54,10 @@ func (s *testIsolationSuite) TestP0DirtyWrite(c *C) {
 	session1.MustExec("begin;")
 	session1.MustExec("update x set c = c+1 where id = 1;")
 	session2.MustExec("begin;")
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		session2.MustExec("update x set c = c+1 where id = 1;")
-		wg.Done()
-	}()
+	})
 	session1.MustExec("commit;")
 	wg.Wait()
 	session2.MustExec("commit;")
@@ -74,11 +72,9 @@ func (s *testIsolationSuite) TestP0DirtyWrite(c *C) {
 	session1.MustExec("begin;")
 	session1.MustExec("update x set c = c+1 where id = 1;")
 	session2.MustExec("begin;")
-	wg.Add(1)
-	go func() {
+	wg.Run(func() {
 		session2.MustExec("update x set c = c+1 where id = 1;")
-		wg.Done()
-	}()
+	})
 	session1.MustExec("commit;")
 	wg.Wait()
 	session2.MustExec("commit;")

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,13 +22,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -192,7 +193,7 @@ func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint,
 		}
 		r := rs[0]
 		defer r.Close()
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		err = r.Next(ctx, req)
 		if err != nil {
 			return err
@@ -241,7 +242,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 			return errors.Trace(err)
 		}
 		r := rs[0]
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		it := chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -271,7 +272,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 			return errors.Trace(err)
 		}
 		r = rs[0]
-		req = r.NewChunk()
+		req = r.NewChunk(nil)
 		it = chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -322,7 +323,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 		}
 		r = rs[0]
 		defer r.Close()
-		req = r.NewChunk()
+		req = r.NewChunk(nil)
 		err = r.Next(ctx, req)
 		if err != nil {
 			return err
@@ -410,12 +411,12 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 	return errors.Trace(err)
 }
 
-func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
 	logger := log.L()
 	se, err := g.getSessionFunc()
 	if err != nil {
 		log.L().Error("can't get a session to update GlueCheckpointsDB", zap.Error(errors.Trace(err)))
-		return
+		return err
 	}
 	defer se.Close()
 
@@ -423,7 +424,7 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 	rebaseQuery := fmt.Sprintf(UpdateTableRebaseTemplate, g.schema, CheckpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(UpdateTableStatusTemplate, g.schema, CheckpointTableNameTable)
 	engineStatusQuery := fmt.Sprintf(UpdateEngineTemplate, g.schema, CheckpointTableNameEngine)
-	err = Transact(context.Background(), "update checkpoints", se, logger, func(c context.Context, s Session) error {
+	return Transact(context.Background(), "update checkpoints", se, logger, func(c context.Context, s Session) error {
 		chunkStmt, _, _, err := s.PrepareStmt(chunkQuery)
 		if err != nil {
 			return errors.Trace(err)
@@ -500,9 +501,6 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 		}
 		return nil
 	})
-	if err != nil {
-		log.L().Error("save checkpoint failed", zap.Error(err))
-	}
 }
 
 func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
@@ -710,7 +708,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 			return errors.Trace(err)
 		}
 		r := rs[0]
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		it := chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -789,7 +787,7 @@ func drainFirstRecordSet(ctx context.Context, rss []sqlexec.RecordSet) ([]chunk.
 	}
 	rs := rss[0]
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

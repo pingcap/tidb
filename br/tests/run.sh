@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -27,7 +28,7 @@ SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.s
 source tests/_utils/run_services
 
 trap stop_services EXIT
-start_services
+start_services $@
 
 # Intermediate file needed because read can be used as a pipe target.
 # https://stackoverflow.com/q/2746553/

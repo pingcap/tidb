@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
 )
@@ -63,11 +64,11 @@ func TestSequenceAutoid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	alloc := autoid.NewSequenceAllocator(store, 1, 1, seq)
 	require.NotNil(t, alloc)
 
 	// allocate sequence cache.
-	base, end, round, err := alloc.AllocSeqCache(1)
+	base, end, round, err := alloc.AllocSeqCache()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), base)
 	require.Equal(t, int64(5), end)
@@ -94,7 +95,7 @@ func TestSequenceAutoid(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(5), nextVal)
 
-	base, end, round, err = alloc.AllocSeqCache(1)
+	base, end, round, err = alloc.AllocSeqCache()
 	require.NoError(t, err)
 	require.Equal(t, int64(5), base)
 	require.Equal(t, int64(10), end)
@@ -119,7 +120,7 @@ func TestSequenceAutoid(t *testing.T) {
 	// the rest in cache in not enough for next value.
 	require.False(t, ok)
 
-	base, end, round, err = alloc.AllocSeqCache(1)
+	base, end, round, err = alloc.AllocSeqCache()
 	require.NoError(t, err)
 	require.Equal(t, int64(-11), base)
 	require.Equal(t, int64(-6), end)
@@ -198,9 +199,9 @@ func TestConcurrentAllocSequence(t *testing.T) {
 	errCh := make(chan error, count)
 
 	allocSequence := func() {
-		alloc := autoid.NewSequenceAllocator(store, 2, seq)
+		alloc := autoid.NewSequenceAllocator(store, 2, 2, seq)
 		for j := 0; j < 3; j++ {
-			base, end, _, err1 := alloc.AllocSeqCache(2)
+			base, end, _, err1 := alloc.AllocSeqCache()
 			if err1 != nil {
 				errCh <- err1
 				break

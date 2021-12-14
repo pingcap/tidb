@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -25,8 +26,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -95,7 +96,6 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
 	return sig, nil
@@ -168,7 +168,6 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
 	return sig, nil
@@ -191,7 +190,7 @@ func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) 
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.AuthIdentityString(), false, nil
+	return data.User.String(), false, nil
 }
 
 type currentRoleFunctionClass struct {
@@ -206,7 +205,6 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
@@ -258,7 +256,6 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
 	return sig, nil
@@ -281,8 +278,7 @@ func (b *builtinUserSig) evalString(row chunk.Row) (string, bool, error) {
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-
-	return data.User.String(), false, nil
+	return data.User.LoginString(), false, nil
 }
 
 type connectionIDFunctionClass struct {
@@ -400,7 +396,6 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
 	return sig, nil
@@ -434,7 +429,6 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
 	return sig, nil
@@ -752,7 +746,7 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBIsDDLOwnerSig.
+// evalInt evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -976,7 +970,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -1032,7 +1026,7 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -1082,7 +1076,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}

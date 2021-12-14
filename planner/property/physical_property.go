@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -144,6 +145,10 @@ type PhysicalProperty struct {
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
+
+	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
+	// Non-MPP tasks do not care about it.
+	RejectSort bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -275,6 +280,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		ExpectedCnt:      p.ExpectedCnt,
 		MPPPartitionTp:   p.MPPPartitionTp,
 		MPPPartitionCols: p.MPPPartitionCols,
+		RejectSort:       p.RejectSort,
 	}
 	return prop
 }

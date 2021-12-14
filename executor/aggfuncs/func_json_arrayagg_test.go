@@ -8,23 +8,27 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (s *testSuite) TestMergePartialResult4JsonArrayagg(c *C) {
+func TestMergePartialResult4JsonArrayagg(t *testing.T) {
+	t.Parallel()
+
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -57,11 +61,13 @@ func (s *testSuite) TestMergePartialResult4JsonArrayagg(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestJsonArrayagg(c *C) {
+func TestJsonArrayagg(t *testing.T) {
+	t.Parallel()
+
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -83,7 +89,7 @@ func (s *testSuite) TestJsonArrayagg(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testAggFuncWithoutDistinct(c, test)
+		testAggFuncWithoutDistinct(t, test)
 	}
 }
 
@@ -124,7 +130,9 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 	return memDeltas, nil
 }
 
-func (s *testSuite) TestMemJsonArrayagg(c *C) {
+func TestMemJsonArrayagg(t *testing.T) {
+	t.Parallel()
+
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggMemTest
@@ -134,6 +142,6 @@ func (s *testSuite) TestMemJsonArrayagg(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		testAggMemFunc(t, test)
 	}
 }

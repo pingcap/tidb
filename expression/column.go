@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -235,7 +237,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && expr.RetType.Equal(newCol.RetType)
+		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
 		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
@@ -652,11 +654,21 @@ func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (col *Column) Coercibility() Coercibility {
-	if col.HasCoercibility() {
-		return col.collationInfo.Coercibility()
+	if !col.HasCoercibility() {
+		col.SetCoercibility(deriveCoercibilityForColumn(col))
 	}
-	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (col *Column) Repertoire() Repertoire {
+	if col.RetType.EvalType() != types.ETString {
+		return ASCII
+	}
+	if col.RetType.Charset == charset.CharsetASCII {
+		return ASCII
+	}
+	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.

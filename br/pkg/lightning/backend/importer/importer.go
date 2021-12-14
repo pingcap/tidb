@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,13 +24,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -200,7 +203,7 @@ func (importer *importer) Flush(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID, _ int64) error {
 	importer.lock.Lock()
 	defer importer.lock.Unlock()
 	req := &import_kvpb.ImportEngineRequest{
@@ -224,12 +227,16 @@ func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUI
 	return errors.Trace(err)
 }
 
-func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (importer *importer) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 func (importer *importer) WriteRows(
@@ -248,7 +255,7 @@ outside:
 			switch {
 			case err == nil:
 				continue outside
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
 			default:
 				return err

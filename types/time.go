@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,8 +25,8 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
@@ -547,10 +548,7 @@ func GetFsp(s string) int8 {
 	} else {
 		fsp = len(s) - index - 1
 	}
-
-	if fsp == len(s) {
-		fsp = 0
-	} else if fsp > 6 {
+	if fsp > 6 {
 		fsp = 6
 	}
 	return int8(fsp)
@@ -1989,7 +1987,18 @@ func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
+		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
+		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning {
+			switch tp {
+			case mysql.TypeTimestamp:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
+			case mysql.TypeDate:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateStr, "0")
+			case mysql.TypeDatetime:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, "0")
+			}
+		}
+		return zt, nil
 	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
@@ -2187,39 +2196,43 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 }
 
 // ExtractDurationNum extracts duration value number from duration unit and format.
-func ExtractDurationNum(d *Duration, unit string) (int64, error) {
+func ExtractDurationNum(d *Duration, unit string) (res int64, err error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return int64(d.MicroSecond()), nil
+		res = int64(d.MicroSecond())
 	case "SECOND":
-		return int64(d.Second()), nil
+		res = int64(d.Second())
 	case "MINUTE":
-		return int64(d.Minute()), nil
+		res = int64(d.Minute())
 	case "HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	case "SECOND_MICROSECOND":
-		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_MICROSECOND":
-		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_SECOND":
-		return int64(d.Minute()*100 + d.Second()), nil
+		res = int64(d.Minute()*100 + d.Second())
 	case "HOUR_MICROSECOND":
-		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "HOUR_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "HOUR_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_MICROSECOND":
-		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond())
 	case "DAY_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "DAY_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
+	if d.Duration < 0 {
+		res = -res
+	}
+	return res, nil
 }
 
 // parseSingleTimeValue parse the format according the given unit. If we set strictCheck true, we'll check whether
@@ -3190,7 +3203,7 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 		t.setMicrosecond(0)
 		return input, true
 	}
-	for v > 0 && v*10 < 1000000 {
+	for i := step; i < 6; i++ {
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))

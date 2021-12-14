@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.
@@ -63,11 +64,11 @@ func (alloc *inMemoryAllocator) GetType() AllocatorType {
 }
 
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
-func (alloc *inMemoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
+func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
 	return alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
 	if n == 0 {
 		return 0, 0, nil
 	}
@@ -85,7 +86,7 @@ func (alloc *inMemoryAllocator) Alloc(ctx context.Context, tableID int64, n uint
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *inMemoryAllocator) Rebase(tableID, requiredBase int64, allocIDs bool) error {
+func (alloc *inMemoryAllocator) Rebase(ctx context.Context, requiredBase int64, allocIDs bool) error {
 	if alloc.isUnsigned {
 		if uint64(requiredBase) > uint64(alloc.base) {
 			alloc.base = requiredBase
@@ -99,7 +100,7 @@ func (alloc *inMemoryAllocator) Rebase(tableID, requiredBase int64, allocIDs boo
 }
 
 // ForceRebase implements autoid.Allocator ForceRebase interface.
-func (alloc *inMemoryAllocator) ForceRebase(tableID, requiredBase int64) error {
+func (alloc *inMemoryAllocator) ForceRebase(requiredBase int64) error {
 	alloc.base = requiredBase
 	return nil
 }
@@ -142,10 +143,10 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 	return min, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
+func (alloc *inMemoryAllocator) AllocSeqCache() (int64, int64, int64, error) {
 	return 0, 0, 0, errNotImplemented.GenWithStackByArgs()
 }
 
-func (alloc *inMemoryAllocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, error) {
+func (alloc *inMemoryAllocator) RebaseSeq(requiredBase int64) (int64, bool, error) {
 	return 0, false, errNotImplemented.GenWithStackByArgs()
 }

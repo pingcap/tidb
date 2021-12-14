@@ -8,20 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package server
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
+func TestParseExecArgs(t *testing.T) {
 	type args struct {
 		args        []types.Datum
 		boundParams [][]byte
@@ -195,12 +198,12 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
-		c.Assert(tt.args.args[0].GetValue(), Equals, tt.expect)
+		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
+		require.Equal(t, tt.expect, tt.args.args[0].GetValue())
 	}
 }
 
-func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+func TestParseStmtFetchCmd(t *testing.T) {
 	tests := []struct {
 		arg       []byte
 		stmtID    uint32
@@ -215,10 +218,10 @@ func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
 	}
 
-	for _, t := range tests {
-		stmtID, fetchSize, err := parseStmtFetchCmd(t.arg)
-		c.Assert(stmtID, Equals, t.stmtID)
-		c.Assert(fetchSize, Equals, t.fetchSize)
-		c.Assert(err, Equals, t.err)
+	for _, tc := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd(tc.arg)
+		require.Equal(t, tc.stmtID, stmtID)
+		require.Equal(t, tc.fetchSize, fetchSize)
+		require.Equal(t, tc.err, err)
 	}
 }

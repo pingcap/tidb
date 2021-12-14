@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -184,6 +186,9 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumResultRows        int64
+	maxResultRows        int64
+	minResultRows        int64
 	prepared             bool
 	// The first time this type of SQL executes.
 	firstSeen time.Time
@@ -228,6 +233,7 @@ type StmtExecInfo struct {
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
+	ResultRows      int64
 	TiKVExecDetails util.ExecDetails
 	Prepared        bool
 }
@@ -354,8 +360,8 @@ type BindableStmt struct {
 	Collation string
 }
 
-// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than once.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() []*BindableStmt {
+// GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -372,7 +378,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() []*BindableSt
 					ssElement.Lock()
 
 					// Empty auth users means that it is an internal queries.
-					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+					if len(ssElement.authUsers) > 0 && (int64(ssbd.history.Len()) > cnt || ssElement.execCount > cnt) {
 						stmt := &BindableStmt{
 							Schema:    ssbd.schemaName,
 							Query:     ssElement.sampleSQL,
@@ -597,6 +603,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		planCacheHits: 0,
 		planInBinding: false,
 		prepared:      sei.Prepared,
+		minResultRows: math.MaxInt64,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -800,6 +807,17 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.ExecRetryCount > 0 {
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
+	}
+	if sei.ResultRows > 0 {
+		ssElement.sumResultRows += sei.ResultRows
+		if ssElement.maxResultRows < sei.ResultRows {
+			ssElement.maxResultRows = sei.ResultRows
+		}
+		if ssElement.minResultRows > sei.ResultRows {
+			ssElement.minResultRows = sei.ResultRows
+		}
+	} else {
+		ssElement.minResultRows = 0
 	}
 	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))

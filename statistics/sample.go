@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -77,7 +78,7 @@ func (s *sampleItemSorter) Len() int {
 
 func (s *sampleItemSorter) Less(i, j int) bool {
 	var cmp int
-	cmp, s.err = s.items[i].Value.CompareDatum(s.sc, &s.items[j].Value)
+	cmp, s.err = s.items[i].Value.Compare(s.sc, &s.items[j].Value, collate.GetBinaryCollator())
 	if s.err != nil {
 		return true
 	}
@@ -239,7 +240,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewChunk()
+	req := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)

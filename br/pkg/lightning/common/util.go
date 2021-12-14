@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,27 +18,20 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"reflect"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -97,21 +91,10 @@ func IsEmptyDir(name string) bool {
 	return len(entries) == 0
 }
 
-type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-}
-
-type DBExecutor interface {
-	QueryExecutor
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}
-
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	// either *sql.DB or *sql.Conn
-	DB           DBExecutor
+	DB           utils.DBExecutor
 	Logger       log.Logger
 	HideQueryLog bool
 }
@@ -139,7 +122,7 @@ outside:
 		// do not retry NotFound error
 		case errors.IsNotFound(err):
 			break outside
-		case IsRetryableError(err):
+		case utils.IsRetryableError(err):
 			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
 			continue
 		default:
@@ -200,61 +183,6 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 		_, err := t.DB.ExecContext(ctx, query, args...)
 		return errors.Trace(err)
 	})
-}
-
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
-
-// IsRetryableError returns whether the error is transient (e.g. network
-// connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
-// function returns `false` (irrecoverable) if `err == nil`.
-//
-// If the error is a multierr, returns true only if all suberrors are retryable.
-func IsRetryableError(err error) bool {
-	for _, singleError := range errors.Errors(err) {
-		if !isSingleRetryableError(singleError) {
-			return false
-		}
-	}
-	return true
-}
-
-func isSingleRetryableError(err error) bool {
-	err = errors.Cause(err)
-
-	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
-		return false
-	}
-
-	switch nerr := err.(type) {
-	case net.Error:
-		return nerr.Timeout()
-	case *mysql.MySQLError:
-		switch nerr.Number {
-		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflictInTiDB, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
-			return true
-		default:
-			return false
-		}
-	default:
-		switch status.Code(err) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
-			return true
-		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
-			}
-			return true
-		default:
-			return false
-		}
-	}
 }
 
 // IsContextCanceledError returns whether the error is caused by context

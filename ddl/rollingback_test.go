@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -69,7 +70,7 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 			jobID = job.ID
 			res, checkErr = tk1.Exec("admin cancel ddl jobs " + strconv.Itoa(int(job.ID)))
 			// drain the result set here, otherwise the cancel action won't take effect immediately.
-			chk := res.NewChunk()
+			chk := res.NewChunk(nil)
 			if err := res.Next(context.Background(), chk); err != nil {
 				checkErr = err
 				return

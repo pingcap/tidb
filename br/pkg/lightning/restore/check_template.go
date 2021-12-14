@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package restore
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -29,8 +31,7 @@ const (
 
 type Template interface {
 	// Collect mainly collect performance related checks' results and critical level checks' results.
-	// If the performance is not as expect. It will output a warn to user and it won't break the whole import task.
-	// if one of critical check not passed. it will stop import task.
+	// If the performance is not as expect or one of critical check not passed. it will stop import task.
 	Collect(t CheckType, passed bool, msg string)
 
 	// Success represents the whole check has passed or not.
@@ -41,12 +42,16 @@ type Template interface {
 
 	// Output print all checks results.
 	Output() string
+
+	// FailedMsg represents the error msg for the failed check.
+	FailedMsg() string
 }
 
 type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
 	criticalFailedCount int
+	failedMsg           []string
 	t                   table.Writer
 }
 
@@ -63,8 +68,13 @@ func NewSimpleTemplate() Template {
 		0,
 		0,
 		0,
+		make([]string, 0),
 		t,
 	}
+}
+
+func (c *SimpleTemplate) FailedMsg() string {
+	return strings.Join(c.failedMsg, ";\n")
 }
 
 func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
@@ -72,19 +82,18 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	if !passed {
 		switch t {
 		case Critical:
-			{
-				c.criticalFailedCount++
-			}
+			c.criticalFailedCount++
 		case Warn:
 			c.warnFailedCount++
 		}
 	}
+	c.failedMsg = append(c.failedMsg, msg)
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()
 }
 
 func (c *SimpleTemplate) Success() bool {
-	return c.warnFailedCount+c.criticalFailedCount == 0
+	return c.criticalFailedCount == 0
 }
 
 func (c *SimpleTemplate) FailedCount(t CheckType) int {

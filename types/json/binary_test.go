@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -460,12 +461,12 @@ func TestParseBinaryFromString(t *testing.T) {
 	obj, err := ParseBinaryFromString("")
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document is empty.*", err.Error())
+	require.Contains(t, err.Error(), "The document is empty")
 
 	obj, err = ParseBinaryFromString(`"a""`)
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document root must not be followed by other values\\..*", err.Error())
+	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
 }
 
 func TestCreateBinary(t *testing.T) {
@@ -492,7 +493,7 @@ func TestCreateBinary(t *testing.T) {
 	func() {
 		defer func() {
 			r := recover()
-			require.Regexp(t, "unknown type:.*", r)
+			require.Regexp(t, "^unknown type:", r)
 		}()
 		bj = CreateBinary(int8(123))
 		require.Equal(t, bj.TypeCode, bj.TypeCode)

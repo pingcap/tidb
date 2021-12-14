@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,12 @@ package pdapi
 
 // The following constants are the APIs of PD server.
 const (
-	HotRead        = "/pd/api/v1/hotspot/regions/read"
-	HotWrite       = "/pd/api/v1/hotspot/regions/write"
-	Regions        = "/pd/api/v1/regions"
-	RegionByID     = "/pd/api/v1/region/id/"
-	Stores         = "/pd/api/v1/stores"
-	ClusterVersion = "/pd/api/v1/config/cluster-version"
-	Status         = "/pd/api/v1/status"
-	Config         = "/pd/api/v1/config"
+	HotRead    = "/pd/api/v1/hotspot/regions/read"
+	HotWrite   = "/pd/api/v1/hotspot/regions/write"
+	HotHistory = "/pd/api/v1/hotspot/regions/history"
+	Regions    = "/pd/api/v1/regions"
+	RegionByID = "/pd/api/v1/region/id/"
+	Stores     = "/pd/api/v1/stores"
+	Status     = "/pd/api/v1/status"
+	Config     = "/pd/api/v1/config"
 )

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,13 +26,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -66,7 +67,7 @@ func SubTestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -84,7 +85,6 @@ func SubTestInfo(t *testing.T) {
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
-	require.NoError(t, dom.ddl.Start(nil))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, dom.Init(ddlLease, sysMockFactory))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL"))
@@ -132,7 +132,7 @@ func SubTestInfo(t *testing.T) {
 		Col: "utf8_bin",
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -159,7 +159,7 @@ func SubTestDomain(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
 	err = dom.Init(ddlLease, sysMockFactory)
 	require.NoError(t, err)
 
@@ -174,7 +174,7 @@ func SubTestDomain(t *testing.T) {
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}
-	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil)
 	require.NoError(t, err)
 
 	// Test for fetchSchemasWithTables when "tables" isn't nil.
@@ -231,7 +231,7 @@ func SubTestDomain(t *testing.T) {
 	require.Equal(t, tblInfo2, tbl.Meta())
 
 	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
-	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs)
+	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs, nil, nil)
 	require.NoError(t, err)
 
 	err = dom.Reload()

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -92,6 +93,7 @@ func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
 	tk.MustExec("use test_partition")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
@@ -168,6 +170,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	// tk1 use to test partition table with index.
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("drop database if exists test_partition_1;")
+	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk1.MustExec("create database test_partition_1")
 	tk1.MustExec("use test_partition_1")
 	tk1.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -179,6 +182,7 @@ func (s *testPartitionPruneSuit) TestListColumnsPartitionPruner(c *C) {
 	// tk2 use to compare the result with normal table.
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("drop database if exists test_partition_2;")
+	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	tk2.MustExec("create database test_partition_2")
 	tk2.MustExec("use test_partition_2")
 	tk2.MustExec("create table t1 (id int, a int, b int)")
@@ -486,4 +490,23 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
+	tk.MustQuery("SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`COL1` int NOT NULL DEFAULT '25' COMMENT 'NUMERIC PK'," +
+		"`COL3` bigint NOT NULL," +
+		"PRIMARY KEY (`COL1`,`COL3`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH ((`COL1` * `COL3`))" +
+		"PARTITIONS 13;")
+	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
+	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }

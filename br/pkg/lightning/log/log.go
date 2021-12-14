@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -92,8 +93,8 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 		// Filter logs from TiDB and PD.
 		return NewFilterCore(core, "github.com/tikv/pd/")
 	})
-
-	if len(cfg.File) > 0 {
+	// "-" is a special config for log to stdout.
+	if len(cfg.File) > 0 && cfg.File != "-" {
 		logCfg.File = pclog.FileLogConfig{
 			Filename:   cfg.File,
 			MaxSize:    cfg.FileMaxSize,
@@ -113,6 +114,11 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	appLevel = props.Level
 
 	return nil
+}
+
+// SetAppLogger replaces the default logger in this package to given one
+func SetAppLogger(l *zap.Logger) {
+	appLogger = Logger{l.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}
 }
 
 // L returns the current logger for Lightning.

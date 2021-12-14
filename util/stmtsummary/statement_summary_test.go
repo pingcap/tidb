@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -720,6 +721,9 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		AvgPdTimeStr,
 		AvgBackoffTotalTimeStr,
 		AvgWriteSQLRespTimeStr,
+		MaxResultRowsStr,
+		MinResultRowsStr,
+		AvgResultRowsStr,
 		PreparedStr,
 		AvgAffectedRowsStr,
 		FirstSeenStr,
@@ -788,7 +792,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
-		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
+		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
@@ -836,7 +840,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
-		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
+		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", ""}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
@@ -1130,8 +1134,8 @@ func TestEnableSummaryParallel(t *testing.T) {
 	require.True(t, ssMap.Enabled())
 }
 
-// Test GetMoreThanOnceBindableStmt.
-func TestGetMoreThanOnceBindableStmt(t *testing.T) {
+// Test GetMoreThanCntBindableStmt.
+func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 
@@ -1140,18 +1144,18 @@ func TestGetMoreThanOnceBindableStmt(t *testing.T) {
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts := ssMap.GetMoreThanOnceBindableStmt()
+	stmts := ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
 	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanOnceBindableStmt()
+	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanOnceBindableStmt()
+	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 1, len(stmts))
 }
 
@@ -1417,26 +1421,26 @@ func TestAccessPrivilege(t *testing.T) {
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	reader.user = user
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, loops)
 	reader.user = badUser
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, 0)
-	reader.isSuper = true
+	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, loops)
 
 	reader.user = user
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
 	reader.user = badUser
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, 0)
-	reader.isSuper = true
+	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
 }

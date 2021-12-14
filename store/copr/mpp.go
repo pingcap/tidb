@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,16 +17,19 @@ package copr
 import (
 	"context"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -64,7 +68,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		return c.selectAllTiFlashStore(), nil
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl)
+	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -137,6 +141,8 @@ type mppIterator struct {
 
 	vars *tikv.Variables
 
+	needTriggerFallback bool
+
 	mu sync.Mutex
 }
 
@@ -151,7 +157,13 @@ func (m *mppIterator) run(ctx context.Context) {
 		}
 		m.mu.Unlock()
 		m.wg.Add(1)
-		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
+		boMaxSleep := copNextMaxBackoff
+		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+			if value.(bool) {
+				boMaxSleep = 2
+			}
+		})
+		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
 				m.wg.Done()
@@ -226,8 +238,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-			// we return timeout to trigger tikv's fallback
-			err = derr.ErrTiFlashServerTimeout
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				err = derr.ErrTiFlashServerTimeout
+			} else {
+				err = sender.GetRPCError()
+			}
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
@@ -248,8 +264,11 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			err = derr.ErrTiFlashServerTimeout
+		}
+		m.sendError(err)
 		return
 	}
 
@@ -261,9 +280,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		return
 	}
 	if len(realResp.RetryRegions) > 0 {
-		for _, retry := range realResp.RetryRegions {
+		logutil.BgLogger().Info("TiFlash found " + strconv.Itoa(len(realResp.RetryRegions)) + " stale regions. Only first " + strconv.Itoa(mathutil.Min(10, len(realResp.RetryRegions))) + " regions will be logged if the log level is higher than Debug")
+		for index, retry := range realResp.RetryRegions {
 			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
-			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			if index < 10 || log.GetLevel() <= zap.DebugLevel {
+				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			}
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
@@ -326,14 +348,18 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = tikvrpc.TiFlash
 
-	// Drain result from root task.
+	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			m.sendError(derr.ErrTiFlashServerTimeout)
+		} else {
+			m.sendError(err)
+		}
 		return
 	}
 
@@ -365,7 +391,12 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 				}
 			}
-			m.sendError(derr.ErrTiFlashServerTimeout)
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				m.sendError(derr.ErrTiFlashServerTimeout)
+			} else {
+				m.sendError(err)
+			}
 			return
 		}
 	}
@@ -457,17 +488,18 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:      c.store,
-		tasks:      dispatchReqs,
-		finishCh:   make(chan struct{}),
-		cancelFunc: cancelFunc,
-		respChan:   make(chan *mppResponse, 4096),
-		startTs:    dispatchReqs[0].StartTs,
-		vars:       vars,
+		store:               c.store,
+		tasks:               dispatchReqs,
+		finishCh:            make(chan struct{}),
+		cancelFunc:          cancelFunc,
+		respChan:            make(chan *mppResponse, 4096),
+		startTs:             dispatchReqs[0].StartTs,
+		vars:                vars,
+		needTriggerFallback: needTriggerFallback,
 	}
 	go iter.run(ctxChild)
 	return iter

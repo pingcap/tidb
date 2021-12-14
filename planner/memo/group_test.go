@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,10 +18,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/stretchr/testify/require"
@@ -103,7 +105,7 @@ func TestGroupFingerPrint(t *testing.T) {
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	ctx := plannercore.MockContext()
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt1, is)
+	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(plannercore.LogicalPlan)
 	require.True(t, ok)
@@ -245,11 +247,12 @@ func TestBuildKeyInfo(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
 	require.NoError(t, err)
-	p1, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt1, is)
+	p1, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
 	logic1, ok := p1.(plannercore.LogicalPlan)
 	require.True(t, ok)
@@ -261,7 +264,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 2: group by column is key
 	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
 	require.NoError(t, err)
-	p2, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt2, is)
+	p2, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
 	require.NoError(t, err)
 	logic2, ok := p2.(plannercore.LogicalPlan)
 	require.True(t, ok)

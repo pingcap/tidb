@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -49,32 +50,34 @@ type Rule struct {
 	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
+// NewRule constructs *Rule from role, count, and constraints. It is here to
+// consistent the behavior of creating new rules.
+func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
+	return &Rule{
+		Role:           role,
+		Count:          int(replicas),
+		Constraints:    cnst,
+		LocationLabels: []string{"region", "zone", "rack", "host"},
+		IsolationLevel: "region",
+	}
+}
+
 // NewRules constructs []*Rule from a yaml-compatible representation of
-// array or map of constraints. It converts 'CONSTRAINTS' field in RFC
-// https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md to structs.
-func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
+// 'array' or 'dict' constraints.
+// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
+func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 
 	cnstbytes := []byte(cnstr)
 
-	constraints1 := []string{}
-	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
 		// can not emit REPLICAS with an array or empty label
 		if replicas == 0 {
 			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
 		}
 
-		labelConstraints, err := NewConstraints(constraints1)
-		if err != nil {
-			return rules, err
-		}
-
-		rules = append(rules, &Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-
+		rules = append(rules, NewRule(role, replicas, constraints1))
 		return rules, nil
 	}
 
@@ -103,19 +106,13 @@ func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 				return rules, err
 			}
 
-			rules = append(rules, &Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
+			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
 		}
 
 		remain := int(replicas) - ruleCnt
 		if remain > 0 {
-			rules = append(rules, &Rule{
-				Count: remain,
-			})
+			rules = append(rules, NewRule(role, uint64(remain), nil))
 		}
-
 		return rules, nil
 	}
 
@@ -129,4 +126,8 @@ func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
 	return n
+}
+
+func (r *Rule) String() string {
+	return fmt.Sprintf("%+v", *r)
 }

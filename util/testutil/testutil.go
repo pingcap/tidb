@@ -8,9 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testutil
@@ -30,12 +32,13 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -85,6 +88,7 @@ type datumEqualsChecker struct {
 // the expected value.
 // For example:
 //     c.Assert(value, DatumEquals, NewDatum(42))
+// TODO: please use trequire.DatumEqual to replace this function to migrate to testify
 var DatumEquals check.Checker = &datumEqualsChecker{
 	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
 }
@@ -108,7 +112,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic("the second param should be datum")
 	}
 	sc := new(stmtctx.StatementContext)
-	res, err := paramFirst.CompareDatum(sc, &paramSecond)
+	res, err := paramFirst.Compare(sc, &paramSecond, collate.GetBinaryCollator())
 	if err != nil {
 		panic(err)
 	}

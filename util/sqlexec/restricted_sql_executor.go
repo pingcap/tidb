@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -101,7 +103,7 @@ type SQLExecutor interface {
 // But a session already has a parser bind in it, so we define this interface and use session as its implementation,
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
-	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
+	ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error)
 }
 
 // Statement is an interface for SQL execution.
@@ -137,8 +139,8 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	// NewChunk create a chunk.
-	NewChunk() *chunk.Chunk
+	// NewChunk create a chunk, if allocator is nil, the default one is used.
+	NewChunk(chunk.Allocator) *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
@@ -162,7 +164,7 @@ type MultiQueryNoDelayResult interface {
 // DrainRecordSet fetches the rows in the RecordSet.
 func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

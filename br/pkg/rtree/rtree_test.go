@@ -6,17 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/stretchr/testify/require"
 )
-
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testRangeTreeSuite{})
-
-type testRangeTreeSuite struct{}
 
 func newRange(start, end []byte) *rtree.Range {
 	return &rtree.Range{
@@ -25,9 +17,10 @@ func newRange(start, end []byte) *rtree.Range {
 	}
 }
 
-func (s *testRangeTreeSuite) TestRangeTree(c *C) {
+func TestRangeTree(t *testing.T) {
+	t.Parallel()
 	rangeTree := rtree.NewRangeTree()
-	c.Assert(rangeTree.Get(newRange([]byte(""), []byte(""))), IsNil)
+	require.Nil(t, rangeTree.Get(newRange([]byte(""), []byte(""))))
 
 	search := func(key []byte) *rtree.Range {
 		rg := rangeTree.Get(newRange(key, []byte("")))
@@ -38,11 +31,11 @@ func (s *testRangeTreeSuite) TestRangeTree(c *C) {
 	}
 	assertIncomplete := func(startKey, endKey []byte, ranges []rtree.Range) {
 		incomplete := rangeTree.GetIncompleteRange(startKey, endKey)
-		c.Logf("%#v %#v\n%#v\n%#v\n", startKey, endKey, incomplete, ranges)
-		c.Assert(len(incomplete), Equals, len(ranges))
+		t.Logf("%#v %#v\n%#v\n%#v\n", startKey, endKey, incomplete, ranges)
+		require.Equal(t, len(ranges), len(incomplete))
 		for idx, rg := range incomplete {
-			c.Assert(rg.StartKey, DeepEquals, ranges[idx].StartKey)
-			c.Assert(rg.EndKey, DeepEquals, ranges[idx].EndKey)
+			require.Equalf(t, ranges[idx].StartKey, rg.StartKey, "idx=%d", idx)
+			require.Equalf(t, ranges[idx].EndKey, rg.EndKey, "idx=%d", idx)
 		}
 	}
 	assertAllComplete := func() {
@@ -62,7 +55,7 @@ func (s *testRangeTreeSuite) TestRangeTree(c *C) {
 	rangeD := newRange([]byte("d"), []byte(""))
 
 	rangeTree.Update(*rangeA)
-	c.Assert(rangeTree.Len(), Equals, 1)
+	require.Equal(t, 1, rangeTree.Len())
 	assertIncomplete([]byte("a"), []byte("b"), []rtree.Range{})
 	assertIncomplete([]byte(""), []byte(""),
 		[]rtree.Range{
@@ -71,7 +64,7 @@ func (s *testRangeTreeSuite) TestRangeTree(c *C) {
 		})
 
 	rangeTree.Update(*rangeC)
-	c.Assert(rangeTree.Len(), Equals, 2)
+	require.Equal(t, 2, rangeTree.Len())
 	assertIncomplete([]byte("a"), []byte("c"), []rtree.Range{
 		{StartKey: []byte("b"), EndKey: []byte("c")},
 	})
@@ -85,15 +78,15 @@ func (s *testRangeTreeSuite) TestRangeTree(c *C) {
 			{StartKey: []byte("d"), EndKey: []byte("")},
 		})
 
-	c.Assert(search([]byte{}), IsNil)
-	c.Assert(search([]byte("a")), DeepEquals, rangeA)
-	c.Assert(search([]byte("b")), IsNil)
-	c.Assert(search([]byte("c")), DeepEquals, rangeC)
-	c.Assert(search([]byte("d")), IsNil)
+	require.Nil(t, search([]byte{}))
+	require.Equal(t, rangeA, search([]byte("a")))
+	require.Nil(t, search([]byte("b")))
+	require.Equal(t, rangeC, search([]byte("c")))
+	require.Nil(t, search([]byte("d")))
 
 	rangeTree.Update(*rangeB)
-	c.Assert(rangeTree.Len(), Equals, 3)
-	c.Assert(search([]byte("b")), DeepEquals, rangeB)
+	require.Equal(t, 3, rangeTree.Len())
+	require.Equal(t, rangeB, search([]byte("b")))
 	assertIncomplete([]byte(""), []byte(""),
 		[]rtree.Range{
 			{StartKey: []byte(""), EndKey: []byte("a")},
@@ -101,76 +94,77 @@ func (s *testRangeTreeSuite) TestRangeTree(c *C) {
 		})
 
 	rangeTree.Update(*rangeD)
-	c.Assert(rangeTree.Len(), Equals, 4)
-	c.Assert(search([]byte("d")), DeepEquals, rangeD)
+	require.Equal(t, 4, rangeTree.Len())
+	require.Equal(t, rangeD, search([]byte("d")))
 	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
 		{StartKey: []byte(""), EndKey: []byte("a")},
 	})
 
 	// None incomplete for any range after insert range 0
 	rangeTree.Update(*range0)
-	c.Assert(rangeTree.Len(), Equals, 5)
+	require.Equal(t, 5, rangeTree.Len())
 
 	// Overwrite range B and C.
 	rangeBD := newRange([]byte("b"), []byte("d"))
 	rangeTree.Update(*rangeBD)
-	c.Assert(rangeTree.Len(), Equals, 4)
+	require.Equal(t, 4, rangeTree.Len())
 	assertAllComplete()
 
 	// Overwrite range BD, c-d should be empty
 	rangeTree.Update(*rangeB)
-	c.Assert(rangeTree.Len(), Equals, 4)
+	require.Equal(t, 4, rangeTree.Len())
 	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
 	})
 
 	rangeTree.Update(*rangeC)
-	c.Assert(rangeTree.Len(), Equals, 5)
+	require.Equal(t, 5, rangeTree.Len())
 	assertAllComplete()
 }
 
-func (s *testRangeTreeSuite) TestRangeIntersect(c *C) {
+func TestRangeIntersect(t *testing.T) {
+	t.Parallel()
 	rg := newRange([]byte("a"), []byte("c"))
 
 	start, end, isIntersect := rg.Intersect([]byte(""), []byte(""))
-	c.Assert(isIntersect, Equals, true)
-	c.Assert(start, DeepEquals, []byte("a"))
-	c.Assert(end, DeepEquals, []byte("c"))
+	require.True(t, isIntersect)
+	require.Equal(t, []byte("a"), start)
+	require.Equal(t, []byte("c"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte("a"))
-	c.Assert(isIntersect, Equals, false)
-	c.Assert(start, DeepEquals, []byte(nil))
-	c.Assert(end, DeepEquals, []byte(nil))
+	require.False(t, isIntersect)
+	require.Equal(t, []byte(nil), start)
+	require.Equal(t, []byte(nil), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte("b"))
-	c.Assert(isIntersect, Equals, true)
-	c.Assert(start, DeepEquals, []byte("a"))
-	c.Assert(end, DeepEquals, []byte("b"))
+	require.True(t, isIntersect)
+	require.Equal(t, []byte("a"), start)
+	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("a"), []byte("b"))
-	c.Assert(isIntersect, Equals, true)
-	c.Assert(start, DeepEquals, []byte("a"))
-	c.Assert(end, DeepEquals, []byte("b"))
+	require.True(t, isIntersect)
+	require.Equal(t, []byte("a"), start)
+	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("aa"), []byte("b"))
-	c.Assert(isIntersect, Equals, true)
-	c.Assert(start, DeepEquals, []byte("aa"))
-	c.Assert(end, DeepEquals, []byte("b"))
+	require.True(t, isIntersect)
+	require.Equal(t, []byte("aa"), start)
+	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("b"), []byte("c"))
-	c.Assert(isIntersect, Equals, true)
-	c.Assert(start, DeepEquals, []byte("b"))
-	c.Assert(end, DeepEquals, []byte("c"))
+	require.True(t, isIntersect)
+	require.Equal(t, []byte("b"), start)
+	require.Equal(t, []byte("c"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte{1})
-	c.Assert(isIntersect, Equals, false)
-	c.Assert(start, DeepEquals, []byte(nil))
-	c.Assert(end, DeepEquals, []byte(nil))
+	require.False(t, isIntersect)
+	require.Equal(t, []byte(nil), start)
+	require.Equal(t, []byte(nil), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("c"), []byte(""))
-	c.Assert(isIntersect, Equals, false)
-	c.Assert(start, DeepEquals, []byte(nil))
-	c.Assert(end, DeepEquals, []byte(nil))
+	require.False(t, isIntersect)
+	require.Equal(t, []byte(nil), start)
+	require.Equal(t, []byte(nil), end)
 }
 
 func BenchmarkRangeTreeUpdate(b *testing.B) {

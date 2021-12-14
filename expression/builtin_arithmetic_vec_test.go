@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,10 +18,12 @@ import (
 	"math"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
@@ -179,8 +182,48 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.NE: {},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
+func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinArithmeticCases)
+}
+
+func TestVectorizedDecimalErrOverflow(t *testing.T) {
+	ctx := mock.NewContext()
+	testCases := []struct {
+		args     []float64
+		funcName string
+		errStr   string
+	}{
+		{args: []float64{8.1e80, 8.1e80}, funcName: ast.Plus,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 + Column#0)'",
+		},
+		{args: []float64{8.1e80, -8.1e80}, funcName: ast.Minus,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 - Column#0)'",
+		},
+		{args: []float64{8.1e80, 8.1e80}, funcName: ast.Mul,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 * Column#0)'",
+		},
+		{args: []float64{8.1e80, 0.1}, funcName: ast.Div,
+			errStr: "[types:1690]DECIMAL value is out of range in '(Column#0 / Column#0)'",
+		},
+	}
+
+	for _, tt := range testCases {
+		fts := []*types.FieldType{eType2FieldType(types.ETDecimal), eType2FieldType(types.ETDecimal)}
+		input := chunk.New(fts, 1, 1)
+		dec1, dec2 := new(types.MyDecimal), new(types.MyDecimal)
+		err := dec1.FromFloat64(tt.args[0])
+		require.NoError(t, err)
+		err = dec2.FromFloat64(tt.args[1])
+		require.NoError(t, err)
+		input.AppendMyDecimal(0, dec1)
+		input.AppendMyDecimal(1, dec2)
+		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
+		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
+		require.NoError(t, err)
+		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
+		err = baseFunc.vecEvalDecimal(input, result)
+		require.EqualError(t, err, tt.errStr)
+	}
 }
 
 func BenchmarkVectorizedBuiltinArithmeticFunc(b *testing.B) {

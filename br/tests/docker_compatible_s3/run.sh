@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -25,7 +26,8 @@ S3_KEY="&access-key=$MINIO_ACCESS_KEY&secret-access-key=$MINIO_SECRET_KEY"
 # restore backup data one by one
 for TAG in ${TAGS}; do
     echo "restore ${TAG} data starts..."
-    bin/br restore db --db test -s "s3://$BUCKET/bk${TAG}?endpoint=http://$S3_ENDPOINT$S3_KEY" --pd $PD_ADDR
+    # after BR merged into TiDB we need skip version check because the build from tidb is not a release version.
+    bin/br restore db --db test -s "s3://$BUCKET/bk${TAG}?endpoint=http://$S3_ENDPOINT$S3_KEY" --pd $PD_ADDR --check-requirements=false
     row_count=$(run_sql_in_container  "SELECT COUNT(*) FROM test.usertable;" | awk '/COUNT/{print $2}')
     if [ $row_count != $EXPECTED_KVS ]; then
        echo "restore kv count is not as expected(1000), obtain $row_count"

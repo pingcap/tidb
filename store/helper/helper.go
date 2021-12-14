@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -32,8 +33,9 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
@@ -50,8 +52,7 @@ import (
 // Storage represents a storage that connects TiKV.
 // Methods copied from kv.Storage and tikv.Storage due to limitation of go1.13.
 type Storage interface {
-	Begin() (kv.Transaction, error)
-	BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error)
+	Begin(opts ...tikv.TxnOption) (kv.Transaction, error)
 	GetSnapshot(ver kv.Version) kv.Snapshot
 	GetClient() kv.Client
 	GetMPPClient() kv.MPPClient
@@ -767,10 +768,12 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if err != nil {
 		return err
 	}
+	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metrics.PDApiExecutionHistogram.WithLabelValues("common").Observe(time.Since(start).Seconds())
 
 	defer func() {
 		err = resp.Body.Close()

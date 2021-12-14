@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,11 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	pd "github.com/tikv/pd/client"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -204,11 +208,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
-	}
-
 	cfg := task.Config{
 		TLS: task.TLSConfig{
 			CA:   tidbCfg.Security.ClusterSSLCA,
@@ -220,6 +219,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		Checksum:    true,
 		SendCreds:   true,
 		LogProgress: true,
+		CipherInfo: backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
 	}
 
 	storageURL, err := url.Parse(s.Storage)
@@ -233,8 +235,25 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+	case "hdfs":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be hdfs when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			return nil
+		}
+	case "local", "file", "":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be local when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
+			return nil
+		}
 	default:
 		break
+	}
+
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
 	}
 
 	cfg.Storage = storageURL.String()
@@ -448,6 +467,12 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 		return err
 	}
 	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
+	return err
+}
+
+func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	exec := gs.se.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err
 }
 

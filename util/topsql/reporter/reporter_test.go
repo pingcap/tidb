@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -64,8 +66,11 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
+	variable.TopSQLVariable.MaxCollect.Store(10000)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
-	variable.TopSQLVariable.AgentAddress.Store(addr)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = addr
+	})
 
 	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	ts := NewRemoteTopSQLReporter(rc)
@@ -245,6 +250,10 @@ func TestCollectAndTopN(t *testing.T) {
 	require.Equal(t, 5, getTotalCPUTime(results[1]))
 	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
 	require.Equal(t, 3, getTotalCPUTime(results[2]))
+	// sleep to wait for all SQL meta received.
+	time.Sleep(50 * time.Millisecond)
+	totalMetas := agentServer.GetTotalSQLMetas()
+	require.Equal(t, 6, len(totalMetas))
 }
 
 func TestCollectCapacity(t *testing.T) {
@@ -298,8 +307,8 @@ func TestCollectCapacity(t *testing.T) {
 	collectedData := make(map[string]*dataPoints)
 	tsr.doCollect(collectedData, 1, genRecord(20000))
 	require.Equal(t, 5001, len(collectedData))
-	require.Equal(t, int64(5000), tsr.sqlMapLength.Load())
-	require.Equal(t, int64(5000), tsr.planMapLength.Load())
+	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
+	require.Equal(t, int64(20000), tsr.planMapLength.Load())
 }
 
 func TestCollectOthers(t *testing.T) {

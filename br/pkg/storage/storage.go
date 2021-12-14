@@ -77,6 +77,8 @@ type ExternalStorage interface {
 	ReadFile(ctx context.Context, name string) ([]byte, error)
 	// FileExists return true if file exists
 	FileExists(ctx context.Context, name string) (bool, error)
+	// DeleteFile delete the file in storage
+	DeleteFile(ctx context.Context, name string) error
 	// Open a Reader by file path. path is relative path to storage base path
 	Open(ctx context.Context, path string) (ExternalFileReader, error)
 	// WalkDir traverse all the files in a dir.
@@ -159,6 +161,11 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "local config not found")
 		}
 		return NewLocalStorage(backend.Local.Path)
+	case *backuppb.StorageBackend_Hdfs:
+		if backend.Hdfs == nil {
+			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "hdfs config not found")
+		}
+		return NewHDFSStorage(backend.Hdfs.Remote), nil
 	case *backuppb.StorageBackend_S3:
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")

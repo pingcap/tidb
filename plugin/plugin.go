@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -437,7 +438,7 @@ func (p *Plugin) supportsFlush(pluginName string) error {
 		return errors.Errorf("plugin '%s' is not ready", pluginName)
 	}
 	if p.Manifest.flushWatcher == nil {
-		return errors.Errorf("plugin %s does not support flush", pluginName)
+		return errors.Errorf("plugin %s does not support flush, or PD is not available", pluginName)
 	}
 	return nil
 }

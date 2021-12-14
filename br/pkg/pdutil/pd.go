@@ -118,14 +118,13 @@ var (
 	}
 
 	// defaultPDCfg find by https://github.com/tikv/pd/blob/master/conf/config.toml.
+	// only use for debug command.
 	defaultPDCfg = map[string]interface{}{
 		"max-merge-region-keys":       200000,
 		"max-merge-region-size":       20,
 		"leader-schedule-limit":       4,
 		"region-schedule-limit":       2048,
-		"max-snapshot-count":          3,
 		"enable-location-replacement": "true",
-		"max-pending-peer-count":      16,
 	}
 )
 
@@ -156,14 +155,17 @@ func pdRequest(
 		if count > pdRequestRetryTime || resp.StatusCode < 500 {
 			break
 		}
-		resp.Body.Close()
-		time.Sleep(time.Second)
+		_ = resp.Body.Close()
+		time.Sleep(pdRequestRetryInterval())
 		resp, err = cli.Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
 	if resp.StatusCode != http.StatusOK {
 		res, _ := io.ReadAll(resp.Body)
 		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "[%d] %s %s", resp.StatusCode, res, reqURL)
@@ -174,6 +176,15 @@ func pdRequest(
 		return nil, errors.Trace(err)
 	}
 	return r, nil
+}
+
+func pdRequestRetryInterval() time.Duration {
+	failpoint.Inject("FastRetry", func(v failpoint.Value) {
+		if v.(bool) {
+			failpoint.Return(0)
+		}
+	})
+	return time.Second
 }
 
 // PdController manage get/update config from pd.
@@ -227,6 +238,7 @@ func NewPdController(
 		ctx, addrs, securityOption,
 		pd.WithGRPCDialOptions(maxCallMsgSize...),
 		pd.WithCustomTimeoutOption(10*time.Second),
+		pd.WithMaxErrorRetry(3),
 	)
 	if err != nil {
 		log.Error("fail to create pd client", zap.Error(err))

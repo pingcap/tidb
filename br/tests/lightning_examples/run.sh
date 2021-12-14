@@ -10,12 +10,13 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 set -eu
 
-EXAMPLES_PATH=${EXAMPLES_PATH:-pkg/lightning/mydump/examples}
+EXAMPLES_PATH=${EXAMPLES_PATH:-br/pkg/lightning/mydump/examples}
 
 # Because of issue JENKINS-45544 we can't use the Unicode filename in the
 # examples. We are going to rename it in-place.

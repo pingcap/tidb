@@ -6,20 +6,13 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestSumDurationInt(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testCollectorSuite{})
-
-type testCollectorSuite struct {
-}
-
-func (suit *testCollectorSuite) TestSumDurationInt(c *C) {
 	fields := []zap.Field{}
 	logger := func(msg string, fs ...zap.Field) {
 		fields = append(fields, fs...)
@@ -33,15 +26,15 @@ func (suit *testCollectorSuite) TestSumDurationInt(c *C) {
 	col.SetSuccessStatus(true)
 	col.Summary("foo")
 
-	c.Assert(len(fields), Equals, 7)
+	require.Equal(t, 7, len(fields))
 	assertContains := func(field zap.Field) {
 		for _, f := range fields {
 			if f.Key == field.Key {
-				c.Assert(f, DeepEquals, field)
+				require.Equal(t, field, f)
 				return
 			}
 		}
-		c.Error(fields, "do not contain", field)
+		t.Error(field, "is not in", fields)
 	}
 	assertContains(zap.Duration("a", time.Second))
 	assertContains(zap.Duration("b", 2*time.Second))

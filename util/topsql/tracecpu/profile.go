@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -293,7 +294,7 @@ func StartCPUProfile(w io.Writer) error {
 // StopCPUProfile same like pprof.StopCPUProfile.
 // other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	if GlobalSQLCPUProfiler.IsEnabled() {
+	if GlobalSQLCPUProfiler.hasExportProfileTask() {
 		return GlobalSQLCPUProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()

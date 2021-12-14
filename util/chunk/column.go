@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -65,6 +66,19 @@ type Column struct {
 	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
 	data       []byte
 	elemBuf    []byte
+}
+
+// ColumnAllocator defines an allocator for Column.
+type ColumnAllocator interface {
+	NewColumn(ft *types.FieldType, cap int) *Column
+}
+
+// DefaultColumnAllocator is the default implementation of ColumnAllocator.
+type DefaultColumnAllocator struct{}
+
+// NewColumn implements the ColumnAllocator interface.
+func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
+	return newColumn(getFixedLen(ft), cap)
 }
 
 // NewColumn creates a new column with the specific type and capacity.

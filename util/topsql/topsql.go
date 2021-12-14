@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -31,8 +32,8 @@ import (
 const (
 	// MaxSQLTextSize exports for testing.
 	MaxSQLTextSize = 4 * 1024
-	// MaxPlanTextSize exports for testing.
-	MaxPlanTextSize = 32 * 1024
+	// MaxBinaryPlanSize exports for testing.
+	MaxBinaryPlanSize = 2 * 1024
 )
 
 var globalTopSQLReport reporter.TopSQLReporter
@@ -121,7 +122,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
-	if len(normalizedBinaryPlan) > MaxPlanTextSize {
+	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return
 	}

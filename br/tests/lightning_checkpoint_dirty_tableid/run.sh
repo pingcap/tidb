@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -26,14 +27,20 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 
 export GO_FAILPOINTS=""
 set +e
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
+# put stdout to log file for next grep
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 set -e
 
-ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please remove these checkpoints first" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
-TABLE_SUGGEST=$(grep "./tidb-lightning-ctl --checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+# some msg will split into two lines when put them into chart.
+ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data loss, this run will stop now." "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+TABLE_SUGGEST=$(grep "checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 
-[ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 2 ]
+# we got same errors in three place:
+# 1. run failed in step 2
+# 2. the whole procedure failed
+# 3. main
+[ $ILLEGAL_CP_COUNT -eq 3 ]
+[ $TABLE_SUGGEST -eq 3 ]
 
 # Try again with the file checkpoints
 
@@ -49,11 +56,17 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 
 export GO_FAILPOINTS=""
 set +e
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
+# put stdout to log file for next grep
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 set -e
 
-ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please remove these checkpoints first" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
-TABLE_SUGGEST=$(grep "./tidb-lightning-ctl --checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+# some msg will split into two lines when put them into chart.
+ILLEGAL_CP_COUNT=$(grep "TiDB Lightning has detected tables with illegal checkpoints. To prevent data loss, this run will stop now." "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
+TABLE_SUGGEST=$(grep "checkpoint-remove=" "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" | wc -l)
 
-[ $ILLEGAL_CP_COUNT -eq 1 ]
-[ $TABLE_SUGGEST -eq 2 ]
+# we got same errors in three place:
+# 1. run failed in step 2
+# 2. the whole procedure failed
+# 3. main
+[ $ILLEGAL_CP_COUNT -eq 3 ]
+[ $TABLE_SUGGEST -eq 3 ]

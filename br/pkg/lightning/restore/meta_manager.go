@@ -10,14 +10,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -80,7 +80,8 @@ type tableMetaMgr interface {
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
-	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum) (bool, *verify.KVChecksum, error)
+	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
+		needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error)
 	FinishTable(ctx context.Context) error
 }
 
@@ -233,6 +234,9 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				maxRowIDMax = rowIDMax
 			}
 		}
+		if rows.Err() != nil {
+			return errors.Trace(rows.Err())
+		}
 
 		// no enough info are available, fetch row_id max for table
 		if curStatus == metaStatusInitial {
@@ -351,10 +355,12 @@ func (m *dbTableMetaMgr) UpdateTableStatus(ctx context.Context, status metaStatu
 	return exec.Exec(ctx, "update meta status", query, status.String(), m.tr.tableInfo.ID, m.taskID)
 }
 
-func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum) (bool, *verify.KVChecksum, error) {
+func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
+	needChecksum bool, needRemoteDupe bool, baseTotalChecksum *verify.KVChecksum, err error,
+) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
-		return false, nil, errors.Trace(err)
+		return false, false, nil, errors.Trace(err)
 	}
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
@@ -363,17 +369,19 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
-		return false, nil, errors.Annotate(err, "enable pessimistic transaction failed")
+		return false, false, nil, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 	var (
 		baseTotalKvs, baseTotalBytes, baseChecksum uint64
 		taskKvs, taskBytes, taskChecksum           uint64
 		totalKvs, totalBytes, totalChecksum        uint64
+		taskHasDuplicates                          bool
 	)
 	newStatus := metaStatusChecksuming
-	needChecksum := true
+	needChecksum = true
+	needRemoteDupe = true
 	err = exec.Transact(ctx, "checksum pre-check", func(ctx context.Context, tx *sql.Tx) error {
-		query := fmt.Sprintf("SELECT task_id, total_kvs_base, total_bytes_base, checksum_base, total_kvs, total_bytes, checksum, status from %s WHERE table_id = ? FOR UPDATE", m.tableName)
+		query := fmt.Sprintf("SELECT task_id, total_kvs_base, total_bytes_base, checksum_base, total_kvs, total_bytes, checksum, status, has_duplicates from %s WHERE table_id = ? FOR UPDATE", m.tableName)
 		rows, err := tx.QueryContext(ctx, query, m.tr.tableInfo.ID)
 		if err != nil {
 			return errors.Annotate(err, "fetch task meta failed")
@@ -389,12 +397,16 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			statusValue string
 		)
 		for rows.Next() {
-			if err = rows.Scan(&taskID, &baseTotalKvs, &baseTotalBytes, &baseChecksum, &taskKvs, &taskBytes, &taskChecksum, &statusValue); err != nil {
+			if err = rows.Scan(&taskID, &baseTotalKvs, &baseTotalBytes, &baseChecksum, &taskKvs, &taskBytes, &taskChecksum, &statusValue, &taskHasDuplicates); err != nil {
 				return errors.Trace(err)
 			}
 			status, err := parseMetaStatus(statusValue)
 			if err != nil {
 				return errors.Annotatef(err, "invalid meta status '%s'", statusValue)
+			}
+
+			if taskHasDuplicates {
+				needChecksum = false
 			}
 
 			// skip finished meta
@@ -405,7 +417,8 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			if taskID == m.taskID {
 				if status >= metaStatusChecksuming {
 					newStatus = status
-					needChecksum = status == metaStatusChecksuming
+					needRemoteDupe = status == metaStatusChecksuming
+					needChecksum = needChecksum && needRemoteDupe
 					return nil
 				}
 
@@ -415,6 +428,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			if status < metaStatusChecksuming {
 				newStatus = metaStatusChecksumSkipped
 				needChecksum = false
+				needRemoteDupe = false
 				break
 			} else if status == metaStatusChecksuming {
 				return errors.New("another task is checksuming, there must be something wrong!")
@@ -430,23 +444,25 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		}
 		rows.Close()
 		closed = true
+		if rows.Err() != nil {
+			return errors.Trace(rows.Err())
+		}
 
-		query = fmt.Sprintf("update %s set total_kvs = ?, total_bytes = ?, checksum = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
-		_, err = tx.ExecContext(ctx, query, checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), newStatus.String(), m.tr.tableInfo.ID, m.taskID)
+		query = fmt.Sprintf("update %s set total_kvs = ?, total_bytes = ?, checksum = ?, status = ?, has_duplicates = ? where table_id = ? and task_id = ?", m.tableName)
+		_, err = tx.ExecContext(ctx, query, checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), newStatus.String(), hasLocalDupes, m.tr.tableInfo.ID, m.taskID)
 		return errors.Annotate(err, "update local checksum failed")
 	})
 	if err != nil {
-		return false, nil, err
+		return false, false, nil, err
 	}
 
-	var remoteChecksum *verify.KVChecksum
 	if needChecksum {
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
-		remoteChecksum = &ck
+		baseTotalChecksum = &ck
 	}
 	log.L().Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
-	return needChecksum, remoteChecksum, nil
+	return
 }
 
 func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
@@ -475,8 +491,11 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 
 type taskMetaMgr interface {
 	InitTask(ctx context.Context, source int64) error
-	CheckClusterSource(ctx context.Context) (int64, error)
 	CheckTaskExist(ctx context.Context) (bool, error)
+	// CheckTasksExclusively check all tasks exclusively. action is the function to check all tasks and returns the tasks
+	// need to update or any new tasks. There is at most one lightning who can execute the action function at the same time.
+	// Note that action may be executed multiple times due to transaction retry, caller should make sure it's idempotent.
+	CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
 	// CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 	// Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
@@ -541,6 +560,15 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 	}
 }
 
+type taskMeta struct {
+	taskID       int64
+	pdCfgs       string
+	status       taskMetaStatus
+	state        int
+	sourceBytes  uint64
+	clusterAvail uint64
+}
+
 type storedCfgs struct {
 	PauseCfg   pdutil.ClusterConfig `json:"paused"`
 	RestoreCfg pdutil.ClusterConfig `json:"restore"`
@@ -580,29 +608,69 @@ func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 				exist = true
 			}
 		}
-		err = rows.Close()
-		return errors.Trace(err)
+		if err := rows.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		return nil
 	})
 	return exist, errors.Trace(err)
 }
 
-func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
+func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
 		Logger: log.L(),
 	}
-
-	source := int64(0)
-	query := fmt.Sprintf("SELECT SUM(source_bytes) from %s", m.tableName)
-	if err := exec.QueryRow(ctx, "query total source size", query, &source); err != nil {
-		return 0, errors.Annotate(err, "fetch task meta failed")
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return errors.Annotate(err, "enable pessimistic transaction failed")
 	}
-	return source, nil
+	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
+		query := fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from %s FOR UPDATE", m.tableName)
+		rows, err := tx.QueryContext(ctx, query)
+		if err != nil {
+			return errors.Annotate(err, "fetch task metas failed")
+		}
+		defer rows.Close()
+
+		var tasks []taskMeta
+		for rows.Next() {
+			var task taskMeta
+			var statusValue string
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.clusterAvail); err != nil {
+				return errors.Trace(err)
+			}
+			status, err := parseTaskMetaStatus(statusValue)
+			if err != nil {
+				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+			}
+			task.status = status
+			tasks = append(tasks, task)
+		}
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		newTasks, err := action(tasks)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, task := range newTasks {
+			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
+			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.clusterAvail); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
@@ -674,6 +742,10 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			return errors.Trace(err)
 		}
 		closed = true
+
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
 
 		if cfgStr != "" {
 			err = json.Unmarshal([]byte(cfgStr), &pausedCfg)
@@ -796,6 +868,10 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 		}
 		closed = true
 
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
 		if taskStatus < taskMetaStatusSwitchSkipped {
 			newStatus := taskMetaStatusSwitchBack
 			newState := taskStateNormal
@@ -899,6 +975,10 @@ func (m noopTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 	return nil
 }
 
+func (m noopTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	return nil
+}
+
 func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
 	return func(ctx context.Context) error {
 		return nil
@@ -906,11 +986,7 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 }
 
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
-	return false, nil
-}
-
-func (m noopTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
-	return 0, nil
+	return true, nil
 }
 
 func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {
@@ -950,8 +1026,8 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 	return nil
 }
 
-func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum) (bool, *verify.KVChecksum, error) {
-	return false, nil, nil
+func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
+	return false, false, nil, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {

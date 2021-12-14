@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,10 +27,10 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -132,6 +133,8 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	}
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
@@ -242,7 +245,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
-					SetTxnScope(e.txnScope).
+					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
@@ -325,15 +328,15 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				partialTableReader := &TableReaderExecutor{
-					baseExecutor: newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
-					dagPB:        e.dagPBs[workID],
-					startTS:      e.startTS,
-					txnScope:     e.txnScope,
-					isStaleness:  e.isStaleness,
-					streaming:    e.partialStreamings[workID],
-					feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-					plans:        e.partialPlans[workID],
-					ranges:       e.ranges[workID],
+					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
+					dagPB:            e.dagPBs[workID],
+					startTS:          e.startTS,
+					readReplicaScope: e.readReplicaScope,
+					isStaleness:      e.isStaleness,
+					streaming:        e.partialStreamings[workID],
+					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+					plans:            e.partialPlans[workID],
+					ranges:           e.ranges[workID],
 				}
 				worker := &partialTableWorker{
 					stats:        e.stats,
@@ -519,7 +522,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			indexMergeExec: e,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
+			memTracker:     e.memTracker,
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
@@ -537,16 +540,16 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
-		table:        tbl,
-		dagPB:        e.tableRequest,
-		startTS:      e.startTS,
-		txnScope:     e.txnScope,
-		isStaleness:  e.isStaleness,
-		streaming:    e.tableStreaming,
-		columns:      e.columns,
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:        e.tblPlans,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
+		table:            tbl,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		streaming:        e.tableStreaming,
+		columns:          e.columns,
+		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+		plans:            e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)

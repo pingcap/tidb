@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -153,6 +155,15 @@ func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
 		CAPath:   tc.caPath,
 		CertPath: tc.certPath,
 		KeyPath:  tc.keyPath,
+	}
+}
+
+func (tc *TLS) ToTiKVSecurityConfig() config.Security {
+	return config.Security{
+		ClusterSSLCA:    tc.caPath,
+		ClusterSSLCert:  tc.certPath,
+		ClusterSSLKey:   tc.keyPath,
+		ClusterVerifyCN: nil, // FIXME should fill this in?
 	}
 }
 

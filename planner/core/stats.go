@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,10 +22,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -283,7 +283,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+		if path.OnlyPointRange(ds.SCtx()) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -296,9 +296,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		}
 	}
 	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
-		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
+		uniqueIdxAccessCols := make([]util.Col2Len, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
-			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
+			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds())
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
 				uniqueBest = uniqueIdx
@@ -313,10 +313,10 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
-			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
-			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
-				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
-				if comparable && setsResult == 1 {
+			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
+			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
+				accessResult, comparable := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
+				if comparable && accessResult == 1 {
 					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
 						refinedBest = singleScanIdx
 					}
@@ -342,8 +342,6 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected != nil {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
-		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 			var tableName string
 			if ds.TableAsName.O == "" {
@@ -410,15 +408,6 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		return nil, err
 	}
 
-	// TODO: implement UnionScan + IndexMerge
-	isReadOnlyTxn := true
-	txn, err := ds.ctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
-	if txn.Valid() && !txn.IsReadOnly() {
-		isReadOnlyTxn = false
-	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
@@ -432,7 +421,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			}
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal {
+
+	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
 		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
@@ -477,11 +468,10 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
 	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
-	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.HandleCols.GetCol(0).RetType)
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -622,19 +612,24 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
+			var unsignedIntHandle bool
+			if path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+				}
+			}
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx()) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		} else {
@@ -649,18 +644,17 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, false) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) && path.Index.Unique) {
+			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx()) && path.Index.Unique) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 				break
 			}
 		}

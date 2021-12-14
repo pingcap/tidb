@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,13 +23,10 @@ import (
 
 const (
 	// states used for the TableCounter labels
-	TableStatePending        = "pending"
-	TableStateWritten        = "written"
-	TableStateClosed         = "closed"
-	TableStateImported       = "imported"
-	TableStateAlteredAutoInc = "altered_auto_inc"
-	TableStateChecksum       = "checksum"
-	TableStateCompleted      = "completed"
+	TableStatePending   = "pending"
+	TableStateWritten   = "written"
+	TableStateImported  = "imported"
+	TableStateCompleted = "completed"
 
 	// results used for the TableCounter labels
 	TableResultSuccess = "success"
