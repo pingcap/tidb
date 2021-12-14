@@ -191,6 +191,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to encode the incoming strings to different charsets.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -962,6 +963,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
 	cc.rsEncoder = newResultEncoder(chs)
+}
+
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
