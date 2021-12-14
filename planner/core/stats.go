@@ -512,7 +512,13 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
 func (ds *DataSource) generateIndexMergeOrPaths() error {
+	for i, expr := range ds.allConds {
+		ds.allConds[i] = expression.PushDownNot(ds.ctx, expr)
+	}
 	usedIndexCount := len(ds.possibleAccessPaths)
+	// Use allConds instread of pushedDownConds,
+	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
+	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
 	for i, cond := range ds.allConds {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
