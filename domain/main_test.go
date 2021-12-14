@@ -33,8 +33,6 @@ func TestMain(m *testing.M) {
 
 // TestDomainSerial handles tests in serial
 func TestDomainSerial(t *testing.T) {
-	t.Parallel()
-
 	// these tests should run in serial for failpoint is global
 	t.Run("info", SubTestInfo)
 	t.Run("domain", SubTestDomain)

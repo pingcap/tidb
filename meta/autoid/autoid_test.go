@@ -529,7 +529,6 @@ func TestRollbackAlloc(t *testing.T) {
 
 // TestNextStep tests generate next auto id step.
 func TestNextStep(t *testing.T) {
-	t.Parallel()
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
 	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)
