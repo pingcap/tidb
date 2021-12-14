@@ -306,7 +306,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		if walkErr == nil {
 			return errors.Errorf("data-source-dir '%s' doesn't exist or contains no files", taskCfg.Mydumper.SourceDir)
 		}
-		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed: ", taskCfg.Mydumper.SourceDir)
+		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed", taskCfg.Mydumper.SourceDir)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
