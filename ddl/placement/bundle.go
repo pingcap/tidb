@@ -210,9 +210,6 @@ func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 	if options.Followers > uint64(8) {
 		return nil, fmt.Errorf("%w: followers should be less than or equal to 8: %d", ErrInvalidPlacementOptions, options.Followers)
 	}
-	if options.Followers > uint64(0) && int(options.Followers) % 2 != 0 {
-
-	}
 
 	// always prefer the sugar syntax, which gives better schedule results most of the time
 	isSyntaxSugar := true
