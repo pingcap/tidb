@@ -1160,3 +1160,22 @@ func genListPartition(begin, end int) string {
 	buf.WriteString(fmt.Sprintf("%v)", end-1))
 	return buf.String()
 }
+
+func TestIssue27532(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue_27532")
+	defer tk.MustExec(`drop database issue_27532`)
+	tk.MustExec("use issue_27532")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10`)
+	tk.MustExec(`insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4)`)
+	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec(`set autocommit = 0`)
+	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
+	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
+	tk.MustExec(`drop table t2`)
+}
