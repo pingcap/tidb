@@ -768,7 +768,7 @@ const (
 	DefTiDBTopSQLEnable                   = false
 	DefTiDBTopSQLPrecisionSeconds         = 1
 	DefTiDBTopSQLMaxStatementCount        = 200
-	DefTiDBTopSQLMaxCollect               = 10000
+	DefTiDBTopSQLMaxCollect               = 5000
 	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
