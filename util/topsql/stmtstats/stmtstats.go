@@ -118,7 +118,7 @@ type SQLPlanDigest struct {
 }
 
 // StatementStatsMap represents Map<SQLDigest, Map<Timestamp, StatementStatsItem>>.
-// We put SQLDigest in front of the two-dimensional map, because SQLDigest
+// We put SQLPlanDigest in front of the two-dimensional map, because SQLPlanDigest
 // is larger than timestamp. This can reduce unnecessary memory usage.
 type StatementStatsMap map[SQLPlanDigest]map[int64]*StatementStatsItem
 
