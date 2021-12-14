@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	fd "github.com/pingcap/tidb/planner/functional_dependency"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -312,6 +313,9 @@ type LogicalPlan interface {
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
 	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
+
+	// extractFD derive the FDSet from the tree bottom up.
+	extractFD() *fd.FDSet
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -373,6 +377,12 @@ type baseLogicalPlan struct {
 	self         LogicalPlan
 	maxOneRow    bool
 	children     []LogicalPlan
+	fdSet        *fd.FDSet
+}
+
+// extractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
+func (p *baseLogicalPlan) extractFD() *fd.FDSet {
+	return p.children[0].extractFD()
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
