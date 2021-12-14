@@ -21,8 +21,6 @@ import (
 )
 
 func TestNewLabel(t *testing.T) {
-	t.Parallel()
-
 	type TestCase struct {
 		name  string
 		input string
@@ -58,8 +56,6 @@ func TestNewLabel(t *testing.T) {
 }
 
 func TestRestoreLabel(t *testing.T) {
-	t.Parallel()
-
 	type TestCase struct {
 		name   string
 		input  Label
@@ -94,8 +90,6 @@ func TestRestoreLabel(t *testing.T) {
 }
 
 func TestNewLabels(t *testing.T) {
-	t.Parallel()
-
 	labels, err := NewLabels(nil)
 	require.NoError(t, err)
 	require.Len(t, labels, 0)
@@ -128,8 +122,6 @@ func TestNewLabels(t *testing.T) {
 }
 
 func TestAddLabels(t *testing.T) {
-	t.Parallel()
-
 	type TestCase struct {
 		name   string
 		labels Labels
@@ -191,8 +183,6 @@ func TestAddLabels(t *testing.T) {
 }
 
 func TestRestoreLabels(t *testing.T) {
-	t.Parallel()
-
 	type TestCase struct {
 		name   string
 		input  Labels

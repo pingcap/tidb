@@ -46,7 +46,6 @@ func newFile(j int) *backuppb.File {
 }
 
 func TestRater(t *testing.T) {
-	t.Parallel()
 	m := prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "testing",
 		Name:      "rater",
@@ -65,13 +64,11 @@ func TestRater(t *testing.T) {
 }
 
 func TestFile(t *testing.T) {
-	t.Parallel()
 	assertTrimEqual(t, logutil.File(newFile(1)),
 		`{"file": {"name": "1", "CF": "write", "sha256": "31", "startKey": "31", "endKey": "32", "startVersion": 1, "endVersion": 2, "totalKvs": 1, "totalBytes": 1, "CRC64Xor": 1}}`)
 }
 
 func TestFiles(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -96,7 +93,6 @@ func TestFiles(t *testing.T) {
 }
 
 func TestKey(t *testing.T) {
-	t.Parallel()
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.Key("test", []byte{0, 1, 2, 3})})
 	require.NoError(t, err)
@@ -104,7 +100,6 @@ func TestKey(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -129,7 +124,6 @@ func TestKeys(t *testing.T) {
 }
 
 func TestRewriteRule(t *testing.T) {
-	t.Parallel()
 	rule := &import_sstpb.RewriteRule{
 		OldKeyPrefix: []byte("old"),
 		NewKeyPrefix: []byte("new"),
@@ -143,7 +137,6 @@ func TestRewriteRule(t *testing.T) {
 }
 
 func TestRegion(t *testing.T) {
-	t.Parallel()
 	region := &metapb.Region{
 		Id:          1,
 		StartKey:    []byte{0x00, 0x01},
@@ -157,14 +150,12 @@ func TestRegion(t *testing.T) {
 }
 
 func TestLeader(t *testing.T) {
-	t.Parallel()
 	leader := &metapb.Peer{Id: 2, StoreId: 3}
 
 	assertTrimEqual(t, logutil.Leader(leader), `{"leader": "id:2 store_id:3 "}`)
 }
 
 func TestSSTMeta(t *testing.T) {
-	t.Parallel()
 	meta := &import_sstpb.SSTMeta{
 		Uuid: []byte("mock uuid"),
 		Range: &import_sstpb.Range{
@@ -183,14 +174,12 @@ func TestSSTMeta(t *testing.T) {
 }
 
 func TestShortError(t *testing.T) {
-	t.Parallel()
 	err := errors.Annotate(berrors.ErrInvalidArgument, "test")
 
 	assertTrimEqual(t, logutil.ShortError(err), `{"error": "test: [BR:Common:ErrInvalidArgument]invalid argument"}`)
 }
 
 func TestContextual(t *testing.T) {
-	t.Parallel()
 	testCore, logs := observer.New(zap.InfoLevel)
 	logutil.ResetGlobalLogger(zap.New(testCore))
 
