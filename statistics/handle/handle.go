@@ -99,9 +99,15 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap tableDeltaMap
+	globalMap struct {
+		sync.Mutex
+		data tableDeltaMap
+	}
 	// feedback is used to store query feedback info.
-	feedback *statistics.QueryFeedbackMap
+	feedback struct {
+		sync.Mutex
+		data *statistics.QueryFeedbackMap
+	}
 
 	lease atomic2.Duration
 
@@ -159,6 +165,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
+	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -167,13 +174,17 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback = statistics.NewQueryFeedbackMap()
+	h.feedback.Lock()
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
-	h.globalMap = make(tableDeltaMap)
+	h.globalMap.Lock()
+	h.globalMap.data = make(tableDeltaMap)
+	h.globalMap.Unlock()
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -188,8 +199,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle := &Handle{
 		ddlEventCh:       make(chan *util.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		globalMap:        make(tableDeltaMap),
-		feedback:         statistics.NewQueryFeedbackMap(),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
 	}
@@ -199,6 +208,8 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	handle.globalMap.data = make(tableDeltaMap)
+	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -218,10 +229,12 @@ func (h *Handle) SetLease(lease time.Duration) {
 
 // GetQueryFeedback gets the query feedback. It is only used in test.
 func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
+	h.feedback.Lock()
 	defer func() {
-		h.feedback = statistics.NewQueryFeedbackMap()
+		h.feedback.data = statistics.NewQueryFeedbackMap()
+		h.feedback.Unlock()
 	}()
-	return h.feedback
+	return h.feedback.data
 }
 
 // DurationToTS converts duration to timestamp.
