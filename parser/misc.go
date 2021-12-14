@@ -670,6 +670,7 @@ var tokenMap = map[string]int{
 	"STATS_HISTOGRAMS":         statsHistograms,
 	"STATS_TOPN":               statsTopN,
 	"STATS_META":               statsMeta,
+	"HISTOGRAMS_IN_FLIGHT":     histogramsInFlight,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATS_SAMPLE_PAGES":       statsSamplePages,
 	"STATS":                    stats,
