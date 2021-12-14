@@ -372,6 +372,35 @@ func TestShowGrants(t *testing.T) {
 	require.Len(t, gs, 3)
 }
 
+// TestErrorMessage checks that the identity in error messages matches the mysql.user table one.
+// MySQL is inconsistent in its error messages, as some match the loginHost and others the
+// identity from mysql.user. In TiDB we now use the identity from mysql.user in error messages
+// for consistency.
+func TestErrorMessage(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	rootSe := newSession(t, store, dbName)
+	mustExec(t, rootSe, `CREATE USER wildcard`)
+	mustExec(t, rootSe, `CREATE USER specifichost@192.168.1.1`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO wildcard`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO specifichost@192.168.1.1`)
+
+	wildSe := newSession(t, store, dbName)
+
+	// The session.Auth() func will populate the AuthUsername and AuthHostname fields.
+	// We don't have to explicitly specify them.
+	require.True(t, wildSe.Auth(&auth.UserIdentity{Username: "wildcard", Hostname: "192.168.1.1"}, nil, nil))
+	_, err := wildSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'wildcard'@'%' to database 'mysql'", err.Error())
+
+	specificSe := newSession(t, store, dbName)
+	require.True(t, specificSe.Auth(&auth.UserIdentity{Username: "specifichost", Hostname: "192.168.1.1"}, nil, nil))
+	_, err = specificSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'specifichost'@'192.168.1.1' to database 'mysql'", err.Error())
+}
+
 func TestShowColumnGrants(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)

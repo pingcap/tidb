@@ -279,6 +279,7 @@ const (
 	IsIPv4Mapped    = "is_ipv4_mapped"
 	IsIPv6          = "is_ipv6"
 	IsUsedLock      = "is_used_lock"
+	IsUUID          = "is_uuid"
 	MasterPosWait   = "master_pos_wait"
 	NameConst       = "name_const"
 	ReleaseAllLocks = "release_all_locks"
