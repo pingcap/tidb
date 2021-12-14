@@ -50,7 +50,7 @@ func CreateStatementStats() *StatementStats {
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
-// for the specified SQLDigest and timestamp if it does not exist before.
+// for the specified SQLPlanDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
 func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest string, ts int64) *StatementStatsItem {
@@ -69,7 +69,7 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest str
 }
 
 // AddExecCount is used to count the number of executions of a certain
-// SQLDigest within a certain timestamp.
+// SQLPlanDigest within a certain timestamp.
 // AddExecCount is thread-safe.
 func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, ts int64, n uint64) {
 	s.mu.Lock()
@@ -79,7 +79,7 @@ func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, ts int64, n 
 }
 
 // AddKvExecCount is used to count the number of executions of a certain
-// SQLDigest for a certain target within a certain timestamp。
+// SQLPlanDigest for a certain target within a certain timestamp。
 // AddKvExecCount is thread-safe.
 func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest string, ts int64, target string, n uint64) {
 	s.mu.Lock()
@@ -117,13 +117,13 @@ type SQLPlanDigest struct {
 	PlanDigest string
 }
 
-// StatementStatsMap represents Map<SQLDigest, Map<Timestamp, StatementStatsItem>>.
+// StatementStatsMap represents Map<SQLPlanDigest, Map<Timestamp, StatementStatsItem>>.
 // We put SQLPlanDigest in front of the two-dimensional map, because SQLPlanDigest
 // is larger than timestamp. This can reduce unnecessary memory usage.
 type StatementStatsMap map[SQLPlanDigest]map[int64]*StatementStatsItem
 
 // Merge merges other into StatementStatsMap.
-// Values with the same SQLDigest and same timestamp will be merged.
+// Values with the same SQLPlanDigest and same timestamp will be merged.
 //
 // After executing Merge, some pointers in other may be referenced
 // by m. So after calling Merge, it is best not to continue to use
@@ -151,7 +151,7 @@ func (m StatementStatsMap) Merge(other StatementStatsMap) {
 
 // StatementStatsItem represents a set of mergeable statistics.
 // StatementStatsItem is used in a larger data structure to represent
-// the stats of a certain SQLDigest under a certain timestamp.
+// the stats of a certain SQLPlanDigest under a certain timestamp.
 // If there are more indicators that need to be added in the future,
 // please add it in StatementStatsItem and implement its aggregation
 // in the Merge method.
