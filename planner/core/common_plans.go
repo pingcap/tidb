@@ -413,7 +413,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 	// Update lastUpdateTime to the newest one.
-	expiredTimeStamp4PC := domain.GetDomain(e.ctx).ExpiredTimeStamp4PC
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC
 	if expiredTimeStamp4PC.Compare(sessVars.LastUpdateTime4PC) > 0 {
 		sctx.PreparedPlanCache().DeleteAll()
 		sessVars.LastUpdateTime4PC = expiredTimeStamp4PC
