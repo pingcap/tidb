@@ -233,6 +233,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.countExecForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -323,6 +324,19 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
+func (a *ExecStmt) countExecForTopSQL() {
+	if !variable.TopSQLEnabled() {
+		return
+	}
+	vars := a.Ctx.GetSessionVars()
+	_, sqlDigest := vars.StmtCtx.SQLDigest()
+	_, planDigest := vars.StmtCtx.GetPlanDigest()
+	if vars.StmtStats != nil {
+		vars.StmtStats.AddExecCount(sqlDigest.String(), planDigest.String(), time.Now().Unix(), 1)
+		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest.String(), planDigest.String())
+	}
+}
+
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
@@ -383,6 +397,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.countExecForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)

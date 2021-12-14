@@ -28,9 +28,9 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 		closed: atomic.NewBool(false),
 	}
 	m.register(stats)
-	stats.AddExecCount("SQL-1", 1001, 1)
+	stats.AddExecCount("SQL-1", "", 1001, 1)
 	assert.Empty(t, m.data)
 	m.collect()
 	assert.NotEmpty(t, m.data)
-	assert.Equal(t, uint64(1), m.data["SQL-1"][1001].ExecCount)
+	assert.Equal(t, uint64(1), m.data[SQLPlanDigest{SQLDigest: "SQL-1"}][1001].ExecCount)
 }

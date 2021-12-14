@@ -24,11 +24,11 @@ import (
 // CreateKvExecCounter creates an associated KvExecCounter from StatementStats.
 // The created KvExecCounter can only be used during a single statement execution
 // and cannot be reused.
-func (s *StatementStats) CreateKvExecCounter(sqlDigest string) *KvExecCounter {
+func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest string) *KvExecCounter {
 	return &KvExecCounter{
-		stats:     s,
-		sqlDigest: sqlDigest,
-		marked:    map[string]struct{}{},
+		stats:  s,
+		digest: SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest},
+		marked: map[string]struct{}{},
 	}
 }
 
@@ -36,10 +36,10 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest string) *KvExecCounter {
 // It internally calls AddKvExecCount of StatementStats at the right time, to
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
-	stats     *StatementStats
-	sqlDigest string
-	mu        sync.Mutex
-	marked    map[string]struct{} // HashSet<Target>
+	stats  *StatementStats
+	digest SQLPlanDigest
+	mu     sync.Mutex
+	marked map[string]struct{} // HashSet<Target>
 }
 
 // RPCInterceptor returns a tikvrpc.Interceptor for client-go.
@@ -64,6 +64,6 @@ func (c *KvExecCounter) mark(target string) {
 	defer c.mu.Unlock()
 	if _, ok := c.marked[target]; !ok {
 		c.marked[target] = struct{}{}
-		c.stats.AddKvExecCount(c.sqlDigest, time.Now().Unix(), target, 1)
+		c.stats.AddKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, time.Now().Unix(), target, 1)
 	}
 }

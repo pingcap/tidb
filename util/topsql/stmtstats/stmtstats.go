@@ -53,11 +53,12 @@ func CreateStatementStats() *StatementStats {
 // for the specified SQLDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest string, ts int64) *StatementStatsItem {
-	tsItem, ok := s.data[sqlDigest]
+func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest string, ts int64) *StatementStatsItem {
+	key := SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
+	tsItem, ok := s.data[key]
 	if !ok {
-		s.data[sqlDigest] = map[int64]*StatementStatsItem{}
-		tsItem = s.data[sqlDigest]
+		s.data[key] = map[int64]*StatementStatsItem{}
+		tsItem = s.data[key]
 	}
 	item, ok := tsItem[ts]
 	if !ok {
@@ -70,20 +71,20 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest string, ts int6
 // AddExecCount is used to count the number of executions of a certain
 // SQLDigest within a certain timestamp.
 // AddExecCount is thread-safe.
-func (s *StatementStats) AddExecCount(sqlDigest string, ts int64, n uint64) {
+func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, ts int64, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, ts)
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest, ts)
 	item.ExecCount += n
 }
 
 // AddKvExecCount is used to count the number of executions of a certain
 // SQLDigest for a certain target within a certain timestamp。
 // AddKvExecCount is thread-safe.
-func (s *StatementStats) AddKvExecCount(sqlDigest string, ts int64, target string, n uint64) {
+func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest string, ts int64, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, ts)
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest, ts)
 	item.KvStatsItem.KvExecCount[target] += n
 }
 
@@ -109,10 +110,17 @@ func (s *StatementStats) Closed() bool {
 	return s.closed.Load()
 }
 
+// SQLPlanDigest is used as the key of StatementStatsMap to
+// distinguish different sql.
+type SQLPlanDigest struct {
+	SQLDigest  string
+	PlanDigest string
+}
+
 // StatementStatsMap represents Map<SQLDigest, Map<Timestamp, StatementStatsItem>>.
 // We put SQLDigest in front of the two-dimensional map, because SQLDigest
 // is larger than timestamp. This can reduce unnecessary memory usage.
-type StatementStatsMap map[string]map[int64]*StatementStatsItem
+type StatementStatsMap map[SQLPlanDigest]map[int64]*StatementStatsItem
 
 // Merge merges other into StatementStatsMap.
 // Values with the same SQLDigest and same timestamp will be merged.

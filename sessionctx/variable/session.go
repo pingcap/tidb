@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -965,6 +966,10 @@ type SessionVars struct {
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
+
+	// StmtStats is a pointer to session.stmtStats. See comments of
+	// session.stmtStats for more information.
+	StmtStats *stmtstats.StatementStats
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

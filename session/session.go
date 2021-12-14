@@ -1539,6 +1539,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
+	s.sessionVars.StmtStats = s.stmtStats
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1547,10 +1548,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
-		if s.stmtStats != nil {
-			s.stmtStats.AddExecCount(digest.String(), s.sessionVars.StartTime.Unix(), 1)
-			s.sessionVars.StmtCtx.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest.String())
-		}
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
@@ -1971,6 +1968,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.PrepareTxnCtx(ctx)
 	var err error
 	s.sessionVars.StartTime = time.Now()
+	s.sessionVars.StmtStats = s.stmtStats
 	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
 		err = plannercore.ErrStmtNotFound
@@ -1982,13 +1980,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	if variable.TopSQLEnabled() {
-		if s.stmtStats != nil {
-			digest := preparedStmt.SQLDigest.String()
-			s.stmtStats.AddExecCount(digest, time.Now().Unix(), 1)
-			s.sessionVars.StmtCtx.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest)
-		}
-	}
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
 	if err != nil {
 		return nil, err

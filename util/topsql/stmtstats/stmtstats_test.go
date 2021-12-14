@@ -58,7 +58,7 @@ func TestStatementsStatsItem_Merge(t *testing.T) {
 
 func TestStatementStatsMap_Merge(t *testing.T) {
 	m1 := StatementStatsMap{
-		"SQL-1": {
+		SQLPlanDigest{SQLDigest: "SQL-1"}: {
 			10001: &StatementStatsItem{
 				ExecCount: 1,
 				KvStatsItem: &KvStatementStatsItem{
@@ -87,7 +87,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 				},
 			},
 		},
-		"SQL-2": {
+		SQLPlanDigest{SQLDigest: "SQL-2"}: {
 			10001: &StatementStatsItem{
 				ExecCount: 1,
 				KvStatsItem: &KvStatementStatsItem{
@@ -118,7 +118,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 		},
 	}
 	m2 := StatementStatsMap{
-		"SQL-2": {
+		SQLPlanDigest{SQLDigest: "SQL-2"}: {
 			10001: &StatementStatsItem{
 				ExecCount: 1,
 				KvStatsItem: &KvStatementStatsItem{
@@ -147,7 +147,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 				},
 			},
 		},
-		"SQL-3": {
+		SQLPlanDigest{SQLDigest: "SQL-3"}: {
 			10001: &StatementStatsItem{
 				ExecCount: 1,
 				KvStatsItem: &KvStatementStatsItem{
@@ -182,33 +182,33 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	m1.Merge(m2)
 	assert.Len(t, m1, 3)
 	assert.Len(t, m2, 2)
-	assert.Equal(t, uint64(1), m1["SQL-1"][10001].ExecCount)
-	assert.Equal(t, uint64(2), m1["SQL-1"][10002].ExecCount)
-	assert.Equal(t, uint64(3), m1["SQL-1"][10003].ExecCount)
-	assert.Equal(t, uint64(2), m1["SQL-2"][10001].ExecCount)
-	assert.Equal(t, uint64(4), m1["SQL-2"][10002].ExecCount)
-	assert.Equal(t, uint64(6), m1["SQL-2"][10003].ExecCount)
-	assert.Equal(t, uint64(1), m1["SQL-3"][10001].ExecCount)
-	assert.Equal(t, uint64(2), m1["SQL-3"][10002].ExecCount)
-	assert.Equal(t, uint64(3), m1["SQL-3"][10003].ExecCount)
-	assert.Equal(t, uint64(1), m1["SQL-1"][10001].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1["SQL-1"][10001].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(2), m1["SQL-1"][10002].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(3), m1["SQL-1"][10002].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(3), m1["SQL-1"][10003].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(4), m1["SQL-1"][10003].KvStatsItem.KvExecCount["KV-4"])
-	assert.Equal(t, uint64(2), m1["SQL-2"][10001].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(4), m1["SQL-2"][10001].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(4), m1["SQL-2"][10002].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(6), m1["SQL-2"][10002].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(6), m1["SQL-2"][10003].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(8), m1["SQL-2"][10003].KvStatsItem.KvExecCount["KV-4"])
-	assert.Equal(t, uint64(1), m1["SQL-3"][10001].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1["SQL-3"][10001].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(2), m1["SQL-3"][10002].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(3), m1["SQL-3"][10002].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(3), m1["SQL-3"][10003].KvStatsItem.KvExecCount["KV-3"])
-	assert.Equal(t, uint64(4), m1["SQL-3"][10003].KvStatsItem.KvExecCount["KV-4"])
+	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10001].ExecCount)
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10002].ExecCount)
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10003].ExecCount)
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10001].ExecCount)
+	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10002].ExecCount)
+	assert.Equal(t, uint64(6), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10003].ExecCount)
+	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10001].ExecCount)
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10002].ExecCount)
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10003].ExecCount)
+	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-1"}][10003].KvStatsItem.KvExecCount["KV-4"])
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(6), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(6), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(8), m1[SQLPlanDigest{SQLDigest: "SQL-2"}][10003].KvStatsItem.KvExecCount["KV-4"])
+	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10001].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10001].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10002].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10002].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(3), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10003].KvStatsItem.KvExecCount["KV-3"])
+	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-3"}][10003].KvStatsItem.KvExecCount["KV-4"])
 	m1.Merge(nil)
 	assert.Len(t, m1, 3)
 }
@@ -229,14 +229,14 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)
-	stats.AddExecCount("SQL-1", 1001, 1)
-	stats.AddExecCount("SQL-2", 1001, 2)
-	stats.AddExecCount("SQL-3", 1001, 3)
+	stats.AddExecCount("SQL-1", "", 1001, 1)
+	stats.AddExecCount("SQL-2", "", 1001, 2)
+	stats.AddExecCount("SQL-3", "", 1001, 3)
 	m = stats.Take()
 	assert.Len(t, m, 3)
-	assert.Equal(t, uint64(1), m["SQL-1"][1001].ExecCount)
-	assert.Equal(t, uint64(2), m["SQL-2"][1001].ExecCount)
-	assert.Equal(t, uint64(3), m["SQL-3"][1001].ExecCount)
+	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}][1001].ExecCount)
+	assert.Equal(t, uint64(2), m[SQLPlanDigest{SQLDigest: "SQL-2"}][1001].ExecCount)
+	assert.Equal(t, uint64(3), m[SQLPlanDigest{SQLDigest: "SQL-3"}][1001].ExecCount)
 	m = stats.Take()
 	assert.Len(t, m, 0)
 }

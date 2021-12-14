@@ -24,7 +24,7 @@ import (
 func TestKvExecCounter(t *testing.T) {
 	manager = newStatementStatsManagerManager()
 	stats := CreateStatementStats()
-	counter := stats.CreateKvExecCounter("SQL-1")
+	counter := stats.CreateKvExecCounter("SQL-1", "")
 	interceptor := counter.RPCInterceptor()
 	for n := 0; n < 10; n++ {
 		_, _ = interceptor(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
@@ -39,8 +39,8 @@ func TestKvExecCounter(t *testing.T) {
 	assert.Len(t, counter.marked, 2)
 	assert.Contains(t, counter.marked, "TIKV-1")
 	assert.Contains(t, counter.marked, "TIKV-2")
-	assert.True(t, len(stats.data["SQL-1"]) > 0)
-	for _, item := range stats.data["SQL-1"] {
+	assert.True(t, len(stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}]) > 0)
+	for _, item := range stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}] {
 		assert.Equal(t, uint64(1), item.KvStatsItem.KvExecCount["TIKV-1"])
 	}
 }
