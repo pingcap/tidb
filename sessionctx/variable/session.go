@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -966,12 +965,6 @@ type SessionVars struct {
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
-
-	// KvExecCounter is created from session.stmtStats to count the number
-	// of SQL executions of the kv layer during the current execution of
-	// the statement. Its life cycle is limited to this execution, and a
-	// new KvExecCounter is always created during each statement execution.
-	KvExecCounter *stmtstats.KvExecCounter
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

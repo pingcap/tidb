@@ -553,9 +553,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	if sessVars.KvExecCounter != nil {
+	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-		s.txn.SetOption(kv.RPCInterceptor, sessVars.KvExecCounter.RPCInterceptor())
+		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
@@ -1549,7 +1549,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 		if s.stmtStats != nil {
 			s.stmtStats.AddExecCount(digest.String(), s.sessionVars.StartTime.Unix(), 1)
-			s.sessionVars.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest.String())
+			s.sessionVars.StmtCtx.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest.String())
 		}
 	}
 
@@ -1986,7 +1986,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if s.stmtStats != nil {
 			digest := preparedStmt.SQLDigest.String()
 			s.stmtStats.AddExecCount(digest, time.Now().Unix(), 1)
-			s.sessionVars.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest)
+			s.sessionVars.StmtCtx.KvExecCounter = s.stmtStats.CreateKvExecCounter(digest)
 		}
 	}
 	ok, err = s.IsCachedExecOk(ctx, preparedStmt)

@@ -1697,7 +1697,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.LogicalOptimizeTrace = nil
 	sc.OptimizerCETrace = nil
-	sc.KvExecCounter = vars.KvExecCounter
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -1919,7 +1918,7 @@ func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snap
 // setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
 // the number of SQL executions of each TiKV.
 func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
-	if snapshot != nil && variable.TopSQLEnabled() && vars.KvExecCounter != nil {
-		snapshot.SetOption(kv.RPCInterceptor, vars.KvExecCounter.RPCInterceptor())
+	if snapshot != nil && variable.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
 }
