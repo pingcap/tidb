@@ -158,6 +158,9 @@ func (e *HashJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -181,7 +184,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	return e.baseExecutor.Open(ctx)
+	return nil
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
