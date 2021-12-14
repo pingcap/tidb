@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -56,17 +55,32 @@ func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataS
 
 		decodePlan: decodePlan,
 	}
-	go util.WithRecovery(dataSink.run, nil)
+	go dataSink.recoverRun()
 	return dataSink
 }
 
-// run will return when SingleTargetDataSink is closed.
-func (ds *SingleTargetDataSink) run() {
+// recoverRun will run until SingleTargetDataSink is closed.
+func (ds *SingleTargetDataSink) recoverRun() {
+	for ds.run() {
+	}
+}
+
+func (ds *SingleTargetDataSink) run() (rerun bool) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.BgLogger().Error("panic in SingleTargetDataSink, rerun",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+			rerun = true
+		}
+	}()
+
 	for {
 		var task sendTask
 		select {
 		case <-ds.ctx.Done():
-			return
+			return false
 		case task = <-ds.sendTaskCh:
 		}
 
