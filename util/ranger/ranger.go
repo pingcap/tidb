@@ -299,7 +299,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
+		rangePoints = rb.intersection(rangePoints, rb.build(cond), collate.GetCollator(tp.Collate))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -375,7 +375,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]), collate.GetCollator(newTp[eqAndInCount].Collate))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
