@@ -146,7 +146,7 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	rs, err := tk.Exec("select * from t t1 join t t2 join t t3")
 	c.Assert(err, Equals, nil)
 	defer rs.Close()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	rs.Next(context.Background(), req)
 	c.Assert(executor.GlobalMemoryUsageTracker.BytesConsumed(), Greater, originConsume)
 }
