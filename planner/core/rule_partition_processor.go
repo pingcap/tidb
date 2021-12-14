@@ -339,7 +339,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
-	appendTableDualTraceStep(ds, tableDual, opt)
+	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
 
@@ -895,7 +895,7 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
-	appendTableDualTraceStep(ds, tableDual, opt)
+	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
 
@@ -1579,16 +1579,20 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 }
 
 func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]model.PartitionDefinition, plan LogicalPlan, children []LogicalPlan, opt *logicalOptimizeOp) {
+	if len(children) == 0 {
+		appendNoPartitionChildTraceStep(ds, plan, opt)
+		return
+	}
 	action := ""
 	reason := ""
 	var used []model.PartitionDefinition
 	for _, def := range usedMap {
 		used = append(used, def)
 	}
-	if len(children) == 0 {
-		action = fmt.Sprintf("Datasource[%v] becomes %s[%v]", ds.ID(), plan.TP(), plan.ID())
-		reason = fmt.Sprintf("Datasource[%v] has no available partition table after partition pruning", ds.ID())
-	} else if len(children) == 1 {
+	sort.Slice(used, func(i, j int) bool {
+		return used[i].ID < used[j].ID
+	})
+	if len(children) == 1 {
 		action = fmt.Sprintf("Datasource[%v] becomes %s[%v]", ds.ID(), plan.TP(), plan.ID())
 		reason = fmt.Sprintf("Datasource[%v] has one available partiton table[%s] after partition pruning", ds.ID(), used[0].Name)
 	} else {
@@ -1618,8 +1622,8 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
 }
 
-func appendTableDualTraceStep(ds *DataSource, dual *LogicalTableDual, opt *logicalOptimizeOp) {
-	action := fmt.Sprintf("DataSource[%v] becomes %v[%v]", ds.ID(), dual.TP(), dual.ID())
+func appendNoPartitionChildTraceStep(ds *DataSource, dual LogicalPlan, opt *logicalOptimizeOp) {
+	action := fmt.Sprintf("Datasource[%v] becomes %v[%v]", ds.ID(), dual.TP(), dual.ID())
 	reason := fmt.Sprintf("Datasource[%v] has no available partition table after partition pruning", ds.ID())
 	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
