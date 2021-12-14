@@ -17,11 +17,11 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
