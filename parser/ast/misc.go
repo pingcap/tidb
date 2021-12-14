@@ -2058,6 +2058,12 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(v)
 		}
+	case AdminFlushPlanCache:
+		if n.InstanceScope {
+			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
+		} else {
+			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
+		}
 	case AdminFlushBindings:
 		ctx.WriteKeyWord("FLUSH BINDINGS")
 	case AdminCaptureBindings:
