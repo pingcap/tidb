@@ -587,6 +587,12 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	c.Assert(tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"), NotNil)
+
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

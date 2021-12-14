@@ -28,8 +28,6 @@ import (
 )
 
 func TestScalarFunction(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
@@ -57,8 +55,6 @@ func TestScalarFunction(t *testing.T) {
 }
 
 func TestIssue23309(t *testing.T) {
-	t.Parallel()
-
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -74,8 +70,6 @@ func TestIssue23309(t *testing.T) {
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,

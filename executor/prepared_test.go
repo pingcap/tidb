@@ -30,7 +30,6 @@ import (
 )
 
 func TestPreparedNameResolver(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -47,7 +46,6 @@ func TestPreparedNameResolver(t *testing.T) {
 
 // a 'create table' DDL statement should be accepted if it has no parameters.
 func TestPreparedDDL(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -58,7 +56,6 @@ func TestPreparedDDL(t *testing.T) {
 
 // TestUnsupportedStmtForPrepare is related to https://github.com/pingcap/tidb/issues/17412
 func TestUnsupportedStmtForPrepare(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -70,7 +67,6 @@ func TestUnsupportedStmtForPrepare(t *testing.T) {
 }
 
 func TestIgnorePlanCache(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -123,7 +119,6 @@ func (sm *mockSessionManager2) ServerID() uint64 {
 }
 
 func TestPreparedStmtWithHint(t *testing.T) {
-	t.Parallel()
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
