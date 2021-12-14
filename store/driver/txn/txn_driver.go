@@ -230,8 +230,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
-	case kv.CachedTableWriteLease:
-		txn.KVTxn.SetCachedTableWriteLease(val.([]uint64))
+	case kv.CommitTSUpperBoundCheck:
+		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	}
 }
 

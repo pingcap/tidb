@@ -569,7 +569,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.txn.SetOption(kv.CachedTableWriteLease, c.lease)
+		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
 	}
 
 	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
@@ -645,6 +645,16 @@ func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRe
 
 func (c *cachedTableRenewLease) stop(ctx context.Context) {
 	close(c.exit)
+}
+
+func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
+	for i := 0; i < len(c.lease); i++ {
+		lease := atomic.LoadUint64(&c.lease[i])
+		if commitTS >= lease {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
