@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBitCount(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -75,7 +75,6 @@ func TestBitCount(t *testing.T) {
 }
 
 func TestRowFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.RowFunc]
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
@@ -83,7 +82,6 @@ func TestRowFunc(t *testing.T) {
 }
 
 func TestSetVar(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
@@ -119,7 +117,6 @@ func TestSetVar(t *testing.T) {
 }
 
 func TestGetVar(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
@@ -174,12 +171,11 @@ func TestGetVar(t *testing.T) {
 }
 
 func TestValues(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
 	require.Error(t, err)
-	require.Regexp(t, ".*Incorrect parameter count in the call to native function 'values'", err.Error())
+	require.Regexp(t, "Incorrect parameter count in the call to native function 'values'$", err.Error())
 
 	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
 	require.NoError(t, err)
@@ -191,20 +187,19 @@ func TestValues(t *testing.T) {
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	require.Error(t, err)
-	require.Regexp(t, "Session current insert values len.*", err.Error())
+	require.Regexp(t, "^Session current insert values len", err.Error())
 
 	currInsertValues := types.MakeDatums("1", "2")
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	require.NoError(t, err)
 
-	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
+	cmp, err := ret.Compare(nil, &currInsertValues[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
 
 func TestSetVarFromColumn(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// Construct arguments.
 	argVarName := &Constant{

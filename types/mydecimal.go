@@ -17,6 +17,7 @@ package types
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -393,8 +394,6 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	// strErr is used to check str is bad number or not
-	var strErr error
 	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
@@ -425,8 +424,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 			endIdx++
 		}
 		digitsFrac = endIdx - strIdx - 1
-	} else if strIdx < len(str) && (str[strIdx] != 'e' && str[strIdx] != 'E' && str[strIdx] != ' ') {
-		strErr = ErrBadNumber
 	} else {
 		digitsFrac = 0
 		endIdx = strIdx
@@ -486,33 +483,40 @@ func (d *MyDecimal) FromString(str []byte) error {
 	if innerIdx != 0 {
 		d.wordBuf[wordIdx] = word * powers10[digitsPerWord-innerIdx]
 	}
-	if endIdx+1 <= len(str) && (str[endIdx] == 'e' || str[endIdx] == 'E') {
-		exponent, err1 := strToInt(string(str[endIdx+1:]))
-		if err1 != nil {
-			err = errors.Cause(err1)
-			if err != ErrTruncated {
-				*d = zeroMyDecimal
-			}
-		}
-		if exponent > math.MaxInt32/2 {
-			negative := d.negative
-			maxDecimal(wordBufLen*digitsPerWord, 0, d)
-			d.negative = negative
-			err = ErrOverflow
-		}
-		if exponent < math.MinInt32/2 && err != ErrOverflow {
-			*d = zeroMyDecimal
-			err = ErrTruncated
-		}
-		if err != ErrOverflow {
-			shiftErr := d.Shift(int(exponent))
-			if shiftErr != nil {
-				if shiftErr == ErrOverflow {
-					negative := d.negative
-					maxDecimal(wordBufLen*digitsPerWord, 0, d)
-					d.negative = negative
+	if endIdx+1 <= len(str) {
+		if str[endIdx] == 'e' || str[endIdx] == 'E' {
+			exponent, err1 := strToInt(string(str[endIdx+1:]))
+			if err1 != nil {
+				err = errors.Cause(err1)
+				if err != ErrTruncated {
+					*d = zeroMyDecimal
 				}
-				err = shiftErr
+			}
+			if exponent > math.MaxInt32/2 {
+				negative := d.negative
+				maxDecimal(wordBufLen*digitsPerWord, 0, d)
+				d.negative = negative
+				err = ErrOverflow
+			}
+			if exponent < math.MinInt32/2 && err != ErrOverflow {
+				*d = zeroMyDecimal
+				err = ErrTruncated
+			}
+			if err != ErrOverflow {
+				shiftErr := d.Shift(int(exponent))
+				if shiftErr != nil {
+					if shiftErr == ErrOverflow {
+						negative := d.negative
+						maxDecimal(wordBufLen*digitsPerWord, 0, d)
+						d.negative = negative
+					}
+					err = shiftErr
+				}
+			}
+		} else {
+			trimstr := strings.TrimSpace(string(str[endIdx:]))
+			if len(trimstr) != 0 {
+				err = ErrTruncated
 			}
 		}
 	}
@@ -527,9 +531,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 		d.negative = false
 	}
 	d.resultFrac = d.digitsFrac
-	if strErr != nil {
-		return strErr
-	}
 	return err
 }
 

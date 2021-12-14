@@ -55,7 +55,7 @@ func TestScheduler(t *testing.T) {
 	}
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{}, cfg, mock)
 	require.Error(t, err)
-	require.Regexp(t, "^failed to update PD.*", err.Error())
+	require.Regexp(t, "^failed to update PD", err.Error())
 	go func() {
 		<-schedulerPauseCh
 	}()

@@ -190,7 +190,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

@@ -285,6 +285,11 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
+		// so we build a from_binary function to do this check.
+		ft := args[0].GetType().Clone()
+		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
+		bf.args[0] = BuildFromBinaryFunction(ctx, args[0], ft)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -292,6 +297,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
+		if bf.tp.Flen == types.UnspecifiedLength {
+			bf.tp.Flen = args[0].GetType().Flen
+		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:

@@ -42,8 +42,6 @@ func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 	}
 }
 func TestConvertColumnInfo(t *testing.T) {
-	t.Parallel()
-
 	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{
