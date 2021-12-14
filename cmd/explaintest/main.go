@@ -593,8 +593,8 @@ func (t *tester) checkLastResult() error {
 	if size == int64(t.outputLen) {
 		return nil
 	}
-	buf := make([]byte, int(size) - t.outputLen + len(t.lastResult))
-	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen - len(t.lastResult))); !(err == nil || err == io.EOF) {
+	buf := make([]byte, int(size)-t.outputLen+len(t.lastResult))
+	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen-len(t.lastResult))); !(err == nil || err == io.EOF) {
 		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", t.lastText, t.lastQuery.Line, t.lastResult, err))
 	}
 	if !bytes.Equal(t.lastResult, buf) {
