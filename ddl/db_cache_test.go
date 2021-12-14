@@ -46,7 +46,6 @@ func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string)
 }
 
 func TestAlterPartitionCache(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -77,7 +76,6 @@ func TestAlterPartitionCache(t *testing.T) {
 }
 
 func TestAlterViewTableCache(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -90,7 +88,6 @@ func TestAlterViewTableCache(t *testing.T) {
 }
 
 func TestAlterTableNoCache(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -115,7 +112,6 @@ func TestAlterTableNoCache(t *testing.T) {
 }
 
 func TestIndexOnCacheTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

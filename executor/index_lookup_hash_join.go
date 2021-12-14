@@ -148,6 +148,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.cancelFunc = nil
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
@@ -311,7 +312,6 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
-		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
 		for range e.resultCh {
