@@ -34,8 +34,6 @@ func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll s
 }
 
 func TestInferCollation(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		exprs []Expression
 		err   bool
@@ -268,8 +266,6 @@ func newColInt(coercibility Coercibility) *Column {
 }
 
 func TestDeriveCollation(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	tests := []struct {
 		fcs    []string
