@@ -86,7 +86,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
-	flags.Uint32(flagConcurrency, 4, "The size of thread pool on br that executes the task," +
+	flags.Uint32(flagConcurrency, 4, "The size of thread pool on BR that executes tasks, " +
 		"this value should increased when backup large amount of table + index")
 
 	flags.Bool(flagRemoveSchedulers, false,
