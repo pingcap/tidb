@@ -703,6 +703,10 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.ctx.GetSessionVars().StmtCtx, path.TableFilters, ds.ctx.GetClient(), kv.TiKV) {
+			addCurrentFilter = true
+			path.TableFilters = nil
+		}
 	}
 	if addCurrentFilter {
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current])

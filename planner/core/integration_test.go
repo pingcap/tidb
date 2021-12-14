@@ -5031,6 +5031,18 @@ func (s *testIntegrationSuite) TestIssue30200(c *C) {
 		"    ├─IndexRangeScan_7(Build) 10.00 cop[tikv] table:t1, index:idx_1(c2, c3) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
 		"    └─TableRowIDScan_8(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c3, 10, 'a')) = 10;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 int , pk int, primary key( pk ) , unique key( c1));")
+	tk.MustExec("insert into t1 values(-3896405, -1), (-2, 1), (-1, -2);")
+	// to_base64(left(pk, 5)) is in partial_path's TableFilters. But it cannot be pushed to TiKV. So it should be executed in TiDB.
+	tk.MustQuery("explain select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows(
+		"Selection_5 8000.00 root  or(eq(test.t1.c1, -3896405), and(in(test.t1.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(test.t1.pk, var_string(20)), 5)), double BINARY))))",
+		"└─IndexMerge_9 3.00 root  ",
+		"  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c1(c1) range:[-3896405,-3896405], keep order:false, stats:pseudo",
+		"  ├─TableRangeScan_7(Build) 2.00 cop[tikv] table:t1 range:[1,1], [53330,53330], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 3.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows("-3896405 -1"))
 }
 
 func (s *testIntegrationSuite) TestIssue29705(c *C) {
