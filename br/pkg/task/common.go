@@ -155,6 +155,7 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
+	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
 	TableFilter        filter.Filter `json:"-" toml:"-"`
 	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
@@ -407,12 +408,11 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.Tables = make(map[string]struct{})
 	var caseSensitive bool
 	if filterFlag := flags.Lookup(flagFilter); filterFlag != nil {
-		var f filter.Filter
-		f, err = filter.Parse(filterFlag.Value.(pflag.SliceValue).GetSlice())
+		cfg.FilterStr = filterFlag.Value.(pflag.SliceValue).GetSlice()
+		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cfg.TableFilter = f
 		caseSensitive, err = flags.GetBool(flagCaseSensitive)
 		if err != nil {
 			return errors.Trace(err)
