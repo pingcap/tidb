@@ -33,8 +33,6 @@ func TestTrackingID(t *testing.T) {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 
-	t.Parallel()
-
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
 
