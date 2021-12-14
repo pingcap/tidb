@@ -22,8 +22,6 @@ import (
 )
 
 func TestWeekBehaviour(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, weekBehaviour(1), weekBehaviourMondayFirst)
 	require.Equal(t, weekBehaviour(2), weekBehaviourYear)
 	require.Equal(t, weekBehaviour(4), weekBehaviourFirstWeekday)
@@ -34,8 +32,6 @@ func TestWeekBehaviour(t *testing.T) {
 }
 
 func TestWeek(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		Input  CoreTime
 		Mode   int
@@ -53,8 +49,6 @@ func TestWeek(t *testing.T) {
 }
 
 func TestCalcDaynr(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 0, calcDaynr(0, 0, 0))
 	require.Equal(t, 3652424, calcDaynr(9999, 12, 31))
 	require.Equal(t, 719528, calcDaynr(1970, 1, 1))
@@ -64,8 +58,6 @@ func TestCalcDaynr(t *testing.T) {
 }
 
 func TestCalcTimeTimeDiff(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T1           CoreTime
 		T2           CoreTime
@@ -105,8 +97,6 @@ func TestCalcTimeTimeDiff(t *testing.T) {
 }
 
 func TestCompareTime(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T1     CoreTime
 		T2     CoreTime
@@ -126,8 +116,6 @@ func TestCompareTime(t *testing.T) {
 }
 
 func TestGetDateFromDaynr(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		daynr uint
 		year  uint
@@ -157,8 +145,6 @@ func TestGetDateFromDaynr(t *testing.T) {
 }
 
 func TestMixDateAndTime(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		date   CoreTime
 		dur    Duration
@@ -208,8 +194,6 @@ func TestMixDateAndTime(t *testing.T) {
 }
 
 func TestIsLeapYear(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T      CoreTime
 		Expect bool
@@ -234,8 +218,6 @@ func TestIsLeapYear(t *testing.T) {
 	}
 }
 func TestGetLastDay(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year        int
 		month       int
@@ -255,8 +237,6 @@ func TestGetLastDay(t *testing.T) {
 }
 
 func TestGetFixDays(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year        int
 		month       int
@@ -278,8 +258,6 @@ func TestGetFixDays(t *testing.T) {
 }
 
 func TestAddDate(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year  int
 		month int
@@ -300,8 +278,6 @@ func TestAddDate(t *testing.T) {
 }
 
 func TestWeekday(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		Input  CoreTime
 		Expect string
@@ -318,7 +294,6 @@ func TestWeekday(t *testing.T) {
 }
 
 func TestFindZoneTransition(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		TZ      string
 		dt      string
@@ -358,7 +333,6 @@ func TestFindZoneTransition(t *testing.T) {
 }
 
 func TestAdjustedGoTime(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		TZ      string
 		dt      CoreTime

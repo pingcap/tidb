@@ -27,7 +27,6 @@ import (
 )
 
 func TestSchemaValidator(t *testing.T) {
-	t.Parallel()
 	t.Run("general", subTestSchemaValidatorGeneral)
 	t.Run("enqueue", subTestEnqueue)
 	t.Run("enqueueActionType", subTestEnqueueActionType)
