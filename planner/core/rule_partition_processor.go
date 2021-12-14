@@ -339,6 +339,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
+	appendTableDualTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
 
@@ -894,6 +895,7 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
+	appendTableDualTraceStep(ds, tableDual, opt)
 	return tableDual, nil
 }
 
@@ -1614,4 +1616,10 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		}()
 	}
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
+}
+
+func appendTableDualTraceStep(ds *DataSource, dual *LogicalTableDual, opt *logicalOptimizeOp) {
+	action := fmt.Sprintf("DataSource[%v] becomes %v[%v]", ds.ID(), dual.TP(), dual.ID())
+	reason := fmt.Sprintf("Datasource[%v] has no available partition table after partition pruning", ds.ID())
+	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
