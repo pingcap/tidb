@@ -40,6 +40,10 @@ func TestBinaryJSONMarshalUnmarshal(t *testing.T) {
 func TestBinaryJSONExtract(t *testing.T) {
 	bj1 := mustParseBinaryFromString(t, `{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	bj2 := mustParseBinaryFromString(t, `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
+	bj3 := mustParseBinaryFromString(t, `{"properties": {"$type": "TiDB"}}`)
+	bj4 := mustParseBinaryFromString(t, `{"properties": {"$type$type": {"$a$a" : "TiDB"}}}`)
+	bj5 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a" : {"$b" : "TiDB"}}}}`)
+	bj6 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a$a" : "TiDB"}},"hello": {"$b$b": "world","$c": "amazing"}}`)
 
 	var tests = []struct {
 		bj              BinaryJSON
@@ -59,10 +63,17 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj1, []string{`$.a[*]."aa"`}, mustParseBinaryFromString(t, `["bb", "cc"]`), true, nil},
 		{bj1, []string{`$."\"hello\""`}, mustParseBinaryFromString(t, `"world"`), true, nil},
 		{bj1, []string{`$**[1]`}, mustParseBinaryFromString(t, `"2"`), true, nil},
+		{bj3, []string{`$.properties.$type`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj4, []string{`$.properties.$type$type`}, mustParseBinaryFromString(t, `{"$a$a" : "TiDB"}`), true, nil},
+		{bj4, []string{`$.properties.$type$type.$a$a`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.$b`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.*[0]`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
 
 		// test extract with multi path expressions.
 		{bj1, []string{"$.a", "$[5]"}, mustParseBinaryFromString(t, `[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
 		{bj2, []string{"$.a", "$[0]"}, mustParseBinaryFromString(t, `[{"a": 1, "b": true}]`), true, nil},
+		{bj6, []string{"$.properties", "$[1]"}, mustParseBinaryFromString(t, `[{"$type": {"$a$a" : "TiDB"}}]`), true, nil},
+		{bj6, []string{"$.hello", "$[2]"}, mustParseBinaryFromString(t, `[{"$b$b": "world","$c": "amazing"}]`), true, nil},
 	}
 
 	for _, test := range tests {
