@@ -206,6 +206,8 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestPlacementFollowers(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	defer tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop placement policy if exists x")
 
 	tk.MustExec("drop placement policy if exists x")
 	tk.MustGetErrMsg("create placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
