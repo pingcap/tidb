@@ -116,7 +116,9 @@ type hashjoinWorkerResult struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
-	close(e.closeCh)
+	if e.closeCh != nil {
+		close(e.closeCh)
+	}
 	e.finished.Store(true)
 	if e.prepared {
 		if e.buildFinished != nil {
