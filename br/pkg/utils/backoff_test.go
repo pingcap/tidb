@@ -16,8 +16,6 @@ import (
 )
 
 func TestBackoffWithSuccess(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
@@ -37,8 +35,6 @@ func TestBackoffWithSuccess(t *testing.T) {
 }
 
 func TestBackoffWithFatalError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")
@@ -66,8 +62,6 @@ func TestBackoffWithFatalError(t *testing.T) {
 }
 
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	canceledError := status.Error(codes.Canceled, "context canceled")
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
@@ -80,8 +74,6 @@ func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 }
 
 func TestBackoffWithRetryableError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond)
 	err := utils.WithRetry(context.Background(), func() error {
@@ -104,8 +96,6 @@ func TestBackoffWithRetryableError(t *testing.T) {
 }
 
 func TestPdBackoffWithRetryableError(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewPDReqBackoffer()
 	gRPCError := status.Error(codes.Unavailable, "transport is closing")

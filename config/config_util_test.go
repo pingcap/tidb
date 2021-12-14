@@ -25,8 +25,6 @@ import (
 )
 
 func TestCloneConf(t *testing.T) {
-	t.Parallel()
-
 	c1, err := CloneConf(&defaultConf)
 	require.NoError(t, err)
 	c2, err := CloneConf(c1)
@@ -44,8 +42,6 @@ func TestCloneConf(t *testing.T) {
 }
 
 func TestMergeConfigItems(t *testing.T) {
-	t.Parallel()
-
 	oriConf, _ := CloneConf(&defaultConf)
 	oldConf, _ := CloneConf(oriConf)
 	newConf, _ := CloneConf(oldConf)
@@ -96,8 +92,6 @@ func TestMergeConfigItems(t *testing.T) {
 }
 
 func TestFlattenConfig(t *testing.T) {
-	t.Parallel()
-
 	toJSONStr := func(v interface{}) string {
 		str, err := json.Marshal(v)
 		require.NoError(t, err)
