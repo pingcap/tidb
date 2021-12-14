@@ -1690,7 +1690,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	e.ctx.GetSessionVars().LastUpdateTime4PC = now
 	e.ctx.PreparedPlanCache().DeleteAll()
-	if s.GlobalScope {
+	if s.InstanceScope {
 		domain.GetDomain(e.ctx).ExpiredTimeStamp4PC = now
 	}
 	return nil

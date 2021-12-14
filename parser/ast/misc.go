@@ -1930,11 +1930,11 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges []HandleRange
-	ShowSlow     *ShowSlow
-	Plugins      []string
-	Where        ExprNode
-	GlobalScope  bool
+	HandleRanges  []HandleRange
+	ShowSlow      *ShowSlow
+	Plugins       []string
+	Where         ExprNode
+	InstanceScope bool
 }
 
 // Restore implements Node interface.

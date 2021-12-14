@@ -816,7 +816,7 @@ func TestDMLStmt(t *testing.T) {
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
 		// Test for 'admin flush plan_cache'
-		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
+		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
 		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
 
 		// for on duplicate key update

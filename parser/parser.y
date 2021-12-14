@@ -1021,6 +1021,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	InstanceScope                          "The scope of some statments"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -10150,11 +10151,11 @@ AdminStmt:
 			Tp: ast.AdminResetTelemetryID,
 		}
 	}
-|	"ADMIN" "FLUSH" GlobalScope "PLAN_CACHE"
+|	"ADMIN" "FLUSH" InstanceScope "PLAN_CACHE"
 	{
 		$$ = &ast.AdminStmt{
-			Tp:          ast.AdminFlushPlanCache,
-			GlobalScope: $3.(bool),
+			Tp:            ast.AdminFlushPlanCache,
+			InstanceScope: $3.(bool),
 		}
 	}
 
@@ -10730,6 +10731,19 @@ GlobalScope:
 		$$ = false
 	}
 |	"GLOBAL"
+	{
+		$$ = true
+	}
+|	"SESSION"
+	{
+		$$ = false
+	}
+
+InstanceScope:
+	{
+		$$ = false
+	}
+|	"INSTANCE"
 	{
 		$$ = true
 	}
