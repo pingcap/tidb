@@ -16,6 +16,7 @@ package reporter
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 	"time"
@@ -31,26 +32,44 @@ import (
 
 // SingleTargetDataSink reports data to grpc servers.
 type SingleTargetDataSink struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	curRPCAddr string
 	conn       *grpc.ClientConn
+	sendTaskCh chan sendTask
+
 	// calling decodePlan this can take a while, so should not block critical paths
 	decodePlan planBinaryDecodeFunc
-	sendTaskCh chan sendTask
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
 func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataSink {
+	ctx, cancel := context.WithCancel(context.Background())
 	dataSink := &SingleTargetDataSink{
-		decodePlan: decodePlan,
+		ctx:    ctx,
+		cancel: cancel,
+
+		curRPCAddr: "",
+		conn:       nil,
 		sendTaskCh: make(chan sendTask, 1),
+
+		decodePlan: decodePlan,
 	}
 	go util.WithRecovery(dataSink.run, nil)
 	return dataSink
 }
 
-// run will return when ds.sendTaskCh is closed.
+// run will return when SingleTargetDataSink is closed.
 func (ds *SingleTargetDataSink) run() {
-	for task := range ds.sendTaskCh {
+	for {
+		var task sendTask
+		select {
+		case <-ds.ctx.Done():
+			return
+		case task = <-ds.sendTaskCh:
+		}
+
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 		if targetRPCAddr == "" {
 			continue
@@ -71,16 +90,18 @@ func (ds *SingleTargetDataSink) run() {
 
 var _ DataSink = &SingleTargetDataSink{}
 
-// Send implements the DataSink interface.
+// TrySend implements the DataSink interface.
 // Currently the implementation will establish a new connection every time,
 // which is suitable for a per-minute sending period
-func (ds *SingleTargetDataSink) Send(data ReportData, deadline time.Time) {
+func (ds *SingleTargetDataSink) TrySend(data ReportData, deadline time.Time) error {
 	select {
 	case ds.sendTaskCh <- sendTask{data: data, deadline: deadline}:
-		// sent successfully
+		return nil
+	case <-ds.ctx.Done():
+		return ds.ctx.Err()
 	default:
 		ignoreReportChannelFullCounter.Inc()
-		logutil.BgLogger().Warn("[top-sql] the channel of single target dataSink is full")
+		return errors.New("the channel of single target dataSink is full")
 	}
 }
 
@@ -90,15 +111,18 @@ func (ds *SingleTargetDataSink) IsPaused() bool {
 }
 
 // IsDown implements the DataSink interface.
-// SingleTargetDataSink be never down. As long as the config ReceiverAddress is valid,
-// SingleTargetDataSink will keep running.
 func (ds *SingleTargetDataSink) IsDown() bool {
-	return false
+	select {
+	case <-ds.ctx.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 // Close uses to close grpc connection.
 func (ds *SingleTargetDataSink) Close() {
-	close(ds.sendTaskCh)
+	ds.cancel()
 	if ds.conn == nil {
 		return
 	}

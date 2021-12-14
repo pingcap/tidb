@@ -562,5 +562,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
 		}
 	})
 	deadline := time.Now().Add(timeout)
-	tsr.dataSink.Send(data, deadline)
+	if err := tsr.dataSink.TrySend(data, deadline); err != nil {
+		logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+	}
 }
