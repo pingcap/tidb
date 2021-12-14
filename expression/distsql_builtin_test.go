@@ -868,7 +868,7 @@ func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Flen:    int32(ft.Flen),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Collate: collate.CollationToProto(ft.Collate),
 		Elems:   ft.Elems,
 	}
 }
