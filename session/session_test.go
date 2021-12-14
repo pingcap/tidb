@@ -5896,7 +5896,7 @@ func TestCorrupt(t *testing.T) {
 	tk.MustExec("set tidb_enable_mutation_checker = true;")
 	tk.MustQuery("select @@tidb_enable_mutation_checker").Check(testkit2.Rows("1"))
 	tk.MustExec(`CREATE TABLE t1653 (c1 VARCHAR(10), c1377 VARCHAR(10), KEY i1654 (c1, c1377), KEY i1655 (c1377, c1))`)
-	failpoint.Enable("github.com/pingcap/tidb/table/tables/corruptMutations", "return(\"missingIndex\")")
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/corruptMutations", "return(\"extraIndex\")")
 	tk.MustExec("begin")
 	tk.MustExec(`insert into t1653 set c1 = 'a', c1377 = 'b'`)
 	tk.MustExec(`insert into t1653 values('aa', 'bb')`)

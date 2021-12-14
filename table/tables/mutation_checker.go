@@ -69,16 +69,7 @@ type columnMaps struct {
 func CheckDataConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
-) (err error) {
-	failpoint.Inject("corruptMutations", func(commands failpoint.Value) {
-		if e := corruptMutations(t, txn, sh, commands.(string)); e != nil {
-			err = e
-		}
-	})
-	if err != nil {
-		return err
-	}
-
+) error {
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
@@ -528,5 +519,12 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 		}
 
 	}
+	return nil
+}
+
+func injectMutationError(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle) error {
+	failpoint.Inject("corruptMutations", func(commands failpoint.Value) {
+		failpoint.Return(corruptMutations(t, txn, sh, commands.(string)))
+	})
 	return nil
 }
