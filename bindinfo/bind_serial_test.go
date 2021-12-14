@@ -262,8 +262,28 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
-	// Add test for SetOprStmt
 	tk.MustExec("create index index_id on t1(id)")
+	tk.MustExec("prepare stmt1 from 'SELECT * from t1 use index(index_id)';")
+	tk.MustExec("execute stmt1;")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("create global binding for SELECT * from t1 using SELECT * from t1 ignore index(index_id)")
+	tk.MustExec("execute stmt1;")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.False(t, tk.HasPlan4ExplainFor(res, "IndexReader"))
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Add test for SetOprStmt
 	tk.MustExec("prepare stmt1 from 'SELECT * from t1 union SELECT * from t1';")
 	tk.MustExec("execute stmt1;")
 	tkProcess = tk.Session().ShowProcess()
