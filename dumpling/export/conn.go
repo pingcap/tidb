@@ -22,8 +22,8 @@ type BaseConn struct {
 
 func newBaseConn(conn *sql.Conn, shouldRetry bool, rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) *BaseConn {
 	baseConn := &BaseConn{DBConn: conn}
+	baseConn.backOffer = newRebuildConnBackOffer(shouldRetry)
 	if shouldRetry {
-		baseConn.backOffer = newRebuildConnBackOffer(shouldRetry)
 		baseConn.rebuildConnFn = rebuildConnFn
 	}
 	return baseConn

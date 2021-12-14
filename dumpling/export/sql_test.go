@@ -248,8 +248,10 @@ func TestBuildOrderByClause(t *testing.T) {
 	mock.ExpectQuery(query).WillReturnError(errors.New("invalid connection"))
 	mock.ExpectQuery(query).WillReturnError(errors.New("invalid connection"))
 	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows(showIndexHeaders).AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
+	mockConf.SortByPk = true
 	orderByClause, err = buildOrderByClause(tctx, mockConf, baseConn, database, table, false)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 	require.Equal(t, "ORDER BY `id`", orderByClause)
 }
 
