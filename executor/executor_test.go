@@ -9508,15 +9508,9 @@ func (s *testSerialSuite) TestIssue30289(c *C) {
 // Test invoke Close without invoking Open before for each operators.
 func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
 
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
-	se, err := session.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
