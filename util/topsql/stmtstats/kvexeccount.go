@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
 
 // CreateKvExecCounter creates an associated KvExecCounter from StatementStats.
@@ -42,13 +43,13 @@ type KvExecCounter struct {
 	marked map[string]struct{} // HashSet<Target>
 }
 
-// RPCInterceptor returns a tikvrpc.Interceptor for client-go.
+// RPCInterceptor returns an interceptor.RPCInterceptor for client-go.
 // The returned interceptor is generally expected to be bind to transaction or
 // snapshot. In this way, the logic preset by KvExecCounter will be executed before
 // each RPC request is initiated, in order to count the number of SQL executions of
 // the TiKV dimension.
-func (c *KvExecCounter) RPCInterceptor() tikvrpc.Interceptor {
-	return func(next tikvrpc.InterceptorFunc) tikvrpc.InterceptorFunc {
+func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
+	return func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			c.mark(target)
 			return next(target, req)

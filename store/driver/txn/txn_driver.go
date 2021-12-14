@@ -32,6 +32,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -231,7 +232,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.SnapInterceptor:
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
 	case kv.RPCInterceptor:
-		txn.KVTxn.SetInterceptor(val.(tikvrpc.Interceptor))
+		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	}
 }
 

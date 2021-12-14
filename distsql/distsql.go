@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/zap"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
-	ctx = BindSQLExecCounterInCtx(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
 	if resp == nil {
@@ -92,7 +92,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}
 	}
 
-	ctx = BindSQLExecCounterInCtx(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -155,7 +155,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
-	ctx = BindSQLExecCounterInCtx(ctx, stmtCtx)
+	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -251,14 +251,14 @@ func init() {
 	}
 }
 
-// BindSQLExecCounterInCtx binds an interceptor for client-go to count the
+// WithSQLKvExecCounterInterceptor binds an interceptor for client-go to count the
 // number of SQL executions of each TiKV (if any).
-func BindSQLExecCounterInCtx(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
+func WithSQLKvExecCounterInterceptor(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
 	if variable.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
 		// Unlike calling Transaction or Snapshot interface, in distsql package we directly
-		// face tikv Request. So we need to manually bind Interceptor to ctx. Instead of
-		// calling SetInterceptor on Transaction or Snapshot.
-		return tikvrpc.SetInterceptorIntoCtx(ctx, stmtCtx.KvExecCounter.RPCInterceptor())
+		// face tikv Request. So we need to manually bind RPCInterceptor to ctx. Instead of
+		// calling SetRPCInterceptor on Transaction or Snapshot.
+		return interceptor.WithRPCInterceptor(ctx, stmtCtx.KvExecCounter.RPCInterceptor())
 	}
 	return ctx
 }
