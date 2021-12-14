@@ -412,10 +412,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}
 	}
-	// Update lastUpdateTime to the newest one.
+	// Update lastUpdateTime to the newest one. And delete all the cached plan whether plan cache enable.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC
 	if expiredTimeStamp4PC.Compare(sessVars.LastUpdateTime4PC) > 0 {
 		sctx.PreparedPlanCache().DeleteAll()
+		prepared.CachedPlan = nil
 		sessVars.LastUpdateTime4PC = expiredTimeStamp4PC
 		goto REBUILD
 	}
