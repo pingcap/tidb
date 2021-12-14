@@ -441,20 +441,24 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
 	}
 	var output []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
-		Plan                  []string
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
+		Plan                         []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
+		testKit.Se.GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
 		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
 		plan := testKit.MustQuery(tt.SQL)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
+			output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
 			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -40,14 +41,14 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
-	t       *testing.T
+	t       testing.TB
 	store   kv.Storage
 	session session.Session
 }
 
 // NewTestKit returns a new *TestKit.
-func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
-	variable.ProcessGeneralLog.Store(false)
+func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
+  variable.ProcessGeneralLog.Store(false)
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -185,7 +186,7 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
-func newSession(t *testing.T, store kv.Storage) session.Session {
+func newSession(t testing.TB, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
@@ -226,4 +227,17 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) b
 		}
 	}
 	return false
+}
+
+// CheckExecResult checks the affected rows and the insert id after executing MustExec.
+func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
+	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows)
+	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID)
+}
+
+// WithPruneMode run test case under prune mode.
+func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
+	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
+	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
+	f()
 }

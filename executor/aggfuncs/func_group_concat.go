@@ -21,15 +21,14 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -294,6 +293,7 @@ type topNRows struct {
 	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
 	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
+	collators      []collate.Collator
 }
 
 func (h topNRows) Len() int {
@@ -303,7 +303,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].CompareDatum(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k])
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -412,8 +412,10 @@ func (e *groupConcatOrder) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 
 func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
@@ -422,6 +424,7 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
+			collators:      ctors,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -479,7 +482,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return 0, plannercore.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -514,8 +517,10 @@ func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(sctx sessionctx.Conte
 
 func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
 	}
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
@@ -525,6 +530,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
+			collators:      ctors,
 		},
 		valSet: valSet,
 	}
@@ -599,7 +605,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.

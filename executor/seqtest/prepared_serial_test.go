@@ -168,7 +168,7 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 		rs, err = stmt.Exec(ctx)
 		require.NoError(t, err)
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(ctx, req)
 		require.NoError(t, err)
 		require.NoError(t, rs.Close())

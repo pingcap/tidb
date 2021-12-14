@@ -294,7 +294,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	batchSize := math.Min(float64(p.ctx.GetSessionVars().IndexJoinBatchSize), outerCnt)
 	sortFactor := 0.0
 	if p.NeedOuterSort {
-		sortFactor = math.Log2(float64(batchSize))
+		sortFactor = math.Log2(batchSize)
 	}
 	if batchSize > 2 {
 		innerCPUCost += outerCnt * (sortFactor + 1.0) * sessVars.CPUFactor
@@ -1295,6 +1295,23 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	return topN
 }
 
+// canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
+// It can be pushed to the index side when all columns used by ByItems are available from the index side and
+//   there's no prefix index column.
+func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+	schema := indexPlan.Schema()
+	for _, col := range byItemCols {
+		pos := schema.ColumnIndex(col)
+		if pos == -1 {
+			return false
+		}
+		if schema.Columns[pos].IsPrefix {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
@@ -1307,7 +1324,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
-		if !copTask.indexPlanFinished && len(copTask.indexPlan.Schema().ColumnsIndices(cols)) > 0 {
+		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
@@ -1458,6 +1475,18 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
+		orderBySize := len(aggFunc.OrderByItems)
+		if orderBySize > 0 {
+			exprs := make([]expression.Expression, 0, orderBySize)
+			for _, item := range aggFunc.OrderByItems {
+				exprs = append(exprs, item.Expr)
+			}
+			if !expression.CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false) {
+				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
+				ret = false
+				break
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sctx, client, aggFunc)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
@@ -1546,6 +1575,7 @@ func BuildFinalModeAggregation(
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
+		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggFunc.HasDistinct {
 			/*
@@ -1563,7 +1593,8 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx, distinctArg) {
+					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
 						break
@@ -1673,12 +1704,18 @@ func BuildFinalModeAggregation(
 			if aggFunc.Name == ast.AggFuncAvg {
 				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
-				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
-				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
+				err := cntAgg.TypeInfer(sctx)
+				if err != nil { // must not happen
+					partial = nil
+					final = original
+					return
+				}
+				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
+				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := *aggFunc
@@ -1700,7 +1737,6 @@ func BuildFinalModeAggregation(
 		finalAggFunc.Args = args
 		finalAggFunc.RetTp = aggFunc.RetTp
 		final.AggFuncs[i] = finalAggFunc
-		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return
@@ -1715,8 +1751,6 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema.Keys = p.schema.Keys
 	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1724,24 +1758,31 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			// inset a count(column)
 			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
+			err := avgCount.TypeInfer(p.ctx)
+			if err != nil { // must not happen
+				return nil
+			}
 			newAggFuncs = append(newAggFuncs, avgCount)
-			avgCount.RetTp = ft
 			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  ft,
+				RetType:  avgCount.RetTp,
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
+			avgSum.TypeInfer4AvgSum(avgSum.RetTp)
 			newAggFuncs = append(newAggFuncs, avgSum)
-			newSchema.Append(p.schema.Columns[i])
-			avgSumCol := p.schema.Columns[i]
+			avgSumCol := &expression.Column{
+				UniqueID: p.schema.Columns[i].UniqueID,
+				RetType:  avgSum.RetTp,
+			}
+			newSchema.Append(avgSumCol)
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
 			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
+			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
 			newAggFuncs = append(newAggFuncs, aggFunc)
@@ -2213,6 +2254,17 @@ func (t *mppTask) convertToRootTask(ctx sessionctx.Context) *rootTask {
 	return t.copy().(*mppTask).convertToRootTaskImpl(ctx)
 }
 
+func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPlan) {
+	switch x := mppPlan.(type) {
+	case *PhysicalTableScan:
+		p.PartitionInfos = append(p.PartitionInfos, tableScanAndPartitionInfo{x, x.PartitionInfo})
+	default:
+		for _, ch := range mppPlan.Children() {
+			collectPartitionInfosFromMPPPlan(p, ch)
+		}
+	}
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2225,6 +2277,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
+	collectPartitionInfosFromMPPPlan(p, t.p)
 
 	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor

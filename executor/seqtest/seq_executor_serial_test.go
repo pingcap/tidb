@@ -96,7 +96,7 @@ func TestEarlyClose(t *testing.T) {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		require.NoError(t, rs.Next(ctx, req))
 		require.NoError(t, rs.Close())
 	}
@@ -109,7 +109,7 @@ func TestEarlyClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select * from earlyclose")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.Error(t, err)
 	require.NoError(t, rs.Close())
@@ -497,7 +497,7 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION `p0` VALUES LESS THAN (10),\n  PARTITION `p1` VALUES LESS THAN (20),\n  PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -529,8 +529,8 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY HASH( `a` )\nPARTITIONS 4",
-	))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY HASH (`a`) PARTITIONS 4"))
 
 	// Test show create table compression type.
 	tk.MustExec(`drop table if exists t1`)
@@ -600,8 +600,7 @@ func TestShow(t *testing.T) {
 	for _, sql := range sqls {
 		res := tk.MustQuery(sql)
 		require.NotNil(t, res)
-		sorted := tk.MustQuery(sql).Sort()
-		require.NotNil(t, sorted)
+		sorted := res.Sort()
 		require.Equal(t, sorted, res)
 	}
 }
@@ -665,7 +664,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	require.NoError(t, err)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
@@ -720,7 +719,7 @@ func TestParallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.parallelExec error")
 }
@@ -743,7 +742,7 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.unparallelExec error")
 }

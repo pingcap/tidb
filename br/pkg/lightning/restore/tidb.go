@@ -83,7 +83,6 @@ func isUnknownSystemVariableErr(err error) bool {
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
-
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -92,12 +91,6 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		SQLMode:          dsn.StrSQLMode,
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
-	}
-
-	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			param.Vars[k] = v
-		}
 	}
 
 	db, err := param.Connect()
@@ -118,6 +111,12 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+	}
+
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			vars[k] = v
+		}
 	}
 
 	for k, v := range vars {

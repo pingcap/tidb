@@ -41,7 +41,8 @@
       "EXPLAIN SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
       "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
       "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
-      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported"
+      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
+      "EXPLAIN SELECT count(a) from t where d=1; -- 11.1. type not supported"
     ]
   },
   {

@@ -31,6 +31,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -223,6 +224,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.ResourceGroupTagger:
+		txn.KVTxn.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:

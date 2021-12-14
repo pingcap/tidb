@@ -15,15 +15,18 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
+func TestMergePartialResult4JsonObjectagg(t *testing.T) {
+	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -63,12 +66,14 @@ func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
 		tests = append(tests, aggTest)
 	}
 
+	ctx := mock.NewContext()
 	for _, test := range tests {
-		s.testMultiArgsMergePartialResult(c, test)
+		testMultiArgsMergePartialResult(t, ctx, test)
 	}
 }
 
-func (s *testSuite) TestJsonObjectagg(c *C) {
+func TestJsonObjectagg(t *testing.T) {
+	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -100,12 +105,14 @@ func (s *testSuite) TestJsonObjectagg(c *C) {
 		tests = append(tests, aggTest)
 	}
 
+	ctx := mock.NewContext()
 	for _, test := range tests {
-		s.testMultiArgsAggFunc(c, test)
+		testMultiArgsAggFunc(t, ctx, test)
 	}
 }
 
-func (s *testSuite) TestMemJsonObjectagg(c *C) {
+func TestMemJsonObjectagg(t *testing.T) {
+	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -146,7 +153,7 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
-			s.testMultiArgsAggMemFunc(c, test)
+			testMultiArgsAggMemFunc(t, test)
 		}
 	}
 }

@@ -109,7 +109,7 @@ func TestBasic(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom.Store()).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store(), nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := store.Begin()
@@ -259,7 +259,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -326,7 +326,7 @@ func TestGetBundle(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -474,15 +474,15 @@ func TestLocalTemporaryTables(t *testing.T) {
 		}
 	}
 
-	assertSchemaByTable := func(sc *infoschema.LocalTemporaryTables, schema model.CIStr, tb *model.TableInfo) {
+	assertSchemaByTable := func(sc *infoschema.LocalTemporaryTables, db *model.DBInfo, tb *model.TableInfo) {
 		got, ok := sc.SchemaByTable(tb)
-		if tb == nil {
-			require.True(t, schema.L == "")
-			require.Equal(t, "", got)
+		if db == nil {
+			require.Nil(t, got)
 			require.False(t, ok)
 		} else {
-			require.Equal(t, schema.L != "", ok)
-			require.Equal(t, got, schema.L)
+			require.NotNil(t, got)
+			require.Equal(t, db.Name.L, got.Name.L)
+			require.True(t, ok)
 		}
 	}
 
@@ -513,7 +513,7 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	for _, p := range prepareTables {
-		err = sc.AddTable(p.db.Name, p.tb)
+		err = sc.AddTable(p.db, p.tb)
 		require.NoError(t, err)
 	}
 
@@ -541,20 +541,20 @@ func TestLocalTemporaryTables(t *testing.T) {
 		)
 
 		assertTableByID(sc, p.tb.Meta().ID, p.db, p.tb)
-		assertSchemaByTable(sc, p.db.Name, p.tb.Meta())
+		assertSchemaByTable(sc, p.db, p.tb.Meta())
 	}
 
 	// test add dup table
-	err = sc.AddTable(db1.Name, tb11)
+	err = sc.AddTable(db1, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
-	err = sc.AddTable(db1b.Name, tb15)
+	err = sc.AddTable(db1b, tb15)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
-	err = sc.AddTable(db1b.Name, tb11)
+	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 	db1c := createNewSchemaInfo("db1")
-	err = sc.AddTable(db1c.Name, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
+	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
 	require.True(t, infoschema.ErrTableExists.Equal(err))
-	err = sc.AddTable(db1b.Name, tb11)
+	err = sc.AddTable(db1b, tb11)
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 
 	// failed add has no effect
@@ -585,22 +585,23 @@ func TestLocalTemporaryTables(t *testing.T) {
 	}
 
 	// test non exist table schemaByTable
-	assertSchemaByTable(sc, model.NewCIStr(""), tb11.Meta())
-	assertSchemaByTable(sc, model.NewCIStr(""), tb22.Meta())
-	assertSchemaByTable(sc, model.NewCIStr(""), nil)
+	assertSchemaByTable(sc, nil, tb11.Meta())
+	assertSchemaByTable(sc, nil, tb22.Meta())
+	assertSchemaByTable(sc, nil, nil)
 
 	// test TemporaryTableAttachedInfoSchema
 	dbTest := createNewSchemaInfo("test")
 	tmpTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableLocal)
 	normalTbTestA := createNewTable(dbTest.ID, "tba", model.TempTableNone)
 	normalTbTestB := createNewTable(dbTest.ID, "tbb", model.TempTableNone)
+	normalTbTestC := createNewTable(db1.ID, "tbc", model.TempTableNone)
 
 	is := &infoschema.TemporaryTableAttachedInfoSchema{
 		InfoSchema:           infoschema.MockInfoSchema([]*model.TableInfo{normalTbTestA.Meta(), normalTbTestB.Meta()}),
 		LocalTemporaryTables: sc,
 	}
 
-	err = sc.AddTable(dbTest.Name, tmpTbTestA)
+	err = sc.AddTable(dbTest, tmpTbTestA)
 	require.NoError(t, err)
 
 	// test TableByName
@@ -641,7 +642,16 @@ func TestLocalTemporaryTables(t *testing.T) {
 	info, ok = is.SchemaByTable(tmpTbTestA.Meta())
 	require.True(t, ok)
 	require.Equal(t, dbTest.Name.L, info.Name.L)
+	// SchemaByTable also returns DBInfo when the schema is not in the infoSchema but the table is an existing tmp table.
 	info, ok = is.SchemaByTable(tb12.Meta())
+	require.True(t, ok)
+	require.Equal(t, db1.Name.L, info.Name.L)
+	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing normal table.
+	info, ok = is.SchemaByTable(normalTbTestC.Meta())
+	require.False(t, ok)
+	require.Nil(t, info)
+	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing tmp table.
+	info, ok = is.SchemaByTable(tb22.Meta())
 	require.False(t, ok)
 	require.Nil(t, info)
 }

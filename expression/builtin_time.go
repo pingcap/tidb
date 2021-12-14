@@ -300,7 +300,7 @@ func (b *builtinDateSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if expr.IsZero() {
+	if expr.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
 	}
 
@@ -4856,7 +4856,7 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 	}
 
 	tz := ctx.GetSessionVars().Location()
-	t, err := val.GoTime(tz)
+	t, err := val.AdjustedGoTime(tz)
 	if err != nil {
 		return 0, false, nil
 	}
@@ -5666,7 +5666,7 @@ func (c *convertTzFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	// tzRegex holds the regex to check whether a string is a time zone.
-	tzRegex, err := regexp.Compile(`(^(\+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^\+13:00$)`)
+	tzRegex, err := regexp.Compile(`(^[-+](0?[0-9]|1[0-3]):[0-5]?\d$)|(^\+14:00?$)`)
 	if err != nil {
 		return nil, err
 	}
@@ -5725,33 +5725,40 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 	fromTzMatched := b.timezoneRegex.MatchString(fromTzStr)
 	toTzMatched := b.timezoneRegex.MatchString(toTzStr)
 
-	if !fromTzMatched && !toTzMatched {
-		fromTz, err := time.LoadLocation(fromTzStr)
+	var fromTz, toTz *time.Location
+	var err error
+
+	if fromTzMatched {
+		fromTz = time.FixedZone(fromTzStr, timeZone2int(fromTzStr))
+	} else {
+		if strings.EqualFold(fromTzStr, "SYSTEM") {
+			fromTzStr = "Local"
+		}
+		fromTz, err = time.LoadLocation(fromTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
 		}
-
-		toTz, err := time.LoadLocation(toTzStr)
-		if err != nil {
-			return types.ZeroTime, true, nil
-		}
-
-		t, err := dt.GoTime(fromTz)
-		if err != nil {
-			return types.ZeroTime, true, nil
-		}
-
-		return types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
 	}
-	if fromTzMatched && toTzMatched {
-		t, err := dt.GoTime(time.Local)
+
+	t, err := dt.GoTime(fromTz)
+	if err != nil {
+		return types.ZeroTime, true, nil
+	}
+	t = t.In(time.UTC)
+
+	if toTzMatched {
+		toTz = time.FixedZone(toTzStr, timeZone2int(toTzStr))
+	} else {
+		if strings.EqualFold(toTzStr, "SYSTEM") {
+			toTzStr = "Local"
+		}
+		toTz, err = time.LoadLocation(toTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
 		}
-
-		return types.NewTime(types.FromGoTime(t.Add(timeZone2Duration(toTzStr)-timeZone2Duration(fromTzStr))), mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
 	}
-	return types.ZeroTime, true, nil
+
+	return types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
 }
 
 type makeDateFunctionClass struct {
@@ -6707,7 +6714,20 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxDatetimeWidthNoFsp, Decimal: types.UnspecifiedLength}
+	flen := mysql.MaxDatetimeWidthNoFsp
+	con, ok := args[0].(*Constant)
+	if !ok {
+		return nil, errors.New("should not happened")
+	}
+	unit, null, err := con.EvalString(ctx, chunk.Row{})
+	if null || err != nil {
+		return nil, errors.New("should not happened")
+	}
+	if unit == ast.TimeUnitMicrosecond.String() {
+		flen = mysql.MaxDatetimeWidthWithFsp
+	}
+
+	bf.tp.Flen = flen
 	sig := &builtinTimestampAddSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_TimestampAdd)
 	return sig, nil
@@ -7181,11 +7201,21 @@ func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 //   2. If t2 < t, we will use t2 as the result,
 //      and with it, a read request won't fail because it's bigger than the latest SafeTS.
 func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
-	if minSafeTime.Before(minTime) {
-		return minTime
-	} else if minSafeTime.After(maxTime) {
-		return maxTime
+	if minSafeTime.Before(minTime) || minSafeTime.After(maxTime) {
+		logutil.BgLogger().Warn("calAppropriateTime",
+			zap.Time("minTime", minTime),
+			zap.Time("maxTime", maxTime),
+			zap.Time("minSafeTime", minSafeTime))
+		if minSafeTime.Before(minTime) {
+			return minTime
+		} else if minSafeTime.After(maxTime) {
+			return maxTime
+		}
 	}
+	logutil.BgLogger().Debug("calAppropriateTime",
+		zap.Time("minTime", minTime),
+		zap.Time("maxTime", maxTime),
+		zap.Time("minSafeTime", minSafeTime))
 	return minSafeTime
 }
 

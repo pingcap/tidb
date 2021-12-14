@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	osuser "os/user"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -197,7 +198,7 @@ const (
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
-		last_analyze_pos 	BLOB DEFAULT NULL,
+		last_analyze_pos 	LONGBLOB DEFAULT NULL,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
@@ -209,8 +210,8 @@ const (
 		bucket_id 	BIGINT(64) NOT NULL,
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
-		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		upper_bound LONGBLOB NOT NULL,
+		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
@@ -355,6 +356,14 @@ const (
 		last_used_at TIMESTAMP,
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
+	);`
+	// CreateTableCacheMetaTable stores the cached table meta lock information.
+	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
+		tid bigint(11) NOT NULL DEFAULT 0,
+		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
+		lease bigint(20) NOT NULL DEFAULT 0,
+		oldReadLease bigint(20) NOT NULL DEFAULT 0,
+		PRIMARY KEY (tid)
 	);`
 )
 
@@ -525,11 +534,15 @@ const (
 	version76 = 76
 	// version77 adds mysql.column_stats_usage table
 	version77 = 77
+	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+	version78 = 78
+	// version79 adds the mysql.table_cache_meta table
+	version79 = 79
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version77
+var currentBootstrapVersion int64 = version79
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -610,6 +623,8 @@ var (
 		upgradeToVer75,
 		upgradeToVer76,
 		upgradeToVer77,
+		upgradeToVer78,
+		upgradeToVer79,
 	}
 )
 
@@ -654,7 +669,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
@@ -838,7 +853,7 @@ func upgradeToVer12(s Session, ver int64) {
 	terror.MustNil(err)
 	sqls := make([]string, 0, 1)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1299,7 +1314,7 @@ func upgradeToVer55(s Session, ver int64) {
 	rs, err := s.ExecuteInternal(ctx, selectSQL)
 	terror.MustNil(err)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1410,7 +1425,7 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
@@ -1599,6 +1614,22 @@ func upgradeToVer77(s Session, ver int64) {
 	doReentrantDDL(s, CreateColumnStatsUsageTable)
 }
 
+func upgradeToVer78(s Session, ver int64) {
+	if ver >= version78 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1681,6 +1712,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 	// Create column_stats_usage table
 	mustExecute(s, CreateColumnStatsUsageTable)
+	// Create table_cache_meta table.
+	mustExecute(s, CreateTableCacheMetaTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1688,10 +1721,20 @@ func doDDLWorks(s Session) {
 // TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
-
-	// Insert a default user with empty password.
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+	if config.GetGlobalConfig().Security.SecureBootstrap {
+		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
+		// i.e. mysql -S /tmp/tidb.sock -uroot
+		// The auth_socket plugin will validate that the user matches $USER.
+		u, err := osuser.Current()
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
+		}
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+	} else {
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	}
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))

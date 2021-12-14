@@ -70,7 +70,7 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 			jobID = job.ID
 			res, checkErr = tk1.Exec("admin cancel ddl jobs " + strconv.Itoa(int(job.ID)))
 			// drain the result set here, otherwise the cancel action won't take effect immediately.
-			chk := res.NewChunk()
+			chk := res.NewChunk(nil)
 			if err := res.Next(context.Background(), chk); err != nil {
 				checkErr = err
 				return

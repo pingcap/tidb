@@ -15,16 +15,20 @@
 package expression
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestLike(c *C) {
+func TestLike(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		input   string
 		pattern string
@@ -47,78 +51,19 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 	}
 
 	for _, tt := range tests {
-		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+		comment := fmt.Sprintf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
-		c.Assert(err, IsNil, commentf)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
+		require.NoError(t, err, comment)
 		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
-		c.Assert(err, IsNil, commentf)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
+		require.NoError(t, err, comment)
+		trequire.DatumEqual(t, types.NewDatum(tt.match), r, comment)
 	}
 }
 
-func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tests := []struct {
-		input        string
-		pattern      string
-		generalMatch int
-		unicodeMatch int
-	}{
-		{"a", "", 0, 0},
-		{"a", "a", 1, 1},
-		{"a", "á", 1, 1},
-		{"a", "b", 0, 0},
-		{"aA", "Aa", 1, 1},
-		{"áAb", `Aa%`, 1, 1},
-		{"áAb", `%ab%`, 1, 1},
-		{"áAb", `%ab`, 1, 1},
-		{"ÀAb", "aA_", 1, 1},
-		{"áééá", "a_%a", 1, 1},
-		{"áééá", "a%_a", 1, 1},
-		{"áéá", "a_%a", 1, 1},
-		{"áéá", "a%_a", 1, 1},
-		{"áá", "a_%a", 0, 0},
-		{"áá", "a%_a", 0, 0},
-		{"áééáííí", "a_%a%", 1, 1},
-
-		// performs matching on a per-character basis
-		// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-		{"ß", "s%", 1, 0},
-		{"ß", "%s", 1, 0},
-		{"ß", "ss", 0, 0},
-		{"ß", "s", 1, 0},
-		{"ss", "%ß%", 1, 0},
-		{"ß", "_", 1, 1},
-		{"ß", "__", 0, 0},
-	}
-	for _, tt := range tests {
-		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
-		fc := funcs[ast.Like]
-		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		f, err := fc.getFunction(s.ctx, inputs)
-		c.Assert(err, IsNil, commentf)
-		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, commentf)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
-	}
-
-	for _, tt := range tests {
-		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
-		fc := funcs[ast.Like]
-		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
-		f, err := fc.getFunction(s.ctx, inputs)
-		c.Assert(err, IsNil, commentf)
-		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, commentf)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
-	}
-}
-
-func (s *testEvaluatorSuite) TestRegexp(c *C) {
+func TestRegexp(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		pattern string
 		input   string
@@ -141,14 +86,14 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
+		require.NoError(t, err)
 		match, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt.err == nil {
-			c.Assert(err, IsNil)
-			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
+			require.NoError(t, err)
+			trequire.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
 		} else {
-			c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+			require.True(t, terror.ErrorEqual(err, tt.err))
 		}
 	}
 }
