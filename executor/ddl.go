@@ -651,7 +651,7 @@ func recoverTablePlacement(ctx sessionctx.Context, snapshotTS uint64, tblInfo *m
 	if ref := tblInfo.PlacementPolicyRef; ref != nil {
 		policy, ok := is.PolicyByName(ref.Name)
 		if !ok || policy.ID != ref.ID {
-			return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%s'", ref.Name, ref.ID)
+			return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%d'", ref.Name, ref.ID)
 		}
 		tblInfo.PlacementPolicyRef = nil
 		tblInfo.DirectPlacementOpts = policy.PlacementSettings
@@ -667,7 +667,7 @@ func recoverTablePlacement(ctx sessionctx.Context, snapshotTS uint64, tblInfo *m
 
 			policy, ok := is.PolicyByName(ref.Name)
 			if !ok || policy.ID != ref.ID {
-				return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%s'", ref.Name, ref.ID)
+				return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%d'", ref.Name, ref.ID)
 			}
 
 			def.PlacementPolicyRef = nil
