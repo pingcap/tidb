@@ -1330,6 +1330,9 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: AuditRecordCmds, Value: ""},
+	{Scope: ScopeGlobal, Name: AuditRecordObjs, Value: ""},
+	{Scope: ScopeGlobal, Name: AuditRecordUsers, Value: ""},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1638,4 +1641,10 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// AuditRecordCmds is the name of 'audit_record_cmds' system variable.
+	AuditRecordCmds = "audit_record_cmds"
+	// AuditRecordObjs is the name of 'audit_record_objs' system variable.
+	AuditRecordObjs = "audit_record_objs"
+	// AuditRecordUsers is the name of 'audit_record_users' system variable.
+	AuditRecordUsers = "audit_record_users"
 )

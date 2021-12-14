@@ -242,6 +242,8 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
+		logutil.BgLogger().Error("failed to get user record",
+			zap.String("user", user), zap.String("host", host))
 		return "", errors.New("Failed to get user record")
 	}
 	// zero-length auth string means no password for native and caching_sha2 auth.

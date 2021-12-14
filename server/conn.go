@@ -1836,6 +1836,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 		}
 	}
+
+	//user log audit
+	cc.userLogAudit(ctx, sql)
+
 	return err
 }
 
@@ -2424,5 +2428,50 @@ func (cc getLastStmtInConn) PProfLabel() string {
 		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
+	}
+}
+
+//user operation record audit..
+func (cc *clientConn) userLogAudit(ctx context.Context, sql string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("command operation audit panic", zap.String("err", fmt.Sprintf("%v", r)))
+		}
+	}()
+	auditRecordCmds, _ := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuditRecordCmds)
+	auditRecordObjs, _ := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuditRecordObjs)
+	auditRecordUsers, _ := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.AuditRecordUsers)
+	if auditRecordCmds != "" && auditRecordObjs != "" && auditRecordUsers != "" {
+		StmtType := strings.ToLower(cc.ctx.GetSessionVars().StmtCtx.StmtType)
+		isCmdExist := false
+		recordCmds := strings.Split(auditRecordCmds, ",")
+		for _, cmd := range recordCmds {
+			if strings.EqualFold(cmd, StmtType) {
+				isCmdExist = true
+			}
+		}
+		isObjExist := false
+		recordObjs := strings.Split(auditRecordObjs, ",")
+		for _, obj := range recordObjs {
+			for _, value := range cc.ctx.GetSessionVars().StmtCtx.Tables {
+				if strings.EqualFold(value.DB+"."+value.Table, obj) {
+					isObjExist = true
+				}
+			}
+		}
+		isUserExist := false
+		recordUsers := strings.Split(auditRecordUsers, ",")
+		for _, user := range recordUsers {
+			if strings.EqualFold(user, cc.user) {
+				isUserExist = true
+			}
+		}
+		if isCmdExist && isObjExist && isUserExist {
+			logutil.Logger(ctx).Info("command operation audit",
+				zap.String("connInfo", cc.String()),
+				zap.String("status", cc.SessionStatusToString()),
+				zap.Stringer("sql", getLastStmtInConn{cc}),
+			)
+		}
 	}
 }
