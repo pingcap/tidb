@@ -192,6 +192,16 @@ func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
 	return records[len(records)-1]
 }
 
+func (svr *mockAgentServer) GetTotalSQLMetas() []tipb.SQLMeta {
+	svr.Lock()
+	defer svr.Unlock()
+	metas := make([]tipb.SQLMeta, 0, len(svr.sqlMetas))
+	for _, meta := range svr.sqlMetas {
+		metas = append(metas, meta)
+	}
+	return metas
+}
+
 func (svr *mockAgentServer) Address() string {
 	return svr.addr
 }
