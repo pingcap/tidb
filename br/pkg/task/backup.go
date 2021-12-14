@@ -129,7 +129,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupTS, err = parseTSString(backupTS)
+	cfg.BackupTS, err = ParseTSString(backupTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -342,7 +342,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	// nothing to backup
-	if ranges == nil {
+	if ranges == nil || len(ranges) <= 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -495,8 +495,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
-// parseTSString port from tidb setSnapshotTS.
-func parseTSString(ts string) (uint64, error) {
+// ParseTSString port from tidb setSnapshotTS.
+func ParseTSString(ts string) (uint64, error) {
 	if len(ts) == 0 {
 		return 0, nil
 	}
