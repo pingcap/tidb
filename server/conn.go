@@ -191,7 +191,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *inputDecoder     // inputDecoder is used to encode the incoming strings to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
