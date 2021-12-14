@@ -299,10 +299,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	// return expectedErr means at least meet one file
 	expectedErr := errors.New("Stop Iter")
 	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+		// return an error when meet the first regular file to break the walk loop
 		return expectedErr
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
-		return errors.Annotatef(err, "there are no file under '%s'", taskCfg.Mydumper.SourceDir)
+		if walkErr == nil {
+			return errors.Errorf("data-source-dir '%s' not exist or contains no files", taskCfg.Mydumper.SourceDir)
+		}
+		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed: ", taskCfg.Mydumper.SourceDir)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
