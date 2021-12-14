@@ -486,8 +486,6 @@ select 7;`
 }
 
 func TestSplitbyColon(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		line   string
 		fields []string

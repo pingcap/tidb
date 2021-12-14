@@ -28,7 +28,6 @@ import (
 )
 
 func TestChangeVerTo2Behavior(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -103,7 +102,6 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 }
 
 func TestFastAnalyzeOnVer2(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -152,7 +150,6 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestIncAnalyzeOnVer2(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -180,7 +177,6 @@ func TestIncAnalyzeOnVer2(t *testing.T) {
 }
 
 func TestExpBackoffEstimation(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -217,7 +213,6 @@ func TestExpBackoffEstimation(t *testing.T) {
 }
 
 func TestGlobalStats(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -314,7 +309,6 @@ func TestGlobalStats(t *testing.T) {
 }
 
 func TestNULLOnFullSampling(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -350,7 +344,6 @@ func TestNULLOnFullSampling(t *testing.T) {
 }
 
 func TestAnalyzeSnapshot(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -380,7 +373,6 @@ func TestAnalyzeSnapshot(t *testing.T) {
 }
 
 func TestHistogramsWithSameTxnTS(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -402,7 +394,6 @@ func TestHistogramsWithSameTxnTS(t *testing.T) {
 }
 
 func TestAnalyzeLongString(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

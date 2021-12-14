@@ -29,7 +29,6 @@ import (
 )
 
 func TestNewHistogramBySelectivity(t *testing.T) {
-	t.Parallel()
 	coll := &HistColl{
 		Count:   330,
 		Columns: make(map[int64]*Column),
@@ -93,7 +92,7 @@ num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0 ndv: 0
 num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0 ndv: 0
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
 
-	newColl := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
+	newColl := coll.NewHistCollBySelectivity(ctx, []*StatsNode{node, node2})
 	require.Equal(t, intColResult, newColl.Columns[1].String())
 	require.Equal(t, stringColResult, newColl.Columns[2].String())
 
@@ -120,12 +119,11 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10 ndv: 0
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10 ndv: 0
 num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
 
-	newColl = coll.NewHistCollBySelectivity(sc, []*StatsNode{node3})
+	newColl = coll.NewHistCollBySelectivity(ctx, []*StatsNode{node3})
 	require.Equal(t, idxResult, newColl.Indices[0].String())
 }
 
 func TestTruncateHistogram(t *testing.T) {
-	t.Parallel()
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
 	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
 	hist.AppendBucket(&low, &high, 0, 1)
@@ -136,7 +134,6 @@ func TestTruncateHistogram(t *testing.T) {
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
-	t.Parallel()
 	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
 	require.NoError(t, err)
 	// Append invalid flag.
@@ -174,7 +171,6 @@ func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histo
 }
 
 func TestMergePartitionLevelHist(t *testing.T) {
-	t.Parallel()
 	type testCase struct {
 		partitionHists  [][]*bucket4Test
 		totColSize      []int64
@@ -428,7 +424,6 @@ func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging
 }
 
 func TestMergeBucketNDV(t *testing.T) {
-	t.Parallel()
 	type testData struct {
 		left   bucket4Merging
 		right  bucket4Merging

@@ -31,7 +31,6 @@ import (
 )
 
 func TestPBToExpr(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
@@ -86,7 +85,6 @@ func TestPBToExpr(t *testing.T) {
 
 // TestEval test expr.Eval().
 func TestEval(t *testing.T) {
-	t.Parallel()
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
 	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)

@@ -21,7 +21,6 @@ import (
 )
 
 func TestDMLVisitorCover(t *testing.T) {
-	t.Parallel()
 	ce := &checkExpr{}
 
 	tableRefsClause := &TableRefsClause{TableRefs: &Join{Left: &TableSource{Source: &TableName{}}, On: &OnCondition{Expr: ce}}}
@@ -72,7 +71,6 @@ func TestDMLVisitorCover(t *testing.T) {
 }
 
 func TestTableNameRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"dbb.`tbb1`", "`dbb`.`tbb1`"},
 		{"`tbb2`", "`tbb2`"},
@@ -88,7 +86,6 @@ func TestTableNameRestore(t *testing.T) {
 }
 
 func TestTableNameIndexHintsRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"t use index (hello)", "`t` USE INDEX (`hello`)"},
 		{"t use index (hello, world)", "`t` USE INDEX (`hello`, `world`)"},
@@ -131,7 +128,6 @@ func TestTableNameIndexHintsRestore(t *testing.T) {
 }
 
 func TestLimitRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"limit 10", "LIMIT 10"},
 		{"limit 10,20", "LIMIT 10,20"},
@@ -144,7 +140,6 @@ func TestLimitRestore(t *testing.T) {
 }
 
 func TestWildCardFieldRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"*", "*"},
 		{"t.*", "`t`.*"},
@@ -157,7 +152,6 @@ func TestWildCardFieldRestore(t *testing.T) {
 }
 
 func TestSelectFieldRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"*", "*"},
 		{"t.*", "`t`.*"},
@@ -172,7 +166,6 @@ func TestSelectFieldRestore(t *testing.T) {
 }
 
 func TestFieldListRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"*", "*"},
 		{"t.*", "`t`.*"},
@@ -187,7 +180,6 @@ func TestFieldListRestore(t *testing.T) {
 }
 
 func TestTableSourceRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"tbl", "`tbl`"},
 		{"tbl as t", "`tbl` AS `t`"},
@@ -201,7 +193,6 @@ func TestTableSourceRestore(t *testing.T) {
 }
 
 func TestOnConditionRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"on t1.a=t2.a", "ON `t1`.`a`=`t2`.`a`"},
 		{"on t1.a=t2.a and t1.b=t2.b", "ON `t1`.`a`=`t2`.`a` AND `t1`.`b`=`t2`.`b`"},
@@ -213,7 +204,6 @@ func TestOnConditionRestore(t *testing.T) {
 }
 
 func TestJoinRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"t1 natural join t2", "`t1` NATURAL JOIN `t2`"},
 		{"t1 natural left join t2", "`t1` NATURAL LEFT JOIN `t2`"},
@@ -252,7 +242,6 @@ func TestJoinRestore(t *testing.T) {
 }
 
 func TestTableRefsClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"t", "`t`"},
 		{"t1 join t2", "`t1` JOIN `t2`"},
@@ -265,7 +254,6 @@ func TestTableRefsClauseRestore(t *testing.T) {
 }
 
 func TestDeleteTableListRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"t1,t2", "`t1`,`t2`"},
 	}
@@ -277,7 +265,6 @@ func TestDeleteTableListRestore(t *testing.T) {
 }
 
 func TestDeleteTableIndexHintRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"DELETE FROM t1 USE key (`fld1`) WHERE fld=1",
 			"DELETE FROM `t1` USE INDEX (`fld1`) WHERE `fld`=1"},
@@ -292,7 +279,6 @@ func TestDeleteTableIndexHintRestore(t *testing.T) {
 }
 
 func TestByItemRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a", "`a`"},
 		{"a desc", "`a` DESC"},
@@ -305,7 +291,6 @@ func TestByItemRestore(t *testing.T) {
 }
 
 func TestGroupByClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"GROUP BY a,b desc", "GROUP BY `a`,`b` DESC"},
 		{"GROUP BY 1 desc,b", "GROUP BY 1 DESC,`b`"},
@@ -317,7 +302,6 @@ func TestGroupByClauseRestore(t *testing.T) {
 }
 
 func TestOrderByClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ORDER BY a", "ORDER BY `a`"},
 		{"ORDER BY a,b", "ORDER BY `a`,`b`"},
@@ -334,7 +318,6 @@ func TestOrderByClauseRestore(t *testing.T) {
 }
 
 func TestAssignmentRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"a=1", "`a`=1"},
 		{"b=1+2", "`b`=1+2"},
@@ -346,7 +329,6 @@ func TestAssignmentRestore(t *testing.T) {
 }
 
 func TestHavingClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"HAVING a", "HAVING `a`"},
 		{"HAVING NULL", "HAVING NULL"},
@@ -359,7 +341,6 @@ func TestHavingClauseRestore(t *testing.T) {
 }
 
 func TestFrameBoundRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"CURRENT ROW", "CURRENT ROW"},
 		{"UNBOUNDED PRECEDING", "UNBOUNDED PRECEDING"},
@@ -378,7 +359,6 @@ func TestFrameBoundRestore(t *testing.T) {
 }
 
 func TestFrameClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"ROWS CURRENT ROW", "ROWS BETWEEN CURRENT ROW AND CURRENT ROW"},
 		{"ROWS UNBOUNDED PRECEDING", "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"},
@@ -393,7 +373,6 @@ func TestFrameClauseRestore(t *testing.T) {
 }
 
 func TestPartitionByClauseRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"PARTITION BY a", "PARTITION BY `a`"},
 		{"PARTITION BY NULL", "PARTITION BY NULL"},
@@ -406,7 +385,6 @@ func TestPartitionByClauseRestore(t *testing.T) {
 }
 
 func TestWindowSpecRestore(t *testing.T) {
-	t.Parallel()
 	testCases := []NodeRestoreTestCase{
 		{"w as ()", "`w` AS ()"},
 		{"w as (w1)", "`w` AS (`w1`)"},
@@ -432,7 +410,6 @@ func TestWindowSpecRestore(t *testing.T) {
 }
 
 func TestFulltextSearchModifier(t *testing.T) {
-	t.Parallel()
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsBooleanMode())
 	require.True(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).IsNaturalLanguageMode())
 	require.False(t, FulltextSearchModifier(FulltextSearchModifierNaturalLanguageMode).WithQueryExpansion())
