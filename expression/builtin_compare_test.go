@@ -29,7 +29,6 @@ import (
 )
 
 func TestCompareFunctionWithRefine(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
@@ -84,7 +83,6 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
@@ -170,7 +168,6 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCoalesce(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -216,7 +213,6 @@ func TestCoalesce(t *testing.T) {
 }
 
 func TestIntervalFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -274,7 +270,6 @@ func TestIntervalFunc(t *testing.T) {
 
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate

@@ -27,7 +27,6 @@ import (
 )
 
 func TestBuildTasks(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -155,7 +154,6 @@ func TestBuildTasks(t *testing.T) {
 }
 
 func TestSplitRegionRanges(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -218,7 +216,6 @@ func TestSplitRegionRanges(t *testing.T) {
 }
 
 func TestRebuild(t *testing.T) {
-	t.Parallel()
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -292,7 +289,6 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 }
 
 func TestBuildPagingTasks(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -345,7 +341,6 @@ func toRange(r *KeyRanges) []kv.KeyRange {
 }
 
 func TestCalculateRetry(t *testing.T) {
-	t.Parallel()
 	worker := copIteratorWorker{}
 
 	// split in one range
@@ -404,7 +399,6 @@ func TestCalculateRetry(t *testing.T) {
 }
 
 func TestCalculateRemain(t *testing.T) {
-	t.Parallel()
 	worker := copIteratorWorker{}
 
 	// split in one range
