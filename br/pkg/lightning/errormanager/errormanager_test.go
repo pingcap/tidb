@@ -16,13 +16,10 @@ package errormanager
 
 import (
 	"context"
-	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
-	"go.uber.org/atomic"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 )
 
@@ -38,15 +35,18 @@ func (e errorManagerSuite) TestInit(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
-	em := &ErrorManager{
-		db:            db,
-		schemaEscaped: "`lightning_errors`",
-		remainingError: config.MaxError{
-			Charset:  *atomic.NewInt64(math.MaxInt64),
-			Conflict: *atomic.NewInt64(math.MaxInt64),
-		},
-	}
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
+	cfg.App.MaxError.Type.Store(10)
+	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
+	em := New(db, cfg)
+	c.Assert(em.dupResolution, Equals, cfg.TikvImporter.DuplicateResolution)
+	c.Assert(em.remainingError.Type.Load(), Equals, cfg.App.MaxError.Type.Load())
+	c.Assert(em.remainingError.Conflict.Load(), Equals, cfg.App.MaxError.Conflict.Load())
+
+	em.remainingError.Type.Store(0)
+	em.dupResolution = config.DupeResAlgNone
 	ctx := context.Background()
 	err = em.Init(ctx)
 	c.Assert(err, IsNil)

@@ -49,9 +49,19 @@ func newLonglong(value int64) *Constant {
 	}
 }
 
+func newString(value string, collation string) *Constant {
+	return &Constant{
+		Value:   types.NewStringDatum(value),
+		RetType: types.NewFieldTypeWithCollation(mysql.TypeVarchar, collation, 255),
+	}
+}
+
 func newFunction(funcName string, args ...Expression) Expression {
-	typeLong := types.NewFieldType(mysql.TypeLonglong)
-	return NewFunctionInternal(mock.NewContext(), funcName, typeLong, args...)
+	return newFunctionWithType(funcName, types.NewFieldType(mysql.TypeLonglong), args...)
+}
+
+func newFunctionWithType(funcName string, tp *types.FieldType, args ...Expression) Expression {
+	return NewFunctionInternal(mock.NewContext(), funcName, tp, args...)
 }
 
 func TestConstantPropagation(t *testing.T) {
@@ -212,6 +222,63 @@ func TestConstantFolding(t *testing.T) {
 		{
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Plus, newColumn(1), newFunction(ast.Plus, newLonglong(2), newLonglong(1)))),
 			result:    "lt(Column#0, plus(Column#1, 3))",
+		},
+	}
+	for _, tt := range tests {
+		newConds := FoldConstant(tt.condition)
+		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+	}
+}
+
+func TestConstantFoldingCharsetConvert(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		condition Expression
+		result    string
+	}{
+		{
+			condition: newFunction(ast.Length, newFunctionWithType(
+				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
+				newString("中文", "gbk_bin"))),
+			result: "4",
+		},
+		{
+			condition: newFunction(ast.Length, newFunctionWithType(
+				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
+				newString("中文", "utf8mb4_bin"))),
+			result: "6",
+		},
+		{
+			condition: newFunction(ast.Concat, newFunctionWithType(
+				InternalFuncFromBinary, types.NewFieldType(mysql.TypeVarchar),
+				newString("中文", "binary"))),
+			result: "中文",
+		},
+		{
+			condition: newFunction(ast.Concat,
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+				newString("中文", "gbk_bin"),
+			),
+			result: "一中文",
+		},
+		{
+			condition: newFunction(ast.Concat,
+				newString("中文", "gbk_bin"),
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+			),
+			result: "中文一",
+		},
+		// The result is binary charset, so gbk constant will convert to binary which is \xd6\xd0\xce\xc4.
+		{
+			condition: newFunction(ast.Concat,
+				newString("中文", "gbk_bin"),
+				newString("\xd2\xbb", "binary"),
+			),
+			result: "\xd6\xd0\xce\xc4\xd2\xbb",
 		},
 	}
 	for _, tt := range tests {

@@ -430,12 +430,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
-		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
-		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
-		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
-		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
-		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
+		"(PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		" PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		" PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		" PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec("DROP TABLE timezone_test")
 
 	// Note that the result of "show create table" varies with time_zone.
@@ -445,12 +445,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
-		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
-		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
-		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
-		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
-		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
+		"(PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		" PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		" PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		" PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")

@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -94,11 +94,8 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
-		collation := newData[i].Collation()
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
-		newData[i].SetCollation(charset.CollationBin)
-		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
-		newData[i].SetCollation(collation)
+		cmp, err := newData[i].Compare(sc, &oldData[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, err
 		}

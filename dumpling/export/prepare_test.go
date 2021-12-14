@@ -287,7 +287,7 @@ func TestConfigValidation(t *testing.T) {
 	conf.FileType = FileFormatSQLTextString
 	err := adjustFileFormat(conf)
 	require.Error(t, err)
-	require.Regexp(t, ".*please unset --filetype or set it to 'csv'.*", err.Error())
+	require.Contains(t, err.Error(), "please unset --filetype or set it to 'csv'")
 
 	conf.FileType = FileFormatCSVString
 	require.NoError(t, adjustFileFormat(conf))

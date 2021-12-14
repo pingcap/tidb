@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"runtime"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -689,6 +691,59 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+
+	// Set the global var to a non canonical form of the value
+	// i.e. implying that it was set from an earlier version of TiDB.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF")
+}
+
+func (s *testSessionSuite) TestMatchIdentity(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("CREATE USER `useridentity`@`%`")
+	tk.MustExec("CREATE USER `useridentity`@`localhost`")
+	tk.MustExec("CREATE USER `useridentity`@`192.168.1.1`")
+	tk.MustExec("CREATE USER `useridentity`@`example.com`")
+
+	// The MySQL matching rule is most specific to least specific.
+	// So if I log in from 192.168.1.1 I should match that entry always.
+	identity, err := tk.Se.MatchIdentity("useridentity", "192.168.1.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "192.168.1.1")
+
+	// If I log in from localhost, I should match localhost
+	identity, err = tk.Se.MatchIdentity("useridentity", "localhost")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// If I log in from 192.168.1.2 I should match wildcard.
+	identity, err = tk.Se.MatchIdentity("useridentity", "192.168.1.2")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "%")
+
+	identity, err = tk.Se.MatchIdentity("useridentity", "127.0.0.1")
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	c.Assert(identity.Hostname, Equals, "localhost")
+
+	// This uses the lookup of example.com to get an IP address.
+	// We then login with that IP address, but expect it to match the example.com
+	// entry in the privileges table (by reverse lookup).
+	ips, err := net.LookupHost("example.com")
+	c.Assert(err, IsNil)
+	identity, err = tk.Se.MatchIdentity("useridentity", ips[0])
+	c.Assert(err, IsNil)
+	c.Assert(identity.Username, Equals, "useridentity")
+	// FIXME: we *should* match example.com instead
+	// as long as skip-name-resolve is not set (DEFAULT)
+	c.Assert(identity.Hostname, Equals, "%")
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -705,9 +760,11 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	tk.MustExec("select @@max_connections")
 	tk.MustExec("select @@global.max_connections")
 	_, err = tk.Exec("select @@session.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 	_, err = tk.Exec("select @@local.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
@@ -715,6 +772,10 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// For issue 19524, test
 	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
 	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
+
+	_, err = tk.Exec("select @@global.last_insert_id")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -1702,31 +1763,24 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk3.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk1.MustExec("update t set c = 1;")
 		}
-	}
-	f2 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk2.MustExec("update t set c = ?;", 1)
 		}
-	}
-	f3 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk3.MustExec("begin")
 			tk3.MustExec("update t set c = 1;")
 			tk3.MustExec("commit")
 		}
-	}
-	go f1()
-	go f2()
-	go f3()
+	})
 	wg.Wait()
 }
 
@@ -2156,6 +2210,22 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	tk.MustExec("insert t values (100);")
 	// Make sure insert to table t2 transaction executes.
 	tk2.MustExec("commit")
+}
+
+func (s *testSchemaSerialSuite) TestValidationRecursion(c *C) {
+	// We have to expect that validation functions will call GlobalVarsAccessor.GetGlobalSysVar().
+	// This tests for a regression where GetGlobalSysVar() can not safely call the validation
+	// function because it might cause infinite recursion.
+	// See: https://github.com/pingcap/tidb/issues/30255
+	sv := variable.SysVar{Scope: variable.ScopeGlobal, Name: "mynewsysvar", Value: "test", Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
+		return vars.GlobalVarsAccessor.GetGlobalSysVar("mynewsysvar")
+	}}
+	variable.RegisterSysVar(&sv)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	val, err := sv.Validate(tk.Se.GetSessionVars(), "test2", variable.ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "test")
 }
 
 func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {

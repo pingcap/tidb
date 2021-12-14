@@ -299,7 +299,8 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 
 func extractHintWarns(warns []error) []error {
 	for _, w := range warns {
-		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+		if parser.ErrParse.Equal(w) ||
+			parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
 			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
 			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
 			parser.ErrWarnOptimizerHintParseError.Equal(w) ||

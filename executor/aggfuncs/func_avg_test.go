@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -67,8 +68,7 @@ func TestMemAvg(t *testing.T) {
 }
 
 func BenchmarkAvg(b *testing.B) {
-	s := testSuite{}
-	s.SetUpSuite(nil)
+	ctx := mock.NewContext()
 
 	rowNum := 50000
 	tests := []aggTest{
@@ -76,6 +76,6 @@ func BenchmarkAvg(b *testing.B) {
 		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, rowNum, nil, 2.0),
 	}
 	for _, test := range tests {
-		s.benchmarkAggFunc(b, test)
+		benchmarkAggFunc(b, ctx, test)
 	}
 }

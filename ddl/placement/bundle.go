@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -412,4 +413,100 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// NewTableBundle creates a bundle for table key range.
+// If table is a partitioned table, it also contains the rules that inherited from table for every partition.
+// The bundle does not contain the rules specified independently by each partition
+func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
+	bundle, err := newBundleFromPolicyOrDirectOptions(t, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if bundle == nil {
+		return nil, nil
+	}
+	ids := []int64{tbInfo.ID}
+	// build the default partition rules in the table-level bundle.
+	if tbInfo.Partition != nil {
+		for _, pDef := range tbInfo.Partition.Definitions {
+			ids = append(ids, pDef.ID)
+		}
+	}
+	bundle.Reset(RuleIndexTable, ids)
+	return bundle, nil
+}
+
+// NewPartitionBundle creates a bundle for partition key range.
+// It only contains the rules specified independently by the partition.
+// That is to say the inherited rules from table is not included.
+func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
+	bundle, err := newBundleFromPolicyOrDirectOptions(t, def.PlacementPolicyRef, def.DirectPlacementOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if bundle != nil {
+		bundle.Reset(RuleIndexPartition, []int64{def.ID})
+	}
+
+	return bundle, nil
+}
+
+// NewPartitionListBundles creates a bundle list for a partition list
+func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]*Bundle, error) {
+	bundles := make([]*Bundle, 0, len(defs))
+	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
+	for _, def := range defs {
+		bundle, err := NewPartitionBundle(t, def)
+		if err != nil {
+			return nil, err
+		}
+
+		if bundle != nil {
+			bundles = append(bundles, bundle)
+		}
+	}
+	return bundles, nil
+}
+
+// NewFullTableBundles returns a bundle list with both table bundle and partition bundles
+func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, error) {
+	var bundles []*Bundle
+	tableBundle, err := NewTableBundle(t, tbInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
+	if tbInfo.Partition != nil {
+		partitionBundles, err := NewPartitionListBundles(t, tbInfo.Partition.Definitions)
+		if err != nil {
+			return nil, err
+		}
+		bundles = append(bundles, partitionBundles...)
+	}
+
+	return bundles, nil
+}
+
+func newBundleFromPolicyOrDirectOptions(t *meta.Meta, ref *model.PolicyRefInfo, directOpts *model.PlacementSettings) (*Bundle, error) {
+	if directOpts != nil {
+		return NewBundleFromOptions(directOpts)
+	}
+
+	if ref != nil {
+		policy, err := t.GetPolicy(ref.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewBundleFromOptions(policy.PlacementSettings)
+	}
+
+	return nil, nil
 }

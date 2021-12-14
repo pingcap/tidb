@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -59,7 +60,8 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		return false, !oldCon.Equal(s.ctx, con)
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().Collate))
+		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
 	return true, false

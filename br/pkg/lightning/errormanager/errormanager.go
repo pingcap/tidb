@@ -112,11 +112,16 @@ type ErrorManager struct {
 	dupResolution  config.DuplicateResolutionAlgorithm
 }
 
+func (em *ErrorManager) TypeErrorsRemain() int64 {
+	return em.remainingError.Type.Load()
+}
+
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		remainingError: cfg.App.MaxError,
+		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db

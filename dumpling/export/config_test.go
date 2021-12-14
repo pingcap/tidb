@@ -16,7 +16,7 @@ func TestCreateExternalStorage(t *testing.T) {
 	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
-	require.Regexp(t, "file:.*", loc.URI())
+	require.Regexp(t, "^file:", loc.URI())
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {

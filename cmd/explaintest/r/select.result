@@ -495,3 +495,7 @@ insert into precise_types values (
 SELECT a, b, c, d FROM precise_types;
 a	b	c	d
 18446744073709551614	-9223372036854775806	99999999999999999999.0	1.8446744073709552e19
+create table t3(a char(10), primary key (a));
+insert into t3 values ('a');
+select * from t3 where a > 0x80;
+Error 1105: Cannot convert string '80' from binary to utf8mb4

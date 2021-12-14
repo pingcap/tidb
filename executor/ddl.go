@@ -185,7 +185,18 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
+		if x.OrReplace && x.IfNotExists {
+			err = ddl.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+			break
+		}
 		err = e.executeCreatePlacementPolicy(x)
+		if x.OrReplace && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyExists) {
+			alterStmt := &ast.AlterPlacementPolicyStmt{
+				PolicyName:       x.PolicyName,
+				PlacementOptions: x.PlacementOptions,
+			}
+			err = e.executeAlterPlacementPolicy(alterStmt)
+		}
 	case *ast.DropPlacementPolicyStmt:
 		err = e.executeDropPlacementPolicy(x)
 	case *ast.AlterPlacementPolicyStmt:

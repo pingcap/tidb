@@ -18,6 +18,7 @@ package pdapi
 const (
 	HotRead    = "/pd/api/v1/hotspot/regions/read"
 	HotWrite   = "/pd/api/v1/hotspot/regions/write"
+	HotHistory = "/pd/api/v1/hotspot/regions/history"
 	Regions    = "/pd/api/v1/regions"
 	RegionByID = "/pd/api/v1/region/id/"
 	Stores     = "/pd/api/v1/stores"

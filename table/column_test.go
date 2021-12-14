@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -126,7 +127,7 @@ func TestHandleBadNull(t *testing.T) {
 	d := types.Datum{}
 	err := col.HandleBadNull(&d, sc)
 	require.NoError(t, err)
-	cmp, err := d.CompareDatum(sc, &types.Datum{})
+	cmp, err := d.Compare(sc, &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -255,7 +256,7 @@ func TestGetZeroValue(t *testing.T) {
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
-			cmp, err := zv.CompareDatum(sc, &tt.value)
+			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.Collate))
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		})

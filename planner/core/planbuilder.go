@@ -960,7 +960,7 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 			return path
 		}
 	}
-	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
+	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 		return tablePath
 	}
 	return nil
@@ -1159,7 +1159,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	return available, nil
 }
 
-func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, dbName model.CIStr) ([]*util.AccessPath, error) {
+func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
@@ -1182,8 +1182,12 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	var err error
 	engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
+		helpMsg := ""
+		if engineVals == "tiflash" {
+			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+		}
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -1703,7 +1707,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		if mysql.HasPriKeyFlag(col.Flag) && (tbl.PKIsHandle || tbl.IsCommonHandle) {
+		if mysql.HasPriKeyFlag(col.Flag) && tbl.HasClusteredIndex() {
 			continue
 		}
 		colsInfo = append(colsInfo, col)
@@ -2585,7 +2589,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		p.setSchemaAndNames(buildShowNextRowID())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
 		return p, nil
-	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsExtended, ast.ShowStatsHealthy, ast.ShowStatsTopN, ast.ShowColumnStatsUsage:
+	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsExtended, ast.ShowStatsHealthy, ast.ShowStatsTopN, ast.ShowHistogramsInFlight, ast.ShowColumnStatsUsage:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -3903,6 +3907,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			b.capFlag &= ^renameView
 			b.isCreateView = false
 		}()
+
+		if stmt := findStmtAsViewSchema(v); stmt != nil {
+			stmt.AsViewSchema = true
+		}
+
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
@@ -4033,13 +4042,39 @@ const (
 	TraceFormatJSON = "json"
 	// TraceFormatLog indicates log tracing format.
 	TraceFormatLog = "log"
+
+	// TracePlanTargetEstimation indicates CE trace target for optimizer trace.
+	TracePlanTargetEstimation = "estimation"
 )
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
+	p := &Trace{
+		StmtNode:             trace.Stmt,
+		Format:               trace.Format,
+		OptimizerTrace:       trace.TracePlan,
+		OptimizerTraceTarget: trace.TracePlanTarget,
+	}
+	// TODO: forbid trace plan if the statement isn't select read-only statement
+	if trace.TracePlan {
+		if trace.TracePlanTarget != "" && trace.TracePlanTarget != TracePlanTargetEstimation {
+			return nil, errors.New("trace plan target should only be 'estimation'")
+		}
+		if trace.TracePlanTarget == TracePlanTargetEstimation {
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "CE_trace", mysql.TypeVarchar, mysql.MaxBlobWidth))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		} else {
+			schema := newColumnsWithNames(1)
+			schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+			p.SetSchema(schema.col2Schema())
+			p.names = schema.names
+		}
+		return p, nil
+	}
 	switch trace.Format {
 	case TraceFormatRow:
 		schema := newColumnsWithNames(3)
@@ -4317,6 +4352,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowStatsHealthy:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Healthy"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowHistogramsInFlight:
+		names = []string{"HistogramsInFlight"}
+		ftypes = []byte{mysql.TypeLonglong}
 	case ast.ShowColumnStatsUsage:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Last_used_at", "Last_analyzed_at"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime}
@@ -4371,7 +4409,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
 	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())
 	p.names = schema.names
 	return p
@@ -4397,4 +4435,19 @@ func adjustOverlongViewColname(plan LogicalPlan) {
 			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
 		}
 	}
+}
+
+// findStmtAsViewSchema finds the first SelectStmt as the schema for the view
+func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
+	switch x := stmt.(type) {
+	case *ast.CreateViewStmt:
+		return findStmtAsViewSchema(x.Select)
+	case *ast.SetOprStmt:
+		return findStmtAsViewSchema(x.SelectList)
+	case *ast.SetOprSelectList:
+		return findStmtAsViewSchema(x.Selects[0])
+	case *ast.SelectStmt:
+		return x
+	}
+	return nil
 }

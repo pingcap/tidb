@@ -146,25 +146,3 @@ func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 	}
 	return rows, nil
 }
-
-// getFuncMemUsage get function memory usage from heap profile
-func (c *Collector) getFuncMemUsage(name string) (int64, error) {
-	prof := pprof.Lookup("heap")
-	if prof == nil {
-		return 0, errors.Errorf("cannot retrieve %s profile", name)
-	}
-	debug := 0
-	buffer := &bytes.Buffer{}
-	if err := prof.WriteTo(buffer, debug); err != nil {
-		return 0, err
-	}
-	p, err := profile.Parse(buffer)
-	if err != nil {
-		return 0, err
-	}
-	root, err := c.profileToFlamegraphNode(p)
-	if err != nil {
-		return 0, err
-	}
-	return root.collectFuncUsage(name), nil
-}
