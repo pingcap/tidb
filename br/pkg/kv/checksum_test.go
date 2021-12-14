@@ -25,8 +25,6 @@ import (
 func uint64NotEqual(a uint64, b uint64) bool { return a != b }
 
 func TestChecksum(t *testing.T) {
-	t.Parallel()
-
 	checksum := kv.NewKVChecksum(0)
 	require.Equal(t, uint64(0), checksum.Sum())
 
@@ -69,8 +67,6 @@ func TestChecksum(t *testing.T) {
 }
 
 func TestChecksumJSON(t *testing.T) {
-	t.Parallel()
-
 	testStruct := &struct {
 		Checksum kv.Checksum
 	}{
