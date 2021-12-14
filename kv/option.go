@@ -70,7 +70,7 @@ const (
 	KVFilter
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
-	// RPCInterceptor is tikvrpc.Interceptor on Transaction or Snapshot, used to decorate
+	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
 	// additional logic before and after the underlying client-go RPC request.
 	RPCInterceptor
 )
