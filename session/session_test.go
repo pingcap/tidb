@@ -5902,14 +5902,14 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 	tk.MustQuery("select * from ct2").Check(testkit.Rows())
 
 	cached := false
-	for i :=0; i<50; i++ {
+	for i := 0; i < 50; i++ {
 		if tk.HasPlan("select * from ct1", "Union") {
 			if tk.HasPlan("select * from ct2", "Union") {
 				cached = true
 				break
 			}
 		}
-		time.Sleep(100*time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	c.Assert(cached, IsTrue)
 

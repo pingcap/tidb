@@ -602,6 +602,8 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	return err
 }
 
+const cacheTableWriteLease = 5 * time.Second
+
 func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
 	writeLockLease, err := handle.LockForWrite(ctx, tid)
 	atomic.StoreUint64(leasePtr, writeLockLease)
@@ -611,7 +613,7 @@ func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, ha
 		return
 	}
 
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(cacheTableWriteLease)
 	defer t.Stop()
 	for {
 		select {
@@ -629,7 +631,7 @@ func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, ha
 func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRemote, tid int64, leasePtr *uint64) error {
 	oldLease := atomic.LoadUint64(leasePtr)
 	physicalTime := oracle.GetTimeFromTS(oldLease)
-	newLease := oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
+	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
 
 	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
 	if err != nil {

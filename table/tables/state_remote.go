@@ -181,9 +181,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64) (wa
 				tid); err != nil {
 				return errors.Trace(err)
 			}
-			if err = h.commitTxn(ctx); err != nil {
-				return errors.Trace(err)
-			}
 
 			// Wait for lease to expire, and then retry.
 			waitAndRetry = waitForLeaseExpire(lease, now)
