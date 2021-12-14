@@ -410,25 +410,11 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 	if len(evicted) == 0 {
 		return
 	}
-	// Clean up non Top N data and merge them as "others" (keyed by in the `keyOthers`) in `collectTarget`.
-	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
-	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
+	// Merge non Top N data as "others" (keyed by in the `keyOthers`) in `collectTarget`.
+	// SQL meta will not be evicted, since the evicted SQL can be appear on Other components (TiKV) TopN records.
 	totalEvictedCPUTime := uint32(0)
 	for _, evict := range evicted {
 		totalEvictedCPUTime += evict.CPUTimeMs
-		key := encodeKey(keyBuf, evict.SQLDigest, evict.PlanDigest)
-		_, ok := collectTarget[key]
-		if ok {
-			continue
-		}
-		_, loaded := normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
-		if loaded {
-			tsr.sqlMapLength.Add(-1)
-		}
-		_, loaded = normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-		if loaded {
-			tsr.planMapLength.Add(-1)
-		}
 	}
 	addEvictedCPUTime(collectTarget, timestamp, totalEvictedCPUTime)
 }
@@ -528,8 +514,7 @@ func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) ReportDa
 		sort.Sort(others)
 	}
 	for _, evict := range evicted {
-		collected.normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
-		collected.normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+		// SQL meta will not be evicted, since the evicted SQL can be appear on Other components (TiKV) TopN records.
 		others = addEvictedIntoSortedDataPoints(others, evict)
 	}
 
