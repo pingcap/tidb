@@ -49,8 +49,6 @@ func TestCTEPreviewAndReport(t *testing.T) {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 
-	t.Parallel()
-
 	s := newSuite(t)
 	defer s.close()
 
