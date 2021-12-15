@@ -498,11 +498,35 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
+<<<<<<< HEAD
+=======
+	// version73 adds mysql.capture_plan_baselines_blacklist table
+	version73 = 73
+	// version74 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
+	version74 = 74
+	// version75 update mysql.*.host from char(60) to char(255)
+	version75 = 75
+	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
+	version76 = 76
+	// version77 adds mysql.column_stats_usage table
+	version77 = 77
+	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+	version78 = 78
+	// version79 adds the mysql.table_cache_meta table
+	version79 = 79
+	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
+	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	version80 = 80
+>>>>>>> d660e483c... sessionctx: fix the value of analyze_version when upgrading 4.x to 5.… (#30743)
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version72
+=======
+var currentBootstrapVersion int64 = version80
+>>>>>>> d660e483c... sessionctx: fix the value of analyze_version when upgrading 4.x to 5.… (#30743)
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -578,6 +602,17 @@ var (
 		upgradeToVer70,
 		upgradeToVer71,
 		upgradeToVer72,
+<<<<<<< HEAD
+=======
+		upgradeToVer73,
+		upgradeToVer74,
+		upgradeToVer75,
+		upgradeToVer76,
+		upgradeToVer77,
+		upgradeToVer78,
+		upgradeToVer79,
+		upgradeToVer80,
+>>>>>>> d660e483c... sessionctx: fix the value of analyze_version when upgrading 4.x to 5.… (#30743)
 	}
 )
 
@@ -1527,6 +1562,86 @@ func upgradeToVer72(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer73(s Session, ver int64) {
+	if ver >= version73 {
+		return
+	}
+	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
+}
+
+func upgradeToVer74(s Session, ver int64) {
+	if ver >= version74 {
+		return
+	}
+	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+}
+
+func upgradeToVer75(s Session, ver int64) {
+	if ver >= version75 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
+}
+
+func upgradeToVer76(s Session, ver int64) {
+	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer77(s Session, ver int64) {
+	if ver >= version77 {
+		return
+	}
+	doReentrantDDL(s, CreateColumnStatsUsageTable)
+}
+
+func upgradeToVer78(s Session, ver int64) {
+	if ver >= version78 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
+}
+
+func upgradeToVer80(s Session, ver int64) {
+	if ver >= version80 {
+		return
+	}
+	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
+	ctx := context.Background()
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
+}
+
+>>>>>>> d660e483c... sessionctx: fix the value of analyze_version when upgrading 4.x to 5.… (#30743)
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
