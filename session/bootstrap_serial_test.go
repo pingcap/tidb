@@ -926,5 +926,5 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, int64(1), row.GetInt64(0))
+	require.Equal(t, "1", row.GetString(0))
 }
