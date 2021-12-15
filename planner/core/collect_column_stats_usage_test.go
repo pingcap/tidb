@@ -54,7 +54,6 @@ func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp plannercor
 }
 
 func TestCollectPredicateColumns(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
