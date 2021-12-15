@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -52,20 +51,20 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return
 	}
-	syncWait := config.GetGlobalConfig().Stats.SyncLoadWait
+	syncWait := int64(config.GetGlobalConfig().Stats.SyncLoadWait)
 	if syncWait <= 0 {
 		return
 	}
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
-	hintMaxExecutionTime := stmtCtx.MaxExecutionTime
+	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
 	if hintMaxExecutionTime == 0 {
-		hintMaxExecutionTime = math.MaxInt
+		hintMaxExecutionTime = mathutil.MaxInt
 	}
-	sessMaxExecutionTime := plan.SCtx().GetSessionVars().MaxExecutionTime
+	sessMaxExecutionTime := int64(plan.SCtx().GetSessionVars().MaxExecutionTime)
 	if sessMaxExecutionTime == 0 {
-		sessMaxExecutionTime = math.MaxInt
+		sessMaxExecutionTime = mathutil.MaxInt
 	}
-	waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
+	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
 	var timeout = time.Duration(waitTime) * time.Millisecond
 	neededColumns := CollectHistColumns(plan)
 	domain.GetDomain(plan.SCtx()).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
