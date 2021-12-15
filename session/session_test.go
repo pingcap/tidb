@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1762,31 +1763,24 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk3.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk1.MustExec("update t set c = 1;")
 		}
-	}
-	f2 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk2.MustExec("update t set c = ?;", 1)
 		}
-	}
-	f3 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk3.MustExec("begin")
 			tk3.MustExec("update t set c = 1;")
 			tk3.MustExec("commit")
 		}
-	}
-	go f1()
-	go f2()
-	go f3()
+	})
 	wg.Wait()
 }
 

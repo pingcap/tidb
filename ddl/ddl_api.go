@@ -1577,7 +1577,7 @@ func buildTableInfo(
 					tbInfo.CommonHandleVersion = 1
 				}
 			}
-			if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
+			if tbInfo.HasClusteredIndex() {
 				// Primary key cannot be invisible.
 				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
 					return nil, ErrPKIndexCantBeInvisible
@@ -2438,7 +2438,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if op.UintValue > 0 && (tbInfo.PKIsHandle || tbInfo.IsCommonHandle) {
+			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -2946,7 +2946,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 		// Nothing need to do.
 		return nil
 	}
-	if uVal > 0 && (t.Meta().PKIsHandle || t.Meta().IsCommonHandle) {
+	if uVal > 0 && t.Meta().HasClusteredIndex() {
 		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
@@ -6440,7 +6440,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionAlterTablePartitionPolicy,
+		Type:       model.ActionAlterTablePartitionPlacement,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, policyRefInfo, placementSettings},
 	}

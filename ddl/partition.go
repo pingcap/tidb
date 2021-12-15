@@ -88,6 +88,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, nil
 	}
 
+	// notice: addingDefinitions is empty when job is in state model.StateNone
 	tblInfo, partInfo, addingDefinitions, err := checkAddPartition(t, job)
 	if err != nil {
 		return ver, err
@@ -117,14 +118,21 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
+		// move the adding definition into tableInfo.
+		updateAddingPartitionInfo(partInfo, tblInfo)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
 		// modify placement settings
-		for _, def := range addingDefinitions {
+		for _, def := range tblInfo.Partition.AddingDefinitions {
 			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}
 
-		bundles, err := alterTablePartitionBundles(t, tblInfo, addingDefinitions)
+		bundles, err := alterTablePartitionBundles(t, tblInfo, tblInfo.Partition.AddingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -135,12 +143,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
-		// move the adding definition into tableInfo.
-		updateAddingPartitionInfo(partInfo, tblInfo)
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:

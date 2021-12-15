@@ -174,6 +174,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+	e.cancelFunc = nil
 	e.startWorkers(ctx)
 	return nil
 }

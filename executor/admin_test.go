@@ -36,8 +36,6 @@ import (
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -58,8 +56,6 @@ func TestAdminCheckIndexRange(t *testing.T) {
 }
 
 func TestAdminCheckIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -89,8 +85,6 @@ func TestAdminCheckIndex(t *testing.T) {
 }
 
 func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -123,8 +117,6 @@ func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -149,8 +141,6 @@ func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
 }
 
 func TestAdminCheckIndexInCacheTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -186,8 +176,6 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
 func TestAdminRecoverIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -305,8 +293,6 @@ func TestAdminRecoverIndex(t *testing.T) {
 }
 
 func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -353,8 +339,6 @@ func TestClusteredIndexAdminRecoverIndex(t *testing.T) {
 }
 
 func TestAdminRecoverPartitionTableIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -428,8 +412,6 @@ func TestAdminRecoverPartitionTableIndex(t *testing.T) {
 }
 
 func TestAdminRecoverIndex1(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -485,8 +467,6 @@ func TestAdminRecoverIndex1(t *testing.T) {
 }
 
 func TestAdminCleanupIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -569,8 +549,6 @@ func TestAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -654,8 +632,6 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 }
 
 func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -708,8 +684,6 @@ func TestAdminCleanupIndexPKNotHandle(t *testing.T) {
 }
 
 func TestAdminCleanupIndexMore(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -776,8 +750,6 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 }
 
 func TestClusteredAdminCleanupIndex(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -857,8 +829,6 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCheckPartitionTableFailed(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -960,8 +930,6 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 
 func TestAdminCheckTable(t *testing.T) {
 	// test NULL value.
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1081,8 +1049,6 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckPrimaryIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1094,8 +1060,6 @@ func TestAdminCheckPrimaryIndex(t *testing.T) {
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {
-	t.Parallel()
-
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 

@@ -1247,7 +1247,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, nil
 }
 
-func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	policyRefInfo := &model.PolicyRefInfo{}
 	placementSettings := &model.PlacementSettings{}
