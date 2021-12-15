@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
@@ -107,6 +108,9 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if point.value.Kind() == types.KindMysqlTime && tp.Tp == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+			// See issue #28424: query failed after add index
+			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
 		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
@@ -121,7 +125,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			return point, errors.Trace(err)
 		}
 	}
-	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
+	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.Collate))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -295,7 +299,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
+		rangePoints = rb.intersection(rangePoints, rb.build(cond), collate.GetCollator(tp.Collate))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
@@ -371,7 +375,7 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	rangePoints := getFullRange()
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessCondition); i++ {
-		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
+		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]), collate.GetCollator(newTp[eqAndInCount].Collate))
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}

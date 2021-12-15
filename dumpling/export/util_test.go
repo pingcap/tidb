@@ -11,8 +11,6 @@ import (
 )
 
 func TestRepeatableRead(t *testing.T) {
-	t.Parallel()
-
 	data := [][]interface{}{
 		{version.ServerTypeUnknown, consistencyTypeNone, true},
 		{version.ServerTypeMySQL, consistencyTypeFlush, true},

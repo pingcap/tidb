@@ -18,8 +18,6 @@ import (
 )
 
 func TestWriteDatabaseMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -40,8 +38,6 @@ func TestWriteDatabaseMeta(t *testing.T) {
 }
 
 func TestWritePolicyMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -62,8 +58,6 @@ func TestWritePolicyMeta(t *testing.T) {
 }
 
 func TestWriteTableMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 
 	config := defaultConfigForTest(t)
@@ -83,8 +77,6 @@ func TestWriteTableMeta(t *testing.T) {
 }
 
 func TestWriteViewMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -114,8 +106,6 @@ func TestWriteViewMeta(t *testing.T) {
 }
 
 func TestWriteTableData(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -155,8 +145,6 @@ func TestWriteTableData(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSize(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -207,8 +195,6 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -260,8 +246,6 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 }
 
 func TestWriteTableDataWithStatementSize(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
