@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -336,7 +335,7 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt(opt string, defaultVal int) int {
+func TidbOptInt(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil {
 		return defaultVal
@@ -344,7 +343,7 @@ func tidbOptInt(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt64(opt string, defaultVal int64) int64 {
+func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
 	if err != nil {
 		return defaultVal
@@ -455,34 +454,6 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
-}
-
-// serverGlobalVariable is used to handle variables that acts in server and global scope.
-type serverGlobalVariable struct {
-	sync.Mutex
-	serverVal string
-	globalVal string
-}
-
-// Set sets the value according to variable scope.
-func (v *serverGlobalVariable) Set(val string, isServer bool) {
-	v.Lock()
-	if isServer {
-		v.serverVal = val
-	} else {
-		v.globalVal = val
-	}
-	v.Unlock()
-}
-
-// GetVal gets the value.
-func (v *serverGlobalVariable) GetVal() string {
-	v.Lock()
-	defer v.Unlock()
-	if v.serverVal != "" {
-		return v.serverVal
-	}
-	return v.globalVal
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
