@@ -555,18 +555,6 @@ func (rc *Client) GoCreateTables(
 	}
 	go func() {
 		defer close(outCh)
-		for _, ct := range cts {
-			log.Debug("table created and send to next",
-				zap.Int("output chan size", len(outCh)),
-				zap.Stringer("table", ct.OldTable.Info.Name),
-				zap.Stringer("database", ct.OldTable.DB.Name))
-			outCh <- ct
-			rater.Inc()
-			rater.L().Info("table created",
-				zap.Stringer("table", ct.OldTable.Info.Name),
-				zap.Stringer("database", ct.OldTable.DB.Name))
-		}
-
 		// fall back to old create table (sequential create table)
 	} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
 		log.Info("fall back to the old DDL way to create table.")
@@ -646,9 +634,13 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	lastSent := 0
+<<<<<<< HEAD
 
 	for i := int(rc.batchDllSize); i < numOfTables+int(rc.batchDllSize); i = i + int(rc.batchDllSize) {
 
+=======
+	for i := int(rc.batchDllSize); i <= numOfTables; i = i + int(rc.batchDllSize) {
+>>>>>>> parallel create tables in br
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
 		if i > numOfTables {
 			i = numOfTables
