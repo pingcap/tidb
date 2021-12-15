@@ -95,6 +95,7 @@ func TestStateRemote(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
+	require.Equal(t, writeLease, lease)
 	require.Greater(t, writeLease, leaseVal)
 
 	// Lock for write again
