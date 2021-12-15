@@ -129,14 +129,13 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, batchDdlSize uint) error {
 	d := domain.GetDomain(gs.se).DDL()
 	log.Info("tidb start create tables", zap.Uint("batchDdlSize", batchDdlSize))
+	var dbName model.CIStr
+	cloneTables := make([]*model.TableInfo, 0, len(tables))
 
 	for db, tablesInDB := range tables {
-		NewTables := make([]*model.TableInfo, 0, len(tablesInDB))
-		dbName := model.NewCIStr(db)
+		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
-		lastSend := 0
 		for _, table := range tablesInDB {
-
 			query, err := gs.showCreateTable(table)
 			if err != nil {
 				log.Error("Tidbsession to show create tables failure.")
@@ -152,55 +151,17 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 				newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 				table.Partition = &newPartition
 			}
-			NewTables = append(NewTables, table)
-			var batchSize int = int(batchDdlSize)
-			if batchDdlSize <= 1 {
-				batchSize = 500
-			}
-			// 500 tables once, limitation from raft entry size
-			LengthOfTables := len(NewTables)
-			if LengthOfTables == 0 {
-				log.Error("size of tables equals to 0.")
-				return errors.New("empty tables to restore.")
-			}
-			if LengthOfTables%batchSize == 0 {
-				ThePatchTables := NewTables[lastSend : LengthOfTables-1]
-				gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-				err := d.BatchCreateTableWithInfo(gs.se, dbName, ThePatchTables, ddl.OnExistIgnore, true)
-				if err != nil {
-					log.Info("Bulk create table from tidb failure, it possible caused by version mismatch with BR.", zap.String("Error", err.Error()))
-					return err
-				}
-				log.Info("BatchCreateTableWithInfo  DONE",
-					zap.Stringer("DB", dbName),
-					zap.Int("start", lastSend),
-					zap.Int("end", LengthOfTables-1),
-					zap.Int("query total size", len(queryBuilder.String())))
-				lastSend = LengthOfTables - 1
-				queryBuilder.Reset()
-			}
-
+			cloneTables = append(cloneTables, table)
 		}
-		// handle leftover tables from NewTables, e.g.
-		// 1. if DB has 550 tables, batch size is 500, 500 will be send by internal loop, 50 leftover, here we handle 50
-		// 2. if DB has 50 tables < 500
-		LengthOfTables := len(NewTables)
-		if lastSend < LengthOfTables {
-			ThePatchTables := NewTables[lastSend:LengthOfTables]
-			gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-			err := d.BatchCreateTableWithInfo(gs.se, dbName, ThePatchTables, ddl.OnExistIgnore, true)
-			if err != nil {
-				log.Info("Bulk create table from tidb failure, it possible caused by version mismatch with BR.", zap.String("Error", err.Error()))
-				return err
-			}
-			log.Info("BatchCreateTableWithInfo  DONE",
-				zap.Stringer("DB", dbName),
-				zap.Int("start", lastSend),
-				zap.Int("end", LengthOfTables),
-				zap.Int("query total size", len(queryBuilder.String())))
-			lastSend = LengthOfTables - 1
-			queryBuilder.Reset()
+		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
+		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore, true)
+		if err != nil {
+			log.Info("Bulk create table from tidb failure, it possible caused by version mismatch with BR.", zap.String("Error", err.Error()))
+			return err
 		}
+		log.Info("BatchCreateTableWithInfo  DONE",
+			zap.Stringer("DB", dbName),
+			zap.Int("table num", len(cloneTables)))
 	}
 
 	return nil
