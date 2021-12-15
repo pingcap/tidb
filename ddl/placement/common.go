@@ -32,9 +32,9 @@ func GroupID(id int64) string {
 
 const (
 	// RuleIndexTable is the index for a rule of table.
-	RuleIndexTable = 8
+	RuleIndexTable = 40
 	// RuleIndexPartition is the index for a rule of partition.
-	RuleIndexPartition = 12
+	RuleIndexPartition = 80
 )
 
 const (
