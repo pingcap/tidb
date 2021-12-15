@@ -32,7 +32,6 @@ import (
 )
 
 func TestAbs(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
@@ -59,7 +58,6 @@ func TestAbs(t *testing.T) {
 }
 
 func TestCeil(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -125,7 +123,6 @@ func TestCeil(t *testing.T) {
 }
 
 func TestExp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -177,7 +174,6 @@ func TestExp(t *testing.T) {
 }
 
 func TestFloor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -248,7 +244,6 @@ func TestFloor(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         []interface{}
@@ -292,7 +287,6 @@ func TestLog(t *testing.T) {
 }
 
 func TestLog2(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         interface{}
@@ -331,7 +325,6 @@ func TestLog2(t *testing.T) {
 }
 
 func TestLog10(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         interface{}
@@ -370,7 +363,6 @@ func TestLog10(t *testing.T) {
 }
 
 func TestRand(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
@@ -392,7 +384,6 @@ func TestRand(t *testing.T) {
 }
 
 func TestPow(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -440,7 +431,6 @@ func TestPow(t *testing.T) {
 }
 
 func TestRound(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
@@ -495,7 +485,6 @@ func TestRound(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
@@ -540,7 +529,6 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestCRC32(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -568,7 +556,6 @@ func TestCRC32(t *testing.T) {
 }
 
 func TestConv(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -633,7 +620,6 @@ func TestConv(t *testing.T) {
 }
 
 func TestSign(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -669,7 +655,6 @@ func TestSign(t *testing.T) {
 }
 
 func TestDegrees(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = false
@@ -713,7 +698,6 @@ func TestDegrees(t *testing.T) {
 }
 
 func TestSqrt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -738,7 +722,6 @@ func TestSqrt(t *testing.T) {
 }
 
 func TestPi(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
@@ -749,7 +732,6 @@ func TestPi(t *testing.T) {
 }
 
 func TestRadians(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
@@ -783,7 +765,6 @@ func TestRadians(t *testing.T) {
 }
 
 func TestSin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -828,7 +809,6 @@ func TestSin(t *testing.T) {
 }
 
 func TestCos(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -870,7 +850,6 @@ func TestCos(t *testing.T) {
 }
 
 func TestAcos(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -910,7 +889,6 @@ func TestAcos(t *testing.T) {
 }
 
 func TestAsin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -950,7 +928,6 @@ func TestAsin(t *testing.T) {
 }
 
 func TestAtan(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -990,7 +967,6 @@ func TestAtan(t *testing.T) {
 }
 
 func TestTan(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -1031,7 +1007,6 @@ func TestTan(t *testing.T) {
 }
 
 func TestCot(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}
