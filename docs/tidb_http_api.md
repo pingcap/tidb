@@ -522,3 +522,18 @@ timezone.*
     curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
     ```
 
+1. Enable/disable the mutation checker
+
+    ```shell
+    curl -X POST -d "tidb_enable_mutation_checker=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_mutation_checker=0" http://{TiDBIP}:10080/settings
+    ```
+
+1. Get/Set the size of the Ballast Object
+
+    ```shell
+    # get current size of the ballast object
+    curl -v http://{TiDBIP}:10080/debug/ballast-object-sz
+    # reset the size of the ballast object (2GB in this example)
+    curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
+    ```

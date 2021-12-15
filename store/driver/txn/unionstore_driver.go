@@ -134,13 +134,6 @@ type tikvIterator struct {
 	tikv.Iterator
 }
 
-func newKVIterator(it tikv.Iterator) kv.Iterator {
-	if it == nil {
-		return nil
-	}
-	return &tikvIterator{Iterator: it}
-}
-
 func (it *tikvIterator) Key() kv.Key {
 	return kv.Key(it.Iterator.Key())
 }

@@ -19,21 +19,15 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-type rowSuite struct{}
+func TestMarshal(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&rowSuite{})
-
-func TestRow(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *rowSuite) TestMarshal(c *C) {
 	dats := make([]types.Datum, 4)
 	dats[0].SetInt64(1)
 	dats[1].SetNull()
@@ -42,12 +36,15 @@ func (s *rowSuite) TestMarshal(c *C) {
 
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{zapRow("row", dats)})
-	c.Assert(err, IsNil)
-	c.Assert(strings.TrimRight(out.String(), "\n"), Equals,
-		`{"row": ["kind: int64, val: 1", "kind: null, val: NULL", "kind: max, val: +inf", "kind: min, val: -inf"]}`)
+	require.NoError(t, err)
+	require.Equal(t,
+		`{"row": ["kind: int64, val: 1", "kind: null, val: NULL", "kind: max, val: +inf", "kind: min, val: -inf"]}`,
+		strings.TrimRight(out.String(), "\n"))
 }
 
-func (s *kvSuite) TestSimplePairIter(c *C) {
+func TestSimplePairIter(t *testing.T) {
+	t.Parallel()
+
 	pairs := []Pair{
 		{Key: []byte("1"), Val: []byte("a")},
 		{Key: []byte("2"), Val: []byte("b")},
@@ -60,33 +57,33 @@ func (s *kvSuite) TestSimplePairIter(c *C) {
 	for iter.Next() {
 		count++
 	}
-	c.Assert(count, Equals, expectCount)
+	require.Equal(t, expectCount, count)
 
-	c.Assert(iter.First(), IsTrue)
-	c.Assert(iter.Last(), IsTrue)
+	require.True(t, iter.First())
+	require.True(t, iter.Last())
 
-	c.Assert(iter.Seek([]byte("1")), IsTrue)
-	c.Assert(bytes.Equal(iter.Key(), []byte("1")), IsTrue)
-	c.Assert(bytes.Equal(iter.Value(), []byte("a")), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
+	require.True(t, iter.Seek([]byte("1")))
+	require.True(t, bytes.Equal(iter.Key(), []byte("1")))
+	require.True(t, bytes.Equal(iter.Value(), []byte("a")))
+	require.True(t, iter.Valid())
 
-	c.Assert(iter.Seek([]byte("2")), IsTrue)
-	c.Assert(bytes.Equal(iter.Key(), []byte("2")), IsTrue)
-	c.Assert(bytes.Equal(iter.Value(), []byte("b")), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
+	require.True(t, iter.Seek([]byte("2")))
+	require.True(t, bytes.Equal(iter.Key(), []byte("2")))
+	require.True(t, bytes.Equal(iter.Value(), []byte("b")))
+	require.True(t, iter.Valid())
 
-	c.Assert(iter.Seek([]byte("3")), IsTrue)
-	c.Assert(bytes.Equal(iter.Key(), []byte("3")), IsTrue)
-	c.Assert(bytes.Equal(iter.Value(), []byte("c")), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
+	require.True(t, iter.Seek([]byte("3")))
+	require.True(t, bytes.Equal(iter.Key(), []byte("3")))
+	require.True(t, bytes.Equal(iter.Value(), []byte("c")))
+	require.True(t, iter.Valid())
 
 	// 4 not exists, so seek position will move to 5.
-	c.Assert(iter.Seek([]byte("4")), IsTrue)
-	c.Assert(bytes.Equal(iter.Key(), []byte("5")), IsTrue)
-	c.Assert(bytes.Equal(iter.Value(), []byte("d")), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
+	require.True(t, iter.Seek([]byte("4")))
+	require.True(t, bytes.Equal(iter.Key(), []byte("5")))
+	require.True(t, bytes.Equal(iter.Value(), []byte("d")))
+	require.True(t, iter.Valid())
 
 	// 6 not exists, so seek position will not valid.
-	c.Assert(iter.Seek([]byte("6")), IsFalse)
-	c.Assert(iter.Valid(), IsFalse)
+	require.False(t, iter.Seek([]byte("6")))
+	require.False(t, iter.Valid())
 }

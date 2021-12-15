@@ -19,15 +19,16 @@ import (
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -56,6 +57,10 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable kv.MemBuffer
+	collators  []collate.Collator
 }
 
 // Open implements the Executor Open interface.
@@ -202,6 +207,10 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
+	if us.cacheTable != nil {
+		// From cache table, so the snapshot is nil
+		return nil, nil
+	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
@@ -266,7 +275,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err := aColumn.CompareDatum(sc, &bColumn)
+		cmp, err := aColumn.Compare(sc, &bColumn, us.collators[colOff])
 		if err != nil {
 			return 0, err
 		}
@@ -274,5 +283,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	return us.belowHandleCols.Compare(a, b)
+	return us.belowHandleCols.Compare(a, b, us.collators)
 }

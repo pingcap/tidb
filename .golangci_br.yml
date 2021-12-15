@@ -1,0 +1,83 @@
+run:
+  concurrency: 4
+  timeout: 7m
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable-all: true
+  disable:
+    - gochecknoglobals
+    - gci
+    - wsl
+    - funlen
+    - gocognit
+    - godox
+    - gomnd
+    - testpackage
+    - nestif
+    - goerr113
+    - lll
+    - paralleltest
+    - nlreturn
+    - exhaustivestruct
+    - exhaustive
+    - godot
+    - gosec
+    - errorlint
+    - wrapcheck
+    - gomoddirectives
+    - bodyclose
+    - unused
+    - unparam
+    - wastedassign
+    - tagliatelle
+    - thelper
+    - nolintlint
+    - ineffassign
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - predeclared
+    - ifshort
+    - cyclop
+    - whitespace
+    - unconvert
+    - forcetypeassert
+    - sqlclosecheck
+    - errcheck
+    - gocritic
+    - golint
+    - gocyclo
+    - promlinter
+    - forbidigo
+    - gochecknoinits
+    - scopelint
+    - revive
+    - misspell
+    - maligned
+    - makezero
+    - interfacer
+    - gofumpt
+    - goconst
+    - prealloc
+    - govet
+    - dupl
+    - deadcode
+    - varcheck
+    - nakedret
+
+linters-settings:
+  staticcheck:
+    checks: ["S1002","S1004","S1007","S1009","S1010","S1012","S1019","S1020","S1021","S1024","S1030","SA2*","SA3*","SA4009","SA5*","SA6000","SA6001","SA6005", "-SA2002"]
+  stylecheck:
+    checks: ["-ST1003"]
+  gosec:
+    excludes:
+      - G601
+
+issues:
+  exclude-rules:

@@ -18,15 +18,14 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -38,15 +37,14 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).
-				GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
@@ -274,7 +272,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
 	tp := *expr.RetType
 	if collate.NewCollationEnabled() {
-		_, tp.Collate = expr.CharsetAndCollation(expr.GetCtx())
+		_, tp.Collate = expr.CharsetAndCollation()
 	}
 
 	// Construct expression ProtoBuf.

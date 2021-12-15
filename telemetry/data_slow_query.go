@@ -23,8 +23,8 @@ import (
 	"time"
 
 	pingcapErrors "github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	pmodel "github.com/prometheus/common/model"

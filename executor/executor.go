@@ -31,12 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -45,6 +40,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -965,18 +965,30 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
-	var planDigest *parser.Digest
-	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
-		_, planDigest = seVars.StmtCtx.GetPlanDigest()
-	}
 	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
-	lockCtx.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest)
+	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
+		if req == nil {
+			return nil
+		}
+		if len(req.Mutations) == 0 {
+			return nil
+		}
+		if mutation := req.Mutations[0]; mutation != nil {
+			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
+			normalized, digest := seVars.StmtCtx.SQLDigest()
+			if len(normalized) == 0 {
+				return nil
+			}
+			_, planDigest := seVars.StmtCtx.GetPlanDigest()
+			return resourcegrouptag.EncodeResourceGroupTag(digest, planDigest, label)
+		}
+		return nil
+	}
 	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
 		cfg := config.GetGlobalConfig()
 		if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
@@ -1009,6 +1021,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
 
+	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1028,6 +1041,20 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
+	if len(stmtCtx.LockTableIDs) == 0 {
+		return keys
+	}
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1666,6 +1693,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
+	sc.LockTableIDs = make(map[int64]struct{})
+	sc.EnableOptimizeTrace = false
+	sc.LogicalOptimizeTrace = nil
+	sc.OptimizerCETrace = nil
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -1878,8 +1909,8 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
 }

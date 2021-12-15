@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling
 
 default: server buildsucc
 
@@ -28,7 +28,8 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test
+dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
+	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
@@ -43,7 +44,8 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_WITHOUT_BR))
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(BR_PACKAGE_DIRECTORIES)) --config .golangci_br.yml
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
@@ -59,11 +61,11 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_WITHOUT_BR)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 
 vet:
 	@echo "vet"
-	$(GO) vet -all $(PACKAGES_WITHOUT_BR) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -82,9 +84,24 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
+
+test_part_parser: parser_yacc test_part_parser_dev
+
+test_part_parser_dev: parser_fmt parser_unit_test
+
+parser_yacc:
+	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd parser && make fmt
+
+parser_unit_test:
+	@cd parser && make test
 
 test_part_br: br_unit_test br_integration_test
+
+test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -92,31 +109,40 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-upload-coverage: SHELL:=/bin/bash
-upload-coverage:
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	mv overalls.coverprofile coverage.txt
-	bash <(curl -s https://codecov.io/bash)
-endif
-
-gotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=info; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
+devgotest: failpoint-enable
+# grep regex: Filter out all tidb logs starting with:
+# - '[20' (like [2021/09/15 ...] [INFO]..)
+# - 'PASS:' to ignore passed tests
+# - 'ok ' to ignore passed directories
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@echo "timeout-check"
-	grep 'PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
-endif
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+gotest: failpoint-enable
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci_part_1: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running gotest_in_verify_ci_part_1."
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_EXPENSIVE) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
+	@$(FAILPOINT_DISABLE)
+
+gotest_in_verify_ci_part_2: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running gotest_in_verify_ci_part_2."
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_OTHERS) -check.p true || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
@@ -134,6 +160,13 @@ ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_debug:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 server_check:
@@ -235,8 +268,17 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	cd ./session && \
-	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
+	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily -bench Ignore \
+		-date `git log -n1 --date=unix --pretty=format:%cd` \
+		-commit `git log -n1 --pretty=format:%h` \
+		-outfile $(TO)
 
 build_tools: build_br build_lightning build_lightning-ctl
 
@@ -280,7 +322,17 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
-	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
+	@export TZ='Asia/Shanghai';
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+br_unit_test_in_verify_ci: export ARGS=$$($(BR_PACKAGES))
+br_unit_test_in_verify_ci: tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
+	-tags leak $(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/br-coverage.xml"
 	@make failpoint-disable
 
 br_integration_test: br_bins build_br build_for_br_integration_test
@@ -331,3 +383,46 @@ br_bins:
 data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+
+build_dumpling:
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
+
+dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test: failpoint-enable
+	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+dumpling_unit_test_in_verify_ci: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test_in_verify_ci: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/dumpling-junit-report.xml" -- -tags leak $(DUMPLING_ARGS) \
+	$(RACE_FLAG) -coverprofile="$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/dumpling_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/dumpling-coverage.xml"
+	@make failpoint-disable
+
+dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+	@make failpoint-disable
+	./dumpling/tests/run.sh $(CASE)
+
+dumpling_tools:
+	@echo "install dumpling tools..."
+	@cd dumpling/tools && make
+
+dumpling_tidy:
+	@echo "go mod tidy"
+	GO111MODULE=on go mod tidy
+	git diff --exit-code go.mod go.sum dumpling/tools/go.mod dumpling/tools/go.sum
+
+dumpling_bins:
+	@which bin/tidb-server
+	@which bin/minio
+	@which bin/tidb-lightning
+	@which bin/sync_diff_inspector
+
+tools/bin/gotestsum: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+tools/bin/gocov: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov  github.com/axw/gocov/gocov
+
+tools/bin/gocov-xml: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov-xml github.com/AlekSi/gocov-xml

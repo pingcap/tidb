@@ -25,8 +25,8 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
@@ -548,10 +548,7 @@ func GetFsp(s string) int8 {
 	} else {
 		fsp = len(s) - index - 1
 	}
-
-	if fsp == len(s) {
-		fsp = 0
-	} else if fsp > 6 {
+	if fsp > 6 {
 		fsp = 6
 	}
 	return int8(fsp)
@@ -1990,7 +1987,18 @@ func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		return NewTime(ZeroCoreTime, tp, DefaultFsp), nil
+		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
+		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning {
+			switch tp {
+			case mysql.TypeTimestamp:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
+			case mysql.TypeDate:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateStr, "0")
+			case mysql.TypeDatetime:
+				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, "0")
+			}
+		}
+		return zt, nil
 	}
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
@@ -3195,7 +3203,7 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 		t.setMicrosecond(0)
 		return input, true
 	}
-	for v > 0 && v*10 < 1000000 {
+	for i := step; i < 6; i++ {
 		v *= 10
 	}
 	t.setMicrosecond(uint32(v))

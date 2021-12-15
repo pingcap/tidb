@@ -15,54 +15,16 @@
 package server
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/stretchr/testify/require"
 )
 
-type ConnTestSuite struct {
-	dom   *domain.Domain
-	store kv.Storage
-}
-
-var _ = SerialSuites(&ConnTestSuite{})
-
-func (ts *ConnTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	ts.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			store := c.AllocID()
-			peer := c.AllocID()
-			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-			mockCluster.AddPeer(region1, store, peer)
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-	c.Assert(err, IsNil)
-	ts.dom, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-}
-
-func (ts *ConnTestSuite) TearDownSuite(c *C) {
-	ts.dom.Close()
-	ts.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
+func TestParseExecArgs(t *testing.T) {
 	type args struct {
 		args        []types.Datum
 		boundParams [][]byte
@@ -236,12 +198,12 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
-		c.Assert(tt.args.args[0].GetValue(), Equals, tt.expect)
+		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
+		require.Equal(t, tt.expect, tt.args.args[0].GetValue())
 	}
 }
 
-func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+func TestParseStmtFetchCmd(t *testing.T) {
 	tests := []struct {
 		arg       []byte
 		stmtID    uint32
@@ -256,10 +218,10 @@ func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
 	}
 
-	for _, t := range tests {
-		stmtID, fetchSize, err := parseStmtFetchCmd(t.arg)
-		c.Assert(stmtID, Equals, t.stmtID)
-		c.Assert(fetchSize, Equals, t.fetchSize)
-		c.Assert(err, Equals, t.err)
+	for _, tc := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd(tc.arg)
+		require.Equal(t, tc.stmtID, stmtID)
+		require.Equal(t, tc.fetchSize, fetchSize)
+		require.Equal(t, tc.err, err)
 	}
 }

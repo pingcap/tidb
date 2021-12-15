@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -70,7 +70,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 		return nil, errors.Trace(err)
 	}
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err = rs.Next(context.TODO(), req)

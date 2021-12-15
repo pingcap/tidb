@@ -15,8 +15,8 @@
 package expression
 
 import (
-	pmysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -34,6 +34,8 @@ var (
 	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
+	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
+	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)

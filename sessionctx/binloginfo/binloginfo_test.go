@@ -26,13 +26,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -158,8 +158,8 @@ func TestBinlog(t *testing.T) {
 	require.Greater(t, prewriteVal.SchemaVersion, int64(0))
 	require.Greater(t, prewriteVal.Mutations[0].TableId, int64(0))
 	expected := [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName)},
 	}
 	gotRows := mutationRowsToRows(t, prewriteVal.Mutations[0].InsertedRows, 2, 4)
 	require.Equal(t, expected, gotRows)
@@ -167,10 +167,10 @@ func TestBinlog(t *testing.T) {
 	tk.MustExec("update local_binlog set name = 'xyz' where id = 2")
 	prewriteVal = getLatestBinlogPrewriteValue(t, pump)
 	oldRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("cde", mysql.DefaultCollationName)},
 	}
 	newRow := [][]types.Datum{
-		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(2), types.NewCollationStringDatum("xyz", mysql.DefaultCollationName)},
 	}
 	gotRows = mutationRowsToRows(t, prewriteVal.Mutations[0].UpdatedRows, 1, 3)
 	require.Equal(t, oldRow, gotRows)
@@ -182,7 +182,7 @@ func TestBinlog(t *testing.T) {
 	prewriteVal = getLatestBinlogPrewriteValue(t, pump)
 	gotRows = mutationRowsToRows(t, prewriteVal.Mutations[0].DeletedRows, 1, 3)
 	expected = [][]types.Datum{
-		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName, collate.DefaultLen)},
+		{types.NewIntDatum(1), types.NewCollationStringDatum("abc", mysql.DefaultCollationName)},
 	}
 	require.Equal(t, expected, gotRows)
 
@@ -716,7 +716,6 @@ func TestTempTableBinlog(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
 	tk.MustExec("begin")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists temp_table")
 	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
 	tk.MustExec(ddlQuery)
@@ -747,7 +746,6 @@ func TestTempTableBinlog(t *testing.T) {
 
 	// for local temporary table
 	latestNonLocalTemporaryTableDDL := ddlQuery
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("create temporary table l_temp_table(id int)")
 	// create temporary table do not write to bin log, so the latest ddl binlog is the previous one
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)
@@ -785,4 +783,32 @@ func TestTempTableBinlog(t *testing.T) {
 	tk.MustExec("drop table l_temp_table")
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)
 	require.True(t, ok)
+}
+
+func TestIssue28292(t *testing.T) {
+	s, clean := createBinlogSuite(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = s.client
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk.MustExec(`CREATE TABLE xxx (
+machine_id int(11) DEFAULT NULL,
+date datetime DEFAULT NULL,
+code int(11) DEFAULT NULL,
+value decimal(20,3) DEFAULT NULL,
+KEY stat_data_index1 (machine_id,date,code)
+) PARTITION BY RANGE ( TO_DAYS(date) ) (
+PARTITION p0 VALUES LESS THAN (TO_DAYS('2021-09-04')),
+PARTITION p1 VALUES LESS THAN (TO_DAYS('2021-09-19')),
+PARTITION p2 VALUES LESS THAN (TO_DAYS('2021-10-04')),
+PARTITION p3 VALUES LESS THAN (TO_DAYS('2021-10-19')),
+PARTITION p4 VALUES LESS THAN (TO_DAYS('2021-11-04')))`)
+
+	tk.MustExec("INSERT INTO xxx value(123, '2021-09-22 00:00:00', 666, 123.24)")
+	tk.MustExec("BEGIN")
+	// No panic.
+	tk.MustExec("DELETE FROM xxx WHERE machine_id = 123 and date = '2021-09-22 00:00:00'")
+	tk.MustExec("COMMIT")
 }

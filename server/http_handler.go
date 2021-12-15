@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -46,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -85,6 +85,7 @@ const (
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
 	pSnapshot   = "snapshot"
+	pFileName   = "filename"
 )
 
 // For query string
@@ -737,6 +738,28 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
 			config.StoreGlobalConfig(cfg)
 		}
+		if mutationChecker := req.Form.Get("tidb_enable_mutation_checker"); mutationChecker != "" {
+			s, err := session.CreateSession(h.Store)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			defer s.Close()
+
+			switch mutationChecker {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.Off)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.On)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -978,7 +1001,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 		messages = make([]*schemaTableStorage, 0)
 		defer terror.Call(results.Close)
 		for {
-			req := results.NewChunk()
+			req := results.NewChunk(nil)
 			if err = results.Next(context.TODO(), req); err != nil {
 				break
 			}

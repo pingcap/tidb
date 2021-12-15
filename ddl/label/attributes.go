@@ -15,6 +15,7 @@
 package label
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -24,23 +25,82 @@ const (
 	partitionKey = "partition"
 )
 
+// AttributesCompatibility is the return type of CompatibleWith.
+type AttributesCompatibility byte
+
+const (
+	// AttributesCompatible indicates two attributes are compatible.
+	AttributesCompatible AttributesCompatibility = iota
+	// AttributesIncompatible indicates two attributes are incompatible.
+	AttributesIncompatible
+	// AttributesDuplicated indicates two attributes are duplicated.
+	AttributesDuplicated
+)
+
 // Label is used to describe attributes
 type Label struct {
 	Key   string `json:"key,omitempty"`
 	Value string `json:"value,omitempty"`
 }
 
+// NewLabel creates a new label for a given string.
+func NewLabel(attr string) (Label, error) {
+	l := Label{}
+	kv := strings.Split(attr, "=")
+	if len(kv) != 2 {
+		return l, fmt.Errorf("%w: %s", ErrInvalidAttributesFormat, attr)
+	}
+
+	key := strings.TrimSpace(kv[0])
+	if key == "" {
+		return l, fmt.Errorf("%w: %s", ErrInvalidAttributesFormat, attr)
+	}
+
+	val := strings.TrimSpace(kv[1])
+	if val == "" {
+		return l, fmt.Errorf("%w: %s", ErrInvalidAttributesFormat, attr)
+	}
+
+	l.Key = key
+	l.Value = val
+	return l, nil
+}
+
+// Restore converts a Attribute to a string.
+func (l *Label) Restore() string {
+	return l.Key + "=" + l.Value
+}
+
+// CompatibleWith will check if two constraints are compatible.
+// Return (compatible, duplicated).
+func (l *Label) CompatibleWith(o *Label) AttributesCompatibility {
+	if l.Key != o.Key {
+		return AttributesCompatible
+	}
+
+	if l.Value == o.Value {
+		return AttributesDuplicated
+	}
+
+	return AttributesIncompatible
+}
+
 // Labels is a slice of Label.
 type Labels []Label
 
 // NewLabels creates a slice of Label for given attributes.
-func NewLabels(attrs []string) Labels {
+func NewLabels(attrs []string) (Labels, error) {
 	labels := make(Labels, 0, len(attrs))
 	for _, attr := range attrs {
-		label := NewLabel(attr)
-		labels.Add(label)
+		label, err := NewLabel(attr)
+		if err != nil {
+			return nil, err
+		}
+		if err := labels.Add(label); err != nil {
+			return nil, err
+		}
 	}
-	return labels
+	return labels, nil
 }
 
 // Restore converts Attributes to a string.
@@ -63,24 +123,22 @@ func (labels *Labels) Restore() string {
 	return sb.String()
 }
 
-// Add adds a new label to existed labels.
-func (labels *Labels) Add(l Label) {
-	for _, label := range *labels {
-		if l.Key != label.Key {
+// Add will add a new attribute, with validation of all attributes.
+func (labels *Labels) Add(label Label) error {
+	for i := range *labels {
+		l := (*labels)[i]
+		res := label.CompatibleWith(&l)
+		if res == AttributesCompatible {
 			continue
 		}
-		return
+		if res == AttributesDuplicated {
+			return nil
+		}
+		s1 := label.Restore()
+		s2 := l.Restore()
+		return fmt.Errorf("%w: '%s' and '%s'", ErrConflictingAttributes, s1, s2)
 	}
 
-	*labels = append(*labels, l)
-}
-
-// NewLabel creates a new label for a given string.
-func NewLabel(attr string) Label {
-	return Label{Key: strings.TrimSpace(attr), Value: "true"}
-}
-
-// Restore converts a Attribute to a string.
-func (a *Label) Restore() string {
-	return a.Key
+	*labels = append(*labels, label)
+	return nil
 }

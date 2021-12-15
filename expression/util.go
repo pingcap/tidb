@@ -20,16 +20,15 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -225,15 +224,21 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
+		substituted := false
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
-			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
-			return true, newFunc
+			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			if substituted {
+				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
+				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
+				e.SetCoercibility(v.Coercibility())
+				return true, e
+			}
+			return false, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		substituted := false
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
@@ -386,8 +391,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 }
 
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
-// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
-func timeZone2Duration(tz string) time.Duration {
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to int for use by time.FixedZone().
+func timeZone2int(tz string) int {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
@@ -398,7 +403,7 @@ func timeZone2Duration(tz string) time.Duration {
 	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
 	terror.Log(err)
-	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	return sign * ((h * 3600) + (m * 60))
 }
 
 var logicalOps = map[string]struct{}{
@@ -827,10 +832,6 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		if ContainMutableConst(ctx, []Expression{expr}) {
-			res = append(res, expr)
-			continue
-		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -905,12 +906,28 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
-// ContainMutableConst checks if the expressions contain a lazy constant.
-func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
-	// Treat all constants immutable if plan cache is not enabled for this query.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+// MaybeOverOptimized4PlanCache used to check whether an optimization can work
+// for the statement when we enable the plan cache.
+// In some situations, some optimizations maybe over-optimize and cache an
+// overOptimized plan. The cached plan may not get the correct result when we
+// reuse the plan for other statements.
+// For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
+// `$a==$b`, but it will cause wrong results when `$a!=$b`.
+// So we need to do the check here. The check includes the following aspects:
+// 1. Whether the plan cache switch is enable.
+// 2. Whether the statement can be cached.
+// 3. Whether the expressions contain a lazy constant.
+// TODO: Do more careful check here.
+func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return false
 	}
+	return containMutableConst(ctx, exprs)
+}
+
+// containMutableConst checks if the expressions contain a lazy constant.
+func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -918,12 +935,25 @@ func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if ContainMutableConst(ctx, v.GetArgs()) {
+			if containMutableConst(ctx, v.GetArgs()) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			v.ParamMarker = nil
+			v.DeferredExpr = nil
+		case *ScalarFunction:
+			RemoveMutableConst(ctx, v.GetArgs())
+		}
+	}
 }
 
 const (
@@ -978,7 +1008,7 @@ func GetFormatBytes(bytes float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
 	}
-	value := float64(bytes) / divisor
+	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
@@ -1017,7 +1047,7 @@ func GetFormatNanoTime(time float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
 	}
-	value := float64(time) / divisor
+	value := time / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}

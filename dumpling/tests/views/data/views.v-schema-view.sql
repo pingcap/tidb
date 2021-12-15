@@ -1,0 +1,14 @@
+/*!40101 SET NAMES binary*/;
+/*T![placement] SET PLACEMENT_CHECKS = 0*/;
+DROP TABLE IF EXISTS `v`;
+DROP VIEW IF EXISTS `v`;
+SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;
+SET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;
+SET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;
+SET character_set_client = utf8mb4;
+SET character_set_results = utf8mb4;
+SET collation_connection = utf8mb4_general_ci;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `views`.`v` AS select `views`.`t`.`a` AS `a`,`views`.`t`.`b` AS `b` from `views`.`t`;
+SET character_set_client = @PREV_CHARACTER_SET_CLIENT;
+SET character_set_results = @PREV_CHARACTER_SET_RESULTS;
+SET collation_connection = @PREV_COLLATION_CONNECTION;

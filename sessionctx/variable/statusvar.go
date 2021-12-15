@@ -49,6 +49,25 @@ func RegisterStatistics(s Statistics) {
 	statisticsListLock.Unlock()
 }
 
+// UnregisterStatistics unregisters statistics.
+func UnregisterStatistics(s Statistics) {
+	statisticsListLock.Lock()
+	defer statisticsListLock.Unlock()
+	idx := -1
+	for i := range statisticsList {
+		if statisticsList[i] == s {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	last := len(statisticsList) - 1
+	statisticsList[idx] = statisticsList[last]
+	statisticsList[last] = nil
+	statisticsList = statisticsList[:last]
+}
+
 // GetStatusVars gets registered statistics status variables.
 // TODO: Refactor this function to avoid repeated memory allocation / dealloc
 func GetStatusVars(vars *SessionVars) (map[string]*StatusVal, error) {
