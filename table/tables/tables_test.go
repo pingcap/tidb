@@ -18,7 +18,6 @@ import (
 	"context"
 	"math"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -752,15 +751,18 @@ func TestViewColumns(t *testing.T) {
 	}
 }
 
-func (ts *testSuite) TestTxnAssertion(c *C) {
+func TestTxnAssertion(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	// TODO: Locks produced by this test may be left without cleaning up, causing the test runs longer than expected.
 	// This is caused by that client-go didn't clean up the transaction when `initKeysAndMutations` returns error.
 
-	se, err := session.CreateSession4Test(ts.store)
+	se, err := session.CreateSession4Test(store)
 	se.SetConnectionID(1)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+	require.NoError(t, err)
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk := testkit.NewTestKit(t, store)
+	tk.SetSession(se)
 
 	fpAdd := "github.com/pingcap/tidb/table/tables/addRecordForceAssertExist"
 	fpUpdate := "github.com/pingcap/tidb/table/tables/updateRecordForceAssertNotExist"
@@ -779,19 +781,19 @@ func (ts *testSuite) TestTxnAssertion(c *C) {
 	}
 
 	withFailpoint := func(fp string, f func()) {
-		c.Assert(failpoint.Enable(fp, "return"), IsNil)
+		require.NoError(t, failpoint.Enable(fp, "return"))
 		defer func() {
-			c.Assert(failpoint.Disable(fp), IsNil)
+			require.NoError(t, failpoint.Disable(fp))
 		}()
 		f()
 	}
 
 	expectAssertionErr := func(assertionLevel string, err error) {
 		if assertionLevel == "STRICT" {
-			c.Assert(err, NotNil)
-			c.Assert(strings.Contains(err.Error(), "assertion failed"), IsTrue)
+			require.NotNil(t, err)
+			require.Contains(t, err.Error(), "assertion failed")
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 
