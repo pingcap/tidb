@@ -35,7 +35,6 @@ import (
 )
 
 func TestGlueGetVersion(t *testing.T) {
-	t.Parallel()
 	g := tidbGlueSession{}
 	version := g.GetVersion()
 	require.Contains(t, version, `Release Version`)
@@ -67,7 +66,6 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 }
 
 func TestFetchShowBRIE(t *testing.T) {
-	t.Parallel()
 	// Compose a mocked session manager.
 	ps := make([]*util.ProcessInfo, 0, 1)
 	pi := &util.ProcessInfo{

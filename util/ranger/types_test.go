@@ -25,7 +25,6 @@ import (
 )
 
 func TestRange(t *testing.T) {
-	t.Parallel()
 	simpleTests := []struct {
 		ran ranger.Range
 		str string
@@ -130,7 +129,6 @@ func TestRange(t *testing.T) {
 }
 
 func TestIsFullRange(t *testing.T) {
-	t.Parallel()
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	isFullRangeTests := []struct {
