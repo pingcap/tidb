@@ -203,7 +203,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		pool:             pool,
 	}
 	handle.lease.Store(lease)
-	handle.pool = pool
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
