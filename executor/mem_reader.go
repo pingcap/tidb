@@ -677,11 +677,6 @@ func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange) (finalHandl
 		switch r := reader.(type) {
 		case *memTableReader:
 			r.kvRanges = kvRanges[i]
-			tmpRows, err := reader.getMemRows()
-			if err != nil {
-				fmt.Println("gjt err: ", err)
-			}
-			fmt.Println("gjt rows: ", tmpRows)
 		case *memIndexReader:
 			r.kvRanges = kvRanges[i]
 		default:
