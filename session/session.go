@@ -1562,7 +1562,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
-			time.Sleep(time.Duration(val.(int)) * time.Millisecond)
+			v, _ := val.(int)
+			time.Sleep(time.Duration(v) * time.Millisecond)
 		}
 	})
 
