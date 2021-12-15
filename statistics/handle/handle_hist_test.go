@@ -15,9 +15,9 @@
 package handle_test
 
 import (
-	"math"
 	"time"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -57,7 +57,7 @@ func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
-	timeout := time.Nanosecond * math.MaxInt
+	timeout := time.Nanosecond * mathutil.MaxInt
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	c.Assert(rs, Equals, true)
@@ -154,7 +154,7 @@ func (s *testStatsSuite) TestConcurrentLoadHistFail(c *C) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
-	timeout := time.Nanosecond * math.MaxInt
+	timeout := time.Nanosecond * mathutil.MaxInt
 	// TODO failpoint, and works again after failpoint
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
