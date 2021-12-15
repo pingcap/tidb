@@ -327,6 +327,22 @@ func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
 	tk.MustExec("insert ignore into t1 values (388021, '', 416235653);")
 	tk.MustQuery("select /*+ use_index_merge( t1 ) */ 1 from t1 where ( t1.col_31 in ( 'OiOXzpCs' , 'oaVv' ) or t1.col_37 <= 4059907010 ) and t1.col_30 ;").Check(testkit.Rows("1"))
 	tk.MustExec("commit;")
+
+	tk.MustExec("drop table if exists tbl_3;")
+	tk.MustExec(`create table tbl_3 ( col_30 decimal , col_31 char(99) , col_32 smallint ,
+				  col_33 tinyint unsigned not null , col_34 char(209) , 
+				  col_35 char(110) , col_36 int unsigned , col_37 int unsigned ,
+				  col_38 decimal(50,15) not null , col_39 char(104), 
+				  primary key ( col_37 ) , unique key ( col_33,col_30,col_36,col_39 ) ,
+				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) , 
+				  key ( col_31,col_33,col_32,col_35,col_36 ) , 
+				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) , 
+				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) , 
+				  key ( col_38,col_32,col_33 ) )`)
+	tk.MustExec("begin;")
+	tk.MustExec("insert ignore into tbl_3 values ( 71,'Fipc',-6676,30,'','FgfK',2464927398,4084082400,5602.5868,'' );")
+	tk.MustQuery("select /*+ use_index_merge( tbl_3 ) */ 1 from tbl_3 where ( tbl_3.col_37 not in ( 1626615245 , 2433569159 ) or tbl_3.col_38 = 0.06 ) ;").Check(testkit.Rows("1"))
+	tk.MustExec("commit;")
 }
 
 func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
