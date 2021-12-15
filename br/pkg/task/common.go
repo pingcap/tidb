@@ -349,7 +349,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 	}
 
 	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(err, "Cipher type and key not match")
+		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
 	}
 
 	return nil
@@ -477,6 +477,9 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
 
 	if err = cfg.parseCipherInfo(flags); err != nil {
 		return errors.Trace(err)
@@ -540,7 +543,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 

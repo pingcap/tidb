@@ -558,3 +558,15 @@ select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= trun
 COL1	COL2	COL3
 -1.7976931348623157e308	0	0
 -1.7976931348623157e308	1	0
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20

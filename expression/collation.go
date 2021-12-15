@@ -301,7 +301,8 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			continue
 		}
 
-		if arg.Repertoire() == ASCII {
+		// If value has ASCII repertoire, or it is binary string, just skip it.
+		if arg.Repertoire() == ASCII || types.IsBinaryStr(arg.GetType()) {
 			continue
 		}
 

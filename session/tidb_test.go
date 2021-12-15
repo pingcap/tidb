@@ -27,8 +27,6 @@ import (
 )
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
-	t.Parallel()
-
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
@@ -58,8 +56,6 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 }
 
 func TestParseErrorWarn(t *testing.T) {
-	t.Parallel()
-
 	ctx := core.MockContext()
 
 	nodes, err := Parse(ctx, "select /*+ adf */ 1")
@@ -72,8 +68,6 @@ func TestParseErrorWarn(t *testing.T) {
 }
 
 func TestKeysNeedLock(t *testing.T) {
-	t.Parallel()
-
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	uniqueValue := make([]byte, 8)

@@ -585,7 +585,7 @@ func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collat
 	case KindString:
 		return d.compareStringNew(sc, ad.GetString(), comparer)
 	case KindBytes:
-		return comparer.Compare(d.GetString(), ad.GetString()), nil
+		return d.compareStringNew(sc, ad.GetString(), comparer)
 	case KindMysqlDecimal:
 		return d.compareMysqlDecimal(sc, ad.GetMysqlDecimal())
 	case KindMysqlDuration:
@@ -754,7 +754,7 @@ func (d *Datum) compareStringNew(sc *stmtctx.StatementContext, s string, compare
 	case KindMysqlEnum:
 		return comparer.Compare(d.GetMysqlEnum().String(), s), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return comparer.Compare(d.GetBinaryLiteral4Cmp().String(), s), nil
+		return comparer.Compare(d.GetBinaryLiteral4Cmp().ToString(), s), nil
 	default:
 		fVal, err := StrToFloat(sc, s, false)
 		if err != nil {
@@ -1037,8 +1037,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	var err1 error
-	f, err1 = ProduceFloatWithSpecifiedTp(f, target, sc)
+	f, err1 := ProduceFloatWithSpecifiedTp(f, target, sc)
 	if err == nil && err1 != nil {
 		err = err1
 	}
@@ -1052,6 +1051,12 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 
 // ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
 func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.StatementContext) (_ float64, err error) {
+	if math.IsNaN(f) {
+		return 0, overflow(f, target.Tp)
+	}
+	if math.IsInf(f, 0) {
+		return f, overflow(f, target.Tp)
+	}
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
@@ -1133,9 +1138,9 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
-		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
+		// Flen is the rune length, not binary length, for Non-binary charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
-		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
+		if chs != charset.CharsetBinary {
 			characterLen = utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
@@ -1268,7 +1273,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	case KindMysqlTime:
 		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
 		if err != nil {
-			ret.SetMysqlTime(ZeroTimestamp)
+			// t might be an invalid Timestamp, but should still be comparable, since same representation (KindMysqlTime)
+			ret.SetMysqlTime(t)
 			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
@@ -2175,7 +2181,8 @@ func (ds *datumsSorter) Len() int {
 }
 
 func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].CompareDatum(ds.sc, &ds.datums[j])
+	// TODO: set collation explicitly when rewrites feedback.
+	cmp, err := ds.datums[i].Compare(ds.sc, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
 	if err != nil {
 		ds.err = errors.Trace(err)
 		return true
@@ -2357,7 +2364,7 @@ func ChangeReverseResultByUpperLowerBound(
 		resRetType.Decimal = int(res.GetMysqlDecimal().GetDigitsInt())
 	}
 	bound := getDatumBound(&resRetType, rType)
-	cmp, err := d.CompareDatum(sc, &bound)
+	cmp, err := d.Compare(sc, &bound, collate.GetCollator(resRetType.Collate))
 	if err != nil {
 		return d, err
 	}

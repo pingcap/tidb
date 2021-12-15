@@ -1281,11 +1281,11 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
 		if v.IsGlobal && !sysVar.HasGlobalScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
 		if !v.IsGlobal && !sysVar.HasSessionScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 			return
 		}
 	}
@@ -1454,11 +1454,14 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETString {
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
-						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+						er.sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
 						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 					} else {
 						continue
 					}
+				} else if er.sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+					// We should remove the mutable constant for correctness, because its value may be changed.
+					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
@@ -2027,7 +2030,12 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 	if handle.IsInt() {
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
-		ret["_tidb_rowid"] = handle.IntValue()
+		// When the clustered index is enabled, we should show the PK name.
+		if tbl.Meta().HasClusteredIndex() {
+			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
+		} else {
+			ret["_tidb_rowid"] = handle.IntValue()
+		}
 		retStr, err := json.Marshal(ret)
 		if err != nil {
 			return "", errors.Trace(err)

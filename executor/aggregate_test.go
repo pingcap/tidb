@@ -36,7 +36,6 @@ import (
 )
 
 func TestAggregation(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -477,7 +476,6 @@ func TestAggregation(t *testing.T) {
 }
 
 func TestAggPrune(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -505,7 +503,6 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestGroupConcatAggr(t *testing.T) {
-	t.Parallel()
 	var err error
 	// issue #5411
 	store, clean := testkit.CreateMockStore(t)
@@ -652,7 +649,6 @@ func TestGroupConcatAggr(t *testing.T) {
 }
 
 func TestSelectDistinct(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -667,7 +663,6 @@ func TestSelectDistinct(t *testing.T) {
 }
 
 func TestAggPushDown(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -698,7 +693,6 @@ func TestAggPushDown(t *testing.T) {
 }
 
 func TestOnlyFullGroupBy(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -813,7 +807,6 @@ func TestOnlyFullGroupBy(t *testing.T) {
 }
 
 func TestIssue16279(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -827,7 +820,6 @@ func TestIssue16279(t *testing.T) {
 }
 
 func TestIssue24676(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -845,7 +837,6 @@ func TestIssue24676(t *testing.T) {
 }
 
 func TestAggPushDownPartitionTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -880,7 +871,6 @@ func TestAggPushDownPartitionTable(t *testing.T) {
 }
 
 func TestIssue13652(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -897,7 +887,6 @@ func TestIssue13652(t *testing.T) {
 }
 
 func TestIssue14947(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -909,7 +898,6 @@ func TestIssue14947(t *testing.T) {
 }
 
 func TestHaving(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -937,7 +925,6 @@ func TestHaving(t *testing.T) {
 }
 
 func TestIssue26496(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -950,7 +937,6 @@ func TestIssue26496(t *testing.T) {
 }
 
 func TestAggEliminator(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -967,7 +953,6 @@ func TestAggEliminator(t *testing.T) {
 }
 
 func TestClusterIndexMaxMinEliminator(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -984,7 +969,6 @@ func TestClusterIndexMaxMinEliminator(t *testing.T) {
 }
 
 func TestMaxMinFloatScalaFunc(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -998,7 +982,6 @@ func TestMaxMinFloatScalaFunc(t *testing.T) {
 }
 
 func TestBuildProjBelowAgg(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1014,7 +997,6 @@ func TestBuildProjBelowAgg(t *testing.T) {
 }
 
 func TestInjectProjBelowTopN(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1036,7 +1018,6 @@ func TestInjectProjBelowTopN(t *testing.T) {
 }
 
 func TestFirstRowEnum(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1050,7 +1031,6 @@ func TestFirstRowEnum(t *testing.T) {
 }
 
 func TestAggJSON(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1103,7 +1083,6 @@ func TestAggJSON(t *testing.T) {
 }
 
 func TestIssue10099(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1116,7 +1095,6 @@ func TestIssue10099(t *testing.T) {
 }
 
 func TestIssue10098(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1128,7 +1106,6 @@ func TestIssue10098(t *testing.T) {
 }
 
 func TestIssue10608(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1144,8 +1121,6 @@ func TestIssue10608(t *testing.T) {
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1176,7 +1151,6 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 }
 
 func TestPR15242ShallowCopy(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1194,7 +1168,6 @@ func TestPR15242ShallowCopy(t *testing.T) {
 }
 
 func TestIssue15690(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1248,7 +1221,6 @@ func TestIssue15690(t *testing.T) {
 }
 
 func TestIssue15958(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1262,7 +1234,6 @@ func TestIssue15958(t *testing.T) {
 }
 
 func TestIssue17216(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1277,7 +1248,6 @@ func TestIssue17216(t *testing.T) {
 }
 
 func TestHashAggRuntimeStat(t *testing.T) {
-	t.Parallel()
 	partialInfo := &executor.AggWorkerInfo{
 		Concurrency: 5,
 		WallTime:    int64(time.Second * 20),
@@ -1336,7 +1306,6 @@ func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
 }
 
 func TestParallelStreamAggGroupConcat(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1384,7 +1353,6 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 }
 
 func TestIssue20658(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1461,7 +1429,6 @@ func TestIssue20658(t *testing.T) {
 }
 
 func TestIssue23277(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1494,9 +1461,29 @@ func TestIssue23277(t *testing.T) {
 	tk.MustExec("drop table t;")
 }
 
+func TestAvgDecimal(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustExec("drop table td;")
+}
+
 // https://github.com/pingcap/tidb/issues/23314
 func TestIssue23314(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

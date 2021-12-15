@@ -13,8 +13,6 @@ import (
 )
 
 func TestCheckGCSafepoint(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333}
 	{
@@ -32,7 +30,7 @@ func TestCheckGCSafepoint(t *testing.T) {
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 0)
 		require.Error(t, err)
-		require.Regexp(t, ".*GC safepoint 2333 exceed TS 0.*", err.Error())
+		require.Contains(t, err.Error(), "GC safepoint 2333 exceed TS 0")
 	}
 }
 
@@ -67,8 +65,6 @@ func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64)
 }
 
 func TestStartServiceSafePointKeeper(t *testing.T) {
-	t.Parallel()
-
 	pdClient := &mockSafePoint{safepoint: 2333}
 
 	cases := []struct {

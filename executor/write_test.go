@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -41,7 +42,6 @@ import (
 )
 
 func TestInsert(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -325,7 +325,6 @@ func TestInsert(t *testing.T) {
 }
 
 func TestMultiBatch(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -340,7 +339,6 @@ func TestMultiBatch(t *testing.T) {
 }
 
 func TestInsertAutoInc(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -476,7 +474,6 @@ func TestInsertAutoInc(t *testing.T) {
 }
 
 func TestInsertIgnore(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	var cfg kv.InjectionConfig
@@ -597,7 +594,6 @@ commit;`
 }
 
 func TestInsertOnDup(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	var cfg kv.InjectionConfig
@@ -765,7 +761,6 @@ commit;`
 }
 
 func TestInsertIgnoreOnDup(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -820,7 +815,6 @@ func TestInsertIgnoreOnDup(t *testing.T) {
 }
 
 func TestInsertSetWithDefault(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -870,7 +864,6 @@ func TestInsertSetWithDefault(t *testing.T) {
 }
 
 func TestInsertOnDupUpdateDefault(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -918,7 +911,6 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1102,7 +1094,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestGeneratedColumnForInsert(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1154,7 +1145,6 @@ func TestGeneratedColumnForInsert(t *testing.T) {
 }
 
 func TestPartitionedTableReplace(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1296,7 +1286,6 @@ func TestPartitionedTableReplace(t *testing.T) {
 }
 
 func TestHashPartitionedTableReplace(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1416,7 +1405,6 @@ func TestHashPartitionedTableReplace(t *testing.T) {
 }
 
 func TestPartitionedTableUpdate(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1526,7 +1514,6 @@ func TestPartitionedTableUpdate(t *testing.T) {
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
 func TestUpdateCastOnlyModifiedValues(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1575,7 +1562,6 @@ func fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func TestMultipleTableUpdate(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1643,7 +1629,6 @@ func TestMultipleTableUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1701,7 +1686,6 @@ func TestPartitionedTableDelete(t *testing.T) {
 			  PARTITION p2 VALUES LESS THAN (16),
 			  PARTITION p3 VALUES LESS THAN (21))`
 
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1767,7 +1751,6 @@ func fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func TestMultiTableDelete(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1782,7 +1765,6 @@ func TestMultiTableDelete(t *testing.T) {
 }
 
 func TestQualifiedDelete(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1821,7 +1803,6 @@ func TestQualifiedDelete(t *testing.T) {
 }
 
 func TestLoadDataMissingColumn(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1863,7 +1844,6 @@ func TestLoadDataMissingColumn(t *testing.T) {
 }
 
 func TestIssue18681(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1899,7 +1879,6 @@ func TestIssue18681(t *testing.T) {
 
 func TestLoadData(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2099,7 +2078,6 @@ func TestLoadData(t *testing.T) {
 
 func TestLoadDataEscape(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2129,10 +2107,30 @@ func TestLoadDataEscape(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
+func TestLoadDataWithLongContent(t *testing.T) {
+	e := &executor.LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
+		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
+	}
+	tests := []struct {
+		content       string
+		inQuoter      bool
+		expectedIndex int
+	}{
+		{"123,123\n123,123", false, 7},
+		{"123123\\n123123", false, -1},
+		{"123123\n123123", true, -1},
+		{"123123\n123123\"\n", true, 14},
+	}
+
+	for _, tt := range tests {
+		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
+	}
+}
+
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
 	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2161,7 +2159,6 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2184,7 +2181,6 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
 func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2206,7 +2202,6 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 }
 
 func TestLoadDataIntoPartitionedTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2234,7 +2229,6 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 }
 
 func TestNullDefault(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2249,7 +2243,6 @@ func TestNullDefault(t *testing.T) {
 }
 
 func TestNotNullDefault(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2321,7 +2314,6 @@ func TestLatch(t *testing.T) {
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
 func TestIssue4067(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2338,7 +2330,6 @@ func TestIssue4067(t *testing.T) {
 }
 
 func TestInsertCalculatedValue(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2424,8 +2415,13 @@ func TestInsertCalculatedValue(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a json not null, b int)")
+	// TODO: MySQL reports 3156 instead of ErrTruncatedWrongValueForField.
+	tk.MustGetErrCode("insert into t value (a,a->'$')", mysql.ErrTruncatedWrongValueForField)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a json not null, b varchar(10))")
 	tk.MustExec("insert into t value (a,a->'$')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("null 0"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("null null"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json, b int, c int as (a->'$.a'))")
@@ -2457,7 +2453,6 @@ func TestInsertCalculatedValue(t *testing.T) {
 }
 
 func TestDataTooLongErrMsg(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2473,7 +2468,6 @@ func TestDataTooLongErrMsg(t *testing.T) {
 }
 
 func TestUpdateSelect(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2488,7 +2482,6 @@ func TestUpdateSelect(t *testing.T) {
 }
 
 func TestUpdateDelete(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2511,7 +2504,6 @@ func TestUpdateDelete(t *testing.T) {
 }
 
 func TestUpdateAffectRowCnt(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2533,7 +2525,6 @@ func TestUpdateAffectRowCnt(t *testing.T) {
 }
 
 func TestReplaceLog(t *testing.T) {
-	t.Parallel()
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2569,7 +2560,6 @@ func TestReplaceLog(t *testing.T) {
 // There is no need to do the rebase when updating a record if the auto-increment ID not changed.
 // This could make the auto ID increasing speed slower.
 func TestRebaseIfNeeded(t *testing.T) {
-	t.Parallel()
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2604,7 +2594,6 @@ func TestRebaseIfNeeded(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForDelete(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2657,7 +2646,6 @@ func TestDeferConstraintCheckForDelete(t *testing.T) {
 }
 
 func TestDeferConstraintCheckForInsert(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2784,7 +2772,6 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 }
 
 func TestPessimisticDeleteYourWrites(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2814,7 +2801,6 @@ func TestPessimisticDeleteYourWrites(t *testing.T) {
 }
 
 func TestDefEnumInsert(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2825,7 +2811,6 @@ func TestDefEnumInsert(t *testing.T) {
 }
 
 func TestIssue11059(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2838,7 +2823,6 @@ func TestIssue11059(t *testing.T) {
 }
 
 func TestSetWithRefGenCol(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2884,7 +2868,6 @@ func TestSetWithRefGenCol(t *testing.T) {
 }
 
 func TestSetWithCurrentTimestampAndNow(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2899,7 +2882,6 @@ func TestSetWithCurrentTimestampAndNow(t *testing.T) {
 }
 
 func TestApplyWithPointAndBatchPointGet(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2943,7 +2925,6 @@ from t order by c_str;`).Check(testkit.Rows("10"))
 }
 
 func TestWriteListPartitionTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -2994,7 +2975,6 @@ func TestWriteListPartitionTable(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3046,7 +3026,6 @@ func TestWriteListColumnsPartitionTable(t *testing.T) {
 
 // TestWriteListPartitionTable1 test for write list partition when the partition expression is simple.
 func TestWriteListPartitionTable1(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3174,7 +3153,6 @@ func TestWriteListPartitionTable1(t *testing.T) {
 
 // TestWriteListPartitionTable2 test for write list partition when the partition expression is complicated and contain generated column.
 func TestWriteListPartitionTable2(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3302,7 +3280,6 @@ func TestWriteListPartitionTable2(t *testing.T) {
 }
 
 func TestWriteListColumnsPartitionTable1(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3431,7 +3408,6 @@ func TestWriteListColumnsPartitionTable1(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListColumnsPartitionTable2(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3583,7 +3559,6 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 
 // TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListPartitionTableIssue21437(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3596,7 +3571,6 @@ func TestWriteListPartitionTableIssue21437(t *testing.T) {
 }
 
 func TestListPartitionWithAutoRandom(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3622,7 +3596,6 @@ func TestListPartitionWithAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionWithAutoIncrement(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3648,7 +3621,6 @@ func TestListPartitionWithAutoIncrement(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3696,7 +3668,6 @@ func TestListPartitionWithGeneratedColumn(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn1(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3766,7 +3737,6 @@ func TestListPartitionWithGeneratedColumn1(t *testing.T) {
 }
 
 func TestListPartitionWithGeneratedColumn2(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3811,7 +3781,6 @@ func TestListPartitionWithGeneratedColumn2(t *testing.T) {
 }
 
 func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3838,7 +3807,6 @@ func TestListColumnsPartitionWithGeneratedColumn(t *testing.T) {
 }
 
 func TestIssue22496(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3882,7 +3850,6 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 }
 
 func TestIssue21232(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

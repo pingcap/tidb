@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -585,6 +586,41 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	row = re.Rows()[0]
 	c.Assert(row[2], Equals, "t")
 	c.Assert(row[9], Equals, "<nil>")
+}
+
+func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("drop table if exists t, t1;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/29915
+	tk.MustExec("drop placement policy if exists x;")
+	tk.MustExec("create placement policy x followers=4;")
+	tk.MustExec("alter table t placement policy x;")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table placement")
+
+	tk.MustExec("rename table t to tt, t1 to tt1")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "rename tables")
+
+	tk.MustExec("create table tt2 (c int) PARTITION BY RANGE (c) " +
+		"(PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11)," +
+		"PARTITION p2 VALUES LESS THAN (16)," +
+		"PARTITION p3 VALUES LESS THAN (21));")
+	tk.MustExec("alter table tt2 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition placement")
+
+	tk.MustExec("alter table tt1 cache")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table cache")
+	tk.MustExec("alter table tt1 nocache")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table nocache")
 }
 
 func (s *testSuiteP2) TestAdminChecksumOfPartitionedTable(c *C) {
@@ -8746,47 +8782,46 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 
 	cases := []struct {
 		sql       string
-		tagLabels []tipb.ResourceGroupTagLabel
+		tagLabels map[tipb.ResourceGroupTagLabel]struct{}
 		ignore    bool
 	}{
 		{
 			sql: "insert into t values(1,1),(2,2),(3,3)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a=1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a in (1,2,3)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "select * from t where b>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow: {},
 			},
 		},
 		{
 			sql: "select a from t use index (idx) where a>1",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
@@ -8795,9 +8830,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		},
 		{
 			sql: "insert into t values(4,4)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
@@ -8806,15 +8841,14 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		},
 		{
 			sql: "update t set a=5,b=5 where a=5",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 		{
 			sql: "replace into t values(6,6)",
-			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
 			},
 		},
 	}
@@ -8838,10 +8872,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			}
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
-			if len(ca.tagLabels) > 0 {
-				c.Assert(tagLabel, Equals, ca.tagLabels[0])
-				ca.tagLabels = ca.tagLabels[1:] // next label
-			}
+			_, ok := ca.tagLabels[tagLabel]
+			c.Assert(ok, Equals, true)
 			checkCnt++
 		}
 
@@ -9396,4 +9428,76 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 	tk.MustExec("create table t29142_2(a double);")
 	tk.MustExec("insert into t29142_1 value(20);")
 	tk.MustQuery("select sum(distinct a) as x from t29142_1 having x > some ( select a from t29142_2 where x in (a));").Check(nil)
+}
+
+func (s *testSerialSuite) TestIssue28650(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int, index(a));")
+	tk.MustExec("create table t2(a int, c int, b char(50), index(a,c,b));")
+	tk.MustExec("set tidb_enable_rate_limit_action=off;")
+
+	wg := &sync.WaitGroup{}
+	sql := `explain analyze
+	select /*+ stream_agg(@sel_1) stream_agg(@sel_3) %s(@sel_2 t2)*/ count(1) from
+		(
+			SELECT t2.a AS t2_external_user_ext_id, t2.b AS t2_t1_ext_id  FROM t2 INNER JOIN (SELECT t1.a AS d_t1_ext_id  FROM t1 GROUP BY t1.a) AS anon_1 ON anon_1.d_t1_ext_id = t2.a  WHERE t2.c = 123 AND t2.b
+		IN ("%s") ) tmp`
+
+	wg.Add(1)
+	sqls := make([]string, 2)
+	go func() {
+		defer wg.Done()
+		inElems := make([]string, 1000)
+		for i := 0; i < len(inElems); i++ {
+			inElems[i] = fmt.Sprintf("wm_%dbDgAAwCD-v1QB%dxky-g_dxxQCw", rand.Intn(100), rand.Intn(100))
+		}
+		sqls[0] = fmt.Sprintf(sql, "inl_join", strings.Join(inElems, "\",\""))
+		sqls[1] = fmt.Sprintf(sql, "inl_hash_join", strings.Join(inElems, "\",\""))
+	}()
+
+	tk.MustExec("insert into t1 select rand()*400;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t1 select rand()*400 from t1;")
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
+	wg.Wait()
+	for _, sql := range sqls {
+		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
+		c.Assert(tk.QueryToErr(sql), IsNil)
+		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
+		c.Assert(strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"), IsTrue)
+		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
+		func() {
+			defer func() {
+				r := recover()
+				c.Assert(r, NotNil)
+				err := errors.Errorf("%v", r)
+				c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+			}()
+			tk.MustExec(sql)
+		}()
+	}
+}
+
+func (s *testSerialSuite) TestIssue30289(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	fpName := "github.com/pingcap/tidb/executor/issue30289"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
+	c.Assert(err.Error(), Matches, "issue30289 build return error")
 }

@@ -552,4 +552,8 @@ const (
 	LabelForSimpleTask int = -18
 	// LabelForCTEStorage represents the label of CTE storage
 	LabelForCTEStorage int = -19
+	// LabelForIndexJoinInnerWorker represents the label of IndexJoin InnerWorker
+	LabelForIndexJoinInnerWorker int = -20
+	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
+	LabelForIndexJoinOuterWorker int = -21
 )

@@ -97,11 +97,11 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 		defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 		cases := []struct {
-			sql      string
-			types    set.StringSet
-			addrs    set.StringSet
-			names    set.StringSet
-			skipOnOS string
+			sql        string
+			types      set.StringSet
+			addrs      set.StringSet
+			names      set.StringSet
+			skipOnDist set.StringSet
 		}{
 			{
 				sql:   "select * from information_schema.CLUSTER_LOAD;",
@@ -115,7 +115,8 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 				addrs: set.NewStringSet(s.listenAddr),
 				names: set.NewStringSet("cpu", "memory", "net", "disk"),
 				// The sysutil package will filter out all disk don't have /dev prefix.
-				skipOnOS: "windows",
+				// gopsutil cpu.Info will fail on mac M1
+				skipOnDist: set.NewStringSet("windows", "darwin/arm64"),
 			},
 			{
 				sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
@@ -126,12 +127,12 @@ func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
 				// Because the underlying implementation use `sysctl` command to get the result
 				// and there is no such command on windows.
 				// https://github.com/pingcap/sysutil/blob/2bfa6dc40bcd4c103bf684fba528ae4279c7ec9f/system_info.go#L50
-				skipOnOS: "windows",
+				skipOnDist: set.NewStringSet("windows"),
 			},
 		}
 
 		for _, cas := range cases {
-			if cas.skipOnOS == runtime.GOOS {
+			if cas.skipOnDist.Exist(runtime.GOOS+"/"+runtime.GOARCH) || cas.skipOnDist.Exist(runtime.GOOS) {
 				continue
 			}
 
