@@ -231,7 +231,28 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			// In partition prune mode == 'dynamic', this is wrong. It will use the tableID,
+			// not the physicalID that the memBufSnap used (since it will later be used for storage at commit)
+			// How can we get the physicalID from the read?!?
+			// Since it seems to be lost through the Next API call, I can only come up with it needs to be reconstructed
+			// from the handle -> partitionID -> physicalID :(
+			// But where?
+
+			var checkKey kv.Key
+			if pt, ok := us.table.(table.PartitionedTable); ok && us.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				var rowDatums []types.Datum
+				fts := us.belowHandleCols.GetFieldsTypes()
+				for i := 0; i < us.belowHandleCols.NumCols(); i++ {
+					rowDatums = append(rowDatums, row.GetDatum(i, fts[i]))
+				}
+				physTbl, err := pt.GetPartitionByRow(us.ctx, rowDatums)
+				if err != nil {
+					return nil, err
+				}
+				checkKey = tablecodec.EncodeRecordKey(physTbl.RecordPrefix(), snapshotHandle)
+			} else {
+				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			}
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.

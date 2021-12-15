@@ -1891,6 +1891,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		case *plannercore.Update:
 			updateStmt := stmt.(*ast.UpdateStmt)
 			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
+				// TODO: Should this not check dynamic pruning mode? Issue with PhysicalTableID?
 				if pp.PartitionInfo != nil {
 					continue
 				}

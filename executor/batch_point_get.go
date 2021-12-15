@@ -558,6 +558,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
+// TODO: move to table/tables/partition.go and deduplicate?
 func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, intVal int64) (int64, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {

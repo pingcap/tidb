@@ -3345,13 +3345,24 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table tx (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))`)
+	defer tk.MustExec("drop table tx")
 	tk.MustExec(`insert into tx values (1)`)
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 
 	tk.MustExec(`begin`)
 	tk.MustExec(`delete from tx where a in (1)`)
 	tk.MustQuery(`select * from tx PARTITION(p0)`).Check(testkit.Rows())
+	tk.MustQuery(`explain format = 'brief' select * from tx PARTITION(p0)`).Check(testkit.Rows(
+		"Projection 10000.00 root  test.tx.a",
+		"└─UnionScan 10000.00 root  ",
+		"  └─TableReader 10000.00 root partition:p0 data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:tx keep order:false, stats:pseudo"))
 	tk.MustQuery(`select * from tx`).Check(testkit.Rows())
+	tk.MustQuery(`explain format = 'brief' select * from tx`).Check(testkit.Rows(
+		"Projection 10000.00 root  test.tx.a",
+		"└─UnionScan 10000.00 root  ",
+		"  └─TableReader 10000.00 root partition:all data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:tx keep order:false, stats:pseudo"))
 	tk.MustExec(`rollback`)
 }
 

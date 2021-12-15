@@ -122,6 +122,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 			if !ok {
 				return nil
 			}
+			//TODO: Should glovalChildIndex be a bool or can this be out-of-bands, i.e. > 1 => negative index?
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -307,6 +308,7 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
 	}
+	// TODO: Check if not PartitionInfo should be cloned as well?
 	return cloned, nil
 }
 
@@ -477,7 +479,7 @@ type PhysicalTableScan struct {
 
 	IsGlobalRead bool
 
-	// The table scan may be a partition, rather than a real table.
+	// The table scan may be a single partition, rather than a real table.
 	// TODO: clean up this field. After we support dynamic partitioning, table scan
 	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
