@@ -27,7 +27,6 @@ import (
 )
 
 func TestLike(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		input   string
@@ -62,7 +61,6 @@ func TestLike(t *testing.T) {
 }
 
 func TestRegexp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		pattern string
