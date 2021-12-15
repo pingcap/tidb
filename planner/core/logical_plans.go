@@ -590,7 +590,6 @@ type DataSource struct {
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	containExprPrefixUk bool
-	addedExprPrefixCond bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

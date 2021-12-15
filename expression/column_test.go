@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -227,4 +228,67 @@ func TestColHybird(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, result.GetString(i), v)
 	}
+}
+
+func TestInColumnArray(t *testing.T) {
+	t.Parallel()
+
+	// normal case, col is in column array
+	col0, col1 := &Column{ID: 0, UniqueID: 0}, &Column{ID: 1, UniqueID: 1}
+	cols := []*Column{col0, col1}
+	require.True(t, col0.InColumnArray(cols))
+
+	// abnormal case, col is not in column array
+	require.False(t, col0.InColumnArray([]*Column{col1}))
+
+	// abnormal case, input is nil
+	require.False(t, col0.InColumnArray(nil))
+}
+
+func TestGcColumnExprIsTidbShard(t *testing.T) {
+	t.Parallel()
+	ctx := mock.NewContext()
+
+	// abnormal case
+	// nil, not tidb_shard
+	require.False(t, GcColumnExprIsTidbShard(nil))
+
+	// `a = 1`, not tidb_shard
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	col := &Column{RetType: ft, Index: 0}
+	d1 := types.NewDatum(1)
+	con := &Constant{Value: d1, RetType: ft}
+	expr := NewFunctionInternal(ctx, ast.EQ, ft, col, con)
+	require.False(t, GcColumnExprIsTidbShard(expr))
+
+	// normal case
+	// tidb_shard(a) = 1
+	shard_expr := NewFunctionInternal(ctx, ast.TidbShard, ft, col)
+	require.True(t, GcColumnExprIsTidbShard(shard_expr))
+}
+
+func TestIndexColToExpressionCol(t *testing.T) {
+	t.Parallel()
+
+	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
+
+	cols := []*Column{col0, col1}
+	colInfos := []*model.ColumnInfo{colInfo0, colInfo1}
+	// normal case
+	resCol := IndexColToExpressionCol(colInfos, cols, indexCol0)
+	require.NotNil(t, resCol)
+	require.True(t, col0.Equal(nil, resCol))
+
+	resCol = IndexColToExpressionCol(colInfos, cols, indexCol1)
+	require.NotNil(t, resCol)
+	require.True(t, col1.Equal(nil, resCol))
+
+	// abnormal case
+	indexCol2 := &model.IndexColumn{Name: model.NewCIStr("2")}
+	resCol = IndexColToExpressionCol(colInfos, cols, indexCol2)
+	require.Nil(t, resCol)
 }

@@ -577,3 +577,47 @@ func TestBinToUUID(t *testing.T) {
 	_, err := funcs[ast.BinToUUID].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
 }
+
+func TestTidbShard(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
+	fc := funcs[ast.TidbShard]
+	/*
+		// tidb_shar(1) == 214
+		arg1 := makeDatums(1)
+		res1 := makeDatums(214)
+		f, err := fc.getFunction(ctx, datumsToConstants(arg1))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, res1[0], d)
+	*/
+	// tidb_shar(-1) == 81, ......
+	args := makeDatums([]int{-1, 0, 1, 9999999999999999})
+	res := makeDatums([]int{81, 167, 214, 63})
+	for i, arg := range args {
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, res[i], d)
+	}
+
+	// tidb_shar("string") always return 167
+	args2 := makeDatums([]string{"abc", "ope", "wopddd"})
+	res2 := makeDatums([]int{167})
+	for _, arg := range args2 {
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, res2[0], d)
+	}
+
+	args3 := makeDatums([]int{-1, 0, 1, 9999999999999999})
+	{
+		_, err := fc.getFunction(ctx, datumsToConstants(args3))
+		require.Error(t, err)
+	}
+}

@@ -19,7 +19,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1705,5 +1708,420 @@ create table t(
 			got := fmt.Sprintf("%v", res.Ranges)
 			require.Equal(t, tt.resultStr, got)
 		})
+	}
+}
+
+func TestTableShardIndex(t *testing.T) {
+
+	dom, store, err := newDomainStoreWithBootstrap(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists test3")
+	testKit.MustExec("create table test3(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a))")
+	testKit.MustExec("create table test33(id int primary key clustered, a int, b int, unique key a(a))")
+	testKit.MustExec("create table test4(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a)),a),unique key uk_b_expr((tidb_shard(b)),b))")
+	testKit.MustExec("create table test5(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a)),a,b))")
+	testKit.MustExec("create table test6(id int primary key clustered, a int, b int, c int, " +
+		"unique key uk_expr((tidb_shard(a)), a))")
+	testKit.MustExec("create table testx(id int primary key clustered, a int, b int, unique key a(a))")
+	testKit.MustExec("create table testy(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(b)),a))")
+	testKit.MustExec("create table testz(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a+b)),a))")
+
+	tests := []struct {
+		exprStr     string
+		accessConds string
+		childLevel  int
+		tableName   string
+	}{
+		{
+			exprStr:     "a = 1",
+			accessConds: "[eq(tidb_shard(test.test3.a), 214) eq(test.test3.a, 1)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a=100 and (b = 100 or b = 200)",
+			accessConds: "[or(eq(test.test3.b, 100), eq(test.test3.b, 200)) eq(tidb_shard(test.test3.a), 8) " +
+				"eq(test.test3.a, 100)]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     " tidb_shard(a) = 8",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a=100 or b = 200",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"eq(test.test3.b, 200))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a=100 or b > 200",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"gt(test.test3.b, 200))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a=100 or a = 200  or 1",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"or(and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200)), 1))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "(a=100 and b = 100) or a = 300",
+			accessConds: "[or(and(eq(test.test3.b, 100), and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100))), " +
+				"and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "((a=100 and b = 100) or a = 200) or a = 300",
+			accessConds: "[or(and(eq(test.test3.b, 100), and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100))), " +
+				"or(and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200)), " +
+				"and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300))))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a IN (100, 200, 300)",
+			accessConds: "[or(or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200))), and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)))]",
+			tableName: "test3",
+		},
+		{
+			exprStr:     "a IN (100)",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a IN (100, 200, 300) or a = 400",
+			accessConds: "[or(or(or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200))), and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300))), and(eq(tidb_shard(test.test3.a), 85), eq(test.test3.a, 400)))]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr: "((a=100 and b = 100) or a = 200) and b = 300",
+			accessConds: "[or(and(eq(test.test3.a, 100), eq(test.test3.b, 100)), eq(test.test3.a, 200)) " +
+				"eq(test.test3.b, 300)]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a = b",
+			accessConds: "[eq(test.test3.a, test.test3.b)]",
+			tableName:   "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a = b and b = 100",
+			accessConds: "[eq(test.test3.a, test.test3.b) eq(test.test3.b, 100)]",
+			tableName:   "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a > 900",
+			accessConds: "[gt(test.test3.a, 900)]",
+			tableName:   "test3",
+		},
+		{
+			// add prefix
+			exprStr:     "a = 3 or a > 900",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 156), eq(test.test3.a, 3)), gt(test.test3.a, 900))]",
+			tableName:   "test3",
+		},
+		// two shard index in one table
+		{
+			exprStr:     "a = 100",
+			accessConds: "[eq(tidb_shard(test.test4.a), 8) eq(test.test4.a, 100)]",
+			tableName:   "test4",
+		},
+		{
+			exprStr:     "b = 100",
+			accessConds: "[eq(tidb_shard(test.test4.b), 8) eq(test.test4.b, 100)]",
+			tableName:   "test4",
+		},
+		{
+			exprStr: "a = 100 and b = 100",
+			accessConds: "[eq(tidb_shard(test.test4.a), 8) eq(test.test4.a, 100) " +
+				"eq(tidb_shard(test.test4.b), 8) eq(test.test4.b, 100)]",
+			tableName: "test4",
+		},
+		{
+			exprStr: "a = 100 or b = 100",
+			accessConds: "[or(and(eq(tidb_shard(test.test4.a), 8), eq(test.test4.a, 100)), " +
+				"and(eq(tidb_shard(test.test4.b), 8), eq(test.test4.b, 100)))]",
+			tableName: "test4",
+		},
+		// shard index cotans three fields
+		{
+			exprStr:     "a = 100 and b = 100",
+			accessConds: "[eq(tidb_shard(test.test5.a), 8) eq(test.test5.a, 100) eq(test.test5.b, 100)]",
+			tableName:   "test5",
+		},
+		{
+			exprStr: "(a=100 and b = 100) or  (a=200 and b = 200)",
+			accessConds: "[or(and(eq(tidb_shard(test.test5.a), 8), and(eq(test.test5.a, 100), eq(test.test5.b, 100))), " +
+				"and(eq(tidb_shard(test.test5.a), 161), and(eq(test.test5.a, 200), eq(test.test5.b, 200))))]",
+			tableName: "test5",
+		},
+		{
+			exprStr: "(a, b) in ((100, 100), (200, 200))",
+			accessConds: "[or(and(eq(tidb_shard(test.test5.a), 8), and(eq(test.test5.a, 100), eq(test.test5.b, 100))), " +
+				"and(eq(tidb_shard(test.test5.a), 161), and(eq(test.test5.a, 200), eq(test.test5.b, 200))))]",
+			tableName: "test5",
+		},
+		{
+			exprStr:     "(a, b) in ((100, 100))",
+			accessConds: "[eq(tidb_shard(test.test5.a), 8) eq(test.test5.a, 100) eq(test.test5.b, 100)]",
+			tableName:   "test5",
+		},
+		// don't add prefix
+		{
+			exprStr:     "a=100",
+			accessConds: "[eq(test.testy.a, 100)]",
+			tableName:   "testy",
+		},
+		// don't add prefix
+		{
+			exprStr:     "a=100",
+			accessConds: "[eq(test.testz.a, 100)]",
+			tableName:   "testz",
+		},
+		// test join
+		{
+			exprStr:     "test3.a = 100",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test33 ON test3.b = test33.b",
+		},
+		{
+			exprStr:     "test3.a = 100 and test33.a > 10",
+			accessConds: "[gt(test.test33.a, 10) eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test33 ON test3.b = test33.b",
+		},
+		{
+			exprStr:     "test3.a = 100 AND test6.a = 10",
+			accessConds: "[eq(test.test6.a, 10) eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test6 ON test3.b = test6.b",
+		},
+		{
+			exprStr:     "test3.a = 100 or test6.a = 10",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), eq(test.test6.a, 10))]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test6 ON test3.b = test6.b",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from " + tt.tableName + " where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			ds, ok := selection.Children()[0].(*plannercore.DataSource)
+			if !ok {
+				if tt.childLevel == 4 {
+					ds = selection.Children()[0].Children()[0].Children()[0].(*plannercore.DataSource)
+				}
+			}
+			newConds := ds.AddPrefix4ShardIndexes(ds.SCtx(), conds)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", newConds))
+		})
+	}
+
+	// test update statement
+	t.Run("", func(t *testing.T) {
+		sql := "update test6 set c = 1000 where a=50 and b = 50"
+		sctx := testKit.Session().(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err)
+		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		require.True(t, ok)
+		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		require.True(t, ok)
+	})
+
+	// test delete statement
+	t.Run("", func(t *testing.T) {
+		sql := "delete from test6 where a = 45 and b = 45;"
+		sctx := testKit.Session().(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err)
+		selection, ok := p.(*plannercore.Delete).SelectPlan.(*plannercore.PhysicalSelection)
+		require.True(t, ok)
+		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		require.True(t, ok)
+	})
+}
+
+func TestShardIndexFuncSuites(t *testing.T) {
+
+	dom, store, err := newDomainStoreWithBootstrap(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
+	sctx := testKit.Session().(sessionctx.Context)
+
+	// -------------------------------------------
+	// test IsValidShardIndex function
+	// -------------------------------------------
+	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
+	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
+	// col2 is GC column and VirtualExpr = tidb_shard(col0)
+	col2 := &expression.Column{UniqueID: 2, ID: 2, RetType: longlongType}
+	col2.VirtualExpr = expression.NewFunctionInternal(sctx, ast.TiDBShard, col2.RetType, col0)
+	// col3 is GC column and VirtualExpr = abs(col0)
+	col3 := &expression.Column{UniqueID: 3, ID: 3, RetType: longlongType}
+	col3.VirtualExpr = expression.NewFunctionInternal(sctx, ast.Abs, col2.RetType, col0)
+	col4 := &expression.Column{UniqueID: 4, ID: 4, RetType: longlongType}
+
+	cols := []*expression.Column{col0, col1}
+
+	// input is nil
+	require.False(t, ranger.IsValidShardIndex(nil))
+	// only 1 column
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col2}))
+	// first col is not expression
+	require.False(t, ranger.IsValidShardIndex(cols))
+	// field in tidb_shard is not the secondary column
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col2, col1}))
+	// expressioin is abs that is not tidb_shard
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col3, col0}))
+	// normal case
+	require.True(t, ranger.IsValidShardIndex([]*expression.Column{col2, col0}))
+
+	// -------------------------------------------
+	// test ExtractColumnsFromExpr function
+	// -------------------------------------------
+	// normal case
+	con1 := &expression.Constant{Value: types.NewDatum(1), RetType: longlongType}
+	con5 := &expression.Constant{Value: types.NewDatum(5), RetType: longlongType}
+	exprEq := expression.NewFunctionInternal(sctx, ast.EQ, col0.RetType, col0, con1)
+	exprIn := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1, con5)
+	require.NotNil(t, exprEq)
+	require.NotNil(t, exprIn)
+	// input is nil
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(nil)), 0)
+	// input is column
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(exprEq.(*expression.ScalarFunction))), 1)
+	// (col0 = 1 and col3 > 1) or (col4 < 5 and 5)
+	exprGt := expression.NewFunctionInternal(sctx, ast.GT, longlongType, col3, con1)
+	require.NotNil(t, exprGt)
+	andExpr1 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprEq, exprGt)
+	require.NotNil(t, andExpr1)
+	exprLt := expression.NewFunctionInternal(sctx, ast.LT, longlongType, col4, con5)
+	andExpr2 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprLt, con5)
+	orExpr2 := expression.NewFunctionInternal(sctx, ast.Or, longlongType, andExpr1, andExpr2)
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(orExpr2.(*expression.ScalarFunction))), 3)
+
+	// -------------------------------------------
+	// test NeedAddColumn4InCond function
+	// -------------------------------------------
+	// normal case
+	sfIn, ok := exprIn.(*expression.ScalarFunction)
+	require.True(t, ok)
+	accessCond := []expression.Expression{nil, exprIn}
+	shardIndexCols := []*expression.Column{col2, col0}
+	require.True(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, sfIn))
+
+	// input nil
+	require.False(t, ranger.NeedAddColumn4InCond(nil, accessCond, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, nil, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, nil))
+
+	// col1 in (1, 5)
+	exprIn2 := expression.NewFunctionInternal(sctx, ast.In, col1.RetType, col1, con1, con5)
+	accessCond[1] = exprIn2
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
+
+	// col0 in (1, col1)
+	exprIn3 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col1, con1, col1)
+	accessCond[1] = exprIn3
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
+
+	// -------------------------------------------
+	// test NeedAddColumn4EqCond function
+	// -------------------------------------------
+	// ranger.valueInfo is not export by package, we can.t test NeedAddColumn4EqCond
+	eqAccessCond := []expression.Expression{nil, exprEq}
+	require.False(t, ranger.NeedAddColumn4EqCond(shardIndexCols, eqAccessCond, nil))
+
+	// -------------------------------------------
+	// test NeedAddGcColumn4ShardIndex function
+	// -------------------------------------------
+	// ranger.valueInfo is not export by package, we can.t test NeedAddGcColumn4ShardIndex
+	require.False(t, ranger.NeedAddGcColumn4ShardIndex(shardIndexCols, nil, nil))
+
+	// -------------------------------------------
+	// test AddExpr4EqAndInCondition function
+	// -------------------------------------------
+	exprIn4 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1)
+	test := []struct {
+		inputConds  []expression.Expression
+		outputConds string
+	}{
+		{
+			// col0 = 1 => tidb_shard(col0) = 214 and col0 = 1
+			inputConds:  []expression.Expression{exprEq},
+			outputConds: "[eq(Column#2, 214) eq(Column#0, 1)]",
+		},
+		{
+			// col0 in (1) => cols2 = 214 and col0 = 1
+			inputConds:  []expression.Expression{exprIn4},
+			outputConds: "[and(eq(Column#2, 214), eq(Column#0, 1))]",
+		},
+		{
+			// col0 in (1, 5) => (cols2 = 214 and col0 = 1) or (cols2 = 122 and col0 = 5)
+			inputConds: []expression.Expression{exprIn},
+			outputConds: "[or(and(eq(Column#2, 214), eq(Column#0, 1)), " +
+				"and(eq(Column#2, 122), eq(Column#0, 5)))]",
+		},
+	}
+
+	for _, tt := range test {
+		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx, tt.inputConds, shardIndexCols)
+		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
 }
