@@ -255,7 +255,7 @@ func checkRowInsertionConsistency(
 				logutil2.Redact(zap.String("input datum", inputDatum.String())),
 			)
 
-			return ErrInconsistentRowValue.GenWithStackByArgs(tableName, decodedDatum.String(), inputDatum.String())
+			return ErrInconsistentRowValue.GenWithStackByArgs(tableName, inputDatum.String(), decodedDatum.String())
 		}
 	}
 	return nil
