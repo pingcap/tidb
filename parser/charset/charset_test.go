@@ -26,7 +26,6 @@ func testValidCharset(t *testing.T, charset string, collation string, expect boo
 }
 
 func TestValidCharset(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		cs   string
 		co   string
@@ -61,7 +60,6 @@ func testGetDefaultCollation(t *testing.T, charset string, expectCollation strin
 }
 
 func TestGetDefaultCollation(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		cs   string
 		co   string
@@ -94,7 +92,6 @@ func TestGetDefaultCollation(t *testing.T) {
 }
 
 func TestSupportedCollations(t *testing.T) {
-	t.Parallel()
 	// All supportedCollation are defined from their names
 	require.Equal(t, len(supportedCollationNames), len(supportedCollationNames))
 
@@ -112,7 +109,6 @@ func TestSupportedCollations(t *testing.T) {
 }
 
 func TestGetCharsetDesc(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		cs     string
 		result string
@@ -138,7 +134,6 @@ func TestGetCharsetDesc(t *testing.T) {
 }
 
 func TestGetCollationByName(t *testing.T) {
-	t.Parallel()
 	for _, collation := range collations {
 		coll, err := GetCollationByName(collation.Name)
 		require.NoError(t, err)
