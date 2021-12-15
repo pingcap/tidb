@@ -51,6 +51,103 @@ type testPrepareSuite struct {
 type testPrepareSerialSuite struct {
 }
 
+func (s *testPrepareSerialSuite) TestFlushPlanCache(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk2 := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int, a int, b int, key(a))")
+	tk.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
+	tk.MustExec("execute stmt1;")
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt2 from 'SELECT * from t1';")
+	tk.MustExec("execute stmt2;")
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
+	tk.MustExec("execute stmt3;")
+	tk.MustExec("execute stmt3;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec("use test")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("drop table if exists t2")
+	tk2.MustExec("create table t1(id int, a int, b int, key(a))")
+	tk2.MustExec("create table t2(id int, a int, b int, key(a))")
+	tk2.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
+	tk2.MustExec("execute stmt1;")
+	tk2.MustExec("execute stmt1;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec("prepare stmt2 from 'SELECT * from t1';")
+	tk2.MustExec("execute stmt2;")
+	tk2.MustExec("execute stmt2;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
+	tk2.MustExec("execute stmt3;")
+	tk2.MustExec("execute stmt3;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("admin flush session plan_cache;")
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt3;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk2.MustExec("execute stmt1;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk2.MustExec("execute stmt2;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk2.MustExec("execute stmt3;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt3;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec("admin flush instance plan_cache;")
+	tk2.MustExec("execute stmt1;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk2.MustExec("execute stmt2;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk2.MustExec("execute stmt3;")
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt3;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
