@@ -41,8 +41,8 @@ func Test_statementStatsManager_run_close(t *testing.T) {
 	wg := sync.WaitGroup{}
 	m := newStatementStatsCollector()
 	assert.True(t, m.closed())
+	wg.Add(1)
 	go func() {
-		wg.Add(1)
 		m.run()
 		wg.Done()
 	}()
