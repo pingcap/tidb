@@ -3781,32 +3781,6 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// addExtraPIDColumn add an extra PID column for partition table.
-// 'select ... for update' on a partition table need to know the partition ID
-// to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
-	pidCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
-	}
-
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
-	schema := ds.Schema()
-	schema.Append(pidCol)
-	ds.names = append(ds.names, &types.FieldName{
-		DBName:      ds.DBName,
-		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
-	})
-	ds.TblCols = append(ds.TblCols, pidCol)
-
-	info.Columns = append(info.Columns, pidCol)
-	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
-}
-
 var (
 	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
 	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
