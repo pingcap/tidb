@@ -557,7 +557,6 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -586,7 +585,6 @@ func TestValidate(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -630,7 +628,6 @@ func TestValidateStmtSummary(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)

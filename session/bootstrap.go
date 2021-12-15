@@ -357,6 +357,14 @@ const (
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
+	// CreateTableCacheMetaTable stores the cached table meta lock information.
+	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
+		tid bigint(11) NOT NULL DEFAULT 0,
+		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
+		lease bigint(20) NOT NULL DEFAULT 0,
+		oldReadLease bigint(20) NOT NULL DEFAULT 0,
+		PRIMARY KEY (tid)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -528,11 +536,16 @@ const (
 	version77 = 77
 	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
 	version78 = 78
+	// version79 adds the mysql.table_cache_meta table
+	version79 = 79
+	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
+	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	version80 = 80
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version78
+var currentBootstrapVersion int64 = version80
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -614,6 +627,8 @@ var (
 		upgradeToVer76,
 		upgradeToVer77,
 		upgradeToVer78,
+		upgradeToVer79,
+		upgradeToVer80,
 	}
 )
 
@@ -1600,6 +1615,34 @@ func upgradeToVer78(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
 }
 
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
+}
+
+func upgradeToVer80(s Session, ver int64) {
+	if ver >= version80 {
+		return
+	}
+	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
+	ctx := context.Background()
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1682,6 +1725,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 	// Create column_stats_usage table
 	mustExecute(s, CreateColumnStatsUsageTable)
+	// Create table_cache_meta table.
+	mustExecute(s, CreateTableCacheMetaTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

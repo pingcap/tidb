@@ -149,7 +149,7 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
 	// Test IncreaseFactor.
-	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
+	count, err := stats1.ColumnEqualRowCount(testKit.Se, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(rowCount1*2))
 

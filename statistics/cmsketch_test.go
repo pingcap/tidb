@@ -107,7 +107,6 @@ func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint6
 }
 
 func TestCMSketch(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -152,7 +151,6 @@ func TestCMSketch(t *testing.T) {
 }
 
 func TestCMSketchCoding(t *testing.T) {
-	t.Parallel()
 	lSketch := NewCMSketch(5, 2048)
 	lSketch.count = 2048 * math.MaxUint32
 	for i := range lSketch.table {
@@ -169,7 +167,6 @@ func TestCMSketchCoding(t *testing.T) {
 }
 
 func TestCMSketchTopN(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -208,7 +205,6 @@ func TestCMSketchTopN(t *testing.T) {
 }
 
 func TestMergeCMSketch4IncrementalAnalyze(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		zipfFactor float64
 		avgError   uint64
@@ -259,7 +255,6 @@ func TestMergeCMSketch4IncrementalAnalyze(t *testing.T) {
 }
 
 func TestCMSketchTopNUniqueData(t *testing.T) {
-	t.Parallel()
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)
 	mp := make(map[int64]uint32)
@@ -281,7 +276,6 @@ func TestCMSketchTopNUniqueData(t *testing.T) {
 }
 
 func TestCMSketchCodingTopN(t *testing.T) {
-	t.Parallel()
 	lSketch := NewCMSketch(5, 2048)
 	lSketch.count = 2048 * (math.MaxUint32)
 	for i := range lSketch.table {
