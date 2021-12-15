@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
