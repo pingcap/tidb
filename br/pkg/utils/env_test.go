@@ -10,8 +10,6 @@ import (
 )
 
 func TestProxyFields(t *testing.T) {
-	t.Parallel()
-
 	revIndex := map[string]int{
 		"http_proxy":  0,
 		"https_proxy": 1,
