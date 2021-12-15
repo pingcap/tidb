@@ -36,7 +36,7 @@ func collectColumnsFromPlan(plan LogicalPlan, neededColumns map[model.TableColum
 	}
 	switch x := plan.(type) {
 	case *DataSource:
-		tblID := x.TableInfo().ID
+		tblID := x.physicalTableID
 		columns := expression.ExtractColumnsFromExpressions(nil, x.pushedDownConds, nil)
 		for _, col := range columns {
 			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}

@@ -55,9 +55,11 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 	ctx := tk.Se.(sessionctx.Context)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+	tk.MustExec("insert into pt values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
 
 	oriLease := dom.StatsHandle().Lease()
 	dom.StatsHandle().SetLease(1)
@@ -85,16 +87,13 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 				}
 			},
 		},
-		{ // PartitionTable TODO
-			sql:  "select * from pt where a < 15 and c > 1",
-			skip: true,
+		{ // PartitionTable
+			sql: "select * from pt where a < 15 and c > 1",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				switch pp := p.(type) {
-				case *plannercore.PhysicalTableReader:
-					stats := pp.Stats().HistColl
-					c.Assert(countFullStats(stats, tableInfo.Columns[2].ID), Greater, 0)
-				default:
-					c.Error("unexpected plan:", pp)
+				pua, ok := p.(*plannercore.PhysicalUnionAll)
+				c.Check(ok, IsTrue)
+				for _, child := range pua.Children() {
+					c.Assert(countFullStats(child.Stats().HistColl, tableInfo.Columns[2].ID), Greater, 0)
 				}
 			},
 		},
