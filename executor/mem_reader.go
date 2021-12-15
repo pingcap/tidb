@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -167,8 +168,6 @@ type memTableReader struct {
 	buffer        allocBuf
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
-	// Used when extracting handles from row in memTableReader.getMemRowsHandle.
-	handleCols plannercore.HandleCols
 }
 
 type allocBuf struct {
@@ -329,17 +328,23 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 
 // getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
-	rows, err := m.getMemRows()
+	handles := make([]kv.Handle, 0, 16)
+	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
+		handle, err := tablecodec.DecodeRowKey(key)
+		if err != nil {
+			return err
+		}
+		handles = append(handles, handle)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	handles := make([]kv.Handle, 0, len(rows))
-	for _, row := range rows {
-		handle, err := m.handleCols.BuildHandleByDatums(row)
-		if err != nil {
-			return nil, err
+
+	if m.desc {
+		for i, j := 0, len(handles)-1; i < j; i, j = i+1, j-1 {
+			handles[i], handles[j] = handles[j], handles[i]
 		}
-		handles = append(handles, handle)
 	}
 	return handles, nil
 }
@@ -577,7 +582,6 @@ func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeRea
 					handleBytes: make([]byte, 0, 16),
 					rd:          rd,
 				},
-				handleCols: indexMergeReader.handleCols,
 			})
 		} else {
 			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
@@ -673,6 +677,11 @@ func (m *memIndexMergeReader) unionHandles(kvRanges [][]kv.KeyRange) (finalHandl
 		switch r := reader.(type) {
 		case *memTableReader:
 			r.kvRanges = kvRanges[i]
+			tmpRows, err := reader.getMemRows()
+			if err != nil {
+				fmt.Println("gjt err: ", err)
+			}
+			fmt.Println("gjt rows: ", tmpRows)
 		case *memIndexReader:
 			r.kvRanges = kvRanges[i]
 		default:
