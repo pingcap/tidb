@@ -130,7 +130,6 @@ func getRange(start, end int64) []*ranger.Range {
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
-	t.Parallel()
 	nodes := make([]*statistics.StatsNode, 3)
 	nodes[0] = statistics.MockStatsNode(1, 3, 2)
 	nodes[1] = statistics.MockStatsNode(2, 5, 2)

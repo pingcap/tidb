@@ -12,7 +12,6 @@ import (
 )
 
 func TestCreateExternalStorage(t *testing.T) {
-	t.Parallel()
 	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
@@ -20,7 +19,6 @@ func TestCreateExternalStorage(t *testing.T) {
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		serverInfo version.ServerInfo
 		expected   bool
