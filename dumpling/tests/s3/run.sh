@@ -38,14 +38,14 @@ mkdir -p "$DBPATH/mybucket"
 DB_NAME="s3"
 TABLE_NAME="t"
 
-## drop database on mysql
-#run_sql "drop database if exists \`$DB_NAME\`;"
-## build data on mysql
-#run_sql "create database $DB_NAME;"
-#
-## load 50MB data into MySQL
-#(cd "$(dirname "$0")" && GO111MODULE=on go build -o out)
-#$DUMPLING_BASE_NAME/out -B $DB_NAME -T $TABLE_NAME -P 3306 -w 16
+# drop database on mysql
+run_sql "drop database if exists \`$DB_NAME\`;"
+# build data on mysql
+run_sql "create database $DB_NAME;"
+
+# load 50MB data into MySQL
+(cd "$(dirname "$0")" && GO111MODULE=on go build -o out)
+$DUMPLING_BASE_NAME/out -B $DB_NAME -T $TABLE_NAME -P 3306 -w 16
 
 # run dumpling!
 HOST_DIR=${DUMPLING_OUTPUT_DIR}
