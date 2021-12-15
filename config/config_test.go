@@ -33,7 +33,6 @@ import (
 )
 
 func TestAtomicBoolUnmarshal(t *testing.T) {
-	t.Parallel()
 	type data struct {
 		Ab AtomicBool `toml:"ab"`
 	}
@@ -59,8 +58,6 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
-	t.Parallel()
-
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	require.NoError(t, err)
@@ -480,8 +477,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 }
 
 func TestOOMActionValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		oomAction string
@@ -500,8 +495,6 @@ func TestOOMActionValid(t *testing.T) {
 }
 
 func TestTxnTotalSizeLimitValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := []struct {
 		limit uint64
@@ -521,8 +514,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestPreparePlanCacheValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
 		{Enabled: true, Capacity: 0}:                        false,
@@ -538,8 +529,6 @@ func TestPreparePlanCacheValid(t *testing.T) {
 }
 
 func TestMaxIndexLength(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {
 		conf.MaxIndexLength = indexLen
@@ -552,8 +541,6 @@ func TestMaxIndexLength(t *testing.T) {
 }
 
 func TestIndexLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLimit int, shouldBeValid bool) {
 		conf.IndexLimit = indexLimit
@@ -566,8 +553,6 @@ func TestIndexLimit(t *testing.T) {
 }
 
 func TestTableColumnCountLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
 		conf.TableColumnCountLimit = uint32(tableColumnLimit)
@@ -580,8 +565,6 @@ func TestTableColumnCountLimit(t *testing.T) {
 }
 
 func TestEncodeDefTempStorageDir(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		host       string
 		statusHost string
@@ -644,8 +627,6 @@ func TestModifyThroughLDFlags(t *testing.T) {
 }
 
 func TestSecurityValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		spilledFileEncryptionMethod string
@@ -664,8 +645,6 @@ func TestSecurityValid(t *testing.T) {
 }
 
 func TestTcpNoDelay(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	//check default value
 	require.True(t, c1.Performance.TCPNoDelay)

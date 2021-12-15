@@ -28,13 +28,13 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,9 +125,9 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
-	sc := &stmtctx.StatementContext{}
+	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(900, 900), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sctx, getRange(900, 900), statsTbl.Count, false)
 	require.NoError(t, err)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
@@ -147,7 +147,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	statsSuiteData.GetTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
 	for i, ran := range input {
-		count, err = col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), increasedTblRowCount, false)
+		count, err = col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), increasedTblRowCount, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
@@ -184,26 +184,26 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
 
-	sc := &stmtctx.StatementContext{}
+	sctx := mock.NewContext()
 	colID := table.Meta().Columns[0].ID
-	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
+	count, err := statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.2, count)
 
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, 30))
 	require.NoError(t, err)
 	require.Equal(t, 7.2, count)
 
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
 	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(9, 30))
 	require.NoError(t, err)
 	require.Equal(t, 7.0, count)
 
@@ -215,7 +215,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetTableStats(table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(1, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 
@@ -228,12 +228,12 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	statsTbl = h.GetTableStats(table.Meta())
 
 	colID = table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	count, err = statsTbl.GetRowCountByColumnRanges(sctx, colID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -252,22 +252,22 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.NoError(t, err)
 	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
 
-	sc := &stmtctx.StatementContext{}
+	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, err := statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(7, 7))
+	count, err := statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(6, 6))
+	count, err = statsTbl.GetRowCountByIndexRanges(sctx, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
 	colID := table.Meta().Columns[0].ID
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(7, 7))
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = statsTbl.GetRowCountByIntColumnRanges(sc, colID, getRange(6, 6))
+	count, err = statsTbl.GetRowCountByIntColumnRanges(sctx, colID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 }
@@ -760,7 +760,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
-	sc := &stmtctx.StatementContext{}
+	sctx := mock.NewContext()
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
 
 	var input []struct {
@@ -775,7 +775,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	statsSuiteData := statistics.GetStatsSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ran := range input {
-		count, err := col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		count, err := col.GetColumnRowCount(sctx, getRange(ran.Start, ran.End), statsTbl.Count, false)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].Start = ran.Start
