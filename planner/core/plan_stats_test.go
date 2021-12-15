@@ -72,8 +72,7 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 		check func(p plannercore.Plan, tableInfo *model.TableInfo)
 	}{
 		{ // DataSource
-			sql:  "select * from t where c>1",
-			skip: false,
+			sql: "select * from t where c>1",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
@@ -99,8 +98,7 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 			},
 		},
 		{ // Join
-			sql:  "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",
-			skip: false,
+			sql: "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(plannercore.PhysicalPlan)
 				c.Check(ok, IsTrue)
@@ -109,8 +107,7 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 			},
 		},
 		{ // Apply
-			sql:  "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
-			skip: false,
+			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(*plannercore.PhysicalProjection)
 				c.Check(ok, IsTrue)
@@ -122,9 +119,8 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 				c.Assert(countFullStats(right.Stats().HistColl, tableInfo.Columns[3].ID), Greater, 0)
 			},
 		},
-		{ // CTE TODO
-			sql:  "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x > 3",
-			skip: true,
+		{ // CTE
+			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				ps, ok := p.(*plannercore.PhysicalSelection)
 				c.Check(ok, IsTrue)
@@ -132,8 +128,9 @@ func (s *testPlanStatsSuite) TestPlanStatsLoad(c *C) {
 				c.Check(ok, IsTrue)
 				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
 				c.Check(ok, IsTrue)
-				c.Assert(countFullStats(pp.Children()[0].Stats().HistColl, tableInfo.Columns[2].ID), Greater, 0)
-				c.Assert(countFullStats(pp.Children()[0].Stats().HistColl, tableInfo.Columns[3].ID), Equals, 0)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+				c.Check(ok, IsTrue)
+				c.Assert(countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), Greater, 0)
 			},
 		},
 	}

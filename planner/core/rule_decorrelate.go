@@ -105,10 +105,6 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
-func (s *decorrelateSolver) needStats() bool {
-	return false
-}
-
 func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {

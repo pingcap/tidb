@@ -57,7 +57,8 @@ func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
 	timeout := time.Nanosecond * math.MaxInt
-	rs := h.SyncLoad(stmtCtx, neededColumns, timeout)
+	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
+	rs := h.SyncWaitStatsLoad(stmtCtx)
 	c.Assert(rs, Equals, true)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
@@ -100,7 +101,8 @@ func (s *testStatsSuite) TestConcurrentLoadHistTimeout(c *C) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
-	rs := h.SyncLoad(stmtCtx, neededColumns, 0)
+	h.SendLoadRequests(stmtCtx, neededColumns, 0)
+	rs := h.SyncWaitStatsLoad(stmtCtx)
 	c.Assert(rs, Equals, false)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
@@ -153,7 +155,8 @@ func (s *testStatsSuite) TestConcurrentLoadHistFail(c *C) {
 	}
 	timeout := time.Nanosecond * math.MaxInt
 	// TODO failpoint, and works again after failpoint
-	rs := h.SyncLoad(stmtCtx, neededColumns, timeout)
+	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
+	rs := h.SyncWaitStatsLoad(stmtCtx)
 	c.Assert(rs, Equals, true)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram

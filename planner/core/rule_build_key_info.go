@@ -25,10 +25,6 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) needStats() bool {
-	return false
-}
-
 func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	buildKeyInfo(p)
 	return p, nil

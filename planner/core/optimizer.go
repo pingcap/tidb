@@ -16,10 +16,8 @@ package core
 
 import (
 	"context"
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -40,7 +38,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"math"
-	"time"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -62,10 +59,12 @@ const (
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagCollectPredicateColumnsPoint
 	flagEliminateOuterJoin
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
+	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
@@ -80,10 +79,12 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
+	&collectPredicateColumnsPoint{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
+	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
@@ -127,7 +128,6 @@ func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 type logicalOptRule interface {
 	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
-	needStats() bool
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
@@ -267,17 +267,11 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
-	}
-	// load full stats if not loaded in logicalOptimize()
-	if !sctx.GetSessionVars().StmtCtx.StatsLoad.FullStatsLoaded {
-		_, err = SyncLoadColumnFullStats(logic)
-		if err != nil {
-			return nil, 0, err
-		}
-		sctx.GetSessionVars().StmtCtx.StatsLoad.FullStatsLoaded = true
 	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, 0, errors.Trace(ErrCartesianProductUnsupported)
@@ -313,39 +307,6 @@ func refineCETrace(sctx sessionctx.Context) {
 				zap.Int64("table id", rec.TableID))
 		}
 		rec.TableName = tbl.Meta().Name.O
-	}
-}
-
-// SyncLoadColumnFullStats sends columns' full-stats request and sync-wait until timeout
-func SyncLoadColumnFullStats(plan LogicalPlan) (bool, error) {
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return true, nil
-	}
-	syncWait := config.GetGlobalConfig().Stats.SyncLoadWait
-	if syncWait <= 0 {
-		return true, nil
-	}
-	neededColumns := CollectHistColumns(plan)
-	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
-	hintMaxExecutionTime := stmtCtx.MaxExecutionTime
-	if hintMaxExecutionTime == 0 {
-		hintMaxExecutionTime = math.MaxInt
-	}
-	sessMaxExecutionTime := plan.SCtx().GetSessionVars().MaxExecutionTime
-	if sessMaxExecutionTime == 0 {
-		sessMaxExecutionTime = math.MaxInt
-	}
-	waitTime := mathutil.Min(int(syncWait), mathutil.Min(int(hintMaxExecutionTime), int(sessMaxExecutionTime)))
-	var timeout = time.Duration(waitTime) * time.Millisecond
-	stmtCtx.StatsLoad.Timeout = timeout
-	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncLoad(stmtCtx, neededColumns, timeout)
-	if !success && config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
-		err := errors.New("Timeout when sync-load full stats for needed columns.")
-		stmtCtx.AppendWarning(err)
-		stmtCtx.StatsLoad.Fallback = true
-		return false, err
-	} else {
-		return true, nil
 	}
 }
 
@@ -464,14 +425,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 			continue
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
-		// sync-load full stats before the first stats-needed rule applied
-		if !vars.StmtCtx.StatsLoad.FullStatsLoaded && rule.needStats() {
-			_, err = SyncLoadColumnFullStats(logic)
-			if err != nil {
-				return nil, err
-			}
-			vars.StmtCtx.StatsLoad.FullStatsLoaded = true
-		}
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err

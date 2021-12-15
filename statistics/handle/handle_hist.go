@@ -45,31 +45,45 @@ type NeededColumnTask struct {
 	ResultCh      chan model.TableColumnID
 }
 
-// SyncLoad sync waits loading of neededColumns and return false if timeout
-func (h *Handle) SyncLoad(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) bool {
+// SendLoadRequests send neededColumns requests
+func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) {
 	missingColumns := h.genHistMissingColumns(neededColumns)
 	if len(missingColumns) <= 0 {
-		return true
+		return
 	}
+	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededColumns = missingColumns
 	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(neededColumns))
-	defer close(sc.StatsLoad.ResultCh)
-	resultCheckMap := map[model.TableColumnID]struct{}{}
 	for _, col := range missingColumns {
 		h.appendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
+	}
+	sc.StatsLoad.LoadStartTime = time.Now()
+}
+
+// SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
+func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
+	if len(sc.StatsLoad.NeededColumns) <= 0 {
+		return true
+	}
+	defer func() {
+		if sc.StatsLoad.ResultCh != nil {
+			close(sc.StatsLoad.ResultCh)
+		}
+	}()
+	resultCheckMap := map[model.TableColumnID]struct{}{}
+	for _, col := range sc.StatsLoad.NeededColumns {
 		resultCheckMap[col] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	t := time.Now()
 	for {
 		select {
 		case result, ok := <-sc.StatsLoad.ResultCh:
 			if ok {
 				delete(resultCheckMap, result)
 				if len(resultCheckMap) == 0 {
-					metrics.SyncLoadHistogram.Observe(float64(time.Since(t).Milliseconds()))
+					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 					return true
 				}
 			}

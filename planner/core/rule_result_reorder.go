@@ -37,10 +37,6 @@ import (
 type resultReorder struct {
 }
 
-func (rs *resultReorder) needStats() bool {
-	return false
-}
-
 func (rs *resultReorder) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	ordered := rs.completeSort(lp)
 	if !ordered {

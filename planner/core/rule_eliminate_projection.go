@@ -146,10 +146,6 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 type projectionEliminator struct {
 }
 
-func (pe *projectionEliminator) needStats() bool {
-	return false
-}
-
 // optimize implements the logicalOptRule interface.
 func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)

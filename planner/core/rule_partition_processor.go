@@ -57,10 +57,6 @@ const FullRange = -1
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) needStats() bool {
-	return false
-}
-
 func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	p, err := s.rewriteDataSource(lp)
 	return p, err

@@ -43,10 +43,5 @@ func collectColumnsFromPlan(plan LogicalPlan, neededColumns map[model.TableColum
 			neededColumns[tblColID] = struct{}{}
 		}
 		// TODO collect idx columns?
-	case *LogicalCTE:
-		collectColumnsFromPlan(x.cte.seedPartLogicalPlan, neededColumns)
-		if x.cte.recursivePartLogicalPlan != nil {
-			collectColumnsFromPlan(x.cte.recursivePartLogicalPlan, neededColumns)
-		}
 	}
 }

@@ -27,10 +27,6 @@ import (
 type gcSubstituter struct {
 }
 
-func (gc *gcSubstituter) needStats() bool {
-	return false
-}
-
 // ExprColumnMap is used to store all expressions of indexed generated columns in a table,
 // and map them to the generated columns,
 // thus we can substitute the expression in a query to an indexed generated column.

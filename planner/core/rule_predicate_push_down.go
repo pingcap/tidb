@@ -27,10 +27,6 @@ import (
 
 type ppdSolver struct{}
 
-func (s *ppdSolver) needStats() bool {
-	return false
-}
-
 func (s *ppdSolver) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	_, p := lp.PredicatePushDown(nil)
 	return p, nil

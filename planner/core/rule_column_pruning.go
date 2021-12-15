@@ -29,10 +29,6 @@ import (
 type columnPruner struct {
 }
 
-func (s *columnPruner) needStats() bool {
-	return false
-}
-
 func (s *columnPruner) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(lp.Schema().Columns)
 	return lp, err

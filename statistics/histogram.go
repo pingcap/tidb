@@ -1073,7 +1073,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 		return true
 	}
 	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
-		if sc.StatsLoad.FullStatsLoaded {
+		if sc.StatsLoad.Timeout > 0 {
 			logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 				zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 		}
