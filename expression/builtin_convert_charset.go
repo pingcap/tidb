@@ -66,10 +66,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 			return nil, err
 		}
 		bf.tp = args[0].GetType().Clone()
-		// adjust enum/set type
-		if bf.tp.Tp == mysql.TypeEnum || bf.tp.Tp == mysql.TypeSet {
-			bf.tp.Tp = mysql.TypeString
-		}
+		bf.tp.Tp = mysql.TypeVarString
 		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
 		sig = &builtinInternalToBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
