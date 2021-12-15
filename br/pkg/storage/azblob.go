@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/spf13/pflag"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -20,6 +21,59 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
+
+const (
+	azblobEndpointOption     = "azblob.endpoint"
+	azblobStorageClassOption = "azblob.storage-class"
+	azblobAccountName        = "azblob.account-name"
+	azblobAccountKey         = "azblob.account-key"
+)
+
+type AzblobBackendOptions struct {
+	Endpoint     string `json:"endpoint" toml:"endpoint"`
+	AccountName  string `json:"account_name" toml:"account_name"`
+	AccountKey   string `json:"account_key" toml:"account_key"`
+	StorageClass string `json:"storage_class" toml:"storage_class"`
+}
+
+func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
+	azblob.Endpoint = options.Endpoint
+	azblob.StorageClass = options.StorageClass
+	azblob.AccountName = options.AccountName
+	azblob.SharedKey = options.AccountKey
+	return nil
+}
+
+func defineAzblobFlags(flags *pflag.FlagSet) {
+	flags.String(azblobEndpointOption, "", "(experimental) Set the Azblob endpoint URL")
+	flags.String(azblobStorageClassOption, "", "(experimental) Specify the storage class for azblob")
+	flags.String(azblobAccountName, "", "Specify the account name for azblob")
+	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
+}
+
+func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
+	var err error
+	options.Endpoint, err = flags.GetString(azblobEndpointOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	options.StorageClass, err = flags.GetString(azblobStorageClassOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	options.AccountName, err = flags.GetString(azblobAccountName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	options.AccountKey, err = flags.GetString(azblobAccountKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
 
 type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
