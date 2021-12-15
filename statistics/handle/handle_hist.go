@@ -191,7 +191,7 @@ func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.Restri
 }
 
 func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
-	if readerCtx.reader == nil || readerCtx.createdTime.Add(time.Second*3).Before(time.Now()) {
+	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
 			err := h.releaseStatsReader(readerCtx.reader, ctx)
 			if err != nil {
@@ -262,7 +262,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
 			}
 			if time.Now().After(task.ToTimeout) {
-				h.StatsLoad.TimeoutColumnsCh <- task
+				h.writeToTimeoutCh(task)
 				continue
 			}
 			return task, nil
@@ -275,7 +275,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
-				h.StatsLoad.TimeoutColumnsCh <- task
+				h.writeToTimeoutCh(task)
 				return task0, nil
 			default:
 				if !ok {
@@ -286,6 +286,16 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			}
 		}
 	}
+}
+
+func (h *Handle) writeToTimeoutCh(task *NeededColumnTask) {
+	select {
+	case h.StatsLoad.TimeoutColumnsCh <- task:
+	default:
+		logutil.BgLogger().Debug("TimeoutCh is full, drop task:", zap.Int64("table", task.TableColumnID.TableID),
+			zap.Int64("column", task.TableColumnID.ColumnID))
+	}
+
 }
 
 // updateCachedColumn updates the column hist to global statsCache.
