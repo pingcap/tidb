@@ -15,7 +15,6 @@
 package core
 
 import (
-	"fmt"
 	"context"
 
 	"github.com/pingcap/tidb/expression"
@@ -448,14 +447,11 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 		}
 	}
 
-	// if len(p.partitionedTable) > 0 {
-	// 	// If the children include partitioned tables, do not prune columns.
-	// 	// Because the executor needs the partitioned columns to calculate the lock key.
-	// 	fmt.Println("parent used column of select lock ===", p.Schema().Columns)
-	// 	return p.children[0].PruneColumns(p.Schema().Columns)
-	// }
-	fmt.Println("parent used column of select lock ===", parentUsedCols)
-	fmt.Println("current schema of of select lock ===", p.Schema().Columns)
+	if len(p.partitionedTable) > 0 {
+		// If the children include partitioned tables, do not prune columns.
+		// Because the executor needs the partitioned columns to calculate the lock key.
+		return p.children[0].PruneColumns(p.Schema().Columns)
+	}
 
 	return p.children[0].PruneColumns(parentUsedCols)
 }

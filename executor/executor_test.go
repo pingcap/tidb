@@ -9499,5 +9499,5 @@ func (s *testSuiteP1) TestIssue30382(c *C) {
 	tk.MustExec("insert into t2 select * from t1 ;")
 	tk.MustExec("begin;")
 	tk.MustQuery("select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;")
-	tk.MustExec("commit");
+	tk.MustExec("commit")
 }

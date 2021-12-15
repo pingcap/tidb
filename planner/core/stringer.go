@@ -196,7 +196,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			}
 		}
 		str += ")"
-		str += fmt.Sprintf("%v", x.Schema().Columns)
 	case *PhysicalTableReader:
 		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
 	case *PhysicalIndexReader:

@@ -15,9 +15,9 @@
 package executor
 
 import (
-	"fmt"
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -634,10 +634,9 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		Lock:             v.Lock,
-		tblID2Handle:     v.TblID2Handle,
-		// partitionedTable: v.PartitionedTable,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
+		Lock:         v.Lock,
+		tblID2Handle: v.TblID2Handle,
 	}
 
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
@@ -670,12 +669,9 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 			offsets := make([]int, 0, len(cols))
 			for _, colInfo := range cols {
 				colName := fmt.Sprintf("%s.%s.%s", dbInfo.Name.L, tblInfo.Name.L, colInfo.Name.L)
-				fmt.Println("matching partition column:", colName)
-				fmt.Println("len of schema ==", len(e.schema.Columns))
 
 				match := false
 				for i, col := range e.schema.Columns {
-					fmt.Println("schema column ==", col.OrigName)
 					if col.OrigName == colName {
 						match = true
 						offsets = append(offsets, i)

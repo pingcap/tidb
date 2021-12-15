@@ -1222,52 +1222,45 @@ func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	selectLock := LogicalLock{
-		Lock:             lock,
-		tblID2Handle:     b.handleHelper.tailMap(),
-		partitionedTable: b.partitionedTable,
+		Lock:         lock,
+		tblID2Handle: b.handleHelper.tailMap(),
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 
-	fmt.Println("in build select lock, schema ==", selectLock.Schema().Columns)
+	if len(b.partitionedTable) > 0 {
+		tables := make([]table.PartitionedTable, 0, len(b.partitionedTable))
+		tables = collectPartitionTable(selectLock, tables)
 
-	// if len(b.partitionedTable) > 0 {
-	// 	// If a chunk row is read from a partitioned table, which partition the row
-	// 	// comes from is unknown. With the existence of Join, the situation could be
-	// 	// even worse: SelectLock have to know the `pid` to construct the lock key.
-	// 	// To solve the problem, an extra `pid` column is add to the schema, and the
-	// 	// DataSource need to return the `pid` information in the chunk row.
-	// 	err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
-	// 	// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
-	// 	// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
-	// 	b.optFlag = b.optFlag | flagPartitionProcessor
-	// }
+		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
+		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+		b.optFlag = b.optFlag | flagPartitionProcessor
+		selectLock.partitionedTable = tables
+	}
 	return selectLock, nil
 }
 
-// func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
-// 	switch raw := p.(type) {
-// 	case *DataSource:
-// 		// Fix issue 26250, do not add extra pid column to normal table.
-// 		if raw.tableInfo.GetPartitionInfo() == nil {
-// 			return nil
-// 		}
-// 		raw.addExtraPIDColumn(info)
-// 		return nil
-// 	default:
-// 		var err error
-// 		for _, child := range p.Children() {
-// 			err = addExtraPIDColumnToDataSource(child, info)
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
+func collectPartitionTable(p LogicalPlan, input []table.PartitionedTable) []table.PartitionedTable {
+	switch raw := p.(type) {
+	case *DataSource:
+		// Fix issue 26250, do not add extra pid column to normal table.
+		if raw.tableInfo.GetPartitionInfo() == nil {
+			return input
+		}
+		input = append(input, raw.table.(table.PartitionedTable))
+	case *LogicalApply:
+		// For logical apply, the query should only lock t1, although it's converted to join:
+		//     select * from t1 where t1.id in (select id from t2) for update
+		//
+		// See issue https://github.com/pingcap/tidb/issues/30382
+		input = collectPartitionTable(raw.Children()[0], input)
+	default:
+		for _, child := range p.Children() {
+			input = collectPartitionTable(child, input)
+		}
+	}
+	return input
+}
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	p := &Prepare{
