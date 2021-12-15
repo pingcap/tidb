@@ -237,7 +237,6 @@ func (b *assertRetryLessThanBackoffer) Attempt() int {
 }
 
 func TestScatterFinishInTime(t *testing.T) {
-	t.Parallel()
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
@@ -283,7 +282,6 @@ func TestScatterFinishInTime(t *testing.T) {
 //   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
-	t.Parallel()
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()

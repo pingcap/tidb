@@ -23,7 +23,6 @@ import (
 )
 
 func TestDirtyTransaction(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -154,7 +153,6 @@ func TestDirtyTransaction(t *testing.T) {
 }
 
 func TestUnionScanWithCastCondition(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -170,7 +168,6 @@ func TestUnionScanWithCastCondition(t *testing.T) {
 }
 
 func TestUnionScanForMemBufferReader(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -309,7 +306,6 @@ func TestUnionScanForMemBufferReader(t *testing.T) {
 }
 
 func TestForUpdateUntouchedIndex(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -350,7 +346,6 @@ func TestForUpdateUntouchedIndex(t *testing.T) {
 }
 
 func TestUpdateScanningHandles(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -385,7 +380,6 @@ func TestUpdateScanningHandles(t *testing.T) {
 
 // See https://github.com/pingcap/tidb/issues/19136
 func TestForApplyAndUnionScan(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
