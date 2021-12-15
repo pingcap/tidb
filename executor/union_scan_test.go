@@ -16,14 +16,17 @@ package executor_test
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite7) TestDirtyTransaction(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestDirtyTransaction(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
 	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
@@ -150,8 +153,10 @@ func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk.MustExec("commit;")
 }
 
-func (s *testSuite7) TestUnionScanWithCastCondition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUnionScanWithCastCondition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")
 	tk.MustExec("insert ta values ('1'), ('2')")
@@ -163,8 +168,10 @@ func (s *testSuite7) TestUnionScanWithCastCondition(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUnionScanForMemBufferReader(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int,b int, index idx(b))")
@@ -215,8 +222,8 @@ func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("insert t values (1,1),(2,2)")
 	tk.MustExec("begin")
 	_, err := tk.Exec("update t set b=b+1")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'idx'")
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
@@ -299,8 +306,10 @@ func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("admin check table t1;")
 }
 
-func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestForUpdateUntouchedIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
@@ -331,14 +340,16 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("create table t (a int,b int, unique index(a))")
 	tk.MustExec("begin")
 	_, err := tk.Exec("insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'a'")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[kv:1062]Duplicate entry '2' for key 'a'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
 
-func (s *testSuite7) TestUpdateScanningHandles(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateScanningHandles(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int primary key, b int);")
@@ -364,13 +375,15 @@ func (s *testSuite7) TestUpdateScanningHandles(c *C) {
 	tk.MustExec("insert into t values (1, 1);")
 	tk.MustExec("update /*+ INL_JOIN(t1) */ t t1, (select a, b from t) t2 set t1.b = t2.b where t1.a = t2.a + 1000;")
 	result := tk.MustQuery("select a, a-b from t where a > 1000 and a - b != 1000;")
-	c.Assert(result.Rows(), HasLen, 0)
+	require.Len(t, result.Rows(), 0)
 	tk.MustExec("rollback;")
 }
 
 // See https://github.com/pingcap/tidb/issues/19136
-func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestForApplyAndUnionScan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
@@ -405,8 +418,10 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite7) TestIssue28073(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue28073(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str) , key(c_int)) partition by hash (c_int) partitions 4")
@@ -424,18 +439,18 @@ func (s *testSuite7) TestIssue28073(c *C) {
 	tk.MustExec("commit")
 
 	// Check no key is written to table ID 0
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	start := tablecodec.EncodeTablePrefix(0)
 	end := tablecodec.EncodeTablePrefix(1)
 	iter, err := txn.Iter(start, end)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	exist := false
 	for iter.Valid() {
-		c.Assert(iter.Next(), IsNil)
+		require.Nil(t, iter.Next())
 		exist = true
 		break
 	}
-	c.Assert(exist, IsFalse)
+	require.False(t, exist)
 }

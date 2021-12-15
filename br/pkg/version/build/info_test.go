@@ -10,8 +10,6 @@ import (
 )
 
 func TestInfo(t *testing.T) {
-	t.Parallel()
-
 	info := Info()
 	lines := strings.Split(info, "\n")
 	require.Regexp(t, "^Release Version", lines[0])

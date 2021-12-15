@@ -23,8 +23,6 @@ import (
 )
 
 func TestTokenID(t *testing.T) {
-	t.Parallel()
-
 	for str, tok := range tokenMap {
 		l := NewScanner(str)
 		var v yySymType
@@ -34,8 +32,6 @@ func TestTokenID(t *testing.T) {
 }
 
 func TestSingleChar(t *testing.T) {
-	t.Parallel()
-
 	table := []byte{'|', '&', '-', '+', '*', '/', '%', '^', '~', '(', ',', ')'}
 	for _, tok := range table {
 		l := NewScanner(string(tok))
@@ -56,8 +52,6 @@ type testLiteralValue struct {
 }
 
 func TestSingleCharOther(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"AT", identifier},
 		{"?", paramMarker},
@@ -69,8 +63,6 @@ func TestSingleCharOther(t *testing.T) {
 }
 
 func TestAtLeadingIdentifier(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"@", singleAtIdentifier},
 		{"@''", singleAtIdentifier},
@@ -96,8 +88,6 @@ func TestAtLeadingIdentifier(t *testing.T) {
 }
 
 func TestUnderscoreCS(t *testing.T) {
-	t.Parallel()
-
 	var v yySymType
 	scanner := NewScanner(`_utf8"string"`)
 	tok := scanner.Lex(&v)
@@ -113,8 +103,6 @@ func TestUnderscoreCS(t *testing.T) {
 }
 
 func TestLiteral(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{`'''a'''`, stringLit},
 		{`''a''`, stringLit},
@@ -163,8 +151,6 @@ func TestLiteral(t *testing.T) {
 }
 
 func TestLiteralValue(t *testing.T) {
-	t.Parallel()
-
 	table := []testLiteralValue{
 		{`'''a'''`, `'a'`},
 		{`''a''`, ``},
@@ -239,8 +225,6 @@ func runLiteralTest(t *testing.T, table []testLiteralValue) {
 }
 
 func TestComment(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", set},
@@ -266,8 +250,6 @@ SELECT`, selectKwd},
 }
 
 func TestScanQuotedIdent(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("`fk`")
 	l.r.peek()
 	tok, pos, lit := scanQuotedIdent(l)
@@ -277,8 +259,6 @@ func TestScanQuotedIdent(t *testing.T) {
 }
 
 func TestScanString(t *testing.T) {
-	t.Parallel()
-
 	table := []struct {
 		raw    string
 		expect string
@@ -314,8 +294,6 @@ func TestScanString(t *testing.T) {
 }
 
 func TestIdentifier(t *testing.T) {
-	t.Parallel()
-
 	replacementString := string(unicode.ReplacementChar) + "xxx"
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
@@ -347,8 +325,6 @@ func TestIdentifier(t *testing.T) {
 }
 
 func TestSpecialComment(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("/*!40101 select\n5*/")
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
@@ -362,8 +338,6 @@ func TestSpecialComment(t *testing.T) {
 }
 
 func TestFeatureIDsComment(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("/*T![auto_rand] auto_random(5) */")
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
@@ -383,8 +357,6 @@ func TestFeatureIDsComment(t *testing.T) {
 }
 
 func TestOptimizerHint(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("SELECT /*+ BKA(t1) */ 0;")
 	tokens := []struct {
 		tok   int
@@ -409,8 +381,6 @@ func TestOptimizerHint(t *testing.T) {
 }
 
 func TestOptimizerHintAfterCertainKeywordOnly(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		tokens []int
@@ -491,8 +461,6 @@ func TestOptimizerHintAfterCertainKeywordOnly(t *testing.T) {
 }
 
 func TestInt(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		expect uint64
@@ -522,8 +490,6 @@ func TestInt(t *testing.T) {
 }
 
 func TestSQLModeANSIQuotes(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input string
 		tok   int
@@ -556,8 +522,6 @@ func TestSQLModeANSIQuotes(t *testing.T) {
 }
 
 func TestIllegal(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"'", invalid},
 		{"'fu", invalid},
@@ -576,8 +540,6 @@ func TestIllegal(t *testing.T) {
 }
 
 func TestVersionDigits(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input    string
 		min      int
@@ -656,8 +618,6 @@ func TestVersionDigits(t *testing.T) {
 }
 
 func TestFeatureIDs(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input      string
 		featureIDs []string
