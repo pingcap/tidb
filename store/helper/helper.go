@@ -284,7 +284,8 @@ type HotTableIndex struct {
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
-	tables := h.GetTablesInfoWithKeyRange(allSchemas)
+	schemas := h.FilterMemDBs(allSchemas)
+	tables := h.GetTablesInfoWithKeyRange(schemas)
 	for regionID, regionMetric := range metrics {
 		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
@@ -683,6 +684,17 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 		startKey,
 		endKey,
 	}
+}
+
+// FilterMemDBs filter memory databases in the input schemas.
+func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
+	for _, dbInfo := range oldSchemas {
+		if util.IsMemDB(dbInfo.Name.L) {
+			continue
+		}
+		schemas = append(schemas, dbInfo)
+	}
+	return
 }
 
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
