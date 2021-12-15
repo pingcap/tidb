@@ -24,7 +24,13 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
+var _ = Suite(&testLoadHistSuite{})
+
+type testLoadHistSuite struct {
+	testSuiteBase
+}
+
+func (s *testLoadHistSuite) TestConcurrentLoadHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -69,7 +75,7 @@ func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {
 	// TODO partition table
 }
 
-func (s *testStatsSuite) TestConcurrentLoadHistTimeout(c *C) {
+func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -121,7 +127,7 @@ func (s *testStatsSuite) TestConcurrentLoadHistTimeout(c *C) {
 	c.Assert(hg.Len()+topn.Num(), Greater, 0)
 }
 
-func (s *testStatsSuite) TestConcurrentLoadHistFail(c *C) {
+func (s *testLoadHistSuite) TestConcurrentLoadHistFail(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
