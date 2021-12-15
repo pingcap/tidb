@@ -2074,6 +2074,17 @@ func TestLoadData(t *testing.T) {
 		{[]byte("1##2##\"3##\"##\"4\n\"#2##3##\"##4#\"##5#"), nil, []string{"1|2|3##|4", "2|3|##4#|5"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+
+	ld.LinesInfo.Terminated = "xxx"
+	ld.FieldsInfo.Terminated = ","
+	ld.LinesInfo.Starting = ""
+	ld.IgnoreLines = 3
+	tests = []testCase{
+		{[]byte("1xx"), []byte("x2xxx3xxx"), []string{}, nil, "Records: 0  Deleted: 0  Skipped: 3  Warnings: 0"},
+		{nil, []byte("1xxx2xxx3xxx4xxx"), []string{"4|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 3  Warnings: 0"},
+		{[]byte("1,2,3,4xx"), []byte("x5xxx6xxx7xxx"), []string{"7|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 3  Warnings: 0"},
+	}
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestLoadDataEscape(t *testing.T) {

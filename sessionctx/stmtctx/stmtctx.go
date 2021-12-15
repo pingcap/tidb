@@ -117,6 +117,7 @@ type StatementContext struct {
 		updated uint64
 		copied  uint64
 		touched uint64
+		skipped uint64
 
 		message        string
 		warnings       []SQLWarn
@@ -433,6 +434,20 @@ func (sc *StatementContext) AddTouchedRows(rows uint64) {
 	sc.mu.touched += rows
 }
 
+// SkippedRows is used to generate info message
+func (sc *StatementContext) SkippedRows() uint64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.mu.skipped
+}
+
+// AddSkippedRows adds touched rows.
+func (sc *StatementContext) AddSkippedRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.skipped += rows
+}
+
 // GetMessage returns the extra message of the last executed command, if there is no message, it returns empty string
 func (sc *StatementContext) GetMessage() string {
 	sc.mu.Lock()
@@ -578,6 +593,7 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.updated = 0
 	sc.mu.copied = 0
 	sc.mu.touched = 0
+	sc.mu.skipped = 0
 	sc.mu.message = ""
 	sc.mu.errorCount = 0
 	sc.mu.warnings = nil

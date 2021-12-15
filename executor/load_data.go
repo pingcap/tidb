@@ -504,7 +504,7 @@ loop:
 
 // getLine returns a line, curData, the next data start index and a bool value.
 // If it has starting symbol the bool is true, otherwise is false.
-func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, []byte, bool) {
+func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) {
 	startingLen := len(e.LinesInfo.Starting)
 	prevData, curData = e.getValidData(prevData, curData)
 	if prevData == nil && len(curData) < startingLen {
@@ -519,11 +519,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	}
 	endIdx := -1
 	if len(curData) >= curStartIdx {
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.IndexOfTerminator(curData[curStartIdx:], inquotor)
-		}
+		endIdx = e.IndexOfTerminator(curData[curStartIdx:], inquotor)
 	}
 	if endIdx == -1 {
 		// no terminated symbol
@@ -533,11 +529,8 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 
 		// terminated symbol in the middle of prevData and curData
 		curData = append(prevData, curData...)
-		if ignore {
-			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
-		} else {
-			endIdx = e.IndexOfTerminator(curData[startingLen:], inquotor)
-		}
+		endIdx = e.IndexOfTerminator(curData[startingLen:], inquotor)
+
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
 			return curData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -552,13 +545,8 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		return curData[curStartIdx : curStartIdx+endIdx], curData[nextDataIdx:], true
 	}
 
-	// terminated symbol in the curData
 	prevData = append(prevData, curData[:nextDataIdx]...)
-	if ignore {
-		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
-	} else {
-		endIdx = e.IndexOfTerminator(prevData[startingLen:], inquotor)
-	}
+	endIdx = e.IndexOfTerminator(prevData[startingLen:], inquotor)
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
 	}
@@ -583,7 +571,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		prevData, curData = curData, prevData
 	}
 	for len(curData) > 0 {
-		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
+		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
@@ -604,6 +592,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 
 		if e.IgnoreLines > 0 {
 			e.IgnoreLines--
+			e.ctx.GetSessionVars().StmtCtx.AddSkippedRows(1)
 			continue
 		}
 		cols, err := e.getFieldsFromLine(line)
@@ -653,7 +642,7 @@ func (e *LoadDataInfo) SetMessage() {
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
 	numDeletes := 0
-	numSkipped := numRecords - stmtCtx.CopiedRows()
+	numSkipped := numRecords - stmtCtx.CopiedRows() + stmtCtx.SkippedRows()
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
