@@ -22,7 +22,7 @@ import (
 )
 
 func TestKvExecCounter(t *testing.T) {
-	manager = newStatementStatsManagerManager()
+	globalCollector.Store(newStatementStatsCollector())
 	stats := CreateStatementStats()
 	counter := stats.CreateKvExecCounter("SQL-1", "")
 	interceptor := counter.RPCInterceptor()

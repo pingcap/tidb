@@ -25,9 +25,9 @@ import (
 // and it is expected that these statistics will eventually be collected and merged
 // in the background.
 type StatementStats struct {
-	mu     sync.Mutex
-	data   StatementStatsMap
-	closed *atomic.Bool
+	mu       sync.Mutex
+	data     StatementStatsMap
+	finished *atomic.Bool
 }
 
 // CreateStatementStats try to create and register an StatementStats.
@@ -38,15 +38,17 @@ type StatementStats struct {
 // not create a valid session. So this case will never happen: "This function
 // returns nil, so this valid session will count nothing".
 func CreateStatementStats() *StatementStats {
-	if manager == nil {
-		return nil
+	if v := globalCollector.Load(); v != nil {
+		if c, ok := v.(*statementStatsCollector); ok && c != nil {
+			stats := &StatementStats{
+				data:     StatementStatsMap{},
+				finished: atomic.NewBool(false),
+			}
+			c.register(stats)
+			return stats
+		}
 	}
-	stats := &StatementStats{
-		data:   StatementStatsMap{},
-		closed: atomic.NewBool(false),
-	}
-	manager.register(stats)
-	return stats
+	return nil
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -98,16 +100,16 @@ func (s *StatementStats) Take() StatementStatsMap {
 	return data
 }
 
-// Close marks StatementStats as "closed".
+// SetFinished marks StatementStats as "finished".
 // The background goroutine will periodically detect whether each
-// StatementStats has been closed, if so, it will be cleaned up.
-func (s *StatementStats) Close() {
-	s.closed.Store(true)
+// StatementStats has been finished, if so, it will be cleaned up.
+func (s *StatementStats) SetFinished() {
+	s.finished.Store(true)
 }
 
-// Closed returns whether the StatementStats has been closed.
-func (s *StatementStats) Closed() bool {
-	return s.closed.Load()
+// Finished returns whether the StatementStats has been finished.
+func (s *StatementStats) Finished() bool {
+	return s.finished.Load()
 }
 
 // SQLPlanDigest is used as the key of StatementStatsMap to

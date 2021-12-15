@@ -2209,7 +2209,7 @@ func (s *session) Close() {
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
 		if s.sessionVars.StmtStats != nil {
-			s.sessionVars.StmtStats.Close()
+			s.sessionVars.StmtStats.SetFinished()
 		}
 	}
 	s.ClearDiskFullOpt()

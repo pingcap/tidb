@@ -15,17 +15,19 @@
 package stmtstats
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 )
 
 func Test_statementStatsManager_register_collect(t *testing.T) {
-	m := newStatementStatsManagerManager()
+	m := newStatementStatsCollector()
 	stats := &StatementStats{
-		data:   StatementStatsMap{},
-		closed: atomic.NewBool(false),
+		data:     StatementStatsMap{},
+		finished: atomic.NewBool(false),
 	}
 	m.register(stats)
 	stats.AddExecCount("SQL-1", "", 1001, 1)
@@ -33,4 +35,20 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 	m.collect()
 	assert.NotEmpty(t, m.data)
 	assert.Equal(t, uint64(1), m.data[SQLPlanDigest{SQLDigest: "SQL-1"}][1001].ExecCount)
+}
+
+func Test_statementStatsManager_run_close(t *testing.T) {
+	wg := sync.WaitGroup{}
+	m := newStatementStatsCollector()
+	assert.True(t, m.closed())
+	go func() {
+		wg.Add(1)
+		m.run()
+		wg.Done()
+	}()
+	time.Sleep(100 * time.Millisecond)
+	assert.False(t, m.closed())
+	m.close()
+	wg.Wait()
+	assert.True(t, m.closed())
 }

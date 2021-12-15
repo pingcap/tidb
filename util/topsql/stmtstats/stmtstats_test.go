@@ -214,18 +214,19 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 }
 
 func TestCreateStatementStats(t *testing.T) {
-	manager = newStatementStatsManagerManager()
+	c := newStatementStatsCollector()
+	globalCollector.Store(c)
 	stats := CreateStatementStats()
 	assert.NotNil(t, stats)
-	_, ok := manager.statsSet.Load(stats)
+	_, ok := c.statsSet.Load(stats)
 	assert.True(t, ok)
-	assert.False(t, stats.Closed())
-	stats.Close()
-	assert.True(t, stats.Closed())
+	assert.False(t, stats.Finished())
+	stats.SetFinished()
+	assert.True(t, stats.Finished())
 }
 
 func TestExecCounter_AddExecCount_Take(t *testing.T) {
-	manager = newStatementStatsManagerManager()
+	globalCollector.Store(newStatementStatsCollector())
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)
