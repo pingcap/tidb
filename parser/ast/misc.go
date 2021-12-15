@@ -1856,6 +1856,7 @@ const (
 	AdminShowTelemetry
 	AdminResetTelemetryID
 	AdminReloadStatistics
+	AdminFlushPlanCache
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1863,6 +1864,14 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+type StatementScope int
+
+const (
+	SessionScope StatementScope = iota
+	InstanceScope
+	GlobalScope
+)
 
 // ShowSlowType defines the type for SlowSlow statement.
 type ShowSlowType int
@@ -1929,10 +1938,11 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges []HandleRange
-	ShowSlow     *ShowSlow
-	Plugins      []string
-	Where        ExprNode
+	HandleRanges   []HandleRange
+	ShowSlow       *ShowSlow
+	Plugins        []string
+	Where          ExprNode
+	StatementScope StatementScope
 }
 
 // Restore implements Node interface.
@@ -2070,6 +2080,14 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
+	case AdminFlushPlanCache:
+		if n.StatementScope == SessionScope {
+			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
+		} else if n.StatementScope == InstanceScope {
+			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
+		} else if n.StatementScope == GlobalScope {
+			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
