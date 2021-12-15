@@ -27,7 +27,6 @@ import (
 )
 
 func TestIndexLookupJoinHang(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -72,7 +71,6 @@ func TestIndexLookupJoinHang(t *testing.T) {
 }
 
 func TestIndexJoinUnionScan(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -127,7 +125,6 @@ func TestIndexJoinUnionScan(t *testing.T) {
 }
 
 func TestBatchIndexJoinUnionScanTest(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -150,7 +147,6 @@ func TestBatchIndexJoinUnionScanTest(t *testing.T) {
 }
 
 func TestInapplicableIndexJoinHint(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -194,7 +190,6 @@ func TestInapplicableIndexJoinHint(t *testing.T) {
 }
 
 func TestIndexJoinOverflow(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -210,7 +205,6 @@ func TestIndexJoinOverflow(t *testing.T) {
 }
 
 func TestIssue11061(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -225,7 +219,6 @@ func TestIssue11061(t *testing.T) {
 }
 
 func TestIndexJoinPartitionTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -240,7 +233,6 @@ func TestIndexJoinPartitionTable(t *testing.T) {
 }
 
 func TestIndexJoinMultiCondition(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -255,7 +247,6 @@ func TestIndexJoinMultiCondition(t *testing.T) {
 }
 
 func TestIssue16887(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -273,7 +264,6 @@ func TestIssue16887(t *testing.T) {
 }
 
 func TestIndexJoinEnumSetIssue19233(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -316,7 +306,6 @@ func TestIndexJoinEnumSetIssue19233(t *testing.T) {
 }
 
 func TestIssue19411(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -336,7 +325,6 @@ func TestIssue19411(t *testing.T) {
 }
 
 func TestIssue23653(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -352,7 +340,6 @@ func TestIssue23653(t *testing.T) {
 }
 
 func TestIssue23656(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -369,7 +356,6 @@ func TestIssue23656(t *testing.T) {
 }
 
 func TestIssue23722(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -406,7 +392,6 @@ func TestIssue23722(t *testing.T) {
 }
 
 func TestIssue24547(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -422,7 +407,6 @@ func TestIssue24547(t *testing.T) {
 }
 
 func TestIssue27138(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -471,7 +455,6 @@ PARTITIONS 1`)
 }
 
 func TestIssue27893(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -491,7 +474,6 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
