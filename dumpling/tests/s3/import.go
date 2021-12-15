@@ -6,9 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math/rand"
 	"os"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -26,7 +24,6 @@ const (
 var rootCmd *cobra.Command
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 	rootCmd = &cobra.Command{}
 	rootCmd.Flags().StringP(flagDatabase, "B", "s3", "Database to import")
 	rootCmd.Flags().StringP(flagTable, "T", "t", "Table to import")
