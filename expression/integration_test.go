@@ -6896,8 +6896,10 @@ func TestIssue30326(t *testing.T) {
 	require.Error(t, err, "[executor:1242]Subquery returns more than 1 row")
 }
 
-func (s *testIntegrationSuite) TestIssue30174(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue30174(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("CREATE TABLE `t1` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,\n  `c2` blob NOT NULL,\n  PRIMARY KEY (`c2`(5)),\n  UNIQUE KEY `idx_89` (`c1`)\n);")
