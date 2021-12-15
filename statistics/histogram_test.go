@@ -92,7 +92,7 @@ num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0 ndv: 0
 num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0 ndv: 0
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
 
-	newColl := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
+	newColl := coll.NewHistCollBySelectivity(ctx, []*StatsNode{node, node2})
 	require.Equal(t, intColResult, newColl.Columns[1].String())
 	require.Equal(t, stringColResult, newColl.Columns[2].String())
 
@@ -119,7 +119,7 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10 ndv: 0
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10 ndv: 0
 num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
 
-	newColl = coll.NewHistCollBySelectivity(sc, []*StatsNode{node3})
+	newColl = coll.NewHistCollBySelectivity(ctx, []*StatsNode{node3})
 	require.Equal(t, idxResult, newColl.Indices[0].String())
 }
 
