@@ -11,4 +11,6 @@ insert into t values ("a");
 insert into t1 values ("A");
 select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
+select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
