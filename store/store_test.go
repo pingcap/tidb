@@ -799,8 +799,12 @@ func TestRegister(t *testing.T) {
 }
 
 func TestSetAssertion(t *testing.T) {
+	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
