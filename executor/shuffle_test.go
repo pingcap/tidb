@@ -26,8 +26,6 @@ import (
 )
 
 func TestPartitionRangeSplitter(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	concurrency := 2
 

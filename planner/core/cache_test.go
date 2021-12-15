@@ -23,7 +23,6 @@ import (
 )
 
 func TestCacheKey(t *testing.T) {
-	t.Parallel()
 	ctx := MockContext()
 	ctx.GetSessionVars().SnapshotTS = 0
 	ctx.GetSessionVars().SQLMode = mysql.ModeNone

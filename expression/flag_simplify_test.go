@@ -23,8 +23,6 @@ import (
 )
 
 func TestSimplifyExpressionByFlag(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

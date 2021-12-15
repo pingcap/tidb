@@ -119,8 +119,8 @@ func (ran *Range) IsPointNonNullable(sctx sessionctx.Context) bool {
 
 // IsPointNullable returns if the range is a point.
 // TODO: unify the parameter type with IsPointNullable and IsPoint
-func (ran *Range) IsPointNullable(stmtCtx *stmtctx.StatementContext) bool {
-	return ran.isPoint(stmtCtx, true)
+func (ran *Range) IsPointNullable(sctx sessionctx.Context) bool {
+	return ran.isPoint(sctx.GetSessionVars().StmtCtx, true)
 }
 
 // IsFullRange check if the range is full scan range
