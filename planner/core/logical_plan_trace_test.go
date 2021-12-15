@@ -92,7 +92,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
 					assertAction: "Datasource[1] becomes PartitionUnion[6] with children[TableScan[1],TableScan[1]]",
 				},
 			},
@@ -103,7 +103,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] has one available partiton table[p1] after partition pruning",
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
 					assertAction: "Datasource[1] becomes TableScan[1]",
 				},
 			},
@@ -114,7 +114,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
 					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
 				},
 			},
@@ -125,7 +125,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] has one available partiton table[p2] after partition pruning",
+					assertReason: "Datasource[1] has one needed partition[p2] after pruning",
 					assertAction: "Datasource[1] becomes TableScan[1]",
 				},
 			},
@@ -136,7 +136,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] has no available partition table after partition pruning",
+					assertReason: "Datasource[1] doesn't have needed partition table after pruning",
 					assertAction: "Datasource[1] becomes TableDual[5]",
 				},
 			},
@@ -147,7 +147,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] have multi available partition tables[p1,p2] after partition pruning",
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
 					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
 				},
 			},
@@ -158,7 +158,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "Datasource[1] has one available partiton table[p1] after partition pruning",
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
 					assertAction: "Datasource[1] becomes TableScan[1]",
 				},
 			},

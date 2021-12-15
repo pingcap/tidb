@@ -850,7 +850,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	if condsToBePruned == nil {
 		return result, nil, nil
 	}
-	// remove useless predicates after partition pruning
+	// remove useless predicates after pruning
 	newConds := make([]expression.Expression, 0, len(*condsToBePruned))
 	for _, cond := range *condsToBePruned {
 		if dataForPrune, ok := pruner.extractDataForPrune(ctx, cond); ok {
@@ -1594,7 +1594,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 	})
 	if len(children) == 1 {
 		action = fmt.Sprintf("Datasource[%v] becomes %s[%v]", ds.ID(), plan.TP(), plan.ID())
-		reason = fmt.Sprintf("Datasource[%v] has one available partiton table[%s] after partition pruning", ds.ID(), used[0].Name)
+		reason = fmt.Sprintf("Datasource[%v] has one needed partition[%s] after pruning", ds.ID(), used[0].Name)
 	} else {
 		action = func() string {
 			buffer := bytes.NewBufferString(fmt.Sprintf("Datasource[%v] becomes %s[%v] with children[", ds.ID(), plan.TP(), plan.ID()))
@@ -1608,14 +1608,14 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 			return buffer.String()
 		}()
 		reason = func() string {
-			buffer := bytes.NewBufferString(fmt.Sprintf("Datasource[%v] have multi available partition tables[", ds.ID()))
+			buffer := bytes.NewBufferString(fmt.Sprintf("Datasource[%v] has multiple needed partitions[", ds.ID()))
 			for i, u := range used {
 				if i > 0 {
 					buffer.WriteString(",")
 				}
 				buffer.WriteString(u.Name.String())
 			}
-			buffer.WriteString("] after partition pruning")
+			buffer.WriteString("] after pruning")
 			return buffer.String()
 		}()
 	}
@@ -1624,6 +1624,6 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 
 func appendNoPartitionChildTraceStep(ds *DataSource, dual LogicalPlan, opt *logicalOptimizeOp) {
 	action := fmt.Sprintf("Datasource[%v] becomes %v[%v]", ds.ID(), dual.TP(), dual.ID())
-	reason := fmt.Sprintf("Datasource[%v] has no available partition table after partition pruning", ds.ID())
+	reason := fmt.Sprintf("Datasource[%v] doesn't have needed partition table after pruning", ds.ID())
 	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
