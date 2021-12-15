@@ -27,7 +27,6 @@ import (
 )
 
 func TestShowStatsMeta(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -47,7 +46,6 @@ func TestShowStatsMeta(t *testing.T) {
 }
 
 func TestShowStatsHistograms(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -79,7 +77,6 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -126,7 +123,6 @@ func TestShowStatsBuckets(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -192,7 +188,6 @@ func TestShowStatsHasNullValue(t *testing.T) {
 }
 
 func TestShowPartitionStats(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -233,7 +228,6 @@ func TestShowPartitionStats(t *testing.T) {
 }
 
 func TestShowStatusSnapshot(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -262,7 +256,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 }
 
 func TestShowStatsExtended(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -317,7 +310,6 @@ func TestShowStatsExtended(t *testing.T) {
 }
 
 func TestShowColumnStatsUsage(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -349,4 +341,16 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+}
+
+func TestShowHistogramsInFlight(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("show histograms_in_flight")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 1)
+	require.Equal(t, rows[0][0], "0")
 }

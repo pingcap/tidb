@@ -27,8 +27,6 @@ import (
 )
 
 func TestColumn(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
@@ -100,8 +98,6 @@ func TestColumn(t *testing.T) {
 }
 
 func TestColumnHashCode(t *testing.T) {
-	t.Parallel()
-
 	col1 := &Column{
 		UniqueID: 12,
 	}
@@ -114,8 +110,6 @@ func TestColumnHashCode(t *testing.T) {
 }
 
 func TestColumn2Expr(t *testing.T) {
-	t.Parallel()
-
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
 		cols = append(cols, &Column{UniqueID: int64(i)})
@@ -128,8 +122,6 @@ func TestColumn2Expr(t *testing.T) {
 }
 
 func TestColInfo2Col(t *testing.T) {
-	t.Parallel()
-
 	col0, col1 := &Column{ID: 0}, &Column{ID: 1}
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{ID: 0}
@@ -142,8 +134,6 @@ func TestColInfo2Col(t *testing.T) {
 }
 
 func TestIndexInfo2Cols(t *testing.T) {
-	t.Parallel()
-
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
@@ -174,8 +164,6 @@ func TestIndexInfo2Cols(t *testing.T) {
 }
 
 func TestColHybird(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 
 	// bit

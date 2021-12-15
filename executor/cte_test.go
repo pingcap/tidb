@@ -23,8 +23,6 @@ import (
 )
 
 func TestBasicCTE(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -74,8 +72,6 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -103,8 +99,6 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
@@ -146,8 +140,6 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 
