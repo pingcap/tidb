@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -227,13 +226,6 @@ type session struct {
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
-
-	// stmtStats is used to count various indicators of each SQL in this session
-	// at each point in time. These data will be periodically taken away by the
-	// background goroutine. The background goroutine will continue to aggregate
-	// all the local data in each session, and finally report them to the remote
-	// regularly.
-	stmtStats *stmtstats.StatementStats
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1539,7 +1531,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.StmtStats = s.stmtStats
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -1968,7 +1959,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.PrepareTxnCtx(ctx)
 	var err error
 	s.sessionVars.StartTime = time.Now()
-	s.sessionVars.StmtStats = s.stmtStats
 	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
 		err = plannercore.ErrStmtNotFound
@@ -2217,11 +2207,11 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
+		if s.sessionVars.StmtStats != nil {
+			s.sessionVars.StmtStats.Close()
+		}
 	}
 	s.ClearDiskFullOpt()
-	if s.stmtStats != nil {
-		s.stmtStats.Close()
-	}
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -2604,7 +2594,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2638,7 +2627,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
