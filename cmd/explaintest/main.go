@@ -97,6 +97,13 @@ type tester struct {
 	resultFD *os.File
 	// ctx is used for Compile sql statement
 	ctx sessionctx.Context
+
+	// outputLen, lastQuery, lastLine and lastResult are used for checking the correctness of last query.
+	// See https://github.com/pingcap/tidb/issues/29475 for details.
+	outputLen  int
+	lastText   string
+	lastQuery  query
+	lastResult []byte
 }
 
 func newTester(name string) *tester {
@@ -170,6 +177,10 @@ LOOP:
 				return errors.Annotate(err, fmt.Sprintf("sql:%v", q.Query))
 			}
 		}
+	}
+
+	if err = t.checkLastResult(); err != nil {
+		return errors.Annotate(err, fmt.Sprintf("sql:%v", t.lastQuery.Query))
 	}
 
 	return t.flushResult()
@@ -365,7 +376,7 @@ func (t *tester) execute(query query) error {
 		t.singleQuery = false
 
 		if err != nil {
-			return errors.Trace(errors.Errorf("run \"%v\" at line %d err %v", st.Text(), query.Line, err))
+			return errors.Trace(errors.Errorf("run \"%v\" at line %d err %v", qText, query.Line, err))
 		}
 
 		if !record && !create {
@@ -374,11 +385,15 @@ func (t *tester) execute(query query) error {
 
 			buf := make([]byte, t.buf.Len()-offset)
 			if _, err = t.resultFD.ReadAt(buf, int64(offset)); !(err == nil || err == io.EOF) {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
+				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", qText, query.Line, gotBuf, err))
 			}
 			if !bytes.Equal(gotBuf, buf) {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
+				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", qText, query.Line, buf, gotBuf))
 			}
+			t.outputLen = t.buf.Len()
+			t.lastText = qText
+			t.lastQuery = query
+			t.lastResult = gotBuf
 		}
 	}
 	return errors.Trace(err)
@@ -564,6 +579,28 @@ func (t *tester) testFileName() string {
 func (t *tester) resultFileName() string {
 	// test and result must be in current ./r, the same as MySQL
 	return fmt.Sprintf("./r/%s.result", t.name)
+}
+
+func (t *tester) checkLastResult() error {
+	if record || create || t.outputLen == 0 {
+		return nil
+	}
+	fi, err := t.resultFD.Stat()
+	if err != nil {
+		return err
+	}
+	size := fi.Size()
+	if size == int64(t.outputLen) {
+		return nil
+	}
+	buf := make([]byte, int(size)-t.outputLen+len(t.lastResult))
+	if _, err = t.resultFD.ReadAt(buf, int64(t.outputLen-len(t.lastResult))); !(err == nil || err == io.EOF) {
+		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", t.lastText, t.lastQuery.Line, t.lastResult, err))
+	}
+	if !bytes.Equal(t.lastResult, buf) {
+		return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", t.lastText, t.lastQuery.Line, buf, t.lastResult))
+	}
+	return nil
 }
 
 func loadAllTests() ([]string, error) {

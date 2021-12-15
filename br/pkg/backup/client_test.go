@@ -265,7 +265,6 @@ func (r *testBackup) TestSendCreds(c *C) {
 	c.Assert(err, IsNil)
 	opts := &storage.ExternalStorageOptions{
 		SendCredentials: true,
-		SkipCheckPath:   true,
 	}
 	_, err = storage.New(r.ctx, backend, opts)
 	c.Assert(err, IsNil)
@@ -284,7 +283,6 @@ func (r *testBackup) TestSendCreds(c *C) {
 	c.Assert(err, IsNil)
 	opts = &storage.ExternalStorageOptions{
 		SendCredentials: false,
-		SkipCheckPath:   true,
 	}
 	_, err = storage.New(r.ctx, backend, opts)
 	c.Assert(err, IsNil)

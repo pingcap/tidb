@@ -153,7 +153,7 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPointNullable(sctx.GetSessionVars().StmtCtx) {
+			if !ran.IsPointNullable(sctx) {
 				return false
 			}
 		}
