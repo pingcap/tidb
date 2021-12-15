@@ -1856,7 +1856,6 @@ const (
 	AdminShowTelemetry
 	AdminResetTelemetryID
 	AdminReloadStatistics
-	AdminFlushPlanCache
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1930,11 +1929,10 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges  []HandleRange
-	ShowSlow      *ShowSlow
-	Plugins       []string
-	Where         ExprNode
-	InstanceScope bool
+	HandleRanges []HandleRange
+	ShowSlow     *ShowSlow
+	Plugins      []string
+	Where        ExprNode
 }
 
 // Restore implements Node interface.
@@ -2057,12 +2055,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain(", ")
 			}
 			ctx.WritePlain(v)
-		}
-	case AdminFlushPlanCache:
-		if n.InstanceScope {
-			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
-		} else {
-			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
 		}
 	case AdminFlushBindings:
 		ctx.WriteKeyWord("FLUSH BINDINGS")

@@ -666,7 +666,6 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
-	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -1021,7 +1020,6 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
-	InstanceScope                          "The scope of some statments"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -6125,7 +6123,6 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
-|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -10151,13 +10148,6 @@ AdminStmt:
 			Tp: ast.AdminResetTelemetryID,
 		}
 	}
-|	"ADMIN" "FLUSH" InstanceScope "PLAN_CACHE"
-	{
-		$$ = &ast.AdminStmt{
-			Tp:            ast.AdminFlushPlanCache,
-			InstanceScope: $3.(bool),
-		}
-	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -10731,19 +10721,6 @@ GlobalScope:
 		$$ = false
 	}
 |	"GLOBAL"
-	{
-		$$ = true
-	}
-|	"SESSION"
-	{
-		$$ = false
-	}
-
-InstanceScope:
-	{
-		$$ = false
-	}
-|	"INSTANCE"
 	{
 		$$ = true
 	}
