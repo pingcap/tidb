@@ -146,6 +146,9 @@ func (s *testPrepareSerialSuite) TestFlushPlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt3;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	err = tk.ExecToErr("admin flush global plan_cache;")
+	c.Check(err.Error(), Equals, "Do not support the 'admin flush global scope.'")
 }
 
 func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
