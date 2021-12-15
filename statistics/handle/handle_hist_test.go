@@ -15,12 +15,13 @@
 package handle_test
 
 import (
+	"math"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/testkit"
-	"math"
-	"time"
 )
 
 func (s *testStatsSuite) TestConcurrentLoadHist(c *C) {

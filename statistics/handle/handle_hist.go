@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// StatsLoad is used to load stats concurrently
 type StatsLoad struct {
 	sync.Mutex
 	SubCtxs          []sessionctx.Context
@@ -121,7 +122,7 @@ func (h *Handle) appendNeededColumn(c model.TableColumnID, resultCh chan model.T
 	h.StatsLoad.NeededColumnsCh <- colTask
 }
 
-var errExit = errors.New("Stop loading since domain is closed.")
+var errExit = errors.New("Stop loading since domain is closed")
 
 type statsReaderContext struct {
 	reader      *statsReader
@@ -129,7 +130,7 @@ type statsReaderContext struct {
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) error {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
 	readerCtx := &statsReaderContext{}
 	defer func() {
 		exitWg.Done()
@@ -146,7 +147,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 		if err != nil {
 			switch err {
 			case errExit:
-				return nil
+				return
 			default:
 				time.Sleep(10 * time.Millisecond)
 				continue
@@ -166,7 +167,7 @@ func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.Restri
 			logutil.BgLogger().Error("stats loading panicked", zap.String("stack", string(buf)))
 		}
 	}()
-	h.getFreshStatsReader(readerCtx, ctx.(sqlexec.RestrictedSQLExecutor))
+	h.getFreshStatsReader(readerCtx, ctx)
 	task, err := h.drainColTask(exit)
 	if err != nil {
 		if err != errExit {
@@ -273,7 +274,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			return nil, errExit
 		case task, ok := <-h.StatsLoad.NeededColumnsCh:
 			if !ok {
-				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
+				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 			}
 			if time.Now().After(task.ToTimeout) {
 				h.writeToTimeoutCh(task)
@@ -286,14 +287,14 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 				return nil, errExit
 			case task0, ok0 := <-h.StatsLoad.NeededColumnsCh:
 				if !ok0 {
-					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed.")
+					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
 				h.writeToTimeoutCh(task)
 				return task0, nil
 			default:
 				if !ok {
-					return nil, errors.New("drainColTask: cannot read from TimeoutColumnsCh, maybe the chan is closed.")
+					return nil, errors.New("drainColTask: cannot read from TimeoutColumnsCh, maybe the chan is closed")
 				}
 				// NeededColumnsCh is empty now, handle task from TimeoutColumnsCh
 				return task, nil
@@ -337,14 +338,13 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 	defer h.StatsLoad.Unlock()
 	chList, ok := h.StatsLoad.workingColMap[col]
 	if ok {
-		chList = append(chList, resultCh)
+		h.StatsLoad.workingColMap[col] = append(chList, resultCh)
 		return false
-	} else {
-		chList = []chan model.TableColumnID{}
-		chList = append(chList, resultCh)
-		h.StatsLoad.workingColMap[col] = chList
-		return true
 	}
+	chList = []chan model.TableColumnID{}
+	chList = append(chList, resultCh)
+	h.StatsLoad.workingColMap[col] = chList
+	return true
 }
 
 func (h *Handle) finishWorking(col model.TableColumnID) {

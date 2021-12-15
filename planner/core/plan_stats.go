@@ -71,15 +71,14 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
+func SyncWaitStatsLoad(plan LogicalPlan) bool {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if !success && config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
-		err := errors.New("Timeout when sync-load full stats for needed columns.")
+		err := errors.New("Timeout when sync-load full stats for needed columns")
 		stmtCtx.AppendWarning(err)
 		stmtCtx.StatsLoad.Fallback = true
-		return false, err
-	} else {
-		return true, nil
+		return false
 	}
+	return true
 }

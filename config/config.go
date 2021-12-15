@@ -472,13 +472,13 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval  string `toml:"-" json:"-"`
-	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                int    `toml:"gogc" json:"gogc"`
-	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency  uint    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize    uint    `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	MemProfileInterval   string `toml:"-" json:"-"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -609,6 +609,7 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
+// Stats controls the stats loading and usage behavior
 type Stats struct {
 	SyncLoadWait         uint `toml:"sync-load-wait" json:"sync-load-wait"`
 	PseudoForLoadTimeout bool `toml:"pseudo-for-load-timeout" json:"pseudo-for-load-timeout"`
