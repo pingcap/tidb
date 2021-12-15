@@ -47,6 +47,7 @@ var (
 )
 
 const (
+	// The size of a paging distsql grows from minPagingSize to maxPagingSize
 	minPagingSize  float64 = 64
 	maxPagingSize  float64 = 8192
 	pagingSizeGrow float64 = 2
@@ -930,27 +931,9 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	idxCst := indexRows * sessVars.CPUFactor
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging {
-		logutil.BgLogger().Info("MYLOG try paging", zap.Uint64("expectCnt", t.expectCnt))
-	}
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= pagingThreshold {
-		seekCnt := float64(1)
-		expectCnt := float64(t.expectCnt)
-		sourceRows := extractRows(t.indexPlan)
-		expectCnt = math.Min(expectCnt, sourceRows)
-		if expectCnt > pagingGrowingSum {
-			seekCnt += float64(int(8 + (expectCnt-pagingGrowingSum)/maxPagingSize))
-		} else if expectCnt > minPagingSize {
-			seekCnt += float64(int(math.Log((pagingSizeGrow-1)*expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
-		}
-		indexSelectivity := float64(1)
-		if sourceRows > indexRows {
-			indexSelectivity = indexRows / sourceRows
-		}
-		pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + expectCnt*sessVars.CPUFactor
-		pagingCst *= indexSelectivity
-		idxCst = math.Min(idxCst, pagingCst)
 		p.Paging = true
+		idxCst = math.Min(idxCst, calcPagingCost(ctx, t))
 	}
 	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
@@ -999,6 +982,34 @@ func extractRows(p PhysicalPlan) float64 {
 		}
 	}
 	return f
+}
+
+func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
+	sessVars := ctx.GetSessionVars()
+	indexRows := t.indexPlan.statsInfo().RowCount
+	expectCnt := float64(t.expectCnt)
+	sourceRows := extractRows(t.indexPlan)
+	// with paging, the scanned rows is always less than or equal to source rows.
+	expectCnt = math.Min(expectCnt, sourceRows)
+	seekCnt := float64(1)
+	if expectCnt > pagingGrowingSum {
+		// if the expectCnt is larger than pagingGrowingSum, calculate the seekCnt for the excess.
+		seekCnt += float64(int(8 + (expectCnt-pagingGrowingSum)/maxPagingSize))
+	} else if expectCnt > minPagingSize {
+		// if the expectCnt is less than pagingGrowingSum,
+		// calculate the seekCnt(number of terms) from the sum of a geometric progression.
+		// expectCnt = minPagingSize * (pagingSizeGrow ^ seekCnt - 1) / (pagingSizeGrow - 1)
+		// simplify (pagingSizeGrow ^ seekCnt - 1) to pagingSizeGrow ^ seekCnt, we can infer that
+		// seekCnt = log((pagingSizeGrow - 1) * expectCnt / minPagingSize) / log(pagingSizeGrow)
+		seekCnt += float64(int(math.Log((pagingSizeGrow-1)*expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
+	}
+	indexSelectivity := float64(1)
+	if sourceRows > indexRows {
+		indexSelectivity = indexRows / sourceRows
+	}
+	pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + expectCnt*sessVars.CPUFactor
+	pagingCst *= indexSelectivity
+	return pagingCst
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
