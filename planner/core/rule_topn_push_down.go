@@ -15,7 +15,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
@@ -27,22 +29,22 @@ type pushDownTopNOptimizer struct {
 }
 
 func (s *pushDownTopNOptimizer) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return p.pushDownTopN(nil), nil
+	return p.pushDownTopN(nil, opt), nil
 }
 
-func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
-		p.Children()[i] = child.pushDownTopN(nil)
+		p.Children()[i] = child.pushDownTopN(nil, opt)
 	}
 	if topN != nil {
-		return topN.setChild(p)
+		return topN.setChild(p, opt)
 	}
 	return p
 }
 
 // setChild set p as topn's child.
-func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
+func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
 	dual, isDual := p.(*LogicalTableDual)
 	if isDual {
@@ -62,37 +64,44 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 			limitHints: lt.limitHints,
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
+		appendTopNPushDownTraceStep(limit, p, opt)
 		return limit
 	}
 	// Then lt must be topN.
 	lt.SetChildren(p)
+	appendTopNPushDownTraceStep(lt, p, opt)
 	return lt
 }
 
-func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	if topN == nil {
-		return ls.baseLogicalPlan.pushDownTopN(nil)
+		return ls.baseLogicalPlan.pushDownTopN(nil, opt)
 	} else if topN.isLimit() {
 		topN.ByItems = ls.ByItems
-		return ls.children[0].pushDownTopN(topN)
+		// sort pass byItems
+		opt.appendStepToCurrent(ls.ID(), ls.TP(), "", "")
+		return ls.children[0].pushDownTopN(topN, opt)
 	}
 	// If a TopN is pushed down, this sort is useless.
-	return ls.children[0].pushDownTopN(topN)
+	return ls.children[0].pushDownTopN(topN, opt)
 }
 
-func (p *LogicalLimit) convertToTopN() *LogicalTopN {
-	return LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
+func (p *LogicalLimit) convertToTopN(opt *logicalOptimizeOp) *LogicalTopN {
+	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
+	opt.appendStepToCurrent(topn.ID(), topn.TP(), "", fmt.Sprintf("%v[%v] converts into %v[%v]",
+		p.TP(), p.ID(), topn.TP(), topn.ID()))
+	return topn
 }
 
-func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
-	child := p.children[0].pushDownTopN(p.convertToTopN())
+func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
+	child := p.children[0].pushDownTopN(p.convertToTopN(opt), opt)
 	if topN != nil {
-		return topN.setChild(child)
+		return topN.setChild(child, opt)
 	}
 	return child
 }
 
-func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
@@ -100,19 +109,23 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
+			// newTopN to push down Union's child
+			opt.appendStepToCurrent(newTopN.ID(), newTopN.TP(), "",
+				fmt.Sprintf("%v[%v] is added and pushed down across %v[%v]",
+					newTopN.TP(), newTopN.ID(), p.TP(), p.ID()))
 		}
-		p.children[i] = child.pushDownTopN(newTopN)
+		p.children[i] = child.pushDownTopN(newTopN, opt)
 	}
 	if topN != nil {
-		return topN.setChild(p)
+		return topN.setChild(p, opt)
 	}
 	return p
 }
 
-func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	for _, expr := range p.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
-			return p.baseLogicalPlan.pushDownTopN(topN)
+			return p.baseLogicalPlan.pushDownTopN(topN, opt)
 		}
 	}
 	if topN != nil {
@@ -128,28 +141,28 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 			}
 		}
 	}
-	p.children[0] = p.children[0].pushDownTopN(topN)
+	p.children[0] = p.children[0].pushDownTopN(topN, opt)
 	return p
 }
 
-func (p *LogicalLock) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (p *LogicalLock) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	if topN != nil {
-		p.children[0] = p.children[0].pushDownTopN(topN)
+		p.children[0] = p.children[0].pushDownTopN(topN, opt)
 	}
 	return p.self
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPlan {
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *logicalOptimizeOp) LogicalPlan {
 	if topN == nil {
-		return p.children[idx].pushDownTopN(nil)
+		return p.children[idx].pushDownTopN(nil, opt)
 	}
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !p.children[idx].Schema().Contains(col) {
-				return p.children[idx].pushDownTopN(nil)
+				return p.children[idx].pushDownTopN(nil, opt)
 			}
 		}
 	}
@@ -162,28 +175,51 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
-	return p.children[idx].pushDownTopN(newTopN)
+	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
+	return p.children[idx].pushDownTopN(newTopN, opt)
 }
 
-func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		p.children[0] = p.pushDownTopNToChild(topN, 0)
-		p.children[1] = p.children[1].pushDownTopN(nil)
+		p.children[0] = p.pushDownTopNToChild(topN, 0, opt)
+		p.children[1] = p.children[1].pushDownTopN(nil, opt)
 	case RightOuterJoin:
-		p.children[1] = p.pushDownTopNToChild(topN, 1)
-		p.children[0] = p.children[0].pushDownTopN(nil)
+		p.children[1] = p.pushDownTopNToChild(topN, 1, opt)
+		p.children[0] = p.children[0].pushDownTopN(nil, opt)
 	default:
-		return p.baseLogicalPlan.pushDownTopN(topN)
+		return p.baseLogicalPlan.pushDownTopN(topN, opt)
 	}
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
-		return topN.setChild(p.self)
+		return topN.setChild(p.self, opt)
 	}
 	return p.self
 }
 
 func (*pushDownTopNOptimizer) name() string {
 	return "topn_push_down"
+}
+
+func appendTopNPushDownTraceStep(parent LogicalPlan, child LogicalPlan, opt *logicalOptimizeOp) {
+	action := fmt.Sprintf("%v[%v] is added as %v[%v]'s parent", parent.TP(), parent.ID(), child.TP(), child.ID())
+	reason := fmt.Sprintf("%v is pushed down", parent.TP())
+	opt.appendStepToCurrent(parent.ID(), parent.TP(), reason, action)
+}
+
+func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v] is added and pushed into %v[%v]'s ",
+			topN.TP(), topN.ID(), p.TP(), p.ID()))
+		if idx == 0 {
+			buffer.WriteString("left ")
+		} else {
+			buffer.WriteString("right ")
+		}
+		buffer.WriteString("child")
+		return buffer.String()
+	}()
+	reason := fmt.Sprintf("%v[%v]'s joinType is %v", p.TP(), p.ID(), p.JoinType.String())
+	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
