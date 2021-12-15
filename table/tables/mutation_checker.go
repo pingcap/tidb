@@ -381,9 +381,31 @@ func getOrBuildColumnMaps(
 	return maps
 }
 
-// CheckTxnConsistency checks the number of row/index mutations before the txn commits,
+// CheckIndexCount checks the number of row/index mutations before the txn commits,
 // to prevent some inconsistent transactions.
-func CheckTxnConsistency(txn kv.Transaction) error {
+//
+// Claim: For mutations in each table in the transaction, #(row insertions) != 0 => #(index insertions) % #(row insertions) = 0
+// Proof:
+// Without loss of generality, assume there is only 1 table involved in the transaction.
+// We examine the changes of numbers of these mutations: PI(put index), PR(put record), DI(delete index), DR(delete record),
+//  for each single-row operations. We argue that delta(PI) / delta(PR) = N always holds, where N is the number of indices.
+// Let h denote the handle, v denote the value of the row (or corresponding index mutations).
+// add record(h, v)
+//    h does not exist
+//        v no duplicates (index does not exist): PR + 1, PI + N
+//        v duplicated (0 puts, M dels): PR + 1, DI - M, PI + N
+// 			note: duplicated index mutations can only come from deletions on unique indices
+//    h is del
+//        v no duplicates: DR - 1, PR + 1, PI + N
+//        v duplicated (0 puts, M dels): DR - 1, PR + 1, DI - M, PI + N
+// update record (h, old, new),
+//    h is put (the intersection of old and new is M): DI + N - M
+//    h does not exist (the intersection of old and new is M): PR + 1, DI + N - M, PI + N
+// remove record(h)
+//    h is put: DR + 1, PR - 1, DI + N, PI - N
+//    h is del: unchanged
+//    h does not exist: DR + 1, DI + N
+func CheckIndexCount(txn kv.Transaction) error {
 	memBuffer := txn.GetMemBuffer()
 	if memBuffer == nil {
 		return nil

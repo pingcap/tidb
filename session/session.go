@@ -570,7 +570,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	// into the mem buffer, which invalidates the check.
 	// Only applies to user DML transactions.
 	if sessVars.ConnectionID != 0 && sessVars.EnableMutationChecker && sessVars.TxnCtx.IsExplicit {
-		if err := tables.CheckTxnConsistency(txn); err != nil {
+		if err := tables.CheckIndexCount(txn); err != nil {
 			return errors.Trace(err)
 		}
 	}
