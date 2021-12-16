@@ -600,9 +600,12 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-		if err != nil {
-			return err
+		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
+		if asgn.Expr != nil {
+			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, set := range p.SetList {

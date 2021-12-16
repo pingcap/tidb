@@ -16,11 +16,9 @@ package expression
 
 import (
 	"context"
-	"reflect"
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -31,33 +29,30 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = check.Suite(&testUtilSuite{})
-
-type testUtilSuite struct{}
-
-func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
+func TestBaseBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	_, _, err = bf.evalInt(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalReal(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalString(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalDecimal(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalTime(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalDuration(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 	_, _, err = bf.evalJSON(chunk.Row{})
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 }
 
-func (s *testUtilSuite) TestClone(c *check.C) {
+func TestClone(t *testing.T) {
 	builtinFuncs := []builtinFunc{
 		&builtinArithmeticPlusRealSig{}, &builtinArithmeticPlusDecimalSig{}, &builtinArithmeticPlusIntSig{}, &builtinArithmeticMinusRealSig{}, &builtinArithmeticMinusDecimalSig{},
 		&builtinArithmeticMinusIntSig{}, &builtinArithmeticDivideRealSig{}, &builtinArithmeticDivideDecimalSig{}, &builtinArithmeticMultiplyRealSig{}, &builtinArithmeticMultiplyDecimalSig{},
@@ -159,37 +154,37 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
-		c.Assert(reflect.TypeOf(f) == reflect.TypeOf(cf), check.IsTrue)
+		require.IsType(t, f, cf)
 	}
 }
 
-func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
+func TestGetUint64FromConstant(t *testing.T) {
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
 	_, isNull, ok := GetUint64FromConstant(con)
-	c.Assert(ok, check.IsTrue)
-	c.Assert(isNull, check.IsTrue)
+	require.True(t, ok)
+	require.True(t, isNull)
 
 	con = &Constant{
 		Value: types.NewIntDatum(-1),
 	}
 	_, _, ok = GetUint64FromConstant(con)
-	c.Assert(ok, check.IsFalse)
+	require.False(t, ok)
 
 	con.Value = types.NewIntDatum(1)
 	num, isNull, ok := GetUint64FromConstant(con)
-	c.Assert(ok, check.IsTrue)
-	c.Assert(isNull, check.IsFalse)
-	c.Assert(num, check.Equals, uint64(1))
+	require.True(t, ok)
+	require.False(t, isNull)
+	require.Equal(t, uint64(1), num)
 
 	con.Value = types.NewUintDatum(1)
 	num, _, _ = GetUint64FromConstant(con)
-	c.Assert(num, check.Equals, uint64(1))
+	require.Equal(t, uint64(1), num)
 
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
 	num, _, _ = GetUint64FromConstant(con)
-	c.Assert(num, check.Equals, uint64(1))
+	require.Equal(t, uint64(1), num)
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -197,58 +192,58 @@ func (s *testUtilSuite) TestGetUint64FromConstant(c *check.C) {
 	}
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
 	num, _, _ = GetUint64FromConstant(con)
-	c.Assert(num, check.Equals, uint64(100))
+	require.Equal(t, uint64(100), num)
 }
 
-func (s *testUtilSuite) TestSetExprColumnInOperand(c *check.C) {
+func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
-	c.Assert(setExprColumnInOperand(col).(*Column).InOperand, check.IsTrue)
+	require.True(t, setExprColumnInOperand(col).(*Column).InOperand)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
 	setExprColumnInOperand(fun)
-	c.Assert(f.getArgs()[0].(*Column).InOperand, check.IsTrue)
+	require.True(t, f.getArgs()[0].(*Column).InOperand)
 }
 
-func (s testUtilSuite) TestPopRowFirstArg(c *check.C) {
+func TestPopRowFirstArg(t *testing.T) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
-	c.Assert(err, check.IsNil)
-	c.Assert(len(fun2.(*ScalarFunction).GetArgs()), check.Equals, 2)
+	require.NoError(t, err)
+	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
 }
 
-func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
+func TestGetStrIntFromConstant(t *testing.T) {
 	col := &Column{}
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
-	c.Assert(err, check.NotNil)
+	require.Error(t, err)
 
 	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
-	c.Assert(err, check.IsNil)
-	c.Assert(isNull, check.IsTrue)
+	require.NoError(t, err)
+	require.True(t, isNull)
 
 	con = &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(1)}
 	ret, _, _ := GetStringFromConstant(mock.NewContext(), con)
-	c.Assert(ret, check.Equals, "1")
+	require.Equal(t, "1", ret)
 
 	con = &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
-	c.Assert(isNull, check.IsTrue)
+	require.True(t, isNull)
 
 	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("abc")}
 	_, isNull, _ = GetIntFromConstant(mock.NewContext(), con)
-	c.Assert(isNull, check.IsTrue)
+	require.True(t, isNull)
 
 	con = &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("123")}
 	num, _, _ := GetIntFromConstant(mock.NewContext(), con)
-	c.Assert(num, check.Equals, 123)
+	require.Equal(t, 123, num)
 }
 
-func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
+func TestSubstituteCorCol2Constant(t *testing.T) {
 	ctx := mock.NewContext()
 	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
@@ -259,21 +254,21 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
-	c.Assert(err, check.IsNil)
-	c.Assert(ret.Equal(ctx, ans1), check.IsTrue)
+	require.NoError(t, err)
+	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	ans2 := col1
-	c.Assert(ret.Equal(ctx, ans2), check.IsTrue)
+	require.True(t, ret.Equal(ctx, ans2))
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	c.Assert(ret.Equal(ctx, ans3), check.IsTrue)
+	require.True(t, ret.Equal(ctx, ans3))
 }
 
-func (s *testUtilSuite) TestPushDownNot(c *check.C) {
+func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
@@ -287,40 +282,38 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
-	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
+	require.True(t, ret.Equal(ctx, orFunc2))
+	require.True(t, notFunc.Equal(ctx, notFuncCopy))
 
 	// issue 15725
 	// (not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
+	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunction(ast.Plus, col, NewOne())
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
-
+	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)))
 	// (not not not a) should be optimized to (not (a is true))
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
-
+	require.True(t, ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))))
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
+	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
 }
 
-func (s *testUtilSuite) TestFilter(c *check.C) {
+func TestFilter(t *testing.T) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -328,24 +321,24 @@ func (s *testUtilSuite) TestFilter(c *check.C) {
 	}
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
-	c.Assert(result, check.HasLen, 1)
+	require.Len(t, result, 1)
 }
 
-func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
+func TestFilterOutInPlace(t *testing.T) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
 		newFunction(ast.EQ, newColumn(1), newColumn(2)),
 		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
-	c.Assert(len(remained), check.Equals, 2)
-	c.Assert(remained[0].(*ScalarFunction).FuncName.L, check.Equals, "eq")
-	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
-	c.Assert(len(filtered), check.Equals, 1)
-	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
+	require.Equal(t, 2, len(remained))
+	require.Equal(t, "eq", remained[0].(*ScalarFunction).FuncName.L)
+	require.Equal(t, "eq", remained[1].(*ScalarFunction).FuncName.L)
+	require.Equal(t, 1, len(filtered))
+	require.Equal(t, "or", filtered[0].(*ScalarFunction).FuncName.L)
 }
 
-func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
+func TestHashGroupKey(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
@@ -365,24 +358,17 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 		}
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
-		if err != nil {
-			c.Fatal(err)
-		}
-		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
-			c.Fatal(err)
-		}
+		require.NoError(t, err)
+		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
+		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
 			d, err := colExpr.Eval(input.GetRow(j))
-			if err != nil {
-				c.Fatal(err)
-			}
+			require.NoError(t, err)
 			buf, err = codec.EncodeValue(sc, buf[:0], d)
-			if err != nil {
-				c.Fatal(err)
-			}
-			c.Assert(string(bufs[j]), check.Equals, string(buf))
+			require.NoError(t, err)
+			require.Equal(t, string(bufs[j]), string(buf))
 		}
 	}
 }
@@ -394,28 +380,27 @@ func isLogicOrFunction(e Expression) bool {
 	return false
 }
 
-func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
+func TestDisableParseJSONFlag4Expr(t *testing.T) {
 	var expr Expression
 	expr = &Column{RetType: newIntFieldType()}
 	ft := expr.GetType()
 	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
+	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
 
 	expr = &CorrelatedColumn{Column: Column{RetType: newIntFieldType()}}
 	ft = expr.GetType()
 	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsTrue)
-
+	require.True(t, mysql.HasParseToJSONFlag(ft.Flag))
 	expr = &ScalarFunction{RetType: newIntFieldType()}
 	ft = expr.GetType()
 	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
-	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
+	require.False(t, mysql.HasParseToJSONFlag(ft.Flag))
 }
 
-func (s *testUtilSuite) TestSQLDigestTextRetriever(c *check.C) {
+func TestSQLDigestTextRetriever(t *testing.T) {
 	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
 
 	r := NewSQLDigestTextRetriever()
@@ -457,24 +442,24 @@ func (s *testUtilSuite) TestSQLDigestTextRetriever(c *check.C) {
 	}
 
 	err := r.RetrieveLocal(context.Background(), nil)
-	c.Assert(err, check.IsNil)
-	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	require.NoError(t, err)
+	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
 	clearResult()
 
 	err = r.RetrieveGlobal(context.Background(), nil)
-	c.Assert(err, check.IsNil)
-	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
+	require.NoError(t, err)
+	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 	clearResult()
 
 	r.fetchAllLimit = 1
 	err = r.RetrieveLocal(context.Background(), nil)
-	c.Assert(err, check.IsNil)
-	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	require.NoError(t, err)
+	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
 	clearResult()
 
 	err = r.RetrieveGlobal(context.Background(), nil)
-	c.Assert(err, check.IsNil)
-	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
+	require.NoError(t, err)
+	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
@@ -552,7 +537,7 @@ func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, is
 }
 func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
-		return float64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -610,7 +595,7 @@ func (m *MockExpr) SetCoercibility(Coercibility)                                
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}

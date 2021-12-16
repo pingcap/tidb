@@ -18,12 +18,12 @@ import (
 	"math"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
@@ -182,11 +182,11 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 	ast.NE: {},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
+func TestVectorizedBuiltinArithmeticFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinArithmeticCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedDecimalErrOverflow(c *C) {
+func TestVectorizedDecimalErrOverflow(t *testing.T) {
 	ctx := mock.NewContext()
 	testCases := []struct {
 		args     []float64
@@ -212,18 +212,17 @@ func (s *testEvaluatorSuite) TestVectorizedDecimalErrOverflow(c *C) {
 		input := chunk.New(fts, 1, 1)
 		dec1, dec2 := new(types.MyDecimal), new(types.MyDecimal)
 		err := dec1.FromFloat64(tt.args[0])
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = dec2.FromFloat64(tt.args[1])
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		input.AppendMyDecimal(0, dec1)
 		input.AppendMyDecimal(1, dec2)
 		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
 		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
 		err = baseFunc.vecEvalDecimal(input, result)
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, tt.errStr)
+		require.EqualError(t, err, tt.errStr)
 	}
 }
 

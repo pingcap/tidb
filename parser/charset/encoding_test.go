@@ -14,38 +14,33 @@
 package charset_test
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"testing"
+	"unicode/utf8"
+
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/text/transform"
 )
 
-var _ = Suite(&testEncodingSuite{})
-
-type testEncodingSuite struct {
-}
-
-func (s *testEncodingSuite) TestEncoding(c *C) {
-	enc := charset.NewEncoding("gbk")
-	c.Assert(enc.Name(), Equals, "gbk")
-	enc.UpdateEncoding("utf-8")
-	c.Assert(enc.Name(), Equals, "utf-8")
-	enc.UpdateEncoding("gbk")
-	c.Assert(enc.Name(), Equals, "gbk")
+func TestEncoding(t *testing.T) {
+	enc := charset.NewEncoding(charset.CharsetGBK)
+	require.Equal(t, charset.CharsetGBK, enc.Name())
 
 	txt := []byte("一二三四")
 	e, _ := charset.Lookup("gbk")
 	gbkEncodedTxt, _, err := transform.Bytes(e.NewEncoder(), txt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	result, err := enc.Decode(nil, gbkEncodedTxt)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, txt)
+	require.NoError(t, err)
+	require.Equal(t, txt, result)
 
 	gbkEncodedTxt2, err := enc.Encode(nil, txt)
-	c.Assert(err, IsNil)
-	c.Assert(gbkEncodedTxt, DeepEquals, gbkEncodedTxt2)
+	require.NoError(t, err)
+	require.Equal(t, gbkEncodedTxt2, gbkEncodedTxt)
 	result, err = enc.Decode(nil, gbkEncodedTxt2)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, txt)
+	require.NoError(t, err)
+	require.Equal(t, txt, result)
 
 	GBKCases := []struct {
 		utf8Str string
@@ -62,14 +57,14 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		{"佝佗佇佶侈侏侘佻佩佰侑佯", "浣濅綏浣囦蕉渚堜緩渚樹交浣╀桨渚戜蒋", true},
 	}
 	for _, tc := range GBKCases {
-		cmt := Commentf("%v", tc)
+		cmt := fmt.Sprintf("%v", tc)
 		result, err = enc.Decode(nil, []byte(tc.utf8Str))
 		if tc.isValid {
-			c.Assert(err, IsNil, cmt)
+			require.NoError(t, err, cmt)
 		} else {
-			c.Assert(err, NotNil, cmt)
+			require.Error(t, err, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
 	}
 
 	utf8Cases := []struct {
@@ -82,13 +77,122 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		{"valid_string_🀁", "valid_string_?", false},
 	}
 	for _, tc := range utf8Cases {
-		cmt := Commentf("%v", tc)
+		cmt := fmt.Sprintf("%v", tc)
 		result, err = enc.Encode(nil, []byte(tc.utf8Str))
 		if tc.isValid {
-			c.Assert(err, IsNil, cmt)
+			require.NoError(t, err, cmt)
 		} else {
-			c.Assert(err, NotNil, cmt)
+			require.Error(t, err, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
+	}
+}
+
+func TestStringValidatorASCII(t *testing.T) {
+	v := charset.StringValidatorASCII{}
+	testCases := []struct {
+		str        string
+		strategy   charset.TruncateStrategy
+		expected   string
+		invalidPos int
+	}{
+		{"", charset.TruncateStrategyEmpty, "", -1},
+		{"qwerty", charset.TruncateStrategyEmpty, "qwerty", -1},
+		{"qwÊrty", charset.TruncateStrategyEmpty, "", 2},
+		{"qwÊrty", charset.TruncateStrategyTrim, "qw", 2},
+		{"qwÊrty", charset.TruncateStrategyReplace, "qw?rty", 2},
+		{"中文", charset.TruncateStrategyEmpty, "", 0},
+		{"中文?qwert", charset.TruncateStrategyTrim, "", 0},
+		{"中文?qwert", charset.TruncateStrategyReplace, "???qwert", 0},
+	}
+	for _, tc := range testCases {
+		msg := fmt.Sprintf("%v", tc)
+		actual, invalidPos := v.Truncate(tc.str, tc.strategy)
+		require.Equal(t, tc.expected, actual, msg)
+		require.Equal(t, tc.invalidPos, invalidPos, msg)
+	}
+	require.Equal(t, -1, v.Validate("qwerty"))
+	require.Equal(t, 2, v.Validate("qwÊrty"))
+	require.Equal(t, 0, v.Validate("中文"))
+}
+
+func TestStringValidatorUTF8(t *testing.T) {
+	// Test charset "utf8mb4".
+	v := charset.StringValidatorUTF8{IsUTF8MB4: true}
+	oxfffefd := string([]byte{0xff, 0xfe, 0xfd})
+	testCases := []struct {
+		str        string
+		strategy   charset.TruncateStrategy
+		expected   string
+		invalidPos int
+	}{
+		{"", charset.TruncateStrategyEmpty, "", -1},
+		{"qwerty", charset.TruncateStrategyEmpty, "qwerty", -1},
+		{"qwÊrty", charset.TruncateStrategyEmpty, "qwÊrty", -1},
+		{"qwÊ合法字符串", charset.TruncateStrategyEmpty, "qwÊ合法字符串", -1},
+		{"😂", charset.TruncateStrategyEmpty, "😂", -1},
+		{oxfffefd, charset.TruncateStrategyEmpty, "", 0},
+		{oxfffefd, charset.TruncateStrategyReplace, "???", 0},
+		{"中文" + oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
+		{string(utf8.RuneError), charset.TruncateStrategyEmpty, "�", -1},
+	}
+	for _, tc := range testCases {
+		msg := fmt.Sprintf("%v", tc)
+		actual, invalidPos := v.Truncate(tc.str, tc.strategy)
+		require.Equal(t, tc.expected, actual, msg)
+		require.Equal(t, tc.invalidPos, invalidPos, msg)
+	}
+	// Test charset "utf8" with checking mb4 value.
+	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
+	testCases = []struct {
+		str        string
+		strategy   charset.TruncateStrategy
+		expected   string
+		invalidPos int
+	}{
+		{"", charset.TruncateStrategyEmpty, "", -1},
+		{"qwerty", charset.TruncateStrategyEmpty, "qwerty", -1},
+		{"qwÊrty", charset.TruncateStrategyEmpty, "qwÊrty", -1},
+		{"qwÊ合法字符串", charset.TruncateStrategyEmpty, "qwÊ合法字符串", -1},
+		{"😂", charset.TruncateStrategyEmpty, "", 0},
+		{"😂", charset.TruncateStrategyReplace, "?", 0},
+		{"valid_str😂", charset.TruncateStrategyReplace, "valid_str?", 9},
+		{oxfffefd, charset.TruncateStrategyEmpty, "", 0},
+		{oxfffefd, charset.TruncateStrategyReplace, "???", 0},
+		{"中文" + oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
+		{string(utf8.RuneError), charset.TruncateStrategyEmpty, "�", -1},
+	}
+	for _, tc := range testCases {
+		msg := fmt.Sprintf("%v", tc)
+		actual, invalidPos := v.Truncate(tc.str, tc.strategy)
+		require.Equal(t, tc.expected, actual, msg)
+		require.Equal(t, tc.invalidPos, invalidPos, msg)
+	}
+}
+
+func TestStringValidatorGBK(t *testing.T) {
+	v := charset.StringValidatorOther{Charset: "gbk"}
+	testCases := []struct {
+		str        string
+		strategy   charset.TruncateStrategy
+		expected   string
+		invalidPos int
+	}{
+		{"", charset.TruncateStrategyEmpty, "", -1},
+		{"asdf", charset.TruncateStrategyEmpty, "asdf", -1},
+		{"中文", charset.TruncateStrategyEmpty, "中文", -1},
+		{"À", charset.TruncateStrategyEmpty, "", 0},
+		{"À", charset.TruncateStrategyReplace, "?", 0},
+		{"中文À中文", charset.TruncateStrategyTrim, "中文", 6},
+		{"中文À中文", charset.TruncateStrategyReplace, "中文?中文", 6},
+		{"asdfÀ", charset.TruncateStrategyReplace, "asdf?", 4},
+	}
+	for _, tc := range testCases {
+		msg := fmt.Sprintf("%v", tc)
+		actual, invalidPos := v.Truncate(tc.str, tc.strategy)
+		require.Equal(t, tc.expected, actual, msg)
+		require.Equal(t, tc.invalidPos, invalidPos, msg)
 	}
 }

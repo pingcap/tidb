@@ -25,9 +25,9 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	buildKeyInfo(lp)
-	return lp, nil
+func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	buildKeyInfo(p)
+	return p, nil
 }
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
@@ -264,11 +264,26 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsIntHandlePath {
+	var latestIndexes map[int64]*model.IndexInfo
+	var changed bool
+	var err error
+	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
+	if ds.isForUpdateRead {
+		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+		if err != nil {
+			return
+		}
+	}
+	for _, index := range ds.table.Meta().Indices {
+		if ds.isForUpdateRead && changed {
+			latestIndex, ok := latestIndexes[index.ID]
+			if !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
+		} else if index.State != model.StatePublic {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)

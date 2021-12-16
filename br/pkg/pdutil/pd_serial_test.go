@@ -35,6 +35,8 @@ func TestScheduler(t *testing.T) {
 	}
 	schedulerPauseCh := make(chan struct{})
 	pdController := &PdController{addrs: []string{"", ""}, schedulerPauseCh: schedulerPauseCh}
+	// As pdController.Client is nil, (*pdController).Close() can not be called directly.
+	defer close(schedulerPauseCh)
 
 	_, err := pdController.pauseSchedulersAndConfigWith(ctx, []string{scheduler}, nil, mock)
 	require.EqualError(t, err, "failed")
@@ -53,7 +55,7 @@ func TestScheduler(t *testing.T) {
 	}
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{}, cfg, mock)
 	require.Error(t, err)
-	require.Regexp(t, "^failed to update PD.*", err.Error())
+	require.Regexp(t, "^failed to update PD", err.Error())
 	go func() {
 		<-schedulerPauseCh
 	}()
@@ -70,9 +72,7 @@ func TestScheduler(t *testing.T) {
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{scheduler}, cfg, mock)
 	require.NoError(t, err)
 
-	go func() {
-		<-schedulerPauseCh
-	}()
+	// pauseSchedulersAndConfigWith will wait on chan schedulerPauseCh
 	err = pdController.resumeSchedulerWith(ctx, []string{scheduler}, mock)
 	require.NoError(t, err)
 
