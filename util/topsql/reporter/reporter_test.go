@@ -64,6 +64,32 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
+type mockDataSink struct {
+	ch chan *ReportData
+}
+
+func newMockDataSink(ch chan *ReportData) DataSink {
+	return &mockDataSink{ch: ch}
+}
+
+var _ DataSink = &mockDataSink{}
+
+func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
+	ds.ch <- data
+	return nil
+}
+
+func (ds *mockDataSink) IsPaused() bool {
+	return false
+}
+
+func (ds *mockDataSink) IsDown() bool {
+	return false
+}
+
+func (ds *mockDataSink) Close() {
+}
+
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.MaxCollect.Store(10000)
@@ -72,8 +98,8 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
-	rc := NewSingleTargetDataSink()
-	ts := NewRemoteTopSQLReporter(rc, mockPlanBinaryDecoderFunc)
+	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	ts.DataSinkRegHandle().Register(NewSingleTargetDataSink())
 	return ts
 }
 
@@ -425,6 +451,52 @@ func TestCollectInternal(t *testing.T) {
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
+	}
+}
+
+func TestMultipleDataSinks(t *testing.T) {
+	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock"
+	})
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	defer tsr.Close()
+
+	ch1 := make(chan *ReportData, 1)
+	ch2 := make(chan *ReportData, 1)
+	ch3 := make(chan *ReportData, 1)
+	tsr.DataSinkRegHandle().Register(newMockDataSink(ch1))
+	tsr.DataSinkRegHandle().Register(newMockDataSink(ch2))
+	tsr.DataSinkRegHandle().Register(newMockDataSink(ch3))
+
+	records := []tracecpu.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 1, 2),
+	}
+
+	tsr.Collect(3, records)
+	data1 := <-ch1
+	data2 := <-ch2
+	data3 := <-ch3
+
+	for _, d := range []*ReportData{data1, data2, data3} {
+		require.NotNil(t, d)
+		require.Equal(t, []tipb.CPUTimeRecord{{
+			SqlDigest:              []byte("sqlDigest1"),
+			PlanDigest:             []byte("planDigest1"),
+			RecordListTimestampSec: []uint64{3},
+			RecordListCpuTimeMs:    []uint32{2},
+		}}, d.CPUTimeRecords)
+
+		require.Equal(t, []tipb.SQLMeta{{
+			SqlDigest:     []byte("sqlDigest1"),
+			NormalizedSql: "sqlNormalized1",
+		}}, d.SQLMetas)
+
+		require.Equal(t, []tipb.PlanMeta{{
+			PlanDigest:     []byte("planDigest1"),
+			NormalizedPlan: "planNormalized1",
+		}}, d.PlanMetas)
 	}
 }
 

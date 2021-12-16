@@ -40,8 +40,8 @@ var globalTopSQLReport reporter.TopSQLReporter
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	ds := reporter.NewSingleTargetDataSink()
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(ds, plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport.DataSinkRegHandle().Register(reporter.NewSingleTargetDataSink())
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
