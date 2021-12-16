@@ -423,7 +423,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colReq := analyzeReq.ColReq
 	/* #nosec G404 */
-	builder := &statistics.ReservoirRowSampleBuilder{
+	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
@@ -431,6 +431,7 @@ func handleAnalyzeFullSamplingReq(
 		ColGroups:       colGroups,
 		MaxSampleSize:   int(colReq.SampleSize),
 		MaxFMSketchSize: int(colReq.SketchSize),
+		SampleRate:      colReq.GetSampleRate(),
 		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	collector, err := builder.Collect()
@@ -438,7 +439,7 @@ func handleAnalyzeFullSamplingReq(
 		return nil, err
 	}
 	colResp := &tipb.AnalyzeColumnsResp{}
-	colResp.RowCollector = collector.ToProto()
+	colResp.RowCollector = collector.Base().ToProto()
 	data, err := colResp.Marshal()
 	if err != nil {
 		return nil, err
@@ -501,7 +502,7 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewChunk(_ chunk.Allocator) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)

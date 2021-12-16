@@ -56,7 +56,6 @@ func recordSetForDistributedSamplingTest(size, batch int) []*recordSet {
 }
 
 func TestWeightedSampling(t *testing.T) {
-	t.Parallel()
 	sampleNum := int64(20)
 	rowNum := 100
 	loopCnt := 1000
@@ -67,7 +66,7 @@ func TestWeightedSampling(t *testing.T) {
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 0; loopI < loopCnt; loopI++ {
-		builder := &ReservoirRowSampleBuilder{
+		builder := &RowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
 			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
@@ -79,8 +78,8 @@ func TestWeightedSampling(t *testing.T) {
 		}
 		collector, err := builder.Collect()
 		require.NoError(t, err)
-		for i := 0; i < collector.MaxSampleSize; i++ {
-			a := collector.Samples[i].Columns[0].GetInt64()
+		for i := 0; i < int(sampleNum); i++ {
+			a := collector.Base().Samples[i].Columns[0].GetInt64()
 			itemCnt[a]++
 		}
 		require.Nil(t, rs.Close())
@@ -95,7 +94,6 @@ func TestWeightedSampling(t *testing.T) {
 }
 
 func TestDistributedWeightedSampling(t *testing.T) {
-	t.Parallel()
 	sampleNum := int64(10)
 	rowNum := 100
 	loopCnt := 1500
@@ -110,7 +108,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 		rootRowCollector := NewReservoirRowSampleCollector(int(sampleNum), 1)
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, NewFMSketch(1000))
 		for i := 0; i < batch; i++ {
-			builder := &ReservoirRowSampleBuilder{
+			builder := &RowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],
 				ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
@@ -139,7 +137,6 @@ func TestDistributedWeightedSampling(t *testing.T) {
 }
 
 func TestBuildStatsOnRowSample(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sketch := NewFMSketch(1000)
 	data := make([]*SampleItem, 0, 8)

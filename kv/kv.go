@@ -30,6 +30,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -335,8 +336,10 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
-	// ResourceGroupTag indicates the kv request task group.
-	ResourceGroupTag []byte
+	// ResourceGroupTagger indicates the kv request task group tagger.
+	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	// Paging indicates whether the request is a paging request.
+	Paging bool
 }
 
 const (
@@ -405,9 +408,7 @@ type Driver interface {
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
-	Begin() (Transaction, error)
-	// BeginWithOption begins a transaction with given option
-	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
+	Begin(opts ...tikv.TxnOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot

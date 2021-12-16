@@ -16,18 +16,10 @@ package mysql
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testConstSuite{})
-
-type testConstSuite struct{}
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *testConstSuite) TestSQLMode(c *C) {
+func TestSQLMode(t *testing.T) {
 	// ref https://dev.mysql.com/doc/internals/en/query-event.html#q-sql-mode-code,
 	hardCode := []struct {
 		code  SQLMode
@@ -99,6 +91,6 @@ func (s *testConstSuite) TestSQLMode(c *C) {
 	}}
 
 	for _, ca := range hardCode {
-		c.Assert(int(ca.code), Equals, ca.value)
+		require.Equal(t, ca.value, int(ca.code))
 	}
 }

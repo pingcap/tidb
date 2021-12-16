@@ -114,9 +114,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	type globalStatsInfo struct {
 		isIndex int
-		// When the `isIndex == 0`, the idxID will be the column ID.
-		// Otherwise, the idxID will be the index ID.
-		idxID        int64
+		// When the `isIndex == 0`, histIDs will be the column IDs.
+		// Otherwise, histIDs will only contain the index ID.
+		histIDs      []int64
 		statsVersion int
 	}
 	// globalStatsMap is a map used to store which partition tables and the corresponding indexes need global-level stats.
@@ -151,19 +151,22 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if results.TableID.IsPartitionTable() && needGlobalStats {
 			for _, result := range results.Ars {
-				for _, hg := range result.Hist {
-					// It's normal virtual column, skip.
-					if hg == nil {
-						continue
-					}
+				if result.IsIndex == 0 {
 					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
-					idxID := int64(-1)
-					if result.IsIndex != 0 {
-						idxID = hg.ID
+					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+					histIDs := make([]int64, 0, len(result.Hist))
+					for _, hg := range result.Hist {
+						// It's normal virtual column, skip.
+						if hg == nil {
+							continue
+						}
+						histIDs = append(histIDs, hg.ID)
 					}
-					globalStatsID := globalStatsKey{results.TableID.TableID, idxID}
-					if _, ok := globalStatsMap[globalStatsID]; !ok {
-						globalStatsMap[globalStatsID] = globalStatsInfo{result.IsIndex, hg.ID, results.StatsVer}
+					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+				} else {
+					for _, hg := range result.Hist {
+						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
 					}
 				}
 			}
@@ -184,7 +187,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -196,7 +199,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			for i := 0; i < globalStats.Num; i++ {
 				hg, cms, topN, fms := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i], globalStats.Fms[i]
 				// fms for global stats doesn't need to dump to kv.
-				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false)
+				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
 				}
@@ -386,7 +389,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
-	kvReqBuilder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(e.snapshot).
@@ -747,7 +750,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
-	builder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -770,7 +773,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
-	collector *statistics.ReservoirRowSampleCollector,
+	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
 	schema *expression.Schema,
@@ -779,9 +782,9 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	for _, col := range e.schemaForVirtualColEval.Columns {
 		totFts = append(totFts, col.RetType)
 	}
-	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
+	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for _, sample := range collector.Samples {
+	for _, sample := range collector.Base().Samples {
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
 				continue
@@ -799,7 +802,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	iter := chunk.NewIterator4Chunk(chk)
 	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
 		datums := row.GetDatumRow(totFts)
-		collector.Samples[i].Columns = datums
+		collector.Base().Samples[i].Columns = datums
 	}
 	return nil
 }
@@ -842,9 +845,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}()
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
-		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
+		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
@@ -894,7 +897,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	} else {
 		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
-		for _, sample := range rootRowCollector.Samples {
+		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
 				if err != nil {
@@ -904,7 +907,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}
 
-	for _, sample := range rootRowCollector.Samples {
+	for _, sample := range rootRowCollector.Base().Samples {
 		// Calculate handle from the row data for each row. It will be used to sort the samples.
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
 		if err != nil {
@@ -916,8 +919,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
-		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
+	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
+		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
@@ -941,7 +944,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			isColumn:         true,
 			slicePos:         i,
 		}
-		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
 	}
 
 	indexPushedDownResult := <-idxNDVPushDownCh
@@ -950,8 +953,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
 		ret := indexPushedDownResult.results[e.indexes[offset].ID]
-		rootRowCollector.NullCount[colLen+offset] = ret.Count
-		rootRowCollector.FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
+		rootRowCollector.Base().NullCount[colLen+offset] = ret.Count
+		rootRowCollector.Base().FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
 	}
 
 	// build index stats
@@ -963,7 +966,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			isColumn:         false,
 			slicePos:         colLen + i,
 		}
-		fmSketches = append(fmSketches, rootRowCollector.FMSketches[colLen+i])
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
 	}
 	close(buildTaskChan)
 	panicCnt := 0
@@ -983,7 +986,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
-	count = rootRowCollector.Count
+	count = rootRowCollector.Base().Count
 	if needExtStats {
 		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
@@ -1160,7 +1163,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 }
 
 type samplingMergeResult struct {
-	collector *statistics.ReservoirRowSampleCollector
+	collector statistics.RowSampleCollector
 	err       error
 }
 
@@ -1190,9 +1193,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
-	retCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
-		retCollector.FMSketches = append(retCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
+		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	for {
 		data, ok := <-taskCh
@@ -1205,11 +1208,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
-		subCollector := &statistics.ReservoirRowSampleCollector{
-			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-		}
-		subCollector.FromProto(colResp.RowCollector)
-		e.job.Update(subCollector.Count)
+		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+		subCollector.Base().FromProto(colResp.RowCollector)
+		e.job.Update(subCollector.Base().Count)
 		retCollector.MergeCollector(subCollector)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
@@ -1217,7 +1218,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 
 type samplingBuildTask struct {
 	id               int64
-	rootRowCollector *statistics.ReservoirRowSampleCollector
+	rootRowCollector statistics.RowSampleCollector
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
@@ -1256,8 +1257,8 @@ workLoop:
 				topns[task.slicePos] = nil
 				continue
 			}
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
-			for j, row := range task.rootRowCollector.Samples {
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+			for j, row := range task.rootRowCollector.Base().Samples {
 				if row.Columns[task.slicePos].IsNull() {
 					continue
 				}
@@ -1276,17 +1277,17 @@ workLoop:
 			}
 			collector = &statistics.SampleCollector{
 				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 			}
 		} else {
 			var tmpDatum types.Datum
 			var err error
 			idx := e.indexes[task.slicePos-colLen]
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
-			for _, row := range task.rootRowCollector.Samples {
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+			for _, row := range task.rootRowCollector.Base().Samples {
 				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 					continue
 				}
@@ -1315,10 +1316,10 @@ workLoop:
 			}
 			collector = &statistics.SampleCollector{
 				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 			}
 		}
 		if task.isColumn {
@@ -1619,7 +1620,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			return
 		}
 		defer terror.Call(rs.Close)
-		chk := rs.NewChunk()
+		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return
@@ -1852,7 +1853,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
@@ -1873,7 +1874,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
 	if readReplicaType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, readReplicaType)
@@ -2047,7 +2048,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, err error) {
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
-	if RandSeed == 1 {
+	if atomic.LoadInt64(&RandSeed) == 1 {
 		atomic.StoreInt64(&e.randSeed, time.Now().UnixNano())
 	} else {
 		atomic.StoreInt64(&e.randSeed, RandSeed)

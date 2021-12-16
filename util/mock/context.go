@@ -38,8 +38,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ sessionctx.Context = (*Context)(nil)
-var _ sqlexec.SQLExecutor = (*Context)(nil)
+var (
+	_ sessionctx.Context  = (*Context)(nil)
+	_ sqlexec.SQLExecutor = (*Context)(nil)
+)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
@@ -245,7 +247,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
+		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}

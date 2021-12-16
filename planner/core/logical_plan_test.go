@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -60,6 +61,7 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable()})
 	s.ctx = MockContext()
+	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -91,6 +93,23 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		})
 		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", ca, ith))
 	}
+}
+
+func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	ca := "Select a from t3 join ( (select 127 as IDD from t3) union all (select 1 as IDD from t3) ) u on t3.b = u.IDD;"
+	comment := Commentf("for %s", ca)
+	stmt, err := s.ParseOneStmt(ca, "", "")
+	c.Assert(err, IsNil, comment)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
+	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
+	c.Assert(schemaNullFlag, Equals, exprNullFlag)
 }
 
 func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
@@ -605,6 +624,9 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		{
 			sql:  "select 1+num from (select 1+a as num from t) t1;",
 			best: "DataScan(t)->Projection",
+		}, {
+			sql:  "select count(*) from t where a in (select b from t2 where  a is null);",
+			best: "Join{DataScan(t)->Dual->Aggr(firstrow(test.t2.b))}(test.t.a,test.t2.b)->Aggr(count(1))->Projection",
 		},
 	}
 
@@ -620,6 +642,29 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
 	}
+}
+
+func (s *testPlanSuite) TestCS3389(c *C) {
+	defer testleak.AfterTest(c)()
+
+	ctx := context.Background()
+	stmt, err := s.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+
+	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
+	proj, isProj := p.(*LogicalProjection)
+	c.Assert(isProj, IsTrue)
+	c.Assert(len(proj.Exprs) > 0, IsTrue)
+	child := proj.Children()[0]
+	agg, isAgg := child.(*LogicalAggregation)
+	c.Assert(isAgg, IsTrue)
+	child = agg.Children()[0]
+	_, isJoin := child.(*LogicalJoin)
+	c.Assert(isJoin, IsTrue)
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
@@ -923,7 +968,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		comment := Commentf("for %s", tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-
+		domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
@@ -1342,8 +1387,9 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 
 		// TODO: to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
@@ -1424,7 +1470,9 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
 			output[i].Err = err != nil
@@ -1457,7 +1505,9 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1532,7 +1582,9 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1651,6 +1703,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 		}
 	}
 	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1749,7 +1802,9 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -1852,7 +1907,9 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		c.Assert(err, IsNil, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+		sctx := MockContext()
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1869,7 +1926,9 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	c.Assert(err, IsNil)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1890,7 +1949,9 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	c.Assert(err, IsNil)
 	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))

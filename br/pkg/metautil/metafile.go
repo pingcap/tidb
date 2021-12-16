@@ -5,6 +5,7 @@ package metautil
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -24,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/encrypt"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +42,9 @@ const (
 
 	// MetaFileSize represents the limit size of one MetaFile
 	MetaFileSize = 128 * units.MiB
+
+	// CrypterIvLen represents the length of iv of crypter method
+	CrypterIvLen = 16
 )
 
 const (
@@ -49,9 +55,45 @@ const (
 	MetaV2
 )
 
+func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
+		return content, iv, nil
+	case encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR:
+		// generate random iv for aes crypter
+		iv = make([]byte, CrypterIvLen)
+		_, err = rand.Read(iv)
+		if err != nil {
+			return content, iv, errors.Trace(err)
+		}
+		encryptedContent, err = encrypt.AESEncryptWithCTR(content, cipher.CipherKey, iv)
+		return
+	default:
+		return content, iv, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	}
+}
+
+func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
+		return content, nil
+	case encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR:
+		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
+	default:
+		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	}
+}
+
 func walkLeafMetaFile(
-	ctx context.Context, storage storage.ExternalStorage, file *backuppb.MetaFile, output func(*backuppb.MetaFile),
-) error {
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	file *backuppb.MetaFile,
+	cipher *backuppb.CipherInfo,
+	output func(*backuppb.MetaFile)) error {
 	if file == nil {
 		return nil
 	}
@@ -64,16 +106,23 @@ func walkLeafMetaFile(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		checksum := sha256.Sum256(content)
+
+		decryptContent, err := Decrypt(content, cipher, node.CipherIv)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		checksum := sha256.Sum256(decryptContent)
 		if !bytes.Equal(node.Sha256, checksum[:]) {
 			return errors.Annotatef(berrors.ErrInvalidMetaFile,
 				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:])
 		}
+
 		child := &backuppb.MetaFile{}
-		if err = proto.Unmarshal(content, child); err != nil {
+		if err = proto.Unmarshal(decryptContent, child); err != nil {
 			return errors.Trace(err)
 		}
-		if err = walkLeafMetaFile(ctx, storage, child, output); err != nil {
+		if err = walkLeafMetaFile(ctx, storage, child, cipher, output); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -101,13 +150,18 @@ func (tbl *Table) NoChecksum() bool {
 type MetaReader struct {
 	storage    storage.ExternalStorage
 	backupMeta *backuppb.BackupMeta
+	cipher     *backuppb.CipherInfo
 }
 
 // NewMetaReader creates MetaReader.
-func NewMetaReader(backpMeta *backuppb.BackupMeta, storage storage.ExternalStorage) *MetaReader {
+func NewMetaReader(
+	backpMeta *backuppb.BackupMeta,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
 		backupMeta: backpMeta,
+		cipher:     cipher,
 	}
 }
 
@@ -124,7 +178,7 @@ func (reader *MetaReader) readDDLs(ctx context.Context, output func([]byte)) err
 			output(s)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.DdlIndexes, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.DdlIndexes, reader.cipher, outputFn)
 }
 
 func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb.Schema)) error {
@@ -138,7 +192,7 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 			output(s)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
 func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
@@ -152,7 +206,7 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 			output(f)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, reader.cipher, outputFn)
 }
 
 // ArchiveSize return the size of Archive data
@@ -429,10 +483,14 @@ type MetaWriter struct {
 
 	// records the total item of in one write meta job.
 	flushedItemNum int
+
+	cipher *backuppb.CipherInfo
 }
 
 // NewMetaWriter creates MetaWriter.
-func NewMetaWriter(storage storage.ExternalStorage, metafileSizeLimit int, useV2Meta bool) *MetaWriter {
+func NewMetaWriter(storage storage.ExternalStorage,
+	metafileSizeLimit int,
+	useV2Meta bool, cipher *backuppb.CipherInfo) *MetaWriter {
 	return &MetaWriter{
 		start:             time.Now(),
 		storage:           storage,
@@ -444,6 +502,7 @@ func NewMetaWriter(storage storage.ExternalStorage, metafileSizeLimit int, useV2
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
+		cipher:         cipher,
 	}
 }
 
@@ -489,9 +548,9 @@ func (writer *MetaWriter) StartWriteMetasAsync(ctx context.Context, op AppendOp)
 	writer.wg.Add(1)
 	go func() {
 		defer func() {
-			writer.wg.Done()
-			// close errCh after metaCh closed
 			close(writer.errCh)
+			// close errCh before metaCh closed
+			writer.wg.Done()
 		}()
 		for {
 			select {
@@ -561,7 +620,13 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	}
 	log.Debug("backup meta", zap.Reflect("meta", writer.backupMeta))
 	log.Info("save backup meta", zap.Int("size", len(backupMetaData)))
-	return writer.storage.WriteFile(ctx, MetaFile, backupMetaData)
+
+	encryptBuff, iv, err := Encrypt(backupMetaData, writer.cipher)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return writer.storage.WriteFile(ctx, MetaFile, append(iv, encryptBuff...))
 }
 
 // fillMetasV1 keep the compatibility for old version.
@@ -620,14 +685,21 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	// Flush metafiles to external storage.
 	writer.metafileSeqNum["metafiles"] += 1
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
-	if err = writer.storage.WriteFile(ctx, fname, content); err != nil {
+
+	encyptedContent, iv, err := Encrypt(content, writer.cipher)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
 		return errors.Trace(err)
 	}
 	checksum := sha256.Sum256(content)
 	file := &backuppb.File{
-		Name:   fname,
-		Sha256: checksum[:],
-		Size_:  uint64(len(content)),
+		Name:     fname,
+		Sha256:   checksum[:],
+		Size_:    uint64(len(content)),
+		CipherIv: iv,
 	}
 
 	index.MetaFiles = append(index.MetaFiles, file)

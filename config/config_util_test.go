@@ -17,8 +17,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -27,8 +25,6 @@ import (
 )
 
 func TestCloneConf(t *testing.T) {
-	t.Parallel()
-
 	c1, err := CloneConf(&defaultConf)
 	require.NoError(t, err)
 	c2, err := CloneConf(c1)
@@ -37,7 +33,7 @@ func TestCloneConf(t *testing.T) {
 
 	c1.Store = "abc"
 	c1.Port = 2333
-	c1.Log.EnableSlowLog = !c1.Log.EnableSlowLog
+	c1.Log.EnableSlowLog.Store(!c1.Log.EnableSlowLog.Load())
 	c1.RepairTableList = append(c1.RepairTableList, "abc")
 	require.NotEqual(t, c2.Store, c1.Store)
 	require.NotEqual(t, c2.Port, c1.Port)
@@ -46,8 +42,6 @@ func TestCloneConf(t *testing.T) {
 }
 
 func TestMergeConfigItems(t *testing.T) {
-	t.Parallel()
-
 	oriConf, _ := CloneConf(&defaultConf)
 	oldConf, _ := CloneConf(oriConf)
 	newConf, _ := CloneConf(oldConf)
@@ -97,39 +91,7 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, oriConf.AdvertiseAddress, oldConf.AdvertiseAddress)
 }
 
-func TestAtomicWriteConfig(t *testing.T) {
-	conf, _ := CloneConf(&defaultConf)
-	confPath := filepath.Join(os.TempDir(), "test-write-config.toml")
-	conf.Performance.MaxMemory = 123
-	conf.Performance.MaxProcs = 234
-	conf.Performance.PseudoEstimateRatio = 3.45
-	require.NoError(t, atomicWriteConfig(conf, confPath))
-
-	content, err := os.ReadFile(confPath)
-	require.NoError(t, err)
-	dconf, err := decodeConfig(string(content))
-	require.NoError(t, err)
-	require.Equal(t, uint64(123), dconf.Performance.MaxMemory)
-	require.Equal(t, uint(234), dconf.Performance.MaxProcs)
-	require.Equal(t, 3.45, dconf.Performance.PseudoEstimateRatio)
-
-	conf.Performance.MaxMemory = 321
-	conf.Performance.MaxProcs = 432
-	conf.Performance.PseudoEstimateRatio = 54.3
-	require.NoError(t, atomicWriteConfig(conf, confPath))
-
-	content, err = os.ReadFile(confPath)
-	require.NoError(t, err)
-	dconf, err = decodeConfig(string(content))
-	require.NoError(t, err)
-	require.Equal(t, uint64(321), dconf.Performance.MaxMemory)
-	require.Equal(t, uint(432), dconf.Performance.MaxProcs)
-	require.Equal(t, 54.3, dconf.Performance.PseudoEstimateRatio)
-}
-
 func TestFlattenConfig(t *testing.T) {
-	t.Parallel()
-
 	toJSONStr := func(v interface{}) string {
 		str, err := json.Marshal(v)
 		require.NoError(t, err)

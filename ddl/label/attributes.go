@@ -125,7 +125,8 @@ func (labels *Labels) Restore() string {
 
 // Add will add a new attribute, with validation of all attributes.
 func (labels *Labels) Add(label Label) error {
-	for _, l := range *labels {
+	for i := range *labels {
+		l := (*labels)[i]
 		res := label.CompatibleWith(&l)
 		if res == AttributesCompatible {
 			continue

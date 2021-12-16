@@ -249,12 +249,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return errors.Trace(err)
 	}
 	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	if cfg.Online {
 		client.EnableOnline()
@@ -278,7 +278,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	reader := metautil.NewMetaReader(backupMeta, s)
+	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.InitBackupMeta(c, backupMeta, u, s, reader); err != nil {
 		return errors.Trace(err)
 	}
@@ -479,7 +479,7 @@ func dropToBlackhole(
 	outCh := make(chan struct{}, 1)
 	go func() {
 		defer func() {
-			outCh <- struct{}{}
+			close(outCh)
 		}()
 		for {
 			select {

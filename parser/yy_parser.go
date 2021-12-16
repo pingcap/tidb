@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/types"
 )
 
 var (
@@ -272,7 +273,12 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
 	dec, err := ast.NewDecimal(str)
 	if err != nil {
-		l.AppendError(l.Errorf("decimal literal: %v", err))
+		if terror.ErrorEqual(err, types.ErrDataOutOfRange) {
+			l.AppendWarn(types.ErrTruncatedWrongValue.FastGenByArgs("DECIMAL", dec))
+			dec, _ = ast.NewDecimal(mysql.DefaultDecimal)
+		} else {
+			l.AppendError(l.Errorf("decimal literal: %v", err))
+		}
 	}
 	lval.item = dec
 	return decLit
@@ -281,6 +287,11 @@ func toDecimal(l yyLexer, lval *yySymType, str string) int {
 func toFloat(l yyLexer, lval *yySymType, str string) int {
 	n, err := strconv.ParseFloat(str, 64)
 	if err != nil {
+		e := err.(*strconv.NumError)
+		if e.Err == strconv.ErrRange {
+			l.AppendError(types.ErrIllegalValueForType.GenWithStackByArgs("double", str))
+			return int(unicode.ReplacementChar)
+		}
 		l.AppendError(l.Errorf("float literal: %v", err))
 		return int(unicode.ReplacementChar)
 	}
@@ -385,7 +396,7 @@ var (
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
-	p.lexer.encoding = charset.Encoding{}
+	p.lexer.encoding = charset.UTF8Encoding
 }
 
 // ParseParam represents the parameter of parsing.
@@ -425,6 +436,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.encoding = *charset.NewEncoding(string(c))
+	p.lexer.encoding = charset.NewEncoding(string(c))
 	return nil
 }

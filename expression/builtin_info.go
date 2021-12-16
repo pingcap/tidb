@@ -190,7 +190,7 @@ func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) 
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.AuthIdentityString(), false, nil
+	return data.User.String(), false, nil
 }
 
 type currentRoleFunctionClass struct {
@@ -278,8 +278,7 @@ func (b *builtinUserSig) evalString(row chunk.Row) (string, bool, error) {
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-
-	return data.User.String(), false, nil
+	return data.User.LoginString(), false, nil
 }
 
 type connectionIDFunctionClass struct {
@@ -747,7 +746,7 @@ func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinTiDBIsDDLOwnerSig.
+// evalInt evals a builtinTiDBDecodeKeySig.
 func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error) {
 	s, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {

@@ -286,7 +286,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 	return iVal, errors.Trace(err)
 }
 
-// StrToUint converts a string to an unsigned integer at the best-effortt.
+// StrToUint converts a string to an unsigned integer at the best-effort.
 func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
@@ -556,8 +556,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			return 0, nil
+		case json.LiteralNil:
+			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 		default:
 			return 1, nil
 		}
@@ -614,8 +616,10 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			return 0, nil
+		case json.LiteralNil:
+			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 		default:
 			return 1, nil
 		}
@@ -641,8 +645,10 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 		err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			res = res.FromInt(0)
+		case json.LiteralNil:
+			err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 		default:
 			res = res.FromInt(1)
 		}
