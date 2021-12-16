@@ -47,13 +47,14 @@ var (
 )
 
 const (
+	pagingSizeGrow     int = 2
+	maxPagingSizeShift int = 7
 	// The size of a paging distsql grows from minPagingSize to maxPagingSize
-	minPagingSize  float64 = 64
-	maxPagingSize  float64 = 8192
-	pagingSizeGrow float64 = 2
+	minPagingSize int = 64
+	maxPagingSize int = minPagingSize << maxPagingSizeShift
 	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
 	// pagingGrowingSum = (pagingSizeGrow ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
-	pagingGrowingSum float64 = 16320
+	pagingGrowingSum int = ((2 << maxPagingSizeShift) - 1) * minPagingSize
 	// if the desired rows are below the threshold, use paging, threshold is the sum of 4 pages
 	pagingThreshold uint64 = 960
 )
@@ -102,6 +103,8 @@ type copTask struct {
 	// For table partition.
 	partitionInfo PartitionInfo
 
+	// expectCnt is the expected row count of upper task, 0 for unlimited.
+	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
 }
 
@@ -987,27 +990,30 @@ func extractRows(p PhysicalPlan) float64 {
 func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
 	sessVars := ctx.GetSessionVars()
 	indexRows := t.indexPlan.statsInfo().RowCount
-	expectCnt := float64(t.expectCnt)
+	expectCnt := int(t.expectCnt)
 	sourceRows := extractRows(t.indexPlan)
 	// with paging, the scanned rows is always less than or equal to source rows.
-	expectCnt = math.Min(expectCnt, sourceRows)
+	if int(sourceRows) < expectCnt {
+		expectCnt = int(sourceRows)
+	}
 	seekCnt := float64(1)
 	if expectCnt > pagingGrowingSum {
 		// if the expectCnt is larger than pagingGrowingSum, calculate the seekCnt for the excess.
-		seekCnt += float64(int(8 + (expectCnt-pagingGrowingSum)/maxPagingSize))
+		seekCnt += float64(8 + (expectCnt-pagingGrowingSum)/maxPagingSize)
 	} else if expectCnt > minPagingSize {
 		// if the expectCnt is less than pagingGrowingSum,
 		// calculate the seekCnt(number of terms) from the sum of a geometric progression.
 		// expectCnt = minPagingSize * (pagingSizeGrow ^ seekCnt - 1) / (pagingSizeGrow - 1)
 		// simplify (pagingSizeGrow ^ seekCnt - 1) to pagingSizeGrow ^ seekCnt, we can infer that
 		// seekCnt = log((pagingSizeGrow - 1) * expectCnt / minPagingSize) / log(pagingSizeGrow)
-		seekCnt += float64(int(math.Log((pagingSizeGrow-1)*expectCnt/minPagingSize) / math.Log(pagingSizeGrow)))
+		seekCnt += float64(int(math.Log(float64((pagingSizeGrow-1)*expectCnt)/float64(minPagingSize)) / math.Log(float64(pagingSizeGrow))))
 	}
 	indexSelectivity := float64(1)
 	if sourceRows > indexRows {
 		indexSelectivity = indexRows / sourceRows
 	}
-	pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + expectCnt*sessVars.CPUFactor
+	// only calculate the diff of seek cost here, so (seekCnt - 1)
+	pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
 	pagingCst *= indexSelectivity
 	return pagingCst
 }
