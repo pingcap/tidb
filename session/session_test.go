@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1762,31 +1763,24 @@ func (s *testSessionSuite2) TestRetry(c *C) {
 	tk2.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 	tk3.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
-	var wg sync.WaitGroup
-	wg.Add(3)
-	f1 := func() {
-		defer wg.Done()
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk1.MustExec("update t set c = 1;")
 		}
-	}
-	f2 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk2.MustExec("update t set c = ?;", 1)
 		}
-	}
-	f3 := func() {
-		defer wg.Done()
+	})
+	wg.Run(func() {
 		for i := 0; i < 30; i++ {
 			tk3.MustExec("begin")
 			tk3.MustExec("update t set c = 1;")
 			tk3.MustExec("commit")
 		}
-	}
-	go f1()
-	go f2()
-	go f3()
+	})
 	wg.Wait()
 }
 
@@ -5888,4 +5882,36 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
 			"  `cs1` int(11) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ct1, ct2")
+	tk.MustExec("create table ct1 (id int, c int)")
+	tk.MustExec("create table ct2 (id int, c int)")
+	tk.MustExec("alter table ct1 cache")
+	tk.MustExec("alter table ct2 cache")
+	tk.MustQuery("select * from ct1").Check(testkit.Rows())
+	tk.MustQuery("select * from ct2").Check(testkit.Rows())
+
+	cached := false
+	for i := 0; i < 50; i++ {
+		if tk.HasPlan("select * from ct1", "Union") {
+			if tk.HasPlan("select * from ct2", "Union") {
+				cached = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(cached, IsTrue)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into ct1 values (3, 4)")
+	tk.MustExec("insert into ct2 values (5, 6)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
+	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
 }

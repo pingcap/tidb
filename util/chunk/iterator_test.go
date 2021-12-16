@@ -23,8 +23,6 @@ import (
 )
 
 func TestIteratorOnSel(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	sel := make([]int, 0, 1024)
@@ -52,8 +50,6 @@ func checkEqual(it Iterator, exp []int64, t *testing.T) {
 }
 
 func TestMultiIterator(t *testing.T) {
-	t.Parallel()
-
 	it := NewMultiIterator(NewIterator4Chunk(new(Chunk)))
 	require.Equal(t, it.End(), it.Begin())
 
@@ -97,8 +93,6 @@ func TestMultiIterator(t *testing.T) {
 }
 
 func TestIterator(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10

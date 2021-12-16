@@ -618,6 +618,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
+	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
 	schema := expression.NewSchema(colMaxOrMin)
 
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
@@ -735,6 +736,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
+	maxResultCol.SetCoercibility(rexpr.Coercibility())
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
@@ -772,6 +774,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
+	firstRowResultCol.SetCoercibility(rexpr.Coercibility())
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
@@ -1008,9 +1011,11 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	if np.Schema().Len() > 1 {
 		newCols := make([]expression.Expression, 0, np.Schema().Len())
 		for i, data := range row {
-			newCols = append(newCols, &expression.Constant{
+			constant := &expression.Constant{
 				Value:   data,
-				RetType: np.Schema().Columns[i].GetType()})
+				RetType: np.Schema().Columns[i].GetType()}
+			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+			newCols = append(newCols, constant)
 		}
 		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
 		if err1 != nil {
@@ -1019,10 +1024,12 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		er.ctxStackAppend(&expression.Constant{
+		constant := &expression.Constant{
 			Value:   row[0],
 			RetType: np.Schema().Columns[0].GetType(),
-		}, types.EmptyName)
+		}
+		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
+		er.ctxStackAppend(constant, types.EmptyName)
 	}
 	return v, true
 }
@@ -2030,7 +2037,12 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 	if handle.IsInt() {
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
-		ret["_tidb_rowid"] = handle.IntValue()
+		// When the clustered index is enabled, we should show the PK name.
+		if tbl.Meta().HasClusteredIndex() {
+			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
+		} else {
+			ret["_tidb_rowid"] = handle.IntValue()
+		}
 		retStr, err := json.Marshal(ret)
 		if err != nil {
 			return "", errors.Trace(err)
