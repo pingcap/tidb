@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1450,8 +1451,6 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
 	tk.MustExec("drop table t;")
 }
-<<<<<<< HEAD
-=======
 
 func TestAvgDecimal(t *testing.T) {
 	t.Parallel()
@@ -1474,18 +1473,3 @@ func TestAvgDecimal(t *testing.T) {
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
 	tk.MustExec("drop table td;")
 }
-
-// https://github.com/pingcap/tidb/issues/23314
-func TestIssue23314(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
-	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
-	res := tk.MustQuery("select col1 from t1 group by col1")
-	res.Check(testkit.Rows("16:40:20.01"))
-}
->>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)

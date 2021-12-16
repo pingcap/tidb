@@ -17,11 +17,8 @@ import (
 	"container/heap"
 	"unsafe"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
->>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
