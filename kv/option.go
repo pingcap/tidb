@@ -71,6 +71,9 @@ const (
 
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
+	// CommitTSUpperBoundChec is used by cached table
+	// The commitTS must be greater than all the write lock lease of the visited cached table.
+	CommitTSUpperBoundCheck
 )
 
 // ReplicaReadType is the type of replica to read data from
