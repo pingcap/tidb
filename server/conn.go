@@ -129,20 +129,6 @@ var (
 		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
 	}
 
-	queryDurationHistogramUse      = metrics.QueryDurationHistogram.WithLabelValues("Use")
-	queryDurationHistogramShow     = metrics.QueryDurationHistogram.WithLabelValues("Show")
-	queryDurationHistogramBegin    = metrics.QueryDurationHistogram.WithLabelValues("Begin")
-	queryDurationHistogramCommit   = metrics.QueryDurationHistogram.WithLabelValues("Commit")
-	queryDurationHistogramRollback = metrics.QueryDurationHistogram.WithLabelValues("Rollback")
-	queryDurationHistogramInsert   = metrics.QueryDurationHistogram.WithLabelValues("Insert")
-	queryDurationHistogramReplace  = metrics.QueryDurationHistogram.WithLabelValues("Replace")
-	queryDurationHistogramDelete   = metrics.QueryDurationHistogram.WithLabelValues("Delete")
-	queryDurationHistogramUpdate   = metrics.QueryDurationHistogram.WithLabelValues("Update")
-	queryDurationHistogramSelect   = metrics.QueryDurationHistogram.WithLabelValues("Select")
-	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
-	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
-	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
-
 	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
 	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
 	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
@@ -1191,37 +1177,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	cost := time.Since(startTime)
 	sessionVar := cc.ctx.GetSessionVars()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, cc.ctx.AffectedRows(), sessionVar.InTxn())
-
-	switch sqlType {
-	case "Use":
-		queryDurationHistogramUse.Observe(cost.Seconds())
-	case "Show":
-		queryDurationHistogramShow.Observe(cost.Seconds())
-	case "Begin":
-		queryDurationHistogramBegin.Observe(cost.Seconds())
-	case "Commit":
-		queryDurationHistogramCommit.Observe(cost.Seconds())
-	case "Rollback":
-		queryDurationHistogramRollback.Observe(cost.Seconds())
-	case "Insert":
-		queryDurationHistogramInsert.Observe(cost.Seconds())
-	case "Replace":
-		queryDurationHistogramReplace.Observe(cost.Seconds())
-	case "Delete":
-		queryDurationHistogramDelete.Observe(cost.Seconds())
-	case "Update":
-		queryDurationHistogramUpdate.Observe(cost.Seconds())
-	case "Select":
-		queryDurationHistogramSelect.Observe(cost.Seconds())
-	case "Execute":
-		queryDurationHistogramExecute.Observe(cost.Seconds())
-	case "Set":
-		queryDurationHistogramSet.Observe(cost.Seconds())
-	case metrics.LblGeneral:
-		queryDurationHistogramGeneral.Observe(cost.Seconds())
-	default:
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
+	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(cost.Seconds())
+	if !config.GetGlobalConfig().Status.RecordLatbyDB {
+		return
 	}
+	metrics.DbQueryDurationHistogram.WithLabelValues(sqlType, cc.dbname).Observe(cost.Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.

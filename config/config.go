@@ -445,6 +445,7 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	RecordLatbyDB   bool   `toml:"record-db-lat" json:"record-db-lat"`
 }
 
 // Performance is the performance section of the config.
@@ -663,6 +664,7 @@ var defaultConf = Config{
 		StatusPort:      DefStatusPort,
 		MetricsInterval: 15,
 		RecordQPSbyDB:   false,
+		RecordLatbyDB:   false,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
