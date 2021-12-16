@@ -37,13 +37,10 @@ type SingleTargetDataSink struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
-
-	// calling decodePlan this can take a while, so should not block critical paths
-	decodePlan planBinaryDecodeFunc
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
-func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataSink {
+func NewSingleTargetDataSink() *SingleTargetDataSink {
 	ctx, cancel := context.WithCancel(context.Background())
 	dataSink := &SingleTargetDataSink{
 		ctx:    ctx,
@@ -52,8 +49,6 @@ func NewSingleTargetDataSink(decodePlan planBinaryDecodeFunc) *SingleTargetDataS
 		curRPCAddr: "",
 		conn:       nil,
 		sendTaskCh: make(chan sendTask, 1),
-
-		decodePlan: decodePlan,
 	}
 	go dataSink.recoverRun()
 	return dataSink
@@ -159,15 +154,15 @@ func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data Re
 
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchSQLMeta(ctx, data.normalizedSQLMap)
+		errCh <- ds.sendBatchSQLMeta(ctx, data.SQLMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchPlanMeta(ctx, data.normalizedPlanMap)
+		errCh <- ds.sendBatchPlanMeta(ctx, data.PlanMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchCPUTimeRecord(ctx, data.collectedData)
+		errCh <- ds.sendBatchCPUTimeRecord(ctx, data.CPUTimeRecords)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -180,111 +175,105 @@ func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data Re
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
+func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) (err error) {
 	if len(records) == 0 {
 		return nil
 	}
+
 	start := time.Now()
+	sentCount := 0
+	defer func() {
+		topSQLReportRecordCounterHistogram.Observe(float64(sentCount))
+		if err != nil {
+			reportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		}
+		reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	}()
+
 	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportCPUTimeRecords(ctx)
 	if err != nil {
 		return err
 	}
 	for _, record := range records {
-		record := &tipb.CPUTimeRecord{
-			RecordListTimestampSec: record.TimestampList,
-			RecordListCpuTimeMs:    record.CPUTimeMsList,
-			SqlDigest:              record.SQLDigest,
-			PlanDigest:             record.PlanDigest,
+		if err = stream.Send(record); err != nil {
+			return
 		}
-		if err := stream.Send(record); err != nil {
-			return err
-		}
+		sentCount += 1
 	}
-	topSQLReportRecordCounterHistogram.Observe(float64(len(records)))
+
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
-	if err != nil {
-		reportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
-		return err
-	}
-	reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
-	return nil
+	return
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas []*tipb.SQLMeta) (err error) {
+	if len(sqlMetas) == 0 {
+		return
+	}
+
 	start := time.Now()
+	sentCount := 0
+	defer func() {
+		topSQLReportSQLCountHistogram.Observe(float64(sentCount))
+
+		if err != nil {
+			reportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		}
+		reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	}()
+
 	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
 		return err
 	}
-	cnt := 0
-	sqlMap.Range(func(key, value interface{}) bool {
-		cnt++
-		meta := value.(SQLMeta)
-		sqlMeta := &tipb.SQLMeta{
-			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: meta.normalizedSQL,
-			IsInternalSql: meta.isInternal,
+
+	for _, meta := range sqlMetas {
+		if err = stream.Send(meta); err != nil {
+			return
 		}
-		if err = stream.Send(sqlMeta); err != nil {
-			return false
-		}
-		return true
-	})
-	// stream.Send return error
-	if err != nil {
-		return err
+		sentCount += 1
 	}
-	topSQLReportSQLCountHistogram.Observe(float64(cnt))
+
+	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
-	if err != nil {
-		reportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
-		return err
-	}
-	reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
-	return nil
+	return
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
+func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas []*tipb.PlanMeta) (err error) {
+	if len(planMetas) == 0 {
+		return nil
+	}
+
 	start := time.Now()
+	sentCount := 0
+	defer func() {
+		topSQLReportPlanCountHistogram.Observe(float64(sentCount))
+		if err != nil {
+			reportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		}
+		reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	}()
+
 	client := tipb.NewTopSQLAgentClient(ds.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
-	cnt := 0
-	planMap.Range(func(key, value interface{}) bool {
-		planDecoded, errDecode := ds.decodePlan(value.(string))
-		if errDecode != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
-			return true
+
+	for _, meta := range planMetas {
+		if err = stream.Send(meta); err != nil {
+			return err
 		}
-		cnt++
-		planMeta := &tipb.PlanMeta{
-			PlanDigest:     []byte(key.(string)),
-			NormalizedPlan: planDecoded,
-		}
-		if err = stream.Send(planMeta); err != nil {
-			return false
-		}
-		return true
-	})
-	// stream.Send return error
-	if err != nil {
-		return err
+		sentCount += 1
 	}
-	topSQLReportPlanCountHistogram.Observe(float64(cnt))
+
+	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
-	if err != nil {
-		reportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
-		return err
-	}
-	reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
-	return err
+	return
 }
 
 // tryEstablishConnection establishes the gRPC connection if connection is not established.
