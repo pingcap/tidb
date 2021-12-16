@@ -161,7 +161,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		ctx:    ctx,
 		cancel: cancel,
 
-		// An unbuffered channel for registration. A call for RemoteDataSinkRegHandle.Register will block
+		// An unbuffered channel for registration. A call for Register will block
 		// until the registration is successful or the RemoteTopSQLReporter is closed.
 		dataSinkRegCh: make(chan DataSink),
 
@@ -233,18 +233,11 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinar
 	}
 }
 
-// RemoteDataSinkRegHandle is used to receive DataSink registrations.
-type RemoteDataSinkRegHandle struct {
-	registerCh     chan DataSink
-	reporterDoneCh <-chan struct{}
-}
-
 var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 
-// Register implements DataSinkRegHandle interface.
+// Register implements DataSinkRegisterer interface.
 //
-// A call for RemoteDataSinkRegHandle.Register will block until the registration is successful
-// or the RemoteTopSQLReporter is closed.
+// A call for Register will block until the registration is successful or the RemoteTopSQLReporter is closed.
 func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) {
 	select {
 	case tsr.dataSinkRegCh <- dataSink:
