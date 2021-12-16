@@ -87,16 +87,11 @@ type executorBuilder struct {
 	hasLock          bool
 	Ti               *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-<<<<<<< HEAD
-	isStaleness bool
-	txnScope    string
-=======
-	isStaleness      bool
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
->>>>>>> 4fbbd5a77... executor: make projection executor unparallel for insert/update/delete (#30290)
+	isStaleness  bool
+	txnScope     string
+	inUpdateStmt bool
+	inDeleteStmt bool
+	inInsertStmt bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
