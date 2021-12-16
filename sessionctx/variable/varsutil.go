@@ -335,6 +335,7 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	return val
 }
 
+// TidbOptInt converts a string to an int
 func TidbOptInt(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil {
@@ -343,6 +344,7 @@ func TidbOptInt(opt string, defaultVal int) int {
 	return val
 }
 
+// TidbOptInt64 converts a string to an int64
 func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
 	if err != nil {

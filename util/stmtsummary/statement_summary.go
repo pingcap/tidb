@@ -248,11 +248,13 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 
 	ssbde := newStmtSummaryByDigestEvicted()
 
-	// TODO:
-	// Each of these options needs to read from the GLOBAL sysvar value
-	// So the newSsMap is initialized with the correct options.
-
-	maxStmtCount := uint(3000) // TODO: GetGlobal: MaxStmtCount
+	// This initializes the stmtSummaryByDigestMap with "compiled defaults"
+	// (which are regrettably duplicated from sessionctx/variable/tidb_vars.go).
+	// Unfortunately we need to do this to avoid circular dependencies, but the correct
+	// values will be applied on startup as soon as domain.LoadSysVarCacheLoop() is called,
+	// which in turn calls func domain.checkEnableServerGlobalVar(name, sVal string) for each sysvar.
+	// Currently this is early enough in the startup sequence.
+	maxStmtCount := uint(3000)
 	newSsMap := &stmtSummaryByDigestMap{
 		summaryMap:             kvcache.NewSimpleLRUCache(maxStmtCount, 0, 0),
 		optMaxStmtCount:        maxStmtCount,
