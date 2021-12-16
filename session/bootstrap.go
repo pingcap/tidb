@@ -365,6 +365,24 @@ const (
 		oldReadLease bigint(20) NOT NULL DEFAULT 0,
 		PRIMARY KEY (tid)
 	);`
+	// CreateStatsHistory stores the historical stats.
+	CreateStatsHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
+		table_id bigint(64) NOT NULL,
+		stats_data longblob NOT NULL,
+		seq_no bigint(64) NOT NULL,
+		version bigint(64) NOT NULL,
+		create_time datetime(6) NOT NULL,
+		PRIMARY KEY(table_id)
+	);`
+	// CreateStatsMetaHistory stores the meta historical stats.
+	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL,
+		count bigint(64) NOT NULL,
+		version bigint(64) NOT NULL,
+		create_time datetime(6) NOT NULL,
+		PRIMARY KEY(table_id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -541,6 +559,8 @@ const (
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
 	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
 	version80 = 80
+	// version81 adds the tables mysql.stats_history and mysql.stats_meta_history
+	version81 = 81
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -629,6 +649,7 @@ var (
 		upgradeToVer78,
 		upgradeToVer79,
 		upgradeToVer80,
+		upgradeToVer81,
 	}
 )
 
@@ -1654,6 +1675,13 @@ func upgradeToVer80(s Session, ver int64) {
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
 }
+func upgradeToVer81(s Session, ver int64) {
+	if ver >= version81 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsHistory)
+	doReentrantDDL(s, CreateStatsMetaHistory)
+}
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
@@ -1739,6 +1767,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateColumnStatsUsageTable)
 	// Create table_cache_meta table.
 	mustExecute(s, CreateTableCacheMetaTable)
+	// Create stats_history table.
+	mustExecute(s, CreateStatsHistory)
+	// Create stats_meta_history table.
+	mustExecute(s, CreateStatsMetaHistory)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

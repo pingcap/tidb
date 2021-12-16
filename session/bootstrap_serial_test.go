@@ -827,6 +827,55 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
+func TestUpgradeVersion81(t *testing.T) {
+	ctx := context.Background()
+	store, _ := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	domV81, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV81.Close()
+	seV81 := createSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seV81)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	type fieldAndType = struct {
+		field string
+		tp    string
+	}
+	statsMetaHistoryTblFields := []fieldAndType{
+		{"table_id", "bigint(64)"},
+		{"modify_count", "bigint(64)"},
+		{"count", "bigint(64)"},
+		{"version", "bigint(64)"},
+		{"create_time", "datetime(6)"},
+	}
+	statsHistoryTblFields := []fieldAndType{
+		{"table_id", "bigint(64)"},
+		{"stats_data", "longblob"},
+		{"seq_no", "bigint(64)"},
+		{"version", "bigint(64)"},
+		{"create_time", "datetime(6)"},
+	}
+	rStatsMetaHistoryTbl := mustExec(t, seV81, `desc mysql.stats_meta_history`)
+	rStatsHistoryTbl := mustExec(t, seV81, `desc mysql.stats_history`)
+	req1 := rStatsMetaHistoryTbl.NewChunk(nil)
+	req2 := rStatsHistoryTbl.NewChunk(nil)
+	require.NoError(t, rStatsMetaHistoryTbl.Next(ctx, req1))
+	require.NoError(t, rStatsHistoryTbl.Next(ctx, req2))
+	require.Equal(t, 5, req1.NumRows())
+	require.Equal(t, 5, req2.NumRows())
+	for i := 0; i < 5; i++ {
+		row := req1.GetRow(i)
+		require.Equal(t, statsMetaHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
+		require.Equal(t, statsMetaHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
+		row = req2.GetRow(i)
+		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
+		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
+	}
+}
+
 func TestForIssue23387(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion
