@@ -605,12 +605,15 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		allRules[r.ID] = r
 	}
 
+	start := time.Now()
 	// Cover getDropOrTruncateTableTiflash
 	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
 		// may fail when no `tikv_gc_safe_point` available, should return in order to remove valid pd rules.
 		log.Error("getDropOrTruncateTableTiflash returns error", zap.Error(err))
 		return errors.Trace(err)
 	}
+	elapsed := time.Since(start)
+	log.Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed))
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
