@@ -6888,8 +6888,8 @@ func TestMySQLWorkbenchIntialConnect(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	// This is a dump of the initial chatter that Workbench does when initial connect.
-	// It has been parsed through sort | uniq.
+	// This is a dump of the initial chatter that Workbench does when connecting to a server.
+	// It has been passed through sort | uniq, so the order is non-exact.
 	// This helps ensure that we do not remove noops which have tools depend on.
 	// See: https://github.com/pingcap/tidb/issues/30636
 
