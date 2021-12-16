@@ -114,7 +114,9 @@ type hashjoinWorkerResult struct {
 
 // Close implements the Executor Close interface.
 func (e *HashJoinExec) Close() error {
-	close(e.closeCh)
+	if e.closeCh != nil {
+		close(e.closeCh)
+	}
 	e.finished.Store(true)
 	if e.prepared {
 		if e.buildFinished != nil {
@@ -157,7 +159,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+<<<<<<< HEAD
 
+=======
+>>>>>>> 8cf847a57... executor: add an unit test case for unreasonable invoking Close (#30696)
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
