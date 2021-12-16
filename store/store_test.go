@@ -821,7 +821,7 @@ func TestSetAssertion(t *testing.T) {
 		} else if assertion == kv.SetAssertUnknown {
 			require.True(t, f.HasAssertUnknown())
 		} else if assertion == kv.SetAssertNone {
-			require.False(t, f.HasAssertion())
+			require.False(t, f.HasAssertionFlags())
 		} else {
 			require.FailNow(t, "unreachable")
 		}
