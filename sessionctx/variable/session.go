@@ -180,6 +180,9 @@ type TransactionContext struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+
+	// CachedTables is not nil if the transaction write on cached table.
+	CachedTables map[int64]interface{}
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -1021,7 +1024,7 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	if s.InTxn() {
+	if s.InTxn() || !s.GetStatusFlag(mysql.ServerStatusAutocommit) {
 		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
 		// please see it for more details.
 		return false
