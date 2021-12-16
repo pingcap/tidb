@@ -9,6 +9,7 @@
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
+* [Behavior Changes](#behavior-changes)
 * [Documentation Changes](#documentation-changes)
 * [Test Design](#test-design)
 * [Impacts & Risks](#impacts--risks)
@@ -163,7 +164,7 @@ The default will be that we map variables as read-only, so we don't need to thin
 
 The mapping system should consider all current instance variable mappings such as `log.enable-slow-log` to `tidb_enable_slow_log`. The earlier instance scoped variables proposal has an [example mapping table](https://docs.google.com/document/d/1RuajYAFVsjJCwCBpIYF--9jtgxDZZcz3cbP-iVuLxJI/edit?n=2020-09-15_Design_Doc_for_Instance_Variables#) which can be used as a guideline for how to create new system variable names.
 
-Because variables can be configured through either an "sysvar name" (under `[instance]`) or a heirachical name, we will need to decide which is the alias versus the actual name (the actual name appears in results like `SELECT * FROM INFORMATION_SCHEMA.CLUSTER_CONFIG`). I propose for this stage the original name is still the source of truth, but in refactoring (stage 3) we switch it.
+Because variables can be configured through either an "sysvar name" (under `[instance]`) or a hierarchical name, we will need to decide which is the alias versus the actual name (the actual name appears in results like `SELECT * FROM INFORMATION_SCHEMA.CLUSTER_CONFIG`). I propose for this stage the original name is still the source of truth, but in refactoring (stage 3) we switch it.
 
 ### Stage 3: Refactoring
 
@@ -171,11 +172,54 @@ The use of a `GetGlobal()` and `SetGlobal()` func for each instance scoped syste
 
 Thus, the source of truth for instance scoped variables moves from the `config` package to another part of the server (likely `domain`). See [issue #30366](https://github.com/pingcap/tidb/issues/30366).
 
-Because in this stage the source of truth is now no longer the `config` package, we will also need to decide how to handle features like `INFORMATION_SCHEMA.CLUSTER_CONFIG`. If it refers to the config file, it will not necessarily reflect the current configuration of the cluster. Because every instance setting will now have a system variable name (which becomes the unified name), I recommend that we deprecate `CLUSTER_CONFIG` for TiDB. We can change `CLUSTER_CONFIG` to read from the new source of truth and maintain both for some versions to support upgrades.
+Because at this stage the source of truth is now no longer the `config` package, we will also need to decide how to handle features like `INFORMATION_SCHEMA.CLUSTER_CONFIG`. If it refers to the config file, it will not necessarily reflect the current configuration of the cluster. Because every instance setting will now have a system variable name (which becomes the unified name), I recommend that we deprecate `CLUSTER_CONFIG` for TiDB. We can change `CLUSTER_CONFIG` to read from the new source of truth and maintain both for some versions to support upgrades.
+
+## Behavior Changes
+
+There are **very few** known scenarios where a system variable is *currently both* instance and global scoped, but each of these will require behavior changes. Here is a script to detect them:
+
+```
+package main
+
+import (
+	"fmt"
+
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+)
+
+func main() {
+	for _, v := range variable.GetSysVars() {
+		if v.HasGlobalScope() && v.HasSessionScope() && (v.GetSession != nil || v.SetSession != nil) && (v.GetGlobal != nil || v.SetGlobal != nil) {
+			fmt.Printf("%s\n", v.Name)
+		}
+	}
+}
+```
+
+**Output:**
+
+```
+tidb_store_limit
+tidb_stmt_summary_internal_query
+tidb_enable_stmt_summary
+tidb_stmt_summary_max_sql_length
+tidb_stmt_summary_max_stmt_count
+tidb_capture_plan_baselines
+tidb_stmt_summary_refresh_interval
+tidb_stmt_summary_history_size
+```
+
+Changes can be grouped into the following:
+
+1. `tidb_store_limit`: This has now been converted to global-only, see [issue #30515 (merged)](https://github.com/pingcap/tidb/issues/30515).
+2. `tidb_stmt_summary_XXX`, `tidb_enable_stmt_summary` and `tidb_capture_plan_baselines` (features work together): The recommendation discussed with the feature maintainers is to convert to global only.
+
+The change to `tidb_store_limit` is unlikely to affect users, since the feature was not working correctly. However, the change to statement summary and capture plan baselines is a behavior change which might affect some users.
 
 ## Documentation Changes
 
-For the purposes of user-communication we don't need to use the terminology `INSTANCE`. We will remove more of the confusion by instead refering to the difference between these as whether it "persists to [the] cluster". This also aligns closer to the syntax that users will be using. Consider the following example changes which are easier to read (the current text also doesn't actually explain that to set an `INSTANCE` variable you must use `SET SESSION`, so it actually communicates a lot more in fewer words):
+For the purposes of user-communication we don't need to use the terminology `INSTANCE`. We will remove more of the confusion by instead referring to the difference between these as whether it "persists to [the] cluster". This also aligns closer to the syntax that users will be using. Consider the following example changes which are easier to read (the current text also doesn't actually explain that to set an `INSTANCE` variable you must use `SET SESSION`, so it actually communicates a lot more in fewer words):
 
 ```
 +++ b/system-variables.md
@@ -245,43 +289,4 @@ Many of the alternatives are difficult to implement because they break compatibi
 
 ## Unresolved Questions
 
-There are **very few** known scenarios where a system variable is *currently both* instance and global scoped, but these individually would need to be handled:
-
-```
-package main
-
-import (
-	"fmt"
-
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-)
-
-func main() {
-	for _, v := range variable.GetSysVars() {
-		if v.HasGlobalScope() && v.HasSessionScope() && (v.GetSession != nil || v.SetSession != nil) && (v.GetGlobal != nil || v.SetGlobal != nil) {
-			fmt.Printf("%s\n", v.Name)
-		}
-	}
-}
-```
-
-**Output:**
-
-```
-tidb_store_limit
-tidb_stmt_summary_internal_query
-tidb_enable_stmt_summary
-tidb_stmt_summary_max_sql_length
-tidb_stmt_summary_max_stmt_count
-tidb_capture_plan_baselines
-tidb_stmt_summary_refresh_interval
-tidb_stmt_summary_history_size
-```
-
-The following suggestions are provided (to be discussed):
-
-- `tidb_store_limit`: Suggestion is to convert to global only (Currently does not work correctly, see [issue #30515](https://github.com/pingcap/tidb/issues/30515))
-- `tidb_stmt_summary_XXX`: Suggestion is to convert to global only.
-- `tidb_enable_stmt_summary`: Convert to global scope only (updated 11 Dec 2021)
-- `tidb_capture_plan_baselines`: Convert to global scope only. 
+None
