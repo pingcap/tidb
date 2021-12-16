@@ -115,11 +115,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	valStr, err := e.extractVarValue(v, sysVar)
-	if err != nil {
-		return err
-	}
 	if v.IsGlobal {
+		valStr, err := e.getVarValue(v, sysVar)
+		if err != nil {
+			return err
+		}
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
@@ -140,6 +140,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Set session variable
+	valStr, err := e.getVarValue(v, nil)
+	if err != nil {
+		return err
+	}
 	getSnapshotTSByName := func() uint64 {
 		if name == variable.TiDBSnapshot {
 			return sessionVars.SnapshotTS
@@ -284,11 +288,15 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	return errors.Trace(variable.SetSessionSystemVar(sessionVars, variable.CollationConnection, coDb))
 }
 
-func (e *SetExecutor) extractVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
+func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
 	if v.IsDefault {
-		// Set a variable to the compiled-in MySQL default value
-		// http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
-		return sysVar.Value, nil
+		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
+		// to the compiled-in MySQL default value, use the DEFAULT keyword.
+		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
+		if sysVar != nil {
+			return sysVar.Value, nil
+		}
+		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
