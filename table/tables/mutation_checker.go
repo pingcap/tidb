@@ -16,7 +16,6 @@ package tables
 
 import (
 	"github.com/pingcap/errors"
-	logutil2 "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"go.uber.org/zap"
 )
 
 var (
@@ -148,7 +146,9 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		}
 		// NOTE: handle type can be different, see issue 29520
 		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
-			return ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
+			err = ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
+			logutil.BgLogger().Error(err.Error())
+			return err
 		}
 	}
 
@@ -249,13 +249,9 @@ func checkRowInsertionConsistency(
 			return errors.Trace(err)
 		}
 		if cmp != 0 {
-			logutil.BgLogger().Error(
-				"inconsistent row mutation", zap.String("table", tableName),
-				logutil2.Redact(zap.String("decoded datum", decodedDatum.String())),
-				logutil2.Redact(zap.String("input datum", inputDatum.String())),
-			)
-
-			return ErrInconsistentRowValue.GenWithStackByArgs(tableName, inputDatum.String(), decodedDatum.String())
+			err = ErrInconsistentRowValue.GenWithStackByArgs(tableName, inputDatum.String(), decodedDatum.String())
+			logutil.BgLogger().Error(err.Error())
+			return err
 		}
 	}
 	return nil
@@ -323,17 +319,12 @@ func compareIndexData(
 		}
 
 		if comparison != 0 {
-			logutil.BgLogger().Error(
-				"inconsistent index data", zap.String("table", tableInfo.Name.O),
-				zap.String("index", indexInfo.Name.O),
-				zap.String("column", cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O),
-				logutil2.Redact(zap.String("decoded datum", decodedMutationDatum.String())),
-				logutil2.Redact(zap.String("expected datum", expectedDatum.String())),
-			)
-			return ErrInconsistentIndexedValue.GenWithStackByArgs(
+			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
 				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
+			logutil.BgLogger().Error(err.Error())
+			return err
 		}
 	}
 	return nil
