@@ -21,12 +21,8 @@ import (
 	"math/rand"
 	"net"
 	"os"
-<<<<<<< HEAD
-=======
-	"path/filepath"
 	"reflect"
 	"runtime"
->>>>>>> 8cf847a57... executor: add an unit test case for unreasonable invoking Close (#30696)
 	"strconv"
 	"strings"
 	"sync"
@@ -9072,22 +9068,6 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 		}()
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSerialSuite) TestIssue30289(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	fpName := "github.com/pingcap/tidb/executor/issue30289"
-	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable(fpName), IsNil)
-	}()
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	c.Assert(err.Error(), Matches, "issue30289 build return error")
-}
 
 // Test invoke Close without invoking Open before for each operators.
 func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
@@ -9215,4 +9195,3 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 	}
 	c.Assert(opsAlreadyCoveredMask, Equals, opsNeedsCoveredMask, Commentf("these operators are not covered %s", commentBuf.String()))
 }
->>>>>>> 8cf847a57... executor: add an unit test case for unreasonable invoking Close (#30696)
