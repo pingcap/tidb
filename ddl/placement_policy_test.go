@@ -203,6 +203,27 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	// TODO: privilege check & constraint syntax check.
 }
 
+func (s *testDBSuite6) TestPlacementFollowers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	defer tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop placement policy if exists x")
+
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustGetErrMsg("create placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
+
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("create placement policy x FOLLOWERS=4")
+	tk.MustGetErrMsg("alter placement policy x FOLLOWERS=99", "invalid placement option: followers should be less than or equal to 8: 99")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustGetErrMsg("create table t1 (a int) followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) followers=4;")
+	tk.MustGetErrMsg("alter table t1 followers=99;", "invalid placement option: followers should be less than or equal to 8: 99")
+}
+
 func testGetPolicyByIDFromMeta(c *C, store kv.Storage, policyID int64) *model.PolicyInfo {
 	var (
 		policyInfo *model.PolicyInfo
