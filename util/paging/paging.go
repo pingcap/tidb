@@ -40,6 +40,7 @@ func GrowPagingSize(size uint64) uint64 {
 	return size
 }
 
+// CalculateSeekCnt calculates the seek count from expect count
 func CalculateSeekCnt(expectCnt uint64) float64 {
 	if expectCnt == 0 {
 		return 0
