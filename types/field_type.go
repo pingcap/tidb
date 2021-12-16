@@ -103,6 +103,18 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
+func TryToFixFlenOfDatetime(resultTp *FieldType) bool {
+	if resultTp.Tp == mysql.TypeDatetime {
+		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if resultTp.Decimal > 0 {
+			resultTp.Flen += resultTp.Decimal + 1
+		}
+		return true
+	} else {
+		return false
+	}
+}
+
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
 func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	var (

@@ -9528,22 +9528,41 @@ func (s *testSerialSuite) TestIssue29498(c *C) {
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
 	tk.MustExec("CREATE TABLE t1 (t3 TIME(3), d DATE, t TIME);")
 	tk.MustExec("INSERT INTO t1 VALUES ('00:00:00.567', '2002-01-01', '00:00:02');")
+
 	res := tk.MustQuery("SELECT CONCAT(IFNULL(t3, d)) AS col1 FROM t1;")
 	row := res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
 	res = tk.MustQuery("SELECT IFNULL(t3, d) AS col1 FROM t1;")
 	row = res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
 	res = tk.MustQuery("SELECT CONCAT(IFNULL(t, d)) AS col1 FROM t1;")
 	row = res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
 	c.Assert(row[len(row)-8:], Equals, "00:00:02")
+
 	res = tk.MustQuery("SELECT IFNULL(t, d) AS col1 FROM t1;")
 	row = res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
 	c.Assert(row[len(row)-8:], Equals, "00:00:02")
+
+	res = tk.MustQuery("SELECT CONCAT(xx) FROM (SELECT t3 AS xx FROM t1 UNION SELECT d FROM t1) x;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
+	res = tk.MustQuery("SELECT CONCAT(xx) FROM (SELECT t3 AS xx FROM t1 UNION SELECT d FROM t1) x;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+
+	res = tk.MustQuery("SELECT CONCAT(CASE WHEN d IS NOT NULL THEN t3 ELSE d END) AS col1 FROM t1;")
+	row = res.Rows()[0][0].(string)
+	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
+	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
 }
 
 // Test invoke Close without invoking Open before for each operators.

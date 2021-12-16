@@ -156,10 +156,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	} else if resultFieldType.Tp == mysql.TypeDatetime {
-		maxDecimal := mathutil.Max(lhs.Decimal, rhs.Decimal)
-		if maxDecimal > 0 {
-			resultFieldType.Flen = mysql.MaxDatetimeWidthNoFsp + maxDecimal + 1
-		}
+		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
 	return resultFieldType, nil
 }
@@ -209,6 +206,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
+	types.TryToFixFlenOfDatetime(fieldTp)
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
 		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
