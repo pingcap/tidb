@@ -25,6 +25,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
@@ -305,6 +306,14 @@ func (s *LocalDupKVStream) Close() error {
 	return s.iter.Close()
 }
 
+type regionError struct {
+	inner *errorpb.Error
+}
+
+func (r regionError) Error() string {
+	return r.inner.String()
+}
+
 // RemoteDupKVStream implements the interface of DupKVStream.
 // It collects duplicate key-value pairs from a TiKV region.
 type RemoteDupKVStream struct {
@@ -354,7 +363,13 @@ func NewRemoteDupKVStream(
 		cancel()
 		return nil, errors.Trace(err)
 	}
-	return &RemoteDupKVStream{cli: cli, cancel: cancel}, nil
+	s := &RemoteDupKVStream{cli: cli, cancel: cancel}
+	// call tryRecv to see if there are some region errors.
+	if err := s.tryRecv(); errors.Cause(err) != io.EOF {
+		cancel()
+		return nil, err
+	}
+	return s, nil
 }
 
 func (s *RemoteDupKVStream) tryRecv() error {
@@ -367,7 +382,7 @@ func (s *RemoteDupKVStream) tryRecv() error {
 		return err
 	}
 	if resp.RegionError != nil {
-		return errors.Errorf("meet region error in duplicate detect response: %s", resp.RegionError.String())
+		return errors.Cause(regionError{inner: resp.RegionError})
 	}
 	if resp.KeyError != nil {
 		return errors.Errorf("meet key error in duplicate detect response: %s", resp.KeyError.Message)
@@ -761,7 +776,11 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 				return nil
 			}()
 			if err != nil {
-				logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
+				if regionErr, ok := errors.Cause(err).(regionError); ok {
+					logger.Debug("[detect-dupe] collect duplicate rows from region failed due to region error", zap.Error(regionErr))
+				} else {
+					logger.Warn("[detect-dupe] collect duplicate rows from region failed", log.ShortError(err))
+				}
 				metErr.Set(err)
 			} else {
 				logger.Debug("[detect-dupe] collect duplicate rows from region completed")

@@ -65,6 +65,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -1425,6 +1426,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
+	errLimiter := rate.NewLimiter(1, 1)
 	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 	err = local.errorMgr.ResolveAllConflictKeys(
 		ctx, tableName, pool,
@@ -1434,12 +1436,15 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 				if err == nil {
 					return nil
 				}
-				// Retry for write conflict error. It is strange that
-				// conflict error occurred in pessimistic transaction.
-				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
-					return errors.Trace(err)
+				if log.IsContextCanceledError(err) {
+					return err
 				}
-				logger.Warn("write conflict encountered", log.ShortError(err))
+				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+				}
+				if err = errLimiter.Wait(ctx); err != nil {
+					return err
+				}
 			}
 		},
 	)
@@ -1452,7 +1457,6 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 	if err != nil {
 		return err
 	}
-	txn.SetPessimistic(true)
 	defer func() {
 		if err == nil {
 			err = txn.Commit(ctx)
