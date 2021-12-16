@@ -148,9 +148,9 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			if err != nil {
 				return nil, err
 			}
-			secondKeyRanges, err1 := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
-			if err1 != nil {
-				return nil, err1
+			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
+			if err != nil {
+				return nil, err
 			}
 			keyRanges := append(firstKeyRanges, secondKeyRanges...)
 			ranges = append(ranges, keyRanges)
