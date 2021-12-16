@@ -452,11 +452,12 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 			case mysql.TypeShort:
 				a.Args[i].GetType().Flen = 5
 			case mysql.TypeInt24:
-				a.Args[i].GetType().Flen = 7
+				a.Args[i].GetType().Flen = 8
 			case mysql.TypeLong:
 				a.Args[i].GetType().Flen = 10
 			case mysql.TypeLonglong:
-				a.Args[i].GetType().Flen = 19
+				a.Args[i].GetType().Flen = 20
+				a.Args[i].GetType().Flen = 20
 			}
 		}
 	}
