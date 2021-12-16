@@ -108,6 +108,11 @@ type Handle struct {
 		sync.Mutex
 		data *statistics.QueryFeedbackMap
 	}
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		sync.Mutex
+		data colStatsUsageMap
+	}
 
 	lease atomic2.Duration
 
@@ -185,6 +190,9 @@ func (h *Handle) Clear() {
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
+	h.colMap.Lock()
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -209,6 +217,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
+	handle.colMap.data = make(colStatsUsageMap)
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -1790,24 +1799,24 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-type colStatsUsage struct {
+type colStatsTimeInfo struct {
 	LastUsedAt     *types.Time
 	LastAnalyzedAt *types.Time
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
+func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsTimeInfo, error) {
 	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
+	colStatsMap := make(map[model.TableColumnID]colStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
 		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
-		var statsUsage colStatsUsage
+		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
 			t := row.GetTime(2)
 			statsUsage.LastUsedAt = &t
@@ -1842,6 +1851,21 @@ func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
 			continue
 		}
 		columnIDs = append(columnIDs, twoIDs...)
+	}
+	return columnIDs, nil
+}
+
+// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT column_id FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	columnIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if !row.IsNull(0) {
+			columnIDs = append(columnIDs, row.GetInt64(0))
+		}
 	}
 	return columnIDs, nil
 }

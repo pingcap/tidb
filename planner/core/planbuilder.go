@@ -1818,16 +1818,33 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 3. Otherwise it returns all the columns.
 func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	if len(as.ColumnNames) == 0 {
+	if as.ColumnChoice == model.AllColumns || as.ColumnChoice == model.DefaultChoice {
+		// TODO: use analyze column config for DefaultChoice
 		return tblInfo.Columns, nil
 	}
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	for _, colName := range as.ColumnNames {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
+	if as.ColumnChoice == model.ColumnList {
+		for _, colName := range as.ColumnNames {
+			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+			if colInfo == nil {
+				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
+			}
+			columnIDs[colInfo.ID] = struct{}{}
 		}
-		columnIDs[colInfo.ID] = struct{}{}
+	} else if as.ColumnChoice == model.PredicateColumns {
+		do := domain.GetDomain(b.ctx)
+		h := do.StatsHandle()
+		cols, err := h.GetPredicateColumns(tblInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(cols) == 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("There is no predicate column so all the columns would be analyzed"))
+			return tblInfo.Columns, nil
+		}
+		for _, id := range cols {
+			columnIDs[id] = struct{}{}
+		}
 	}
 	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
 	if len(tblInfo.Indices) > 0 {

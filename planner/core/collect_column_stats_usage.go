@@ -15,6 +15,8 @@
 package core
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
 )
@@ -301,4 +303,15 @@ func CollectColumnStatsUsageForTest(lp LogicalPlan, onlyHistNeeded bool) []model
 		tblColIDs = append(tblColIDs, tblColID)
 	}
 	return tblColIDs
+}
+
+func collectPredicateColumnsFromPlan(lp LogicalPlan) {
+	collector := newColumnStatsUsageCollector(collectPredicateColumns)
+	collector.collectFromPlan(lp)
+	colStatsUsage := make(map[model.TableColumnID]time.Time, len(collector.predicateCols))
+	t := time.Now()
+	for tblColID := range collector.predicateCols {
+		colStatsUsage[tblColID] = t
+	}
+	lp.SCtx().UpdateColStatsUsage(colStatsUsage)
 }
