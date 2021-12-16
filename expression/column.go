@@ -686,6 +686,7 @@ func SortColumns(cols []*Column) []*Column {
 	return sorted
 }
 
+// InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
 	for _, c := range cols {
 		if col.Equal(nil, c) {
@@ -695,6 +696,7 @@ func (col *Column) InColumnArray(cols []*Column) bool {
 	return false
 }
 
+// GcColumnExprIsTidbShard check whether the expression is tidb_shard()
 func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	if virtualExpr == nil {
 		return false
@@ -712,6 +714,7 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	return true
 }
 
+// IndexColToExpressionCol return the expression.Column by model.IndexColumn
 func IndexColToExpressionCol(colInfos []*model.ColumnInfo, cols []*Column,
 	col *model.IndexColumn) *Column {
 	return indexCol2Col(colInfos, cols, col)

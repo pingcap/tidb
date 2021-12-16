@@ -58,6 +58,7 @@ var (
 	_ functionClass = &uuidToBinFunctionClass{}
 	_ functionClass = &binToUUIDFunctionClass{}
 	_ functionClass = &isUUIDFunctionClass{}
+	_ functionClass = &tidbShardFunctionClass{}
 )
 
 var (
@@ -92,6 +93,7 @@ var (
 	_ builtinFunc = &builtinNameConstDurationSig{}
 	_ builtinFunc = &builtinNameConstStringSig{}
 	_ builtinFunc = &builtinNameConstJSONSig{}
+	_ builtinFunc = &builtinTidbShardSig{}
 )
 
 type sleepFunctionClass struct {

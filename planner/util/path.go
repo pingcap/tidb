@@ -275,6 +275,7 @@ func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
 	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
 }
 
+// IsUkShardIndex if unique index and the first field is tidb_shard() return true
 func (path *AccessPath) IsUkShardIndex() bool {
 	if path.Index.Unique && path.IsShardIndexPath {
 		return true

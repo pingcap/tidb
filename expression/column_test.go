@@ -263,8 +263,8 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 
 	// normal case
 	// tidb_shard(a) = 1
-	shard_expr := NewFunctionInternal(ctx, ast.TidbShard, ft, col)
-	require.True(t, GcColumnExprIsTidbShard(shard_expr))
+	shardExpr := NewFunctionInternal(ctx, ast.TidbShard, ft, col)
+	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }
 
 func TestIndexColToExpressionCol(t *testing.T) {
