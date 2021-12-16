@@ -592,7 +592,6 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 
 		if e.IgnoreLines > 0 {
 			e.IgnoreLines--
-			e.ctx.GetSessionVars().StmtCtx.AddSkippedRows(1)
 			continue
 		}
 		cols, err := e.getFieldsFromLine(line)
@@ -642,7 +641,7 @@ func (e *LoadDataInfo) SetMessage() {
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
 	numDeletes := 0
-	numSkipped := numRecords - stmtCtx.CopiedRows() + stmtCtx.SkippedRows()
+	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)

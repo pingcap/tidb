@@ -2080,9 +2080,9 @@ func TestLoadData(t *testing.T) {
 	ld.LinesInfo.Starting = ""
 	ld.IgnoreLines = 3
 	tests = []testCase{
-		{[]byte("1xx"), []byte("x2xxx3xxx"), []string{}, nil, "Records: 0  Deleted: 0  Skipped: 3  Warnings: 0"},
-		{nil, []byte("1xxx2xxx3xxx4xxx"), []string{"4|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 3  Warnings: 0"},
-		{[]byte("1,2,3,4xx"), []byte("x5xxx6xxx7xxx"), []string{"7|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 3  Warnings: 0"},
+		{[]byte("1xx"), []byte("x2xxx3xxx"), []string{}, nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{nil, []byte("1xxx2xxx3xxx4xxx"), []string{"4|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("1,2,3,4xx"), []byte("x5xxx6xxx7xxx"), []string{"7|<nil>|<nil>|<nil>"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
