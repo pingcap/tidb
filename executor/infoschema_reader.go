@@ -575,9 +575,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				}
 				if table.IsSequence() {
 					tableType = "SEQUENCE"
-					if rowCount == 0 {
-						rowCount = 1
-					}
+					// sequence is always 1 row regardless of stats.
+					rowCount = 1
 				}
 				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
