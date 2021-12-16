@@ -17,14 +17,14 @@ type FilterCore struct {
 	filters []string
 }
 
-// NewFilterCore returns a FilterCore.
+// NewFilterCore returns a FilterCore, only logs under allowPackages will be written.
 //
-// Example, filter TiDB's log, `NewFilterCore(core, "github.com/pingcap/tidb/")`.
+// Example, only write br's log and ignore any other, `NewFilterCore(core, "github.com/pingcap/tidb/br/")`.
 // Note, must set AddCaller() to the logger.
-func NewFilterCore(core zapcore.Core, filteredPackages ...string) *FilterCore {
+func NewFilterCore(core zapcore.Core, allowPackages ...string) *FilterCore {
 	return &FilterCore{
 		Core:    core,
-		filters: filteredPackages,
+		filters: allowPackages,
 	}
 }
 
