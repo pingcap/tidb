@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/stretchr/testify/require"
 )
 
 func TestT(t *testing.T) {
