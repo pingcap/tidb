@@ -50,12 +50,11 @@ type TopSQLReporter interface {
 	tracecpu.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
-	DataSinkRegHandle() DataSinkRegHandle
 	Close()
 }
 
-// DataSinkRegHandle registers DataSink
-type DataSinkRegHandle interface {
+// DataSinkRegisterer is for registering DataSink
+type DataSinkRegisterer interface {
 	Register(dataSink DataSink)
 }
 
@@ -240,21 +239,16 @@ type RemoteDataSinkRegHandle struct {
 	reporterDoneCh <-chan struct{}
 }
 
-var _ DataSinkRegHandle = &RemoteDataSinkRegHandle{}
-
-// DataSinkRegHandle implements TopSQLReporter interface.
-func (tsr *RemoteTopSQLReporter) DataSinkRegHandle() DataSinkRegHandle {
-	return &RemoteDataSinkRegHandle{reporterDoneCh: tsr.ctx.Done(), registerCh: tsr.dataSinkRegCh}
-}
+var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 
 // Register implements DataSinkRegHandle interface.
 //
 // A call for RemoteDataSinkRegHandle.Register will block until the registration is successful
 // or the RemoteTopSQLReporter is closed.
-func (r RemoteDataSinkRegHandle) Register(dataSink DataSink) {
+func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) {
 	select {
-	case r.registerCh <- dataSink:
-	case <-r.reporterDoneCh:
+	case tsr.dataSinkRegCh <- dataSink:
+	case <-tsr.ctx.Done():
 		logutil.BgLogger().Warn("[top-sql] failed to register datasink due to the reporter is down")
 		dataSink.Close()
 	}
@@ -280,10 +274,6 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	for _, dataSink := range tsr.dataSinks {
-		dataSink.Close()
-	}
-	tsr.dataSinks = nil
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -509,7 +499,13 @@ func (d *ReportData) hasData() bool {
 
 // reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
-	defer util.Recover("top-sql", "reportWorker", nil, false)
+	defer func() {
+		for _, sink := range tsr.dataSinks {
+			sink.Close()
+		}
+		tsr.dataSinks = nil
+		util.Recover("top-sql", "reportWorker", nil, false)
+	}()
 
 	for {
 		tsr.removeDownDataSinks()

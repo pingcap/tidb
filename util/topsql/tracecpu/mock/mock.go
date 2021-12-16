@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -167,20 +166,6 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 			time.Sleep(time.Millisecond * 10)
 		}
 	}
-}
-
-type noopRegHandle struct{}
-
-// Register implements reporter.DataSinkRegHandle
-func (noopRegHandle) Register(dataSink reporter.DataSink) {
-	dataSink.Close()
-}
-
-var _ reporter.DataSinkRegHandle = &noopRegHandle{}
-
-// DataSinkRegHandle implements the interface.
-func (c *TopSQLCollector) DataSinkRegHandle() reporter.DataSinkRegHandle {
-	return &noopRegHandle{}
 }
 
 // Close implements the interface.
