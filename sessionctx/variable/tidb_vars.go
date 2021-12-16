@@ -636,7 +636,6 @@ const (
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = true
-	DefTiDBEnforceMPPExecution         = false
 	DefTiDBMPPStoreFailTTL             = "60s"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
