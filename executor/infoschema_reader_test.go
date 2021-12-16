@@ -17,7 +17,6 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/path/pkg/mod/github.com/go-kit/kit@v0.9.0/transport/grpc"
 	"net"
 	"net/http/httptest"
 	"strconv"
