@@ -5883,3 +5883,35 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 			"  `cs1` int(11) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+
+func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ct1, ct2")
+	tk.MustExec("create table ct1 (id int, c int)")
+	tk.MustExec("create table ct2 (id int, c int)")
+	tk.MustExec("alter table ct1 cache")
+	tk.MustExec("alter table ct2 cache")
+	tk.MustQuery("select * from ct1").Check(testkit.Rows())
+	tk.MustQuery("select * from ct2").Check(testkit.Rows())
+
+	cached := false
+	for i := 0; i < 50; i++ {
+		if tk.HasPlan("select * from ct1", "Union") {
+			if tk.HasPlan("select * from ct2", "Union") {
+				cached = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(cached, IsTrue)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into ct1 values (3, 4)")
+	tk.MustExec("insert into ct2 values (5, 6)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
+	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+}
