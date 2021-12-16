@@ -71,7 +71,15 @@ func (t backoffType) metric() prometheus.Observer {
 	case boTiKVServerBusy, boTiFlashServerBusy:
 		return tikvBackoffHistogramServerBusy
 	case boStaleCmd:
+<<<<<<< HEAD
 		return tikvBackoffHistogramStaleCmd
+=======
+		return metrics.BackoffHistogramStaleCmd
+	case boTxnNotFound:
+		return metrics.BackoffHistogramTxnNotFound
+	case boMaxTsNotSynced:
+		return metrics.BackoffHistogramMaxTsNotSynced
+>>>>>>> 257ffa171... tikv: fix wrong backoff metric label (#27978)
 	}
 	return tikvBackoffHistogramEmpty
 }
