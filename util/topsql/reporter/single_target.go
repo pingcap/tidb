@@ -56,6 +56,17 @@ func NewSingleTargetDataSink() *SingleTargetDataSink {
 
 // recoverRun will run until SingleTargetDataSink is closed.
 func (ds *SingleTargetDataSink) recoverRun() {
+	defer func() {
+		if ds.conn == nil {
+			return
+		}
+		err := ds.conn.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
+		}
+		ds.conn = nil
+	}()
+
 	for ds.run() {
 	}
 }
@@ -132,14 +143,6 @@ func (ds *SingleTargetDataSink) IsDown() bool {
 // Close uses to close grpc connection.
 func (ds *SingleTargetDataSink) Close() {
 	ds.cancel()
-	if ds.conn == nil {
-		return
-	}
-	err := ds.conn.Close()
-	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
-	}
-	ds.conn = nil
 }
 
 func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data *ReportData) error {
