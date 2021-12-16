@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -62,6 +63,12 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 		}
 	}
 	m[id] = item
+}
+
+func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
+	for id, item := range deltaMap {
+		m.update(id, item.Delta, item.Count, &item.ColSize)
+	}
 }
 
 type errorRateDelta struct {
@@ -125,14 +132,12 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
-	for id, item := range s.mapper {
-		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
-	}
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap) {
+	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
-	h.feedback.Merge(s.feedback)
+	feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
 }
 
@@ -375,13 +380,15 @@ const (
 // sweepList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
+	deltaMap := make(tableDeltaMap)
+	errorRateMap := make(errorRateDeltaMap)
+	feedback := statistics.NewQueryFeedbackMap()
 	prev := h.listHead
 	prev.Lock()
-	errorRateMap := make(errorRateDeltaMap)
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
-		// Merge the session stats into handle and error rate map.
-		h.merge(curr, errorRateMap)
+		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
+		merge(curr, deltaMap, errorRateMap, feedback)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -393,37 +400,34 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
+	h.globalMap.Lock()
+	h.globalMap.data.merge(deltaMap)
+	h.globalMap.Unlock()
 	h.mu.Lock()
 	h.mu.rateMap.merge(errorRateMap)
 	h.mu.Unlock()
-	h.siftFeedbacks()
-}
-
-// siftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
-// feedback accuracy and its overhead.
-func (h *Handle) siftFeedbacks() {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	for k, qs := range h.feedback.Feedbacks {
-		fbs := make([]statistics.Feedback, 0, len(qs)*2)
-		for _, q := range qs {
-			fbs = append(fbs, q.Feedback...)
-		}
-		if len(fbs) == 0 {
-			delete(h.feedback.Feedbacks, k)
-			continue
-		}
-		h.feedback.Feedbacks[k] = h.feedback.Feedbacks[k][:1]
-		h.feedback.Feedbacks[k][0].Feedback, _ = statistics.NonOverlappedFeedbacks(sc, fbs)
-	}
-	h.feedback.Size = len(h.feedback.Feedbacks)
+	h.feedback.Lock()
+	h.feedback.data.Merge(feedback)
+	h.feedback.data.SiftFeedbacks()
+	h.feedback.Unlock()
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
+	h.globalMap.Lock()
+	deltaMap := h.globalMap.data
+	h.globalMap.data = make(tableDeltaMap)
+	h.globalMap.Unlock()
+	defer func() {
+		h.globalMap.Lock()
+		deltaMap.merge(h.globalMap.data)
+		h.globalMap.data = deltaMap
+		h.globalMap.Unlock()
+	}()
 	currentTime := time.Now()
-	for id, item := range h.globalMap {
+	for id, item := range deltaMap {
 		if mode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
 		}
@@ -432,17 +436,17 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			return errors.Trace(err)
 		}
 		if updated {
-			h.globalMap.update(id, -item.Delta, -item.Count, nil)
+			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			return errors.Trace(err)
 		}
 		if updated {
-			delete(h.globalMap, id)
+			delete(deltaMap, id)
 		} else {
-			m := h.globalMap[id]
+			m := deltaMap[id]
 			m.ColSize = nil
-			h.globalMap[id] = m
+			deltaMap[id] = m
 		}
 	}
 	return nil
@@ -522,8 +526,12 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
 func (h *Handle) DumpStatsFeedbackToKV() error {
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 	var err error
-	for _, fbs := range h.feedback.Feedbacks {
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
@@ -548,7 +556,6 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			}
 		}
 	}
-	h.feedback = statistics.NewQueryFeedbackMap()
 	return errors.Trace(err)
 }
 
@@ -581,8 +588,12 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
+	h.feedback.Lock()
+	feedback := h.feedback.data
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 OUTER:
-	for _, fbs := range h.feedback.Feedbacks {
+	for _, fbs := range feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
 			table, ok := h.getTableByPhysicalID(is, fb.PhysicalID)
@@ -1256,7 +1267,18 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		return nil
 	}
 
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	timeZone := sctx.GetSessionVars().StmtCtx.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sctx.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)
@@ -1264,10 +1286,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err
@@ -1344,7 +1366,20 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	if !ok {
 		return nil
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+	timeZone := sc.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sc.TimeZone = time.UTC
+
 	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
@@ -1359,7 +1394,6 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
 			continue
 		}
-
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
@@ -1375,12 +1409,12 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
 		// prefer index stats over column stats
 		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sctx, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
 			err = convertRangeType(rang, col.Tp, time.UTC)
 			if err == nil {
-				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeCount, err = t.GetRowCountByColumnRanges(sctx, col.ID, []*ranger.Range{rang})
 				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
 			}
 		} else {
