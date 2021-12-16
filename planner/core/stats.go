@@ -16,6 +16,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"sort"
 
@@ -329,10 +330,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 	if len(ds.indexMergeHints) > 0 {
-		if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] use hint, from connection %d, for %s", ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
-		} else {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] use hint"))
+		if variable.EnableDebugLog.Load() {
+			if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] use hint, from connection %d, for %s", ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
+			} else {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] use hint"))
+			}
 		}
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
@@ -343,12 +346,14 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
-		if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v, from connection %d, for %s",
-				isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn, ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
-		} else {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v",
-				isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn))
+		if variable.EnableDebugLog.Load() {
+			if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v, from connection %d, for %s",
+					isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn, ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
+			} else {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] is inapplicable or disabled, isPossibleIdxMerge: %v, sessionAndStmtPermission %v, needConsiderIndexMerge %v, isReadOnlyTxn %v",
+					isPossibleIdxMerge, sessionAndStmtPermission, needConsiderIndexMerge, isReadOnlyTxn))
+			}
 		}
 	}
 	return ds.stats, nil
@@ -368,10 +373,12 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
-		if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] ignore hint, from connection %d, for %s", ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
-		} else {
-			logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] ignore hint"))
+		if variable.EnableDebugLog.Load() {
+			if ds.ctx.GetSessionVars() != nil && ds.tableInfo != nil {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] ignore hint, from connection %d, for %s", ds.ctx.GetSessionVars().ConnectionID, ds.tableInfo.Name.String()))
+			} else {
+				logutil.BgLogger().Info(fmt.Sprintf("[IndexMerge] ignore hint"))
+			}
 		}
 		return nil
 	}
