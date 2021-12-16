@@ -980,6 +980,11 @@ func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
 }
 
+// IsTableKey is used to check whether the key is a table key.
+func IsTableKey(k []byte) bool {
+	return len(k) == 9 && k[0] == 't'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
@@ -1154,7 +1159,8 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	tailLen := 0
 	// Version info.
 	idxVal = append(idxVal, IndexVersionFlag)
@@ -1211,7 +1217,8 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 
 // genIndexValueVersion0 create index value for both local and global index.
 func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	newEncode := false
 	tailLen := 0
 	if !h.IsInt() && distinct {

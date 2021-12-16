@@ -16,6 +16,7 @@ package variable
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -237,7 +239,7 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 }
 
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
-	value = onOffToTrueFalse(value)
+	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
 }
 
@@ -252,9 +254,10 @@ func trueFalseToOnOff(str string) string {
 	return str
 }
 
+// OnOffToTrueFalse convert "ON"/"OFF" to "true"/"false".
 // In mysql.tidb the convention has been to store the string value "true"/"false",
 // but sysvars use the convention ON/OFF.
-func onOffToTrueFalse(str string) string {
+func OnOffToTrueFalse(str string) string {
 	if strings.EqualFold("ON", str) {
 		return "true"
 	} else if strings.EqualFold("OFF", str) {
@@ -480,4 +483,22 @@ func (v *serverGlobalVariable) GetVal() string {
 		return v.serverVal
 	}
 	return v.globalVal
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	var str []string
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }

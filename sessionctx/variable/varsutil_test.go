@@ -98,7 +98,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, int64(DefTiDBShardAllocateStep), vars.ShardAllocateStep)
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
-	require.Equal(t, int64(DefTMPTableSize), vars.TMPTableSize)
+	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -467,7 +467,8 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'", err)
+	require.Error(t, err)
+	require.Regexp(t, "Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'$", err)
 
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "10")
 	require.NoError(t, err)
@@ -475,16 +476,20 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'$", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_cache' is a read only variable", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_cache' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_binding' is a read only variable", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_binding' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
-	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Unknown system variable 'UnknownVariable'$", err.Error())
 
 	// reset warnings
 	v.StmtCtx.TruncateWarnings(0)
@@ -493,7 +498,8 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
-	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
+	require.Error(t, warn.Err)
+	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
 }
 
 func TestValidate(t *testing.T) {
@@ -587,7 +593,6 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -616,7 +621,6 @@ func TestValidate(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -675,7 +679,6 @@ func TestValidateStmtSummary(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)

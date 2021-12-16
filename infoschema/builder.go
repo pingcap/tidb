@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Builder builds a new InfoSchema.
@@ -41,6 +43,9 @@ type Builder struct {
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
 	store kv.Storage
+	// TODO: renewLeaseCh is only used to pass data between table and domain
+	renewLeaseCh chan func()
+	factory      func() (pools.Resource, error)
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -154,10 +159,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			switch diff.Type {
-			case model.ActionAlterTableAlterPartition:
-				partitionID := opt.TableID
-				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
 				// Reduce the impact on DML when executing partition DDL. eg.
 				// While session 1 performs the DML operation associated with partition 1,
@@ -200,12 +201,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, errors.Trace(err)
 			}
 			tblIDs = append(tblIDs, affectedIDs...)
-		}
-	} else {
-		switch diff.Type {
-		case model.ActionAlterTableAlterPartition:
-			// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
-			return []int64{}, nil
 		}
 	}
 	return tblIDs, nil
@@ -448,7 +443,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo)
+	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -611,7 +606,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -630,6 +625,26 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 		sort.Sort(v)
 	}
 	return b, nil
+}
+
+func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	ret, err := tables.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if t, ok := ret.(table.CachedTable); ok {
+		var tmp pools.Resource
+		tmp, err = b.factory()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		err = t.Init(b.renewLeaseCh, tmp.(sqlexec.SQLExecutor))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ret, nil
 }
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
@@ -668,7 +683,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage) *Builder {
+func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -677,6 +692,8 @@ func NewBuilder(store kv.Storage) *Builder {
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
+		renewLeaseCh: renewCh,
+		factory:      factory,
 	}
 }
 

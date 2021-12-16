@@ -31,6 +31,7 @@ import (
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -107,6 +109,87 @@ func (s *Server) listenStatusHTTPServer() error {
 	return nil
 }
 
+// Ballast try to reduce the GC frequency by using Ballast Object
+type Ballast struct {
+	ballast     []byte
+	ballastLock sync.Mutex
+
+	maxSize int
+}
+
+func newBallast(maxSize int) *Ballast {
+	var b Ballast
+	b.maxSize = 1024 * 1024 * 1024 * 2
+	if maxSize > 0 {
+		b.maxSize = maxSize
+	} else {
+		// we try to use the total amount of ram as a reference to set the default ballastMaxSz
+		// since the fatal throw "runtime: out of memory" would never yield to `recover`
+		totalRAMSz, err := memory.MemTotal()
+		if err != nil {
+			logutil.BgLogger().Error("failed to get the total amount of RAM on this system", zap.Error(err))
+		} else {
+			maxSzAdvice := totalRAMSz >> 2
+			if uint64(b.maxSize) > maxSzAdvice {
+				b.maxSize = int(maxSzAdvice)
+			}
+		}
+	}
+	return &b
+}
+
+// GetSize get the size of ballast object
+func (b *Ballast) GetSize() int {
+	var sz int
+	b.ballastLock.Lock()
+	sz = len(b.ballast)
+	b.ballastLock.Unlock()
+	return sz
+}
+
+// SetSize set the size of ballast object
+func (b *Ballast) SetSize(newSz int) error {
+	if newSz < 0 {
+		return fmt.Errorf("newSz cannot be negative: %d", newSz)
+	}
+	if newSz > b.maxSize {
+		return fmt.Errorf("newSz cannot be bigger than %d but it has value %d", b.maxSize, newSz)
+	}
+	b.ballastLock.Lock()
+	b.ballast = make([]byte, newSz)
+	b.ballastLock.Unlock()
+	return nil
+}
+
+// GenHTTPHandler generate a HTTP handler to get/set the size of this ballast object
+func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(b.GetSize())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+			newSz, err := strconv.Atoi(string(body))
+			if err == nil {
+				err = b.SetSize(newSz)
+			}
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				errStr := err.Error()
+				if _, err := w.Write([]byte(errStr)); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+		}
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -117,6 +200,10 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).Name("StatsHistoryDump")
+
+	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
+
+	router.Handle("/optimize_trace/dump/{filename}", s.newOptimizeTraceHandler()).Name("OptimizeTraceDump")
 
 	tikvHandlerTool := s.newTikvHandlerTool()
 	router.Handle("/settings", settingsHandler{tikvHandlerTool}).Name("Settings")
@@ -194,6 +281,16 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	ballast := newBallast(s.cfg.MaxBallastObjectSize)
+	{
+		err := ballast.SetSize(s.cfg.BallastObjectSize)
+		if err != nil {
+			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
+		}
+	}
+	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

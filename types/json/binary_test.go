@@ -24,8 +24,6 @@ import (
 )
 
 func TestBinaryJSONMarshalUnmarshal(t *testing.T) {
-	t.Parallel()
-
 	expectedList := []string{
 		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
 		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
@@ -40,10 +38,12 @@ func TestBinaryJSONMarshalUnmarshal(t *testing.T) {
 }
 
 func TestBinaryJSONExtract(t *testing.T) {
-	t.Parallel()
-
 	bj1 := mustParseBinaryFromString(t, `{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	bj2 := mustParseBinaryFromString(t, `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
+	bj3 := mustParseBinaryFromString(t, `{"properties": {"$type": "TiDB"}}`)
+	bj4 := mustParseBinaryFromString(t, `{"properties": {"$type$type": {"$a$a" : "TiDB"}}}`)
+	bj5 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a" : {"$b" : "TiDB"}}}}`)
+	bj6 := mustParseBinaryFromString(t, `{"properties": {"$type": {"$a$a" : "TiDB"}},"hello": {"$b$b": "world","$c": "amazing"}}`)
 
 	var tests = []struct {
 		bj              BinaryJSON
@@ -63,10 +63,17 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj1, []string{`$.a[*]."aa"`}, mustParseBinaryFromString(t, `["bb", "cc"]`), true, nil},
 		{bj1, []string{`$."\"hello\""`}, mustParseBinaryFromString(t, `"world"`), true, nil},
 		{bj1, []string{`$**[1]`}, mustParseBinaryFromString(t, `"2"`), true, nil},
+		{bj3, []string{`$.properties.$type`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj4, []string{`$.properties.$type$type`}, mustParseBinaryFromString(t, `{"$a$a" : "TiDB"}`), true, nil},
+		{bj4, []string{`$.properties.$type$type.$a$a`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.$b`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.*[0]`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
 
 		// test extract with multi path expressions.
 		{bj1, []string{"$.a", "$[5]"}, mustParseBinaryFromString(t, `[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
 		{bj2, []string{"$.a", "$[0]"}, mustParseBinaryFromString(t, `[{"a": 1, "b": true}]`), true, nil},
+		{bj6, []string{"$.properties", "$[1]"}, mustParseBinaryFromString(t, `[{"$type": {"$a$a" : "TiDB"}}]`), true, nil},
+		{bj6, []string{"$.hello", "$[2]"}, mustParseBinaryFromString(t, `[{"$b$b": "world","$c": "amazing"}]`), true, nil},
 	}
 
 	for _, test := range tests {
@@ -86,8 +93,6 @@ func TestBinaryJSONExtract(t *testing.T) {
 }
 
 func TestBinaryJSONType(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		in  string
 		out string
@@ -111,8 +116,6 @@ func TestBinaryJSONType(t *testing.T) {
 }
 
 func TestBinaryJSONUnquote(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		json     string
 		unquoted string
@@ -139,8 +142,6 @@ func TestBinaryJSONUnquote(t *testing.T) {
 }
 
 func TestQuoteString(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		raw    string
 		quoted string
@@ -163,8 +164,6 @@ func TestQuoteString(t *testing.T) {
 }
 
 func TestBinaryJSONModify(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		base     string
 		setField string
@@ -219,8 +218,6 @@ func TestBinaryJSONModify(t *testing.T) {
 }
 
 func TestBinaryJSONRemove(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		base     string
 		path     string
@@ -257,8 +254,6 @@ func TestBinaryJSONRemove(t *testing.T) {
 }
 
 func TestCompareBinary(t *testing.T) {
-	t.Parallel()
-
 	jNull := mustParseBinaryFromString(t, `null`)
 	jBoolTrue := mustParseBinaryFromString(t, `true`)
 	jBoolFalse := mustParseBinaryFromString(t, `false`)
@@ -323,8 +318,6 @@ func TestCompareBinary(t *testing.T) {
 }
 
 func TestBinaryJSONMerge(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		suffixes []string
 		expected string
@@ -368,8 +361,6 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 }
 
 func TestBinaryJSONContains(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		input    string
 		target   string
@@ -401,8 +392,6 @@ func TestBinaryJSONContains(t *testing.T) {
 }
 
 func TestBinaryJSONCopy(t *testing.T) {
-	t.Parallel()
-
 	expectedList := []string{
 		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
 		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
@@ -415,8 +404,6 @@ func TestBinaryJSONCopy(t *testing.T) {
 }
 
 func TestGetKeys(t *testing.T) {
-	t.Parallel()
-
 	parsedBJ := mustParseBinaryFromString(t, "[]")
 	require.Equal(t, "[]", parsedBJ.GetKeys().String())
 	parsedBJ = mustParseBinaryFromString(t, "{}")
@@ -434,8 +421,6 @@ func TestGetKeys(t *testing.T) {
 }
 
 func TestBinaryJSONDepth(t *testing.T) {
-	t.Parallel()
-
 	var tests = []struct {
 		input    string
 		expected int
@@ -456,22 +441,18 @@ func TestBinaryJSONDepth(t *testing.T) {
 }
 
 func TestParseBinaryFromString(t *testing.T) {
-	t.Parallel()
-
 	obj, err := ParseBinaryFromString("")
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document is empty.*", err.Error())
+	require.Contains(t, err.Error(), "The document is empty")
 
 	obj, err = ParseBinaryFromString(`"a""`)
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document root must not be followed by other values\\..*", err.Error())
+	require.Contains(t, err.Error(), "The document root must not be followed by other values.")
 }
 
 func TestCreateBinary(t *testing.T) {
-	t.Parallel()
-
 	bj := CreateBinary(int64(1 << 62))
 	require.Equal(t, TypeCodeInt64, bj.TypeCode)
 	require.NotNil(t, bj.Value)
@@ -493,7 +474,7 @@ func TestCreateBinary(t *testing.T) {
 	func() {
 		defer func() {
 			r := recover()
-			require.Regexp(t, "unknown type:.*", r)
+			require.Regexp(t, "^unknown type:", r)
 		}()
 		bj = CreateBinary(int8(123))
 		require.Equal(t, bj.TypeCode, bj.TypeCode)
@@ -502,8 +483,6 @@ func TestCreateBinary(t *testing.T) {
 }
 
 func TestFunctions(t *testing.T) {
-	t.Parallel()
-
 	testByte := []byte{'\\', 'b', 'f', 'n', 'r', 't', 'u', 'z', '0'}
 	testOutput, err := unquoteString(string(testByte))
 	require.Equal(t, "\bfnrtuz0", testOutput)
@@ -519,8 +498,6 @@ func TestFunctions(t *testing.T) {
 }
 
 func TestBinaryJSONExtractCallback(t *testing.T) {
-	t.Parallel()
-
 	bj1 := mustParseBinaryFromString(t, `{"\"hello\"": "world", "a": [1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}], "b": true, "c": ["d"]}`)
 	bj2 := mustParseBinaryFromString(t, `[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`)
 
@@ -590,8 +567,6 @@ func TestBinaryJSONExtractCallback(t *testing.T) {
 }
 
 func TestBinaryJSONWalk(t *testing.T) {
-	t.Parallel()
-
 	bj1 := mustParseBinaryFromString(t, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`)
 	bj2 := mustParseBinaryFromString(t, `{}`)
 

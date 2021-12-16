@@ -16,10 +16,13 @@
 
 set -eux
 
-check_cluster_version 4 0 0 'local backend' || exit 0
+check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
+
+# let lightning run a bit slow to avoid some table in the first lightning finish too fast.
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(250)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted1" \
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
@@ -48,8 +51,8 @@ verify_detected_rows() {
     done
   done
   mapfile -t expect_rows < <(for row in "${expect_rows[@]}"; do echo "$row"; done | sort | uniq)
-  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v1 WHERE table_name = \"${table}\"" |
-    grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/, */,/g' | sort | uniq)
+  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v1 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
+    grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/"//g' | sed 's/, */,/g' | sort | uniq)
   equal=0
   if [ "${#actual_rows[@]}" = "${#expect_rows[@]}" ]; then
     equal=1
@@ -63,7 +66,7 @@ verify_detected_rows() {
   fi
   set -x
   if [ "$equal" = "0" ]; then
-    echo "verify detected rows of ${table} fail, expect: ${expect_rows[@]}, actual: ${actual_rows[@]}"
+    echo "verify detected rows of ${table} fail, expect: ${expect_rows[*]}, actual: ${actual_rows[*]}"
     exit 1
   fi
 }

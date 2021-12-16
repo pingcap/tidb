@@ -81,6 +81,6 @@ The alternative implementation is to generate a random password with `--initiali
 ## Unresolved Questions
 
 - Should the `auth_socket` user on the MySQL-side be the OS-user, or `root`. It is possible to do either. We need to discuss what is the less of 2 evils:
-  - Having 2 "roots" (localhost, and %)
+  - Having 2 "roots" (localhost, and %).
   - Having a default user that is different for everyone, with instructions to create a root account.
 
