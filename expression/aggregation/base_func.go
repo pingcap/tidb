@@ -178,7 +178,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	return nil
 }
 
-// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Sum should return a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
@@ -421,6 +421,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if a.Args[i].GetType().Tp == mysql.TypeNull {
 			continue
 		}
+		tpOld := a.Args[i].GetType().Tp
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -443,5 +444,20 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)
 		a.Args[i].GetType().Tp = originTp
+		// refine each mysql integer type to the needed decimal precision
+		if tpOld == mysql.TypeTiny || tpOld == mysql.TypeShort || tpOld == mysql.TypeInt24 || tpOld == mysql.TypeLong || tpOld == mysql.TypeLonglong {
+			switch tpOld {
+			case mysql.TypeTiny:
+				a.Args[i].GetType().Flen = 3
+			case mysql.TypeShort:
+				a.Args[i].GetType().Flen = 5
+			case mysql.TypeInt24:
+				a.Args[i].GetType().Flen = 7
+			case mysql.TypeLong:
+				a.Args[i].GetType().Flen = 10
+			case mysql.TypeLonglong:
+				a.Args[i].GetType().Flen = 19
+			}
+		}
 	}
 }
