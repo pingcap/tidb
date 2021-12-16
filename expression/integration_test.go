@@ -6880,6 +6880,43 @@ func TestIssue28739(t *testing.T) {
 		"2021-03-28 02:30:00 1616891400",
 		"2021-10-31 02:30:00 1635636600",
 		"<nil> <nil>"))
+
+}
+func TestMySQLWorkbenchIntialConnect(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	// This is a dump of the initial chatter that Workbench does when initial connect.
+	// It has been parsed through sort | uniq.
+	// This helps ensure that we do not remove noops which have tools depend on.
+	// See: https://github.com/pingcap/tidb/issues/30636
+
+	tk.MustExec("SELECT CONNECTION_ID()")
+	tk.MustExec("SELECT current_user()")
+	tk.MustExec("set autocommit=1")
+	tk.MustExec("SET CHARACTER SET utf8")
+	tk.MustExec("SET NAMES utf8")
+	tk.MustExec("SET NAMES 'utf8mb4'")
+	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	tk.MustExec("SET SQL_SAFE_UPDATES=1")
+	tk.MustExec("show character set where charset = 'utf8mb4'")
+	tk.MustExec("show charset")
+	tk.MustExec("show collation")
+	tk.MustExec("SHOW DATABASES")
+	tk.MustExec("show engines")
+	tk.MustExec("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'interactive_timeout'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'lower_case_table_names'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'offline_mode'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'sql_mode'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'version'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'version_comment'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'version_compile_os'")
+	tk.MustExec("SHOW SESSION VARIABLES LIKE 'wait_timeout'")
+	tk.MustExec("show variables")
+
 }
 
 func TestIssue30326(t *testing.T) {
