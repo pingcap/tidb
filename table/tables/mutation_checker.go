@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 var (
@@ -147,7 +148,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		// NOTE: handle type can be different, see issue 29520
 		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
 			err = ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
-			logutil.BgLogger().Error(err.Error())
+			logutil.BgLogger().Error("inconsistent handle in index and record insertions", zap.Error(err))
 			return err
 		}
 	}
@@ -250,7 +251,7 @@ func checkRowInsertionConsistency(
 		}
 		if cmp != 0 {
 			err = ErrInconsistentRowValue.GenWithStackByArgs(tableName, inputDatum.String(), decodedDatum.String())
-			logutil.BgLogger().Error(err.Error())
+			logutil.BgLogger().Error("inconsistent row value in row insertion", zap.Error(err))
 			return err
 		}
 	}
@@ -323,7 +324,7 @@ func compareIndexData(
 				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
-			logutil.BgLogger().Error(err.Error())
+			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
 			return err
 		}
 	}
