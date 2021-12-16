@@ -483,6 +483,9 @@ const (
 	// TiDBStoreLimit indicates the limit of sending request to a store, 0 means without limit.
 	TiDBStoreLimit = "tidb_store_limit"
 
+	// TiDBDebugLogEnable is only used for this patch.
+	TiDBDebugLogEnable = "tidb_debug_log_enable"
+
 	// TiDBMetricSchemaStep indicates the step when query metric schema.
 	TiDBMetricSchemaStep = "tidb_metric_query_step"
 
@@ -763,6 +766,7 @@ var (
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 	EnableLocalTxn = atomic.NewBool(DefTiDBEnableLocalTxn)
+	EnableDebugLog = atomic.NewBool(true)
 )
 
 // TopSQL is the variable for control top sql feature.

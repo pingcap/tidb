@@ -1522,6 +1522,12 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDebugLogEnable, Value: BoolToOnOff(true), Type: TypeBool, GetSession: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableDebugLog.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		EnableDebugLog.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreLimit, Value: strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
 		return nil

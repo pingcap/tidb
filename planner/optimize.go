@@ -340,6 +340,15 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 	return nil, "", "", nil
 }
 
+func printBindings(binds []bindinfo.Binding) string {
+	for _, binding := range binds {
+		if binding.Status == bindinfo.Using {
+			return binding.BindSQL
+		}
+	}
+	return ""
+}
+
 func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string, error) {
 	// When the domain is initializing, the bind will be nil.
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
@@ -353,6 +362,9 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
+			if variable.EnableDebugLog.Load() {
+				logutil.BgLogger().Info(fmt.Sprintf("[GetSessionBinding] Original: %v, Binding: %v", bindRecord.OriginalSQL, printBindings(bindRecord.Bindings)))
+			}
 			return bindRecord, metrics.ScopeSession, nil
 		}
 		return nil, "", nil
