@@ -65,7 +65,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-rc.0.20211213075151-b147ced35a14
+	github.com/tikv/client-go/v2 v2.0.0-rc.0.20211214093715-605f49d3ba50
 	github.com/tikv/pd v1.1.0-beta.0.20211118054146-02848d2660ee
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -104,4 +104,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 // TODO(mornyx): remove
-replace github.com/tikv/client-go/v2 => github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211214082307-e4a03694c56c
+replace github.com/tikv/client-go/v2 => github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211216032540-3d3b93bd94b7
