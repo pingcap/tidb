@@ -6895,3 +6895,17 @@ func TestIssue30326(t *testing.T) {
 	err := tk.QueryToErr("select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;")
 	require.Error(t, err, "[executor:1242]Subquery returns more than 1 row")
 }
+
+func TestIssue30174(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE `t1` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,\n  `c2` blob NOT NULL,\n  PRIMARY KEY (`c2`(5)),\n  UNIQUE KEY `idx_89` (`c1`)\n);")
+	tk.MustExec("CREATE TABLE `t2` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'Alice',\n  `c2` set('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'David',\n  `c3` enum('Alice','Bob','Charlie','David') NOT NULL,\n  PRIMARY KEY (`c3`,`c2`)\n);")
+	tk.MustExec("insert into t1 values('Charlie','');")
+	tk.MustExec("insert into t2 values('Charlie','Charlie','Alice');")
+	tk.MustQuery("select * from t2 where c3 in (select c2 from t1);").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
+}
