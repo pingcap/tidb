@@ -87,6 +87,52 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from t as t1 left join t as t2 on t1.a = t2.a order by t1.a limit 10;",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			assertRuleName: "topn_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Limit[6] is converted into TopN[7]",
+					assertReason: "Limit can be converted into TopN",
+				},
+				{
+					assertAction: "Sort[5] passes ByItems[test.t.a] to TopN[7]",
+					assertReason: "TopN[7] is Limit originally",
+				},
+				{
+					assertAction: "TopN[8] is added and pushed into Join[3]'s left table",
+					assertReason: "Join[3]'s joinType is left outer join, and all ByItems[test.t.a] contained in left table",
+				},
+				{
+					assertAction: "TopN[8] is added as DataSource[1]'s parent",
+					assertReason: "TopN is pushed down",
+				},
+				{
+					assertAction: "TopN[7] is added as Join[3]'s parent",
+					assertReason: "TopN is pushed down",
+				},
+			},
+		},
+		{
+			sql:            "select * from t order by a limit 10",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			assertRuleName: "topn_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Limit[4] is converted into TopN[5]",
+					assertReason: "Limit can be converted into TopN",
+				},
+				{
+					assertAction: "Sort[3] passes ByItems[test.t.a] to TopN[5]",
+					assertReason: "TopN[5] is Limit originally",
+				},
+				{
+					assertAction: "TopN[5] is added as DataSource[1]'s parent",
+					assertReason: "TopN is pushed down",
+				},
+			},
+		},
+		{
 			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
 			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
 			assertRuleName: "join_reorder",

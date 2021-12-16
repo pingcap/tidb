@@ -78,8 +78,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 		return ls.baseLogicalPlan.pushDownTopN(nil, opt)
 	} else if topN.isLimit() {
 		topN.ByItems = ls.ByItems
-		// sort pass byItems
-		opt.appendStepToCurrent(ls.ID(), ls.TP(), "", "")
+		appendSortPassByItemsTraceStep(ls, topN, opt)
 		return ls.children[0].pushDownTopN(topN, opt)
 	}
 	// If a TopN is pushed down, this sort is useless.
@@ -88,7 +87,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 
 func (p *LogicalLimit) convertToTopN(opt *logicalOptimizeOp) *LogicalTopN {
 	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
-	opt.appendStepToCurrent(topn.ID(), topn.TP(), "", fmt.Sprintf("%v[%v] converts into %v[%v]",
+	opt.appendStepToCurrent(topn.ID(), topn.TP(), "Limit can be converted into TopN", fmt.Sprintf("%v[%v] is converted into %v[%v]",
 		p.TP(), p.ID(), topn.TP(), topn.ID()))
 	return topn
 }
@@ -217,9 +216,41 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 		} else {
 			buffer.WriteString("right ")
 		}
-		buffer.WriteString("child")
+		buffer.WriteString("table")
 		return buffer.String()
 	}()
-	reason := fmt.Sprintf("%v[%v]'s joinType is %v", p.TP(), p.ID(), p.JoinType.String())
+	reason := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v]'s joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
+		for i, item := range topN.ByItems {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(item.String())
+		}
+		buffer.WriteString("] contained in ")
+		if idx == 0 {
+			buffer.WriteString("left ")
+		} else {
+			buffer.WriteString("right ")
+		}
+		buffer.WriteString("table")
+		return buffer.String()
+	}()
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v] passes ByItems[", sort.TP(), sort.ID()))
+		for i, item := range sort.ByItems {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(item.String())
+		}
+		buffer.WriteString(fmt.Sprintf("] to %v[%v]", topN.TP(), topN.ID()))
+		return buffer.String()
+	}()
+	reason := fmt.Sprintf("%v[%v] is Limit originally", topN.TP(), topN.ID())
+	opt.appendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
