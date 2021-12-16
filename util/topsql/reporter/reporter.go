@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -118,9 +117,9 @@ type planBinaryDecodeFunc func(string) (string, error)
 // RemoteTopSQLReporter implements a TopSQL reporter that sends data to a remote agent
 // This should be called periodically to collect TopSQL resource usage metrics
 type RemoteTopSQLReporter struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	client ReportClient
+	ctx      context.Context
+	cancel   context.CancelFunc
+	dataSink DataSink
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -145,12 +144,12 @@ type SQLMeta struct {
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(dataSink DataSink) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		ctx:                     ctx,
 		cancel:                  cancel,
-		client:                  client,
+		dataSink:                dataSink,
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
 	}
@@ -238,7 +237,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	tsr.client.Close()
+	tsr.dataSink.Close()
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -450,15 +449,15 @@ type collectedData struct {
 	normalizedPlanMap *sync.Map
 }
 
-// reportData contains data that reporter sends to the agent
-type reportData struct {
+// ReportData contains data that reporter sends to the agent
+type ReportData struct {
 	// collectedData contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
 	collectedData     []*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
 }
 
-func (d *reportData) hasData() bool {
+func (d *ReportData) hasData() bool {
 	if len(d.collectedData) > 0 {
 		return true
 	}
@@ -496,9 +495,9 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	}
 }
 
-// getReportData gets reportData from the collectedData.
+// getReportData gets ReportData from the collectedData.
 // This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
-func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportData {
+func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) ReportData {
 	// Fetch TopN dataPoints.
 	others := collected.records[keyOthers]
 	delete(collected.records, keyOthers)
@@ -524,21 +523,20 @@ func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportDa
 		records = append(records, others)
 	}
 
-	return reportData{
+	return ReportData{
 		collectedData:     records,
 		normalizedSQLMap:  collected.normalizedSQLMap,
 		normalizedPlanMap: collected.normalizedPlanMap,
 	}
 }
 
-func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
+func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
 	if !data.hasData() {
 		return
 	}
 
-	agentAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -548,14 +546,8 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 			}
 		}
 	})
-	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-	start := time.Now()
-	err := tsr.client.Send(ctx, agentAddr, data)
-	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
-		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-	} else {
-		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	deadline := time.Now().Add(timeout)
+	if err := tsr.dataSink.TrySend(data, deadline); err != nil {
+		logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
 	}
-	cancel()
 }

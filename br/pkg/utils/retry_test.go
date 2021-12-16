@@ -17,8 +17,6 @@ import (
 )
 
 func TestIsRetryableError(t *testing.T) {
-	t.Parallel()
-
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
 	require.False(t, IsRetryableError(io.EOF))
