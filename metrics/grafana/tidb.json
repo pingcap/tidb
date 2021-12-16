@@ -6171,7 +6171,7 @@
               "expr": "sum(rate(tidb_distsql_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m])) by (copr_type)",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "",
+              "legendFormat": "{{copr_type}}",
               "metric": "tidb_distsql_query_total",
               "refId": "A",
               "step": 4
