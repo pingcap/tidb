@@ -1826,6 +1826,17 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// BuildCastCollationFunction builds a ScalarFunction which casts the collation.
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+	if expr.GetType().Collate == ec.Collation {
+		return expr
+	}
+	tp := expr.GetType().Clone()
+	tp.Charset, tp.Collate = ec.Charset, ec.Collation
+	newExpr := BuildCastFunction(ctx, expr, tp)
+	return newExpr
+}
+
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
