@@ -27,8 +27,6 @@ import (
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -66,8 +64,6 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 }
 
 func TestJsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -131,8 +127,6 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 }
 
 func TestMemJsonArrayagg(t *testing.T) {
-	t.Parallel()
-
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggMemTest
