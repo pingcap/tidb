@@ -326,40 +326,6 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 		checkActRows(c, tk, test.sql, test.expected)
 	}
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("insert into t with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
-
-	rows := tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
-		" select * from cte, t;").Rows()
-
-	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
-	c.Assert(rows[4][8].(string), Equals, "0 Bytes")
-
-	tk.MustExec("set @@tidb_mem_quota_query=10240;")
-	rows = tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
-		" select * from cte, t;").Rows()
-
-	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
-	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
-}
-
-func (s *testSuite) TestExplainStatementsSummary(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
-		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testutil.RowsWithSep("|",
-		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testutil.RowsWithSep(" ",
-		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
-	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testutil.RowsWithSep(" ",
-		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
-}
 
 func (s *testSuite) TestFix29401(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -381,4 +347,3 @@ func (s *testSuite) TestFix29401(c *C) {
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
 }
->>>>>>> 05ccb8a20... planner: fix panic when the join key is scalarFunction (#30002)
