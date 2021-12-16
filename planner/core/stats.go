@@ -16,7 +16,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"sort"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
