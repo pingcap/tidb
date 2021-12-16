@@ -651,6 +651,7 @@ func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 	for i := 0; i < len(c.lease); i++ {
 		lease := atomic.LoadUint64(&c.lease[i])
 		if commitTS >= lease {
+			// Txn fails to commit because the write lease is expired.
 			return false
 		}
 	}
