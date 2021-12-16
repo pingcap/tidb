@@ -1,3 +1,5 @@
+create database collation_check_use_collation;
+use collation_check_use_collation;
 CREATE TABLE `t` (
 `a` char(10) DEFAULT NULL
 );
@@ -20,3 +22,4 @@ a
 select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
 a_col
 a
+use test
