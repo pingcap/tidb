@@ -200,8 +200,19 @@ type IndexReaderExecutor struct {
 }
 
 // Close clears all resources hold by current object.
+<<<<<<< HEAD
 func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
+=======
+func (e *IndexReaderExecutor) Close() (err error) {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
+		return nil
+	}
+
+	if e.result != nil {
+		err = e.result.Close()
+	}
+>>>>>>> 8cf847a57... executor: add an unit test case for unreasonable invoking Close (#30696)
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
