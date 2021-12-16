@@ -9549,7 +9549,7 @@ func (s *testSerialSuite) TestIssue29498(c *C) {
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp)
 	c.Assert(row[len(row)-8:], Equals, "00:00:02")
 
-	res = tk.MustQuery("SELECT CONCAT(xx) FROM (SELECT t3 AS xx FROM t1 UNION SELECT d FROM t1) x;")
+	res = tk.MustQuery("SELECT CONCAT(xx) FROM (SELECT t3 AS xx FROM t1 UNION SELECT d FROM t1) x LIMIT 1;")
 	row = res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
