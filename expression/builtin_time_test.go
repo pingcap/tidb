@@ -2882,6 +2882,8 @@ func TestWithTimeZone(t *testing.T) {
 	sv := ctx.GetSessionVars()
 	originTZ := sv.Location()
 	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	nowTs, _ := GetStmtTimestamp(ctx)
+	sv.StmtCtx.Timestamp = nowTs
 	defer func() {
 		sv.TimeZone = originTZ
 	}()

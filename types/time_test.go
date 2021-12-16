@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -920,10 +921,13 @@ func TestRoundFrac(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	sc := mock.NewContext().GetSessionVars().StmtCtx
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
 	sc.TimeZone = losAngelesTz
+	nowTs, _ := expression.GetStmtTimestamp(ctx)
+	sc.Timestamp = nowTs
 	tbl := []struct {
 		Input  string
 		Fsp    int8
