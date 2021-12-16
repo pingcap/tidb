@@ -1527,7 +1527,7 @@ func (s *testSuite) TestIssue28792(c *C) {
 func (s *testSerialSuite) TestExplainForConnectionBrief(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	rows := tk.MustQuery("select connection_id();").Rows()
+	rows := tk.MustQuery("SELECT CONNECTION_ID();").Rows()
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
 
