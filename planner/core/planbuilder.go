@@ -4138,6 +4138,9 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
+	if explainFor.Format == types.ExplainFormatBrief {
+		return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, nil)
+	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
 

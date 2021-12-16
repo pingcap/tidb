@@ -1523,3 +1523,25 @@ func (s *testSuite) TestIssue28792(c *C) {
 	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
 	c.Assert(r1, DeepEquals, r2)
 }
+
+func (s *testSerialSuite) TestExplainForConnectionBrief(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id();").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (a int);")
+	tk.MustQuery("SELECT * FROM t;")
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	tk.MustQuery(fmt.Sprintf("EXPLAIN FORMAT = 'brief' FOR CONNECTION %s;", connID)).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+}
