@@ -52,7 +52,7 @@ const (
 	maxPagingSize  float64 = 8192
 	pagingSizeGrow float64 = 2
 	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
-	// pagingGrowingSum = (pagingSize ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
+	// pagingGrowingSum = (pagingSizeGrow ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
 	pagingGrowingSum float64 = 16320
 	// if the desired rows are below the threshold, use paging, threshold is the sum of 4 pages
 	pagingThreshold uint64 = 960
