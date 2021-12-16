@@ -1679,6 +1679,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
+	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll)
 	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll)
 	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll)
 
