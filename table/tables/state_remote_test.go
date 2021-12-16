@@ -17,11 +17,14 @@ package tables_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // CreateMetaLockForCachedTable initializes the cached table meta lock information.
@@ -43,7 +46,6 @@ func initRow(ctx context.Context, exec session.Session, tid int) error {
 }
 
 func TestStateRemote(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -64,65 +66,74 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lockType.String(), "NONE")
 	require.Equal(t, lease, uint64(0))
 
+	ts, err := se.GetStore().GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: kv.GlobalTxnScope})
+	require.NoError(t, err)
+	physicalTime := oracle.GetTimeFromTS(ts)
+	leaseVal := oracle.GoTimeToTS(physicalTime.Add(200 * time.Millisecond))
+
 	// Check read lock.
-	succ, err := h.LockForRead(ctx, 5, 1234, 1234)
+	succ, err := h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1234))
+	require.Equal(t, lease, leaseVal)
 
 	// LockForRead when read lock is hold.
 	// This operation equals to renew lease.
-	succ, err = h.LockForRead(ctx, 5, 1235, 1235)
+	succ, err = h.LockForRead(ctx, 5, leaseVal+1)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1235))
+	require.Equal(t, lease, leaseVal+1)
 
 	// Renew read lock lease operation.
-	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(400 * time.Millisecond))
+	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, uint64(1264))
+	require.Equal(t, lease, leaseVal)
 
 	// Check write lock.
-	require.NoError(t, h.LockForWrite(ctx, 5, 2234, 2234))
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(700 * time.Millisecond))
+	require.NoError(t, h.LockForWrite(ctx, 5, leaseVal))
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
-	require.Equal(t, lease, uint64(2234))
+	require.Equal(t, lease, leaseVal)
 
 	// Lock for write again
-	require.NoError(t, h.LockForWrite(ctx, 5, 3234, 3234))
-	lockType, lease, err = h.Load(ctx, 5)
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(800 * time.Millisecond))
+	require.NoError(t, h.LockForWrite(ctx, 5, leaseVal))
+	lockType, _, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
-	require.Equal(t, lease, uint64(3234))
 
 	// Renew read lock lease should fail when the write lock is hold.
-	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
+	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.False(t, succ)
 
 	// Acquire read lock should also fail when the write lock is hold.
-	succ, err = h.LockForRead(ctx, 5, 1264, 1264)
+	succ, err = h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.False(t, succ)
 
 	// But clear orphan write lock should success.
-	succ, err = h.LockForRead(ctx, 5, 4234, 4234)
+	time.Sleep(time.Second)
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(2 * time.Second))
+	succ, err = h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.True(t, succ)
 }

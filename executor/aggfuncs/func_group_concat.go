@@ -293,6 +293,7 @@ type topNRows struct {
 	// ('---', 'ccc') should be poped from heap, so '-' should be appended to result.
 	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
+	collators      []collate.Collator
 }
 
 func (h topNRows) Len() int {
@@ -302,7 +303,7 @@ func (h topNRows) Len() int {
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
 	for k := 0; k < n; k++ {
-		ret, err := h.rows[i].byItems[k].CompareDatum(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k])
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
 			h.err = err
 			return false
@@ -411,8 +412,10 @@ func (e *groupConcatOrder) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 
 func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
 	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
@@ -421,6 +424,7 @@ func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int6
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
+			collators:      ctors,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -513,8 +517,10 @@ func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(sctx sessionctx.Conte
 
 func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
 	for i, byItem := range e.byItems {
 		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().Collate))
 	}
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
@@ -524,6 +530,7 @@ func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDe
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
+			collators:      ctors,
 		},
 		valSet: valSet,
 	}

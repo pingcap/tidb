@@ -34,14 +34,9 @@ import (
 )
 
 func TestInferType(t *testing.T) {
-	t.Parallel()
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
-	defer func() {
-		dom.Close()
-		err = store.Close()
-		require.NoError(t, err)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
 	s := InferTypeSuite{}
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)

@@ -1293,8 +1293,8 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	return nil
 }
 
-// BackfillDataInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
-// indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
+// BackfillDataInTxn will backfill table index in a transaction. If the value of rowKey is changed, there must be some other transactions
+// update the row, result in write conflict, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
@@ -1327,13 +1327,6 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
 				continue
-			}
-
-			// Lock the row key to notify us that someone delete or update the row,
-			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
 			}
 
 			// Create the index.

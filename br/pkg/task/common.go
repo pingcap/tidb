@@ -355,7 +355,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 	}
 
 	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(err, "Cipher type and key not match")
+		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
 	}
 
 	return nil

@@ -39,7 +39,6 @@ func genColumn(tp byte, id int64) *Column {
 
 func TestConstant2Pb(t *testing.T) {
 	t.Skip("constant pb has changed")
-	t.Parallel()
 	var constExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -123,7 +122,6 @@ func TestConstant2Pb(t *testing.T) {
 }
 
 func TestColumn2Pb(t *testing.T) {
-	t.Parallel()
 	var colExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -215,7 +213,6 @@ func TestColumn2Pb(t *testing.T) {
 }
 
 func TestCompareFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var compareExprs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -252,7 +249,6 @@ func TestCompareFunc2Pb(t *testing.T) {
 }
 
 func TestLikeFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var likeFuncs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -291,7 +287,6 @@ func TestLikeFunc2Pb(t *testing.T) {
 }
 
 func TestArithmeticalFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var arithmeticalFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -339,7 +334,6 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 }
 
 func TestDateFunc2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -396,7 +390,6 @@ func TestLogicalFunc2Pb(t *testing.T) {
 }
 
 func TestBitwiseFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var bitwiseFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -435,7 +428,6 @@ func TestBitwiseFunc2Pb(t *testing.T) {
 }
 
 func TestControlFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var controlFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -477,7 +469,6 @@ func TestControlFunc2Pb(t *testing.T) {
 }
 
 func TestOtherFunc2Pb(t *testing.T) {
-	t.Parallel()
 	var otherFuncs = make([]Expression, 0)
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -508,7 +499,6 @@ func TestOtherFunc2Pb(t *testing.T) {
 }
 
 func TestExprPushDownToFlash(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1004,7 +994,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 func TestExprOnlyPushDownToFlash(t *testing.T) {
 	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1058,7 +1047,6 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 }
 
 func TestExprPushDownToTiKV(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1111,7 +1099,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 }
 
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1138,7 +1125,6 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 }
 
 func TestGroupByItem2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
@@ -1156,7 +1142,6 @@ func TestGroupByItem2Pb(t *testing.T) {
 }
 
 func TestSortByItem2Pb(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 

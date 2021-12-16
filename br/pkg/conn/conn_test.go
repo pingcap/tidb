@@ -165,8 +165,6 @@ func TestCheckStoresAlive(t *testing.T) {
 }
 
 func TestGetAllTiKVStores(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		stores         []*metapb.Store
 		storeBehavior  StoreBehavior
@@ -258,8 +256,6 @@ func TestGetAllTiKVStores(t *testing.T) {
 }
 
 func TestGetConnOnCanceledContext(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
