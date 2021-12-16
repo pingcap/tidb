@@ -698,7 +698,7 @@ Placement policy didn't meet the constraint, reason: %s
 
 ["ddl:8237"]
 error = '''
-Invalid attributes '%s': %s
+Invalid attributes: %s
 '''
 
 ["ddl:8240"]
