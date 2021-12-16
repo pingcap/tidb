@@ -32,7 +32,8 @@ WORKDIR /go/src/github.com/pingcap/tidb
 # Cache dependencies
 COPY go.mod .
 COPY go.sum .
-
+# Skip mods in current repo
+RUN go mod edit -droprequire github.com/pingcap/tidb/parser
 RUN GO111MODULE=on go mod download
 
 # Build real binaries
