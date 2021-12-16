@@ -102,7 +102,7 @@ var _ DataSink = &SingleTargetDataSink{}
 // TrySend implements the DataSink interface.
 // Currently the implementation will establish a new connection every time,
 // which is suitable for a per-minute sending period
-func (ds *SingleTargetDataSink) TrySend(data ReportData, deadline time.Time) error {
+func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) error {
 	select {
 	case ds.sendTaskCh <- sendTask{data: data, deadline: deadline}:
 		return nil
@@ -142,7 +142,7 @@ func (ds *SingleTargetDataSink) Close() {
 	ds.conn = nil
 }
 
-func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data ReportData) error {
+func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data *ReportData) error {
 	err := ds.tryEstablishConnection(ctx, addr)
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data Re
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []*tipb.CPUTimeRecord) (err error) {
+func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []tipb.CPUTimeRecord) (err error) {
 	if len(records) == 0 {
 		return nil
 	}
@@ -195,8 +195,8 @@ func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, reco
 	if err != nil {
 		return err
 	}
-	for _, record := range records {
-		if err = stream.Send(record); err != nil {
+	for i := range records {
+		if err = stream.Send(&records[i]); err != nil {
 			return
 		}
 		sentCount += 1
@@ -208,7 +208,7 @@ func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, reco
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
-func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas []*tipb.SQLMeta) (err error) {
+func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas []tipb.SQLMeta) (err error) {
 	if len(sqlMetas) == 0 {
 		return
 	}
@@ -230,8 +230,8 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 		return err
 	}
 
-	for _, meta := range sqlMetas {
-		if err = stream.Send(meta); err != nil {
+	for i := range sqlMetas {
+		if err = stream.Send(&sqlMetas[i]); err != nil {
 			return
 		}
 		sentCount += 1
@@ -243,7 +243,7 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
-func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas []*tipb.PlanMeta) (err error) {
+func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas []tipb.PlanMeta) (err error) {
 	if len(planMetas) == 0 {
 		return nil
 	}
@@ -264,8 +264,8 @@ func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas
 		return err
 	}
 
-	for _, meta := range planMetas {
-		if err = stream.Send(meta); err != nil {
+	for i := range planMetas {
+		if err = stream.Send(&planMetas[i]); err != nil {
 			return err
 		}
 		sentCount += 1
@@ -321,6 +321,6 @@ func (ds *SingleTargetDataSink) dial(ctx context.Context, targetRPCAddr string) 
 }
 
 type sendTask struct {
-	data     ReportData
+	data     *ReportData
 	deadline time.Time
 }

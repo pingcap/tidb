@@ -457,9 +457,9 @@ type collectedData struct {
 // ReportData contains data that reporter sends to the agent
 type ReportData struct {
 	// CPUTimeRecords contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
-	CPUTimeRecords []*tipb.CPUTimeRecord
-	SQLMetas       []*tipb.SQLMeta
-	PlanMetas      []*tipb.PlanMeta
+	CPUTimeRecords []tipb.CPUTimeRecord
+	SQLMetas       []tipb.SQLMeta
+	PlanMetas      []tipb.PlanMeta
 }
 
 func (d *ReportData) hasData() bool {
@@ -487,7 +487,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 
 // getReportData gets ReportData from the collectedData.
 // This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
-func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) ReportData {
+func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) *ReportData {
 	records := getTopNFromCollected(collected)
 	return tsr.buildReportData(records, collected.normalizedSQLMap, collected.normalizedPlanMap)
 }
@@ -526,15 +526,15 @@ func getTopNFromCollected(collected collectedData) (records []*dataPoints) {
 //
 // Attention, caller should guarantee no more reader or writer access `sqlMap` and `planMap`, because buildReportData
 // will do heavy jobs in sync.Map.Range and it may block other readers and writers.
-func (tsr *RemoteTopSQLReporter) buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map) ReportData {
-	res := ReportData{
-		CPUTimeRecords: make([]*tipb.CPUTimeRecord, 0, len(records)),
-		SQLMetas:       make([]*tipb.SQLMeta, 0, len(records)),
-		PlanMetas:      make([]*tipb.PlanMeta, 0, len(records)),
+func (tsr *RemoteTopSQLReporter) buildReportData(records []*dataPoints, sqlMap *sync.Map, planMap *sync.Map) *ReportData {
+	res := &ReportData{
+		CPUTimeRecords: make([]tipb.CPUTimeRecord, 0, len(records)),
+		SQLMetas:       make([]tipb.SQLMeta, 0, len(records)),
+		PlanMetas:      make([]tipb.PlanMeta, 0, len(records)),
 	}
 
 	for _, record := range records {
-		res.CPUTimeRecords = append(res.CPUTimeRecords, &tipb.CPUTimeRecord{
+		res.CPUTimeRecords = append(res.CPUTimeRecords, tipb.CPUTimeRecord{
 			RecordListTimestampSec: record.TimestampList,
 			RecordListCpuTimeMs:    record.CPUTimeMsList,
 			SqlDigest:              record.SQLDigest,
@@ -544,7 +544,7 @@ func (tsr *RemoteTopSQLReporter) buildReportData(records []*dataPoints, sqlMap *
 
 	sqlMap.Range(func(key, value interface{}) bool {
 		meta := value.(SQLMeta)
-		res.SQLMetas = append(res.SQLMetas, &tipb.SQLMeta{
+		res.SQLMetas = append(res.SQLMetas, tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -558,7 +558,7 @@ func (tsr *RemoteTopSQLReporter) buildReportData(records []*dataPoints, sqlMap *
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true
 		}
-		res.PlanMetas = append(res.PlanMetas, &tipb.PlanMeta{
+		res.PlanMetas = append(res.PlanMetas, tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
 			NormalizedPlan: planDecoded,
 		})
@@ -568,7 +568,7 @@ func (tsr *RemoteTopSQLReporter) buildReportData(records []*dataPoints, sqlMap *
 	return res
 }
 
-func (tsr *RemoteTopSQLReporter) doReport(data ReportData) {
+func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	defer util.Recover("top-sql", "doReport", nil, false)
 
 	if !data.hasData() {
