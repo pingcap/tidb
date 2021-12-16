@@ -28,15 +28,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getColumnName(is infoschema.InfoSchema, tblColID model.TableColumnID) (string, bool) {
-	tbl, ok := is.TableByID(tblColID.TableID)
-	if !ok {
-		return "", false
+func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableColumnID) (string, bool) {
+	var tblInfo *model.TableInfo
+	var prefix string
+	if tbl, ok := is.TableByID(tblColID.TableID); ok {
+		tblInfo = tbl.Meta()
+		prefix = tblInfo.Name.L + "."
+	} else {
+		db, exists := is.SchemaByName(model.NewCIStr("test"))
+		require.True(t, exists)
+		for _, tbl := range db.Tables {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, def := range pi.Definitions {
+				if def.ID == tblColID.TableID {
+					tblInfo = tbl
+					prefix = tbl.Name.L + "." + def.Name.L + "."
+					break
+				}
+			}
+			if tblInfo != nil {
+				break
+			}
+		}
+		if tblInfo == nil {
+			return "", false
+		}
 	}
-	tblInfo := tbl.Meta()
 	for _, col := range tblInfo.Columns {
 		if tblColID.ColumnID == col.ID {
-			return tblInfo.Name.L + "." + col.Name.L, true
+			return prefix + col.Name.L, true
 		}
 	}
 	return "", false
@@ -46,7 +69,7 @@ func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp plannercor
 	tblColIDs := plannercore.CollectColumnStatsUsageForTest(lp, onlyHistNeeded)
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
-		col, ok := getColumnName(is, tblColID)
+		col, ok := getColumnName(t, is, tblColID)
 		require.True(t, ok, comment)
 		cols = append(cols, col)
 	}
@@ -59,7 +82,6 @@ func TestCollectPredicateColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t1(a int, b int, c int)")
 	tk.MustExec("create table t2(a int, b int, c int)")
 	tk.MustExec("create table t3(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
@@ -169,11 +191,6 @@ func TestCollectPredicateColumns(t *testing.T) {
 			res: []string{"t1.b", "t2.c"},
 		},
 		{
-			// LogicalPartitionUnionAll
-			sql: "select * from t3 where a < 15 and b > 1",
-			res: []string{"t3.a", "t3.b"},
-		},
-		{
 			// LogicalCTE
 			sql: "with cte(x, y) as (select a + 1, b from t1 where b > 1) select * from cte where x > 3",
 			res: []string{"t1.a", "t1.b"},
@@ -193,12 +210,32 @@ func TestCollectPredicateColumns(t *testing.T) {
 			sql: "with recursive cte(x, y) as (select a, b from t1 union select x + 1, y from cte where x < 5) select * from cte",
 			res: []string{"t1.a", "t1.b"},
 		},
+		{
+			sql: "set @@session.tidb_partition_prune_mode= 'static'",
+		},
+		{
+			// LogicalPartitionUnionAll, static partition prune mode, use table ID rather than partition ID
+			sql: "select * from t3 where a < 15 and b > 1",
+			res: []string{"t3.a", "t3.b"},
+		},
+		{
+			sql: "set @@tidb_partition_prune_mode = 'dynamic'",
+		},
+		{
+			// dynamic partition prune mode, use table ID rather than partition ID
+			sql: "select * from t3 where a < 15 and b > 1",
+			res: []string{"t3.a", "t3.b"},
+		},
 	}
 
 	ctx := context.Background()
 	sctx := tk.Session()
 	is := dom.InfoSchema()
 	for _, tt := range tests {
+		if tt.res == nil {
+			tk.MustExec(tt.sql)
+			continue
+		}
 		comment := fmt.Sprintf("for %s", tt.sql)
 		logutil.BgLogger().Info(comment)
 		stmts, err := tk.Session().Parse(ctx, tt.sql)
@@ -229,6 +266,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int primary key, b int, c int, index idx_b(b))")
 	tk.MustExec("create table t2(a int, b int, c int)")
+	tk.MustExec("create table t3(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
 	tests := []struct {
 		sql string
@@ -254,12 +292,30 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			sql: "select * from t1 as x join t2 as y on x.b + y.b > 2 and x.a > 1 and y.c < 1",
 			res: []string{"t1.a", "t2.c"},
 		},
+		{
+			sql: "set @@tidb_partition_prune_mode = 'static'",
+		},
+		{
+			sql: "select * from t3 where a < 15 and b > 1",
+			res: []string{"t3.p0.a", "t3.p1.a", "t3.p0.b", "t3.p1.b"},
+		},
+		{
+			sql: "set @@tidb_partition_prune_mode = 'dynamic'",
+		},
+		{
+			sql: "select * from t3 where a < 15 and b > 1",
+			res: []string{"t3.a", "t3.b"},
+		},
 	}
 
 	ctx := context.Background()
 	sctx := tk.Session()
 	is := dom.InfoSchema()
 	for _, tt := range tests {
+		if tt.res == nil {
+			tk.MustExec(tt.sql)
+			continue
+		}
 		comment := fmt.Sprintf("for %s", tt.sql)
 		logutil.BgLogger().Info(comment)
 		stmts, err := tk.Session().Parse(ctx, tt.sql)

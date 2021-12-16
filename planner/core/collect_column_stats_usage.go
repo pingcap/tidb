@@ -153,10 +153,9 @@ func (p *LogicalUnionAll) updateColMapAndAddPredicateColumns(c *columnStatsUsage
 }
 
 func (ds *DataSource) addHistNeededColumns(c *columnStatsUsageCollector) {
-	tblID := ds.TableInfo().ID
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
 	for _, col := range columns {
-		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+		tblColID := model.TableColumnID{TableID: ds.physicalTableID, ColumnID: col.ID}
 		c.histNeededCols[tblColID] = struct{}{}
 	}
 }
