@@ -350,7 +350,7 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < endKey, endKey: %s, regionEndKey: %s",
 			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
 	}
 
