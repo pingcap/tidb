@@ -622,8 +622,14 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeUpdateColumnWorker:
+				ctx := sessCtx.GetSessionVars().StmtCtx
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
-				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
+				ctx.InCreateOrAlterStmt = true
+				nowTs, err := expression.GetStmtTimestamp(sessCtx)
+				if err != nil {
+					return err
+				}
+				ctx.Timestamp = nowTs
 				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
