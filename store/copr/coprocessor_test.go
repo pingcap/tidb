@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/paging"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -318,7 +319,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 	require.True(t, tasks[0].paging)
-	require.Equal(t, tasks[0].pagingSize, minPagingSize)
+	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

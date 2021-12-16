@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/sessionctx"
 	"math"
 
 	"github.com/cznic/mathutil"
@@ -29,12 +30,12 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -44,19 +45,6 @@ var (
 	_ task = &copTask{}
 	_ task = &rootTask{}
 	_ task = &mppTask{}
-)
-
-const (
-	pagingSizeGrow     int = 2
-	maxPagingSizeShift int = 7
-	// The size of a paging distsql grows from minPagingSize to maxPagingSize
-	minPagingSize int = 64
-	maxPagingSize int = minPagingSize << maxPagingSizeShift
-	// pagingGrowingSum is the sum of paging sizes during growing to the max page size
-	// pagingGrowingSum = (pagingSizeGrow ^ n - 1) * minPagingSize = (2 ^ 8 - 1) * 64 = 16320
-	pagingGrowingSum int = ((2 << maxPagingSizeShift) - 1) * minPagingSize
-	// if the desired rows are below the threshold, use paging, threshold is the sum of 4 pages
-	pagingThreshold uint64 = 960
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -934,9 +922,12 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	idxCst := indexRows * sessVars.CPUFactor
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= pagingThreshold {
+	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
 		p.Paging = true
-		idxCst = math.Min(idxCst, calcPagingCost(ctx, t))
+		// we want the diff between idxCst and pagingCst here,
+		// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
+		pagingCstDiff := calcPagingCost(ctx, t) - sessVars.GetSeekFactor(nil)
+		idxCst = math.Min(idxCst, pagingCstDiff)
 	}
 	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
@@ -990,30 +981,18 @@ func extractRows(p PhysicalPlan) float64 {
 func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
 	sessVars := ctx.GetSessionVars()
 	indexRows := t.indexPlan.statsInfo().RowCount
-	expectCnt := int(t.expectCnt)
+	expectCnt := t.expectCnt
 	sourceRows := extractRows(t.indexPlan)
 	// with paging, the scanned rows is always less than or equal to source rows.
-	if int(sourceRows) < expectCnt {
-		expectCnt = int(sourceRows)
+	if uint64(sourceRows) < expectCnt {
+		expectCnt = uint64(sourceRows)
 	}
-	seekCnt := float64(1)
-	if expectCnt > pagingGrowingSum {
-		// if the expectCnt is larger than pagingGrowingSum, calculate the seekCnt for the excess.
-		seekCnt += float64(8 + (expectCnt-pagingGrowingSum)/maxPagingSize)
-	} else if expectCnt > minPagingSize {
-		// if the expectCnt is less than pagingGrowingSum,
-		// calculate the seekCnt(number of terms) from the sum of a geometric progression.
-		// expectCnt = minPagingSize * (pagingSizeGrow ^ seekCnt - 1) / (pagingSizeGrow - 1)
-		// simplify (pagingSizeGrow ^ seekCnt - 1) to pagingSizeGrow ^ seekCnt, we can infer that
-		// seekCnt = log((pagingSizeGrow - 1) * expectCnt / minPagingSize) / log(pagingSizeGrow)
-		seekCnt += float64(int(math.Log(float64((pagingSizeGrow-1)*expectCnt)/float64(minPagingSize)) / math.Log(float64(pagingSizeGrow))))
-	}
+	seekCnt := paging.CalculateSeekCnt(expectCnt)
 	indexSelectivity := float64(1)
 	if sourceRows > indexRows {
 		indexSelectivity = indexRows / sourceRows
 	}
-	// only calculate the diff of seek cost here, so (seekCnt - 1)
-	pagingCst := (seekCnt-1)*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
+	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
 	pagingCst *= indexSelectivity
 	return pagingCst
 }
