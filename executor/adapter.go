@@ -1103,10 +1103,11 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan, hintStr string) {
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan string, tableHints []*ast.TableOptimizerHint) {
 	var hintSet bool
+	var hints []*ast.TableOptimizerHint
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
-	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
+	hints, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
 	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
@@ -1115,9 +1116,20 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 		sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
 	}
 	if genHint {
-		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		hintStr = hint.RestoreOptimizerHints(hints)
-		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
+		hints = plannercore.GenHintsFromPhysicalPlan(p)
+		sctx.GetSessionVars().StmtCtx.SetPlanHint(hints)
+	}
+
+	// remove duplicate hints
+	tableHints = make([]*ast.TableOptimizerHint, 0, len(hints))
+	hintsMap := make(map[string]struct{}, len(hints))
+	for idx := range hints {
+		hintStr := hint.RestoreTableOptimizerHint(hints[idx])
+		if _, ok := hintsMap[hintStr]; ok {
+			continue
+		}
+		hintsMap[hintStr] = struct{}{}
+		tableHints = append(tableHints, hints[idx])
 	}
 	return
 }
@@ -1160,7 +1172,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars.SetPrevStmtDigest(digest.String())
 
 	// No need to encode every time, so encode lazily.
-	planGenerator := func() (string, string) {
+	planGenerator := func() (string, []*ast.TableOptimizerHint) {
 		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.

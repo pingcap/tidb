@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -35,8 +36,8 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func emptyPlanGenerator() (string, string) {
-	return "", ""
+func emptyPlanGenerator() (string, []*ast.TableOptimizerHint) {
+	return "", nil
 }
 
 func fakePlanDigestGenerator() string {
@@ -431,12 +432,12 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string) {
+	stmtExecInfo7.PlanGenerator = func() (string, []*ast.TableOptimizerHint) {
 		buf := make([]byte, maxEncodedPlanSizeInBytes+1)
 		for i := range buf {
 			buf[i] = 'a'
 		}
-		return string(buf), ""
+		return string(buf), nil
 	}
 	key = &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo7.SchemaName,

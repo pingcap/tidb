@@ -274,7 +274,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			defPlanHintsStr := hint.RestoreOptimizerHints(defPlanHints)
 			binding := bindRecord.FindBinding(defPlanHintsStr)
 			if binding == nil {
-				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHintsStr)
+				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHints)
 			}
 		}
 	}
@@ -499,7 +499,7 @@ func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level
 	globalHandle.AddDropInvalidBindTask(&bindRecord)
 }
 
-func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {
+func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint []*ast.TableOptimizerHint) {
 	bindSQL := bindinfo.GenerateBindSQL(ctx, stmtNode, planHint, false, br.Db)
 	if bindSQL == "" {
 		return

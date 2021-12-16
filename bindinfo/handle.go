@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -824,9 +823,9 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, captured bool, defaultDB string) string {
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, captured bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
-	if planHint == "" {
+	if len(planHints) == 0 {
 		return ""
 	}
 	if !captured {
@@ -838,57 +837,108 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			return ""
 		}
 	}
-	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
-	// So here we would remove the hint and inject the current best plan hint.
-	hint.BindHint(stmtNode, &hint.HintsSet{})
-	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	// We can place hints at the update, delete, select stmt blocks. There are three combinations as follows:
+	// updateStmt-selectStmt, deleteStmt-selectStmt, insertStmt-selectStmt.
+	// So when they appeared，we need a way to prevent the hints of the wrong place.
+	// eg `update /*+ use_index(@upd_1 t1 idx_b) t1 set b = 1 where (a in (select /*+use_index(@sel_1 t2  idx_ba)*/ a from t2 where b = 1) )`
+	// If we only order hints by parsing offset from qb_name, then @upd_1 and @sel_1 will be the same offset.
+	// It's incorrect, so we need a way to deal this. So we introduce the startBlockOffset.
+	// The startBlockOffset is the start of the offset to place hints. Now if we get @upd_1 and @sel_1, we will set startBlockOffset = 0.
+	// Because ParseOffsetFromBlockName only parse qbName which Prefix with 'sel_',
+	// so upd_1 will be parsed to startBlockOffset that is 0, the @sel_1 will be parse to 1. It's the right result for us.
+	var blockStartOffset int
+	var afterProcessFunc func(string) string
+	switch n := stmtNode.(type) {
+	case *ast.DeleteStmt:
+		blockStartOffset = 0
+		afterProcessFunc = func(bindSQL string) string {
+			deleteIdx := strings.Index(bindSQL, "DELETE")
+			// Remove possible `explain` prefix.
+			return bindSQL[deleteIdx:]
+		}
+	case *ast.UpdateStmt:
+		blockStartOffset = 0
+		afterProcessFunc = func(bindSQL string) string {
+			updateIdx := strings.Index(bindSQL, "UPDATE")
+			// Remove possible `explain` prefix.
+			return bindSQL[updateIdx:]
+		}
+	case *ast.SelectStmt:
+		blockStartOffset = 1
+		afterProcessFunc = func(bindSQL string) string {
+			var selectIdx int
+			if n.With != nil {
+				selectIdx = strings.Index(bindSQL, "WITH")
+			} else {
+				selectIdx = strings.Index(bindSQL, "SELECT")
+			}
+			// Remove possible `explain` prefix.
+			return bindSQL[selectIdx:]
+		}
+	case *ast.SetOprStmt:
+		blockStartOffset = 1
+		afterProcessFunc = func(bindSQL string) string {
+			var selectIdx int
+			if n.With != nil {
+				selectIdx = strings.Index(bindSQL, "WITH")
+			} else {
+				selectIdx = strings.Index(bindSQL, "SELECT")
+			}
+			// Remove possible `explain` prefix.
+			return bindSQL[selectIdx:]
+		}
+	case *ast.InsertStmt:
+		blockStartOffset = 1
+		afterProcessFunc = func(bindSQL string) string {
+			var insertIdx int
+			if n.IsReplace {
+				insertIdx = strings.Index(bindSQL, "REPLACE")
+			} else {
+				insertIdx = strings.Index(bindSQL, "INSERT")
+			}
+			// Remove possible `explain` prefix.
+			return bindSQL[insertIdx:]
+		}
+	default:
+		logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+		return ""
+	}
+
+	bindSQL := getBindSQL(stmtNode, planHints, defaultDB, blockStartOffset)
 	if bindSQL == "" {
 		return ""
 	}
-	switch n := stmtNode.(type) {
-	case *ast.DeleteStmt:
-		deleteIdx := strings.Index(bindSQL, "DELETE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[deleteIdx:]
-		return strings.Replace(bindSQL, "DELETE", fmt.Sprintf("DELETE /*+ %s*/", planHint), 1)
-	case *ast.UpdateStmt:
-		updateIdx := strings.Index(bindSQL, "UPDATE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[updateIdx:]
-		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
-	case *ast.SelectStmt:
-		var selectIdx int
-		if n.With != nil {
-			var withSb strings.Builder
-			withIdx := strings.Index(bindSQL, "WITH")
-			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
-			restoreCtx.DefaultDB = defaultDB
-			err := n.With.Restore(restoreCtx)
-			if err != nil {
-				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
-				return ""
-			}
-			withEnd := withIdx + len(withSb.String())
-			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
-			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
+	return afterProcessFunc(bindSQL)
+}
+
+func getBindSQL(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defaultDB string, blockOffsetStart int) string {
+	maxHintOffset := 0
+	blockHintProcessor := hint.BlockHintProcessor{}
+	offsetToHintMap := make(map[int][]*ast.TableOptimizerHint)
+	for _, pHint := range planHints {
+		hintOffset := blockHintProcessor.ParseOffsetFromBlockName(pHint.QBName, blockOffsetStart)
+		hints := offsetToHintMap[hintOffset]
+		hints = append(hints, pHint)
+		offsetToHintMap[hintOffset] = hints
+
+		if hintOffset > maxHintOffset {
+			maxHintOffset = hintOffset
 		}
-		selectIdx = strings.Index(bindSQL, "SELECT")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[selectIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
-	case *ast.InsertStmt:
-		insertIdx := int(0)
-		if n.IsReplace {
-			insertIdx = strings.Index(bindSQL, "REPLACE")
-		} else {
-			insertIdx = strings.Index(bindSQL, "INSERT")
-		}
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[insertIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
-	return ""
+	if len(offsetToHintMap) == 0 {
+		return ""
+	}
+	tableHints := make([][]*ast.TableOptimizerHint, maxHintOffset+1)
+	for offset := 0; offset <= maxHintOffset; offset++ {
+		hints := offsetToHintMap[blockOffsetStart+offset]
+		tableHints[offset] = hints
+	}
+
+	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
+	// So here we would remove the hint and inject the current best plan hint.
+	hint.BindHint(stmtNode, hint.GetHintsSet(tableHints, nil))
+	bindSQL := utilparser.RestoreWithDefaultDB(stmtNode, defaultDB, "")
+	return bindSQL
 }
 
 type paramMarkerChecker struct {

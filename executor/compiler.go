@@ -395,6 +395,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Trace"
 	case *ast.ShutdownStmt:
 		return "Shutdown"
+	case *ast.SetOprStmt:
+		return "SetOpr"
 	}
 	return "other"
 }

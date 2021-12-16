@@ -244,6 +244,11 @@ func CollectHint(in ast.StmtNode) *HintsSet {
 	return hp.HintsSet
 }
 
+// GetHintsSet generate struct HintsSet by tableHints and indexHints
+func GetHintsSet(tableHints [][]*ast.TableOptimizerHint, indexHints [][]*ast.IndexHint) *HintsSet {
+	return &HintsSet{tableHints: tableHints, indexHints: indexHints}
+}
+
 // BindHint will add hints for stmt according to the hints in `hintsSet`.
 func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 	hp := hintProcessor{HintsSet: hintsSet, bindHint2Ast: true}
@@ -436,6 +441,26 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr) int {
 	return -1
 }
 
+// ParseOffsetFromBlockName parse block offset from blockName
+func (p *BlockHintProcessor) ParseOffsetFromBlockName(blockName model.CIStr, curLevel int) int {
+	if p.QbNameMap != nil {
+		level, ok := p.QbNameMap[blockName.L]
+		if ok {
+			return level
+		}
+	}
+
+	if strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
+		suffix := blockName.L[len(defaultSelectBlockPrefix):]
+		level, err := strconv.ParseInt(suffix, 10, 64)
+		if err != nil {
+			return -1
+		}
+		return int(level)
+	}
+	return curLevel
+}
+
 // GetHintOffset gets the offset of stmt that the hints take effects.
 func (p *BlockHintProcessor) GetHintOffset(qbName model.CIStr, currentOffset int) int {
 	if qbName.L != "" {
@@ -483,6 +508,8 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 			return model.NewCIStr(defaultUpdateBlockName), nil
 		}
 		return model.NewCIStr(""), errors.New(fmt.Sprintf("Unexpected NodeType %d when block offset is 0", nodeType))
+	} else if blockOffset < 0 {
+		return model.NewCIStr(""), errors.New("Block offset is less than 0")
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
 }

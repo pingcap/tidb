@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -111,7 +112,7 @@ type stmtSummaryByDigestElement struct {
 	collation   string
 	prevSQL     string
 	samplePlan  string
-	planHint    string
+	planHint    []*ast.TableOptimizerHint
 	indexNames  []string
 	execCount   int64
 	sumErrors   int
@@ -213,7 +214,7 @@ type StmtExecInfo struct {
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
-	PlanGenerator  func() (string, string)
+	PlanGenerator  func() (string, []*ast.TableOptimizerHint)
 	PlanDigest     string
 	PlanDigestGen  func() string
 	User           string
@@ -355,7 +356,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 type BindableStmt struct {
 	Schema    string
 	Query     string
-	PlanHint  string
+	PlanHint  []*ast.TableOptimizerHint
 	Charset   string
 	Collation string
 }
@@ -372,7 +373,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*Bi
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
+			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace" || ssbd.stmtType == "SetOpr") {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()

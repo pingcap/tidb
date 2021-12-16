@@ -675,7 +675,7 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), MAX_EXECUTION_TIME(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
 func TestDefaultSessionVars(t *testing.T) {
