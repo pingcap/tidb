@@ -103,6 +103,7 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
+// TryToFixFlenOfDatetime try to fix flen of Datetime for specific func or other field merge cases
 func TryToFixFlenOfDatetime(resultTp *FieldType) bool {
 	if resultTp.Tp == mysql.TypeDatetime {
 		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
