@@ -60,8 +60,8 @@ github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20211216060840-084762baf46b h1:f9KcG4sem2RVf98UDD9doEcO9GF4wGjtYM34zo6A+V4=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20211216060840-084762baf46b/go.mod h1:ZFEaknU8OVsIPu583/oo5LBCD8Qcj+nuVcTy0p4N52E=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20211216090459-e31bbdfff74d h1:WcrPd7/319obHbzxye2iuFrYgPTeiOhkXAgICPQZwrw=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20211216090459-e31bbdfff74d/go.mod h1:ZFEaknU8OVsIPu583/oo5LBCD8Qcj+nuVcTy0p4N52E=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/PuerkitoBio/purell v1.1.0/go.mod h1:c11w/QuzBsJSee3cPx9rAFu61PvFxuPbtSwDGJws/X0=

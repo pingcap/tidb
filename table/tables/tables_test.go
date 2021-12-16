@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"testing"
@@ -797,67 +798,78 @@ func TestTxnAssertion(t *testing.T) {
 		}
 	}
 
-	testAssertionBasicImpl := func(level string, lock bool, lockIdx bool) {
+	testAssertionBasicImpl := func(level string, lock bool, lockIdx bool, useCommonHandle bool) {
 		tk.MustExec("set @@tidb_txn_assertion_level = " + level)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
+		if useCommonHandle {
+			tk.MustExec("create table t(id varchar(64) primary key clustered, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
+		} else {
+			tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
+		}
+
+		var id1, id2, id3 interface{}
+		if useCommonHandle {
+			id1, id2, id3 = "1", "2", "3"
+		} else {
+			id1, id2, id3 = 1, 2, 3
+		}
 
 		// Auto commit
-		tk.MustExec("insert into t values (1, 10, 100, 1000, '10000')")
-		tk.MustExec("update t set v = v + 1 where id = 1")
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id1)
 		tk.MustExec("delete from t where id = 1")
 
 		// Optimistic
-		tk.MustExec("insert into t values (2, 20, 200, 2000, '20000'), (3, 30, 300, 3000, '30000')")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		tk.MustExec("begin optimistic")
 		if lock {
-			tk.MustExec("select * from t where id in (1, 2, 3) for update")
+			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1, id2, id3)
 		}
 		if lockIdx {
 			tk.MustExec("select * from t where v3 in (1000, 2000, 3000) for update")
 		}
-		tk.MustExec("insert into t values (1, 10, 100, 1000, '10000')")
-		tk.MustExec("update t set v = v + 1 where id = 2")
-		tk.MustExec("delete from t where id = 3")
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id2)
+		tk.MustExec("delete from t where id = ?", id3)
 		tk.MustExec("commit")
 
 		// Pessimistic
 		tk.MustExec("delete from t")
-		tk.MustExec("insert into t values (2, 20, 200, 2000, '20000'), (3, 30, 300, 3000, '30000')")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		tk.MustExec("begin pessimistic")
 		if lock {
-			tk.MustExec("select * from t where id in (1, 2, 3) for update")
+			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1,id2, id3)
 		}
 		if lockIdx {
 			tk.MustExec("select * from t where v3 in (1000, 2000, 3000) for update")
 		}
-		tk.MustExec("insert into t values (1, 10, 100, 1000, '10000')")
-		tk.MustExec("update t set v = v + 1 where id = 2")
-		tk.MustExec("delete from t where id = 3")
+		tk.MustExec("insert into t values (?, 10, 100, 1000, '10000')", id1)
+		tk.MustExec("update t set v = v + 1 where id = ?", id2)
+		tk.MustExec("delete from t where id = ?", id3)
 		tk.MustExec("commit")
 
 		// Inject incorrect assertion so that it must fail.
 
 		// Auto commit
 		tk.MustExec("delete from t")
-		tk.MustExec("insert into t values (2, 20, 200, 2000, '20000'), (3, 30, 300, 3000, '30000')")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		withFailpoint(fpAdd, func() {
-			err = tk.ExecToErr("insert into t values (1, 10, 100, 1000, '10000')")
+			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpUpdate, func() {
-			err = tk.ExecToErr("update t set v = v + 1 where id = 2")
+			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpRemove, func() {
-			err = tk.ExecToErr("delete from t where id = 3")
+			err = tk.ExecToErr("delete from t where id = ?", id3)
 			expectAssertionErr(level, err)
 		})
 
 		var lockStmts []string = nil
 		if lock {
-			lockStmts = append(lockStmts, "select * from t where id in (1, 2, 3) for update")
+			lockStmts = append(lockStmts, fmt.Sprintf("select * from t where id in (%#v, %#v, %#v) for update", id1, id2, id3))
 		}
 		if lockIdx {
 			lockStmts = append(lockStmts, "select * from t where v3 in (1000, 2000, 3000) for update")
@@ -865,45 +877,47 @@ func TestTxnAssertion(t *testing.T) {
 
 		// Optimistic
 		tk.MustExec("delete from t")
-		tk.MustExec("insert into t values (2, 20, 200, 2000, '20000'), (3, 30, 300, 3000, '30000')")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		withFailpoint(fpAdd, func() {
-			err = runStmtInTxn(false, append(lockStmts, "insert into t values (1, 10, 100, 1000, '10000')")...)
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("insert into t values (%#v, 10, 100, 1000, '10000')", id1))...)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpUpdate, func() {
-			err = runStmtInTxn(false, append(lockStmts, "update t set v = v + 1 where id = 2")...)
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("update t set v = v + 1 where id = %#v", id2))...)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpRemove, func() {
-			err = runStmtInTxn(false, append(lockStmts, "delete from t where id = 3")...)
+			err = runStmtInTxn(false, append(lockStmts, fmt.Sprintf("delete from t where id = %#v", id3))...)
 			expectAssertionErr(level, err)
 		})
 
 		// Pessimistic
 		tk.MustExec("delete from t")
-		tk.MustExec("insert into t values (2, 20, 200, 2000, '20000'), (3, 30, 300, 3000, '30000')")
+		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		withFailpoint(fpAdd, func() {
-			err = runStmtInTxn(true, append(lockStmts, "insert into t values (1, 10, 100, 1000, '10000')")...)
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("insert into t values (%#v, 10, 100, 1000, '10000')", id1))...)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpUpdate, func() {
-			err = runStmtInTxn(true, append(lockStmts, "update t set v = v + 1 where id = 2")...)
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("update t set v = v + 1 where id = %#v", id2))...)
 			expectAssertionErr(level, err)
 		})
 		withFailpoint(fpRemove, func() {
-			err = runStmtInTxn(true, append(lockStmts, "delete from t where id = 3")...)
+			err = runStmtInTxn(true, append(lockStmts, fmt.Sprintf("delete from t where id = %#v", id3))...)
 			expectAssertionErr(level, err)
 		})
 	}
 
-	testAssertionBasicImpl("STRICT", false, false)
-	testAssertionBasicImpl("OFF", false, false)
-	testAssertionBasicImpl("STRICT", false, true)
-	testAssertionBasicImpl("OFF", false, true)
-	testAssertionBasicImpl("STRICT", true, false)
-	testAssertionBasicImpl("OFF", true, false)
-	testAssertionBasicImpl("STRICT", true, true)
-	testAssertionBasicImpl("OFF", true, true)
+	for _, level := range []string{"STRICT", "OFF"} {
+		for _, lock := range []bool {false, true} {
+			for _, lockIdx := range[]bool{false, true} {
+				for _, useCommonHandle := range []bool{false, true} {
+					t.Logf("testing testAssertionBasicImpl level: %v, lock: %v, lockIdx: %v, useCommonHandle: %v...", level, lock, lockIdx, useCommonHandle)
+					testAssertionBasicImpl(level, lock, lockIdx, useCommonHandle)
+				}
+			}
+		}
+	}
 
 	testUntouchedIndexImpl := func(level string, pessimistic bool) {
 		tk.MustExec("set @@tidb_txn_assertion_level = " + level)
