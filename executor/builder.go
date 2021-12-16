@@ -80,16 +80,10 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
-<<<<<<< HEAD
-=======
-	Ti               *TelemetryInfo
-	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
->>>>>>> 4fbbd5a77... executor: make projection executor unparallel for insert/update/delete (#30290)
+
+	inUpdateStmt bool
+	inDeleteStmt bool
+	inInsertStmt bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
