@@ -6916,7 +6916,12 @@ func TestIssue30327(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	result := tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
 	result.Check(testkit.Rows(time.Now().Format("2006-01-02")))
-	tk.MustExec("SET TIMESTAMP=978332400;")
+	tk.MustExec("SET TIMESTAMP=UNIX_TIMESTAMP('2001-01-01');")
 	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
 	result.Check(testkit.Rows("2001-01-01"))
+	tk.MustExec("SET @@TIMESTAMP=UNIX_TIMESTAMP('2002-01-01');")
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2002-01-01"))
+	result = tk.MustQuery("SELECT cast(TIME'23:59:59.4' as date)")
+	result.Check(testkit.Rows("2002-01-01"))
 }

@@ -961,6 +961,8 @@ func TestConvert(t *testing.T) {
 	}
 	// test different time zone.
 	sc.TimeZone = time.UTC
+	nowTs, _ = expression.GetStmtTimestamp(ctx)
+	sc.Timestamp = nowTs
 	for _, tt := range tblDuration {
 		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
 		require.NoError(t, err)
