@@ -446,6 +446,18 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	// After a duration of this time in seconds if the server doesn't see any activity it pings
+	// the client to see if the transport is still alive.
+	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the server waits for a duration of timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GRPCKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// The number of max concurrent streams/requests on a client connection.
+	GRPCConcurrentStreams uint `toml:"grpc-concurrent-streams" json:"grpc-concurrent-streams"`
+	// Sets window size for stream. The default value is 2MB.
+	GRPCInitialWindowSize int `toml:"grpc-initial-window-size" json:"grpc-initial-window-size"`
+	// Set maximum message length in bytes that gRPC can send. `-1` means unlimited. The default value is 10MB.
+	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
 }
 
 // Performance is the performance section of the config.
@@ -667,11 +679,16 @@ var defaultConf = Config{
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Status: Status{
-		ReportStatus:    true,
-		StatusHost:      DefStatusHost,
-		StatusPort:      DefStatusPort,
-		MetricsInterval: 15,
-		RecordQPSbyDB:   false,
+		ReportStatus:          true,
+		StatusHost:            DefStatusHost,
+		StatusPort:            DefStatusPort,
+		MetricsInterval:       15,
+		RecordQPSbyDB:         false,
+		GRPCKeepAliveTime:     10,
+		GRPCKeepAliveTimeout:  3,
+		GRPCConcurrentStreams: 1024,
+		GRPCInitialWindowSize: 2 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    10 * 1024 * 1024,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
