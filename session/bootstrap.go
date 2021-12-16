@@ -1198,11 +1198,22 @@ func upgradeToVer42(s Session, ver int64) {
 	writeDefaultExprPushDownBlacklist(s)
 }
 
+// Convert statement summary global variables to non-empty values.
+func writeStmtSummaryVars(s Session) {
+	sql := "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''"
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBEnableStmtSummary), variable.TiDBEnableStmtSummary)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(variable.DefTiDBStmtSummaryInternalQuery), variable.TiDBStmtSummaryInternalQuery)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryRefreshInterval), variable.TiDBStmtSummaryRefreshInterval)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.Itoa(variable.DefTiDBStmtSummaryHistorySize), variable.TiDBStmtSummaryHistorySize)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount)
+	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(variable.DefTiDBStmtSummaryMaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength)
+}
+
 func upgradeToVer43(s Session, ver int64) {
 	if ver >= version43 {
 		return
 	}
-	// writeStmtSummaryVars(s)
+	writeStmtSummaryVars(s)
 }
 
 func upgradeToVer44(s Session, ver int64) {
@@ -1803,7 +1814,7 @@ func doDMLWorks(s Session) {
 
 	writeDefaultExprPushDownBlacklist(s)
 
-	// writeStmtSummaryVars(s)
+	writeStmtSummaryVars(s)
 
 	_, err := s.ExecuteInternal(context.Background(), "COMMIT")
 	if err != nil {
