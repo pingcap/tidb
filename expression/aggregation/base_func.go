@@ -457,7 +457,6 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 				a.Args[i].GetType().Flen = 10
 			case mysql.TypeLonglong:
 				a.Args[i].GetType().Flen = 20
-				a.Args[i].GetType().Flen = 20
 			}
 		}
 	}
