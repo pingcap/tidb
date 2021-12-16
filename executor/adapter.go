@@ -332,7 +332,7 @@ func (a *ExecStmt) countExecForTopSQL() {
 	_, sqlDigest := vars.StmtCtx.SQLDigest()
 	_, planDigest := vars.StmtCtx.GetPlanDigest()
 	if vars.StmtStats != nil {
-		vars.StmtStats.AddExecCount(sqlDigest.String(), planDigest.String(), time.Now().Unix(), 1)
+		vars.StmtStats.AddExecCount(sqlDigest.String(), planDigest.String(), 1)
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest.String(), planDigest.String())
 	}
 }

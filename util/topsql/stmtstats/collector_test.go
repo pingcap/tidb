@@ -30,11 +30,11 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	m.register(stats)
-	stats.AddExecCount("SQL-1", "", 1001, 1)
-	assert.Empty(t, m.data)
+	stats.AddExecCount("SQL-1", "", 1)
+	assert.Empty(t, m.records)
 	m.collect()
-	assert.NotEmpty(t, m.data)
-	assert.Equal(t, uint64(1), m.data[SQLPlanDigest{SQLDigest: "SQL-1"}][1001].ExecCount)
+	assert.NotEmpty(t, m.records)
+	assert.Equal(t, uint64(1), m.records[0].data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 }
 
 func Test_statementStatsManager_run_close(t *testing.T) {

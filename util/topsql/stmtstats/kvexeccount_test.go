@@ -39,8 +39,6 @@ func TestKvExecCounter(t *testing.T) {
 	assert.Len(t, counter.marked, 2)
 	assert.Contains(t, counter.marked, "TIKV-1")
 	assert.Contains(t, counter.marked, "TIKV-2")
-	assert.True(t, len(stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}]) > 0)
-	for _, item := range stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}] {
-		assert.Equal(t, uint64(1), item.KvStatsItem.KvExecCount["TIKV-1"])
-	}
+	assert.NotNil(t, stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}])
+	assert.Equal(t, uint64(1), stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["TIKV-1"])
 }

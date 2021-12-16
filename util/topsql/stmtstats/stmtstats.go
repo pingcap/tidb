@@ -55,38 +55,31 @@ func CreateStatementStats() *StatementStats {
 // for the specified SQLPlanDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest string, ts int64) *StatementStatsItem {
+func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest string) *StatementStatsItem {
 	key := SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
-	tsItem, ok := s.data[key]
+	item, ok := s.data[key]
 	if !ok {
-		s.data[key] = map[int64]*StatementStatsItem{}
-		tsItem = s.data[key]
-	}
-	item, ok := tsItem[ts]
-	if !ok {
-		tsItem[ts] = NewStatementStatsItem()
-		item = tsItem[ts]
+		s.data[key] = NewStatementStatsItem()
+		item = s.data[key]
 	}
 	return item
 }
 
-// AddExecCount is used to count the number of executions of a certain
-// SQLPlanDigest within a certain timestamp.
+// AddExecCount is used to count the number of executions of a certain SQLPlanDigest.
 // AddExecCount is thread-safe.
-func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, ts int64, n uint64) {
+func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest, ts)
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 	item.ExecCount += n
 }
 
-// AddKvExecCount is used to count the number of executions of a certain
-// SQLPlanDigest for a certain target within a certain timestamp。
+// AddKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
 // AddKvExecCount is thread-safe.
-func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest string, ts int64, target string, n uint64) {
+func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest string, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest, ts)
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 	item.KvStatsItem.KvExecCount[target] += n
 }
 
@@ -119,13 +112,11 @@ type SQLPlanDigest struct {
 	PlanDigest string
 }
 
-// StatementStatsMap represents Map<SQLPlanDigest, Map<Timestamp, StatementStatsItem>>.
-// We put SQLPlanDigest in front of the two-dimensional map, because SQLPlanDigest
-// is larger than timestamp. This can reduce unnecessary memory usage.
-type StatementStatsMap map[SQLPlanDigest]map[int64]*StatementStatsItem
+// StatementStatsMap is the local data type of StatementStats.
+type StatementStatsMap map[SQLPlanDigest]*StatementStatsItem
 
 // Merge merges other into StatementStatsMap.
-// Values with the same SQLPlanDigest and same timestamp will be merged.
+// Values with the same SQLPlanDigest will be merged.
 //
 // After executing Merge, some pointers in other may be referenced
 // by m. So after calling Merge, it is best not to continue to use
@@ -134,20 +125,13 @@ func (m StatementStatsMap) Merge(other StatementStatsMap) {
 	if m == nil || other == nil {
 		return
 	}
-	for newSQL, newTsItem := range other {
-		tsItem, ok := m[newSQL]
+	for newDigest, newItem := range other {
+		item, ok := m[newDigest]
 		if !ok {
-			m[newSQL] = newTsItem
+			m[newDigest] = newItem
 			continue
 		}
-		for ts, newItem := range newTsItem {
-			item, ok := tsItem[ts]
-			if !ok {
-				tsItem[ts] = newItem
-				continue
-			}
-			item.Merge(newItem)
-		}
+		item.Merge(newItem)
 	}
 }
 

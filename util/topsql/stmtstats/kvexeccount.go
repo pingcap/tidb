@@ -16,7 +16,6 @@ package stmtstats
 
 import (
 	"sync"
-	"time"
 
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -65,6 +64,6 @@ func (c *KvExecCounter) mark(target string) {
 	defer c.mu.Unlock()
 	if _, ok := c.marked[target]; !ok {
 		c.marked[target] = struct{}{}
-		c.stats.AddKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, time.Now().Unix(), target, 1)
+		c.stats.AddKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, target, 1)
 	}
 }

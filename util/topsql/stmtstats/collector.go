@@ -22,17 +22,19 @@ import (
 )
 
 const (
-	// statementStatsCollectDuration is the time period for statementStatsCollector
-	// to collect data from all StatementStats.
-	statementStatsCollectDuration = 3 * time.Second
-
 	// statementStatsUploadDuration is the time period for statementStatsCollector
 	// to report all aggregated data.
-	statementStatsUploadDuration = 30 * time.Second
+	statementStatsUploadDuration = 5 * time.Second
 )
 
 // globalCollector is global *statementStatsCollector.
 var globalCollector atomic.Value
+
+// StatementStatsMapRecord is the merged StatementStatsMap with timestamp.
+type StatementStatsMapRecord struct {
+	timestamp int64
+	data      StatementStatsMap
+}
 
 // statementStatsCollector is used to collect data from all StatementStats.
 // It is responsible for collecting data from all StatementStats, aggregating
@@ -40,7 +42,7 @@ var globalCollector atomic.Value
 type statementStatsCollector struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	data     StatementStatsMap
+	records  []StatementStatsMapRecord
 	statsSet sync.Map // map[*StatementStats]struct{}
 	running  int32
 }
@@ -48,7 +50,7 @@ type statementStatsCollector struct {
 // newStatementStatsCollector creates an empty statementStatsCollector.
 func newStatementStatsCollector() *statementStatsCollector {
 	return &statementStatsCollector{
-		data: StatementStatsMap{},
+		records: []StatementStatsMapRecord{},
 	}
 }
 
@@ -56,13 +58,11 @@ func newStatementStatsCollector() *statementStatsCollector {
 // loop of statementStatsCollector.
 func (m *statementStatsCollector) run() {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.data = StatementStatsMap{}
-	m.statsSet = sync.Map{}
 	atomic.StoreInt32(&m.running, 1)
 	defer func() {
 		atomic.StoreInt32(&m.running, 0)
 	}()
-	tickCollect := time.NewTicker(statementStatsCollectDuration)
+	tickCollect := time.NewTicker(time.Second)
 	defer tickCollect.Stop()
 	tickUpload := time.NewTicker(statementStatsUploadDuration)
 	defer tickUpload.Stop()
@@ -81,25 +81,30 @@ func (m *statementStatsCollector) run() {
 // collect data from all associated StatementStats.
 // If StatementStats has been closed, collect will remove it from the map.
 func (m *statementStatsCollector) collect() {
+	r := StatementStatsMapRecord{
+		timestamp: time.Now().Unix(),
+		data:      StatementStatsMap{},
+	}
 	m.statsSet.Range(func(statsR, _ interface{}) bool {
 		stats := statsR.(*StatementStats)
 		if stats.Finished() {
 			m.statsSet.Delete(stats)
 		}
-		m.data.Merge(stats.Take())
+		r.data.Merge(stats.Take())
 		return true
 	})
+	m.records = append(m.records, r)
 }
 
 // upload get, clear, and push the existing data of statementStatsCollector.
 func (m *statementStatsCollector) upload() {
-	data := m.data
-	m.data = StatementStatsMap{}
+	records := m.records
+	m.records = []StatementStatsMapRecord{}
 
-	// TODO(mornyx): upload data. Here is a bridge connecting the stmtstats module
+	// TODO(mornyx): upload records. Here is a bridge connecting the stmtstats module
 	//               with the existing top-sql cpu reporter. We will provide this
 	//               part after the pub/sub code of top-sql is merged into master.
-	_ = data
+	_ = records
 }
 
 // register binds StatementStats to statementStatsCollector.
