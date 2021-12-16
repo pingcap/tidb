@@ -25,13 +25,13 @@ func (s *testFilterSuite) TestFilter(c *C) {
 	)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/")
+		return log.NewFilterCore(c, "github.com/pingcap/br/")
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(buffer.Stripped(), HasLen, 0)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
+		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(
@@ -40,7 +40,7 @@ func (s *testFilterSuite) TestFilter(c *C) {
 	)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
+		return log.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(buffer.Stripped(), HasLen, 0)
@@ -49,11 +49,8 @@ func (s *testFilterSuite) TestFilter(c *C) {
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
 		return log.NewFilterCore(c, "github.com/pingcap/check/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
-	logger.Warn("the message", zap.String("stack", "github.com/pingcap/check/"))
-	c.Assert(
-		buffer.Stripped(), Equals,
-		`{"$lvl":"WARN","$msg":"the message","a":"b","stack":"github.com/pingcap/check/"}`,
-	)
+	logger.Warn("the message", zap.String("stack", "github.com/pingcap/tidb/br/"))
+	c.Assert(buffer.Stripped(), HasLen, 0)
 }
 
 // PASS: filter_test.go:82: testFilterSuite.BenchmarkFilterRegexMatchString 1000000               1163 ns/op
