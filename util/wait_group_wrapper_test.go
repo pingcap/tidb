@@ -22,7 +22,6 @@ import (
 )
 
 func TestWaitGroupWrapperRun(t *testing.T) {
-	t.Parallel()
 	var expect int32 = 4
 	var val atomic.Int32
 	var wg WaitGroupWrapper
@@ -36,7 +35,6 @@ func TestWaitGroupWrapperRun(t *testing.T) {
 }
 
 func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
-	t.Parallel()
 	var expect int32 = 2
 	var val atomic.Int32
 	var wg WaitGroupWrapper

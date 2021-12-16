@@ -22,7 +22,6 @@ import (
 )
 
 func TestSetInVariable(t *testing.T) {
-	t.Parallel()
 	sv := newSysVars()
 	st := sv.getVariable(typeMaxStmtCount)
 	require.Equal(t, int64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), st)
@@ -58,7 +57,6 @@ func TestSetInVariable(t *testing.T) {
 }
 
 func TestSetBoolVariable(t *testing.T) {
-	t.Parallel()
 	sv := newSysVars()
 	en := sv.getVariable(typeEnable)
 	require.Equal(t, config.GetGlobalConfig().StmtSummary.Enable, en > 0)
@@ -98,7 +96,6 @@ func TestSetBoolVariable(t *testing.T) {
 }
 
 func TestMinValue(t *testing.T) {
-	t.Parallel()
 	sv := newSysVars()
 	err := sv.setVariable(typeMaxStmtCount, "0", false)
 	require.NoError(t, err)
