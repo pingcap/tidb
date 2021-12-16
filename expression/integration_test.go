@@ -10198,8 +10198,6 @@ func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -10276,4 +10274,3 @@ func (s *testIntegrationSuite) TestIssue30101(c *C) {
 	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
 	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
 }
->>>>>>> 4947cf1f5... expression: fix wrong result of greatest/least(mixed unsigned/signed int) (#30121)
