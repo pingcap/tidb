@@ -839,7 +839,7 @@ func TestTxnAssertion(t *testing.T) {
 		tk.MustExec("insert into t values (?, 20, 200, 2000, '20000'), (?, 30, 300, 3000, '30000')", id2, id3)
 		tk.MustExec("begin pessimistic")
 		if lock {
-			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1,id2, id3)
+			tk.MustExec("select * from t where id in (?, ?, ?) for update", id1, id2, id3)
 		}
 		if lockIdx {
 			tk.MustExec("select * from t where v3 in (1000, 2000, 3000) for update")
@@ -909,8 +909,8 @@ func TestTxnAssertion(t *testing.T) {
 	}
 
 	for _, level := range []string{"STRICT", "OFF"} {
-		for _, lock := range []bool {false, true} {
-			for _, lockIdx := range[]bool{false, true} {
+		for _, lock := range []bool{false, true} {
+			for _, lockIdx := range []bool{false, true} {
 				for _, useCommonHandle := range []bool{false, true} {
 					t.Logf("testing testAssertionBasicImpl level: %v, lock: %v, lockIdx: %v, useCommonHandle: %v...", level, lock, lockIdx, useCommonHandle)
 					testAssertionBasicImpl(level, lock, lockIdx, useCommonHandle)
