@@ -31,6 +31,6 @@ type DataSink interface {
 	// Note that: once a DataSink is down, it cannot go back to be up.
 	IsDown() bool
 
-	// Close cleans up resources owned by this DataSink
+	// Close notifies DataSink that the reporter is dropping it.
 	Close()
 }

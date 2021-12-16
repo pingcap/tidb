@@ -41,7 +41,7 @@ var globalTopSQLReport reporter.TopSQLReporter
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
 	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	remoteReporter.Register(reporter.NewSingleTargetDataSink())
+	remoteReporter.Register(context.Background(), reporter.NewSingleTargetDataSink())
 
 	globalTopSQLReport = remoteReporter
 

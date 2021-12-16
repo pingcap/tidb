@@ -15,6 +15,7 @@
 package reporter
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,7 +100,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	})
 
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	ts.Register(NewSingleTargetDataSink())
+	ts.Register(context.Background(), NewSingleTargetDataSink())
 	return ts
 }
 
@@ -466,9 +467,9 @@ func TestMultipleDataSinks(t *testing.T) {
 	ch1 := make(chan *ReportData, 1)
 	ch2 := make(chan *ReportData, 1)
 	ch3 := make(chan *ReportData, 1)
-	tsr.Register(newMockDataSink(ch1))
-	tsr.Register(newMockDataSink(ch2))
-	tsr.Register(newMockDataSink(ch3))
+	tsr.Register(context.Background(), newMockDataSink(ch1))
+	tsr.Register(context.Background(), newMockDataSink(ch2))
+	tsr.Register(context.Background(), newMockDataSink(ch3))
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),

@@ -55,7 +55,7 @@ type TopSQLReporter interface {
 
 // DataSinkRegisterer is for registering DataSink
 type DataSinkRegisterer interface {
-	Register(dataSink DataSink)
+	Register(ctx context.Context, dataSink DataSink)
 }
 
 type cpuData struct {
@@ -161,8 +161,6 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		ctx:    ctx,
 		cancel: cancel,
 
-		// An unbuffered channel for registration. A call for Register will block
-		// until the registration is successful or the RemoteTopSQLReporter is closed.
 		dataSinkRegCh: make(chan DataSink),
 
 		collectCPUDataChan:      make(chan cpuData, 1),
@@ -237,10 +235,14 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 
 // Register implements DataSinkRegisterer interface.
 //
-// A call for Register will block until the registration is successful or the RemoteTopSQLReporter is closed.
-func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) {
+// A call for Register will block until the registration is successful or the RemoteTopSQLReporter is closed or ctx is
+// done.
+func (tsr *RemoteTopSQLReporter) Register(ctx context.Context, dataSink DataSink) {
 	select {
 	case tsr.dataSinkRegCh <- dataSink:
+	case <-ctx.Done():
+		logutil.BgLogger().Warn("[top-sql] failed to register datasink", zap.Error(ctx.Err()))
+		dataSink.Close()
 	case <-tsr.ctx.Done():
 		logutil.BgLogger().Warn("[top-sql] failed to register datasink due to the reporter is down")
 		dataSink.Close()
@@ -650,6 +652,9 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	})
 	deadline := time.Now().Add(timeout)
 	for _, ds := range tsr.dataSinks {
+		if ds.IsPaused() {
+			continue
+		}
 		if err := ds.TrySend(data, deadline); err != nil {
 			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
 		}
