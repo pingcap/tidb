@@ -1868,7 +1868,8 @@ type HandleRange struct {
 type StatementScope int
 
 const (
-	SessionScope StatementScope = iota
+	NoneScope StatementScope = iota
+	SessionScope
 	InstanceScope
 	GlobalScope
 )
