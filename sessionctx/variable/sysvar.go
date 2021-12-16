@@ -678,7 +678,6 @@ var defaultSysVars = []*SysVar{
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
 		return DefTimestamp, nil
 	}},
-	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true, Type: TypeInt},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {

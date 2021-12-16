@@ -1864,6 +1864,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
+	nowTs, err := expression.GetStmtTimestamp(ctx)
+	if err != nil {
+		return err
+	}
+	sc.Timestamp = nowTs
 	return
 }
 

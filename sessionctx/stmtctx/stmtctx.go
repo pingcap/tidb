@@ -204,7 +204,7 @@ type StatementContext struct {
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
 	// Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
-	Timestamp int
+	Timestamp time.Time
 }
 
 // StmtHints are SessionVars related sql hints.
