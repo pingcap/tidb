@@ -6890,7 +6890,7 @@ func TestMySQLWorkbenchIntialConnect(t *testing.T) {
 
 	// This is a dump of the initial chatter that Workbench does when connecting to a server.
 	// It has been passed through sort | uniq, so the order is non-exact.
-	// This helps ensure that we do not remove noops which have tools depend on.
+	// This helps ensure that we do not remove noops which tools depend on.
 	// See: https://github.com/pingcap/tidb/issues/30636
 
 	tk.MustExec("SELECT CONNECTION_ID()")
