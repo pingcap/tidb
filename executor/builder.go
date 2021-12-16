@@ -86,18 +86,12 @@ type executorBuilder struct {
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
 	Ti               *TelemetryInfo
-<<<<<<< HEAD
 	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
 	explicitStaleness bool
 	txnScope          string
-=======
-	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
->>>>>>> 4fbbd5a77... executor: make projection executor unparallel for insert/update/delete (#30290)
+	inUpdateStmt      bool
+	inDeleteStmt      bool
+	inInsertStmt      bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
