@@ -9522,7 +9522,6 @@ func (s *testSerialSuite) TestIssue30289(c *C) {
 	c.Assert(err.Error(), Matches, "issue30289 build return error")
 }
 
-
 func (s *testSerialSuite) TestIssue29498(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
