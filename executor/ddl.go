@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -622,7 +621,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
-	if tblInfo, err = recoverTablePlacement(e.ctx, job.StartTS, tblInfo); err != nil {
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
 		return err
 	}
 
@@ -642,17 +641,13 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 
 // recoverTablePlacement is used when recover/flashback table.
 // It will replace the placement policy of table with the direct options because the original policy may be deleted
-func recoverTablePlacement(ctx sessionctx.Context, snapshotTS uint64, tblInfo *model.TableInfo) (*model.TableInfo, error) {
-	is, err := domain.GetDomain(ctx).GetSnapshotInfoSchema(snapshotTS)
-	if err != nil {
-		return nil, err
-	}
-
+func recoverTablePlacement(snapshotMeta *meta.Meta, tblInfo *model.TableInfo) (*model.TableInfo, error) {
 	if ref := tblInfo.PlacementPolicyRef; ref != nil {
-		policy, ok := is.PolicyByName(ref.Name)
-		if !ok || policy.ID != ref.ID {
-			return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%d'", ref.Name, ref.ID)
+		policy, err := snapshotMeta.GetPolicy(ref.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+
 		tblInfo.PlacementPolicyRef = nil
 		tblInfo.DirectPlacementOpts = policy.PlacementSettings
 	}
@@ -665,9 +660,9 @@ func recoverTablePlacement(ctx sessionctx.Context, snapshotTS uint64, tblInfo *m
 				continue
 			}
 
-			policy, ok := is.PolicyByName(ref.Name)
-			if !ok || policy.ID != ref.ID {
-				return nil, errors.Errorf("Cannot find policy with name '%s', ID: '%d'", ref.Name, ref.ID)
+			policy, err := snapshotMeta.GetPolicy(ref.ID)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 
 			def.PlacementPolicyRef = nil
@@ -831,7 +826,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 
-	if tblInfo, err = recoverTablePlacement(e.ctx, job.StartTS, tblInfo); err != nil {
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
 		return err
 	}
 
