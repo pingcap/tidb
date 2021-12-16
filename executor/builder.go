@@ -92,12 +92,9 @@ type executorBuilder struct {
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
-<<<<<<< HEAD
-=======
 	inUpdateStmt     bool
 	inDeleteStmt     bool
 	inInsertStmt     bool
->>>>>>> 4fbbd5a77... executor: make projection executor unparallel for insert/update/delete (#30290)
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
