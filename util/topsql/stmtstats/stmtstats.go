@@ -15,6 +15,9 @@
 package stmtstats
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"sync"
 
 	"go.uber.org/atomic"
@@ -112,6 +115,19 @@ type SQLPlanDigest struct {
 	PlanDigest string
 }
 
+// String is only used for debugging.
+func (d SQLPlanDigest) String() string {
+	bs := bytes.NewBufferString("")
+	if len(d.SQLDigest) >= 5 {
+		bs.Write([]byte(d.SQLDigest)[:5])
+	}
+	if len(d.PlanDigest) >= 5 {
+		bs.WriteRune('-')
+		bs.Write([]byte(d.PlanDigest)[:5])
+	}
+	return bs.String()
+}
+
 // StatementStatsMap is the local data type of StatementStats.
 type StatementStatsMap map[SQLPlanDigest]*StatementStatsItem
 
@@ -133,6 +149,20 @@ func (m StatementStatsMap) Merge(other StatementStatsMap) {
 		}
 		item.Merge(newItem)
 	}
+}
+
+// String is only used for debugging.
+func (m StatementStatsMap) String() string {
+	if len(m) == 0 {
+		return "StatementStatsMap {}"
+	}
+	bs := bytes.NewBufferString("")
+	bs.WriteString("StatementStatsMap {\n")
+	for k, v := range m {
+		bs.WriteString(fmt.Sprintf("    %s => %s\n", k, v))
+	}
+	bs.WriteString("}")
+	return bs.String()
 }
 
 // StatementStatsItem represents a set of mergeable statistics.
@@ -173,6 +203,15 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	} else {
 		i.KvStatsItem.Merge(other.KvStatsItem)
 	}
+}
+
+// String is only used for debugging.
+func (i *StatementStatsItem) String() string {
+	if i == nil {
+		return "<nil>"
+	}
+	b, _ := json.Marshal(i)
+	return string(b)
 }
 
 // KvStatementStatsItem is part of StatementStatsItem, it only contains
