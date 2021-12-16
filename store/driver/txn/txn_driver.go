@@ -293,7 +293,7 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	if err != nil && !tikverr.IsErrNotFound(err) {
 		return err
 	}
-	if err == nil && f.HasAssertion() {
+	if err == nil && f.HasAssertionFlags() {
 		return nil
 	}
 	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key1, getTiKVFlagsOps(assertion)...)
