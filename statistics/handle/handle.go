@@ -1503,6 +1503,15 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+		return err
+	}
 	// Remove the existing 'deleted' records.
 	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
 		return err
@@ -1513,17 +1522,10 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
 	// next `Update()` to remove the cached item then.
 	h.removeExtendedStatsItem(tableID, statsName)
-	txn, err := h.mu.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	version := txn.StartTS()
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
 	if _, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited); err != nil {
 		return err
 	}
-	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
-	_, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID)
 	return
 }
 
@@ -1563,10 +1565,10 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return errors.Trace(err)
 	}
 	version := txn.StartTS()
-	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
 		return err
 	}
 	return nil
