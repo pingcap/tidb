@@ -466,6 +466,28 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err, NotNil)
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -1234,4 +1256,32 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)
 	return se
+}
+
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE issue24414")
+	tk.MustExec("USE issue24414")
+	tk.MustExec(`create table table1(
+		col1 int,
+		col2 int,
+		col3 int
+		)`)
+	tk.MustExec(`insert into table1 values (1,1,1),(2,2,2)`)
+	tk.MustExec(`CREATE ROLE 'ACL-mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin-no-role'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'ACL-mobius-admin'@'%'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'mobius-admin-no-role'@'%'`)
+	tk.MustExec(`GRANT 'ACL-mobius-admin'@'%' to 'mobius-admin'@'%'`)
+	tk.MustExec(`SET DEFAULT ROLE ALL TO 'mobius-admin'`)
+	// create tables
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view (col1 , col2 , col3) AS SELECT * from table1`)
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin-no-role'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view2 (col1 , col2 , col3) AS SELECT * from table1`)
+
+	// all examples should work
+	tk.MustExec("select * from test_view")
+	tk.MustExec("select * from test_view2")
 }

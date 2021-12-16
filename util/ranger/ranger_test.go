@@ -351,7 +351,8 @@ create table t(
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
-	index idx_f(f)
+	index idx_f(f),
+	index idx_de(d(2), e)
 )`)
 
 	tests := []struct {
@@ -619,6 +620,13 @@ create table t(
 			accessConds: "[]",
 			filterConds: "[like(test.t.f, @%, 92)]",
 			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "d in ('aab', 'aac') and e = 'a'",
+			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+			filterConds: "[in(test.t.d, aab, aac)]",
+			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
 		},
 	}
 
@@ -1504,12 +1512,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	// test index range
 	testKit.MustExec("DROP TABLE IF EXISTS t")
 	testKit.MustExec("CREATE TABLE t (a year(4), key(a))")
-	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
+	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0'), (NULL)")
 	testKit.MustQuery("SELECT * FROM t WHERE a < 15698").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
 	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
+	testKit.MustQuery("SELECT * FROM t WHERE a <=> NULL").Check(testkit.Rows("<nil>"))
 
 	tests := []struct {
 		indexPos    int
@@ -1718,6 +1727,44 @@ func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
 	testKit.MustExec("insert into t1 values(0),(null);")
 	testKit.MustExec("create table t2(a int, b decimal unsigned, key idx(a,b));")
 	testKit.MustExec("insert into t2 values(1,0),(1,null);")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("USE test")
+	testKit.MustExec("DROP TABLE IF EXISTS IDT_20755")
+	testKit.MustExec("CREATE TABLE `IDT_20755` (\n" +
+		"  `COL1` varchar(20) DEFAULT NULL,\n" +
+		"  `COL2` tinyint(16) DEFAULT NULL,\n" +
+		"  `COL3` timestamp NULL DEFAULT NULL,\n" +
+		"  KEY `u_m_col` (`COL1`(10),`COL2`,`COL3`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", 73, \"2010-06-03 07:29:05\")")
+	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"xxxxxxxxxxxxxxx\", 73, \"2010-06-03 07:29:05\")")
 
 	var input []string
 	var output []struct {

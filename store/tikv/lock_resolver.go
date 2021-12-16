@@ -227,11 +227,6 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 	// locks have been cleaned before GC.
 	expiredLocks := locks
 
-	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
 	txnInfos := make(map[uint64]uint64)
 	startTime := time.Now()
 	for _, l := range expiredLocks {
@@ -241,7 +236,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		metrics.LockResolverCountWithExpired.Inc()
 
 		// Use currentTS = math.MaxUint64 means rollback the txn, no matter the lock is expired or not!
-		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, false, l)
+		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, math.MaxUint64, true, false, l)
 		if err != nil {
 			return false, err
 		}
@@ -255,7 +250,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 				continue
 			}
 			if _, ok := errors.Cause(err).(*nonAsyncCommitLock); ok {
-				status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true, true, l)
+				status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, 0, math.MaxUint64, true, true, l)
 				if err != nil {
 					return false, err
 				}
@@ -435,8 +430,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	return msBeforeTxnExpired.value(), pushed, nil
 }
 
-func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS uint64, locks []*Lock) (int64, error) {
-	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, true, false)
+func (lr *LockResolver) resolveLocksForWrite(bo *Backoffer, callerStartTS, callerForUpdateTS uint64, locks []*Lock) (int64, error) {
+	// The forWrite parameter is only useful for optimistic transactions which can avoid deadlock between large transactions,
+	// so only use forWrite if the callerForUpdateTS is zero.
+	msBeforeTxnExpired, _, err := lr.resolveLocks(bo, callerStartTS, locks, callerForUpdateTS == 0, false)
 	return msBeforeTxnExpired, err
 }
 
@@ -484,12 +481,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	var err error
 	var status TxnStatus
-	if l.UseAsyncCommit && !forceSyncCommit {
-		// Async commit doesn't need the current ts since it uses the minCommitTS.
-		currentTS = 0
-		// Set to 0 so as not to push forward min commit ts.
-		callerStartTS = 0
-	} else if l.TTL == 0 {
+	if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
 		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
 		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
@@ -791,8 +783,10 @@ func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatu
 	for region, locks := range keysByRegion {
 		curLocks := locks
 		curRegion := region
+		resolveBo, cancel := bo.Fork()
+		defer cancel()
 		go func() {
-			errChan <- lr.resolveRegionLocks(bo, l, curRegion, curLocks, status)
+			errChan <- lr.resolveRegionLocks(resolveBo, l, curRegion, curLocks, status)
 		}()
 	}
 
@@ -827,11 +821,11 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 	}
 
 	errChan := make(chan error, len(regions))
-	checkBo, cancel := bo.Fork()
-	defer cancel()
 	for regionID, keys := range regions {
 		curRegionID := regionID
 		curKeys := keys
+		checkBo, cancel := bo.Fork()
+		defer cancel()
 
 		go func() {
 			errChan <- lr.checkSecondaries(checkBo, l.TxnID, curKeys, curRegionID, &shared)

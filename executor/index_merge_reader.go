@@ -257,9 +257,11 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
-	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getPartitalPlanID(workID)),
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int,
+	partialWorkerWg *sync.WaitGroup) error {
+	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
+	partialTableReader := &TableReaderExecutor{
+		baseExecutor: newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
@@ -268,18 +270,11 @@ func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, 
 		plans:        e.partialPlans[workID],
 		ranges:       e.ranges[workID],
 	}
-	return tableReaderExec
-}
-
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int,
-	partialWorkerWg *sync.WaitGroup) error {
-	partialTableReader := e.buildPartialTableReader(ctx, workID)
 	err := partialTableReader.Open(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
 		return err
 	}
-	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
 		stats:        e.stats,
 		sc:           e.ctx,
@@ -287,7 +282,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
 		tableReader:  partialTableReader,
-		tableInfo:    tableInfo,
+		tableInfo:    ts.Table,
 	}
 
 	if worker.batchSize > worker.maxBatchSize {

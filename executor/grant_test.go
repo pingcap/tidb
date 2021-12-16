@@ -362,6 +362,14 @@ func (s *testSuite3) TestMaintainRequire(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite3) TestMaintainAuthString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo'`)
+	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
+	tk.MustExec(`ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL`)
+	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
+}
+
 func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user genius")

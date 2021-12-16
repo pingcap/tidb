@@ -824,6 +824,21 @@ func (s *testSuiteAgg) TestIssue16279(c *C) {
 	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
 }
 
+func (s *testSuiteAgg) TestIssue24676(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+		id int(11) NOT NULL PRIMARY KEY,
+		c1 int(11) NOT NULL DEFAULT '0'
+		)`)
+	tk.MustQuery("SELECT c1 FROM t1 GROUP BY c1 ORDER BY c1 ASC;")
+	tk.MustQuery("SELECT ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;")
+	err := tk.ExecToErr("SELECT ((floor(((`c1` - 10) / 300)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
+}
+
 func (s *testSuiteAgg) TestAggPushDownPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -902,6 +917,15 @@ func (s *testSuiteAgg) TestHaving(c *C) {
 	tk.MustQuery("select sum(c1) as s from t group by c1 having sum(c1) order by s").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 as s from t group by c1 having sum(c1) - 1 order by s").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
+}
+
+func (s *testSuiteAgg) TestIssue26496(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists UK_NSPRE_19416")
+	tk.MustExec("CREATE TABLE `UK_NSPRE_19416` (  `COL1` binary(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL,  UNIQUE KEY `UK_COL1` (`COL1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("insert into `UK_NSPRE_19416`(col1) values (0xc5b428e2ebc1b78f0b183899a8df55c88a333f86), (0x004dad637b37cc4a9742484ab93f97ede2ab8bd5), (0x550c4a4390ba14fd6d382dd29063e10210c99381)")
+	tk.MustQuery("select t1.col1, count(t2.col1) from UK_NSPRE_19416 as t1 left join UK_NSPRE_19416 as t2 on t1.col1 = t2.col1 where t1.col1 in (0x550C4A4390BA14FD6D382DD29063E10210C99381, 0x004DAD637B37CC4A9742484AB93F97EDE2AB8BD5, 0xC5B428E2EBC1B78F0B183899A8DF55C88A333F86) group by t1.col1, t2.col1 having t1.col1 in (0x9B4B48FEBA9225BACF8F9ADEAEE810AEC26DC7A2, 0x25A6C4FAD832F8E0267AAA504CFAE767565C8B84, 0xE26E5B0080EC5A8156DACE67D13B239500E540E6)").Check(nil)
 }
 
 func (s *testSuiteAgg) TestAggEliminator(c *C) {
@@ -1307,6 +1331,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	for _, sql := range sqls {
 		var expected [][]interface{}
 		for _, con := range concurrencies {
+			comment := Commentf("sql: %s; concurrency: %d", sql, con)
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort().Rows()
@@ -1320,16 +1345,20 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 						break
 					}
 				}
-				c.Assert(ok, Equals, true)
+				c.Assert(ok, Equals, true, comment)
 				rows := tk.MustQuery(sql).Sort().Rows()
 
-				c.Assert(len(rows), Equals, len(expected))
+				c.Assert(len(rows), Equals, len(expected), comment)
 				for i := range rows {
-					v1, err := strconv.ParseFloat(rows[i][0].(string), 64)
-					c.Assert(err, IsNil)
-					v2, err := strconv.ParseFloat(expected[i][0].(string), 64)
-					c.Assert(err, IsNil)
-					c.Assert(math.Abs(v1-v2), Less, 1e-3)
+					rowStr, expStr := rows[i][0].(string), expected[i][0].(string)
+					if rowStr == "<nil>" && expStr == "<nil>" {
+						continue
+					}
+					v1, err := strconv.ParseFloat(rowStr, 64)
+					c.Assert(err, IsNil, comment)
+					v2, err := strconv.ParseFloat(expStr, 64)
+					c.Assert(err, IsNil, comment)
+					c.Assert(math.Abs(v1-v2), Less, 1e-3, comment)
 				}
 			}
 		}
