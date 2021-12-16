@@ -56,7 +56,6 @@ func recordSetForDistributedSamplingTest(size, batch int) []*recordSet {
 }
 
 func TestWeightedSampling(t *testing.T) {
-	t.Parallel()
 	sampleNum := int64(20)
 	rowNum := 100
 	loopCnt := 1000
@@ -95,7 +94,6 @@ func TestWeightedSampling(t *testing.T) {
 }
 
 func TestDistributedWeightedSampling(t *testing.T) {
-	t.Parallel()
 	sampleNum := int64(10)
 	rowNum := 100
 	loopCnt := 1500
@@ -139,7 +137,6 @@ func TestDistributedWeightedSampling(t *testing.T) {
 }
 
 func TestBuildStatsOnRowSample(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	sketch := NewFMSketch(1000)
 	data := make([]*SampleItem, 0, 8)

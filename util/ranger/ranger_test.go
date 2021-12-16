@@ -48,7 +48,6 @@ func newDomainStoreWithBootstrap(t *testing.T) (*domain.Domain, kv.Storage, erro
 }
 
 func TestTableRange(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -307,7 +306,6 @@ func TestTableRange(t *testing.T) {
 
 // for issue #6661
 func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -864,7 +862,6 @@ func TestColumnRange(t *testing.T) {
 }
 
 func TestIndexRangeEliminatedProjection(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -921,7 +918,6 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 }
 
 func TestIndexStringIsTrueRange(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -952,7 +948,6 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 }
 
 func TestCompIndexDNFMatch(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -985,7 +980,6 @@ func TestCompIndexDNFMatch(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF1(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1019,7 +1013,6 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 }
 
 func TestCompIndexMultiColDNF2(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1053,7 +1046,6 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 }
 
 func TestPrefixIndexMultiColDNF(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1089,7 +1081,6 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 }
 
 func TestIndexRangeForBit(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1128,7 +1119,6 @@ func TestIndexRangeForBit(t *testing.T) {
 }
 
 func TestIndexRangeForYear(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1291,7 +1281,6 @@ func TestIndexRangeForYear(t *testing.T) {
 
 // For https://github.com/pingcap/tidb/issues/22032
 func TestPrefixIndexRangeScan(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1363,7 +1352,6 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 }
 
 func TestIndexRangeForDecimal(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
@@ -1397,7 +1385,6 @@ func TestIndexRangeForDecimal(t *testing.T) {
 }
 
 func TestPrefixIndexAppendPointRanges(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()

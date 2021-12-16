@@ -34,8 +34,6 @@ import (
 )
 
 func TestInferType(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
