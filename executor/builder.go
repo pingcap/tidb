@@ -3124,6 +3124,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
+		plannercore.SetMppForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
 	ret, err := buildNoRangeTableReader(b, v)

@@ -1843,6 +1843,20 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 	return tsExec
 }
 
+// BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
+func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.PartitionTableScan {
+	pkColIds := TryGetCommonPkColumnIds(tableInfo)
+	tsExec := &tipb.PartitionTableScan{
+		TableId:          tableInfo.ID,
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle),
+		PrimaryColumnIds: pkColIds,
+	}
+	if tableInfo.IsCommonHandle {
+		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
+	}
+	return tsExec
+}
+
 // TemporaryTable is used to store transaction-specific or session-specific information for global / local temporary tables.
 // For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
 type TemporaryTable struct {

@@ -29,10 +29,11 @@ import (
 
 // RegionInfo contains region related information for batchCopTask
 type RegionInfo struct {
-	Region    tikv.RegionVerID
-	Meta      *metapb.Region
-	Ranges    *KeyRanges
-	AllStores []uint64
+	Region      tikv.RegionVerID
+	Meta        *metapb.Region
+	Ranges      *KeyRanges
+	AllStores   []uint64
+	PartitionID int64
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.

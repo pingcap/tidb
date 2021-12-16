@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
+func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool, partitionIDs []int64) error {
 	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
@@ -32,6 +32,8 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID
 			m := tmp.(map[int64]struct{})
 			m[partitionID] = struct{}{}
 		}
+	case tipb.ExecType_TypePartitionTableScan:
+		exec.PartitionTableScan.PartitionIds = partitionIDs
 	case tipb.ExecType_TypeIndexScan:
 		exec.IdxScan.TableId = partitionID
 	case tipb.ExecType_TypeSelection:
@@ -54,7 +56,7 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}
 	if child != nil && recursive {
-		return updateExecutorTableID(ctx, child, partitionID, recursive)
+		return updateExecutorTableID(ctx, child, partitionID, recursive, partitionIDs)
 	}
 	return nil
 }

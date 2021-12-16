@@ -519,25 +519,30 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
-	rangesLen := ranges.Len()
-	for {
+	rangesLen := 0
 
-		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	for {
 		var tasks []*copTask
-		for _, lo := range locations {
-			tasks = append(tasks, &copTask{
-				region:    lo.Location.Region,
-				ranges:    lo.Ranges,
-				cmdType:   cmdType,
-				storeType: storeType,
-			})
+		rangesLen = 0
+		for i, ranges := range rangess {
+			rangesLen += ranges.Len()
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, lo := range locations {
+				tasks = append(tasks, &copTask{
+					region:      lo.Location.Region,
+					ranges:      lo.Ranges,
+					cmdType:     cmdType,
+					storeType:   storeType,
+					partitionID: int64(i),
+				})
+			}
 		}
 
 		var batchTasks []*batchCopTask
@@ -562,13 +567,13 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 			}
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores})
+				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionID: task.partitionID})
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr:   rpcCtx.Addr,
 					cmdType:     cmdType,
 					ctx:         rpcCtx,
-					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores}},
+					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionID: task.partitionID}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -577,7 +582,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
 			// It's equal to long poll the store but get no response. Here we'd better use
 			// TiFlash error to trigger the TiKV fallback mechanism.
-			err = bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
+			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -624,7 +629,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0)
+	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, []*KeyRanges{ranges}, req.StoreType, nil, 0, false, 0)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -765,7 +770,8 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
+	ret, err := buildBatchCopTasks(bo, b.store, []*KeyRanges{NewKeyRanges(ranges)}, b.req.StoreType, nil, 0, false, 0)
+	return ret, err
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.

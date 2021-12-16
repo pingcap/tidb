@@ -1074,3 +1074,21 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }
+
+func (s *tiflashTestSuite) TestTiflashPartitionTableScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(\n    a int,\n    primary key(a)\n) partition by range(a) (\n    partition p1 values less than (10),\n    partition p2 values less than (20),\n    partition p3 values less than (30),\n    partition p4 values less than (40),\n    partition p5 values less than (50)\n);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+}
