@@ -2912,7 +2912,7 @@ type testOutput struct {
 
 func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
 	for i, tt := range input {
-		var isSelect bool = false
+		var isSelect = false
 		if strings.HasPrefix(strings.ToLower(tt), "select ") {
 			isSelect = true
 		}
