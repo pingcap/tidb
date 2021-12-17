@@ -113,6 +113,12 @@ func testCreateStore(c *C, name string) kv.Storage {
 	return store
 }
 
+func testCreateStoreT(t *testing.T, name string) kv.Storage {
+	store, err := mockstore.NewMockStore()
+	require.Nil(t, err)
+	return store
+}
+
 func testNewContext(d *ddl) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -92,6 +94,16 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testCreateColumnT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
+	err := d.doDDLJob(ctx, job)
+	require.Nil(t, err)
+	v := getSchemaVerT(t, ctx)
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -153,6 +165,19 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testDropColumnT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+	job := buildDropColumnJob(dbInfo, tblInfo, colName)
+	err := d.doDDLJob(ctx, job)
+	if isError {
+		require.NotNil(t, err)
+		return nil
+	}
+	require.Nil(t, err)
+	v := getSchemaVerT(t, ctx)
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
