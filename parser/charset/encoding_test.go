@@ -24,7 +24,6 @@ import (
 )
 
 func TestEncoding(t *testing.T) {
-	t.Parallel()
 	enc := charset.FindEncoding(charset.CharsetGBK)
 	require.Equal(t, charset.CharsetGBK, enc.Name())
 

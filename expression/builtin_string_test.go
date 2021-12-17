@@ -38,7 +38,6 @@ import (
 )
 
 func TestLengthAndOctetLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -107,7 +106,6 @@ func TestLengthAndOctetLength(t *testing.T) {
 }
 
 func TestASCII(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -168,7 +166,6 @@ func TestASCII(t *testing.T) {
 }
 
 func TestConcat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args    []interface{}
@@ -225,7 +222,6 @@ func TestConcat(t *testing.T) {
 }
 
 func TestConcatSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -271,7 +267,6 @@ func TestConcatSig(t *testing.T) {
 }
 
 func TestConcatWS(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -344,7 +339,6 @@ func TestConcatWS(t *testing.T) {
 }
 
 func TestConcatWSSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -393,7 +387,6 @@ func TestConcatWSSig(t *testing.T) {
 }
 
 func TestLeft(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -444,7 +437,6 @@ func TestLeft(t *testing.T) {
 }
 
 func TestRight(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -495,7 +487,6 @@ func TestRight(t *testing.T) {
 }
 
 func TestRepeat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	args := []interface{}{"a", int64(2)}
 	fc := funcs[ast.Repeat]
@@ -549,7 +540,6 @@ func TestRepeat(t *testing.T) {
 }
 
 func TestRepeatSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -596,7 +586,6 @@ func TestRepeatSig(t *testing.T) {
 }
 
 func TestLower(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -655,7 +644,6 @@ func TestLower(t *testing.T) {
 }
 
 func TestUpper(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -715,7 +703,6 @@ func TestUpper(t *testing.T) {
 }
 
 func TestReverse(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Reverse]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
@@ -747,7 +734,6 @@ func TestReverse(t *testing.T) {
 }
 
 func TestStrcmp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -789,7 +775,6 @@ func TestStrcmp(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -831,7 +816,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestSubstring(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -880,7 +864,6 @@ func TestSubstring(t *testing.T) {
 }
 
 func TestConvert(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		str           interface{}
@@ -942,7 +925,6 @@ func TestConvert(t *testing.T) {
 }
 
 func TestSubstringIndex(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -990,7 +972,6 @@ func TestSubstringIndex(t *testing.T) {
 }
 
 func TestSpace(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -1037,7 +1018,6 @@ func TestSpace(t *testing.T) {
 }
 
 func TestSpaceSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeLonglong},
@@ -1066,7 +1046,6 @@ func TestSpaceSig(t *testing.T) {
 }
 
 func TestLocate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	// 1. Test LOCATE without binary input.
 	tbl := []struct {
@@ -1139,7 +1118,6 @@ func TestLocate(t *testing.T) {
 }
 
 func TestTrim(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
@@ -1192,7 +1170,6 @@ func TestTrim(t *testing.T) {
 }
 
 func TestLTrim(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
@@ -1235,7 +1212,6 @@ func TestLTrim(t *testing.T) {
 }
 
 func TestRTrim(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
@@ -1276,7 +1252,6 @@ func TestRTrim(t *testing.T) {
 }
 
 func TestHexFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
@@ -1347,7 +1322,6 @@ func TestHexFunc(t *testing.T) {
 }
 
 func TestUnhexFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
@@ -1388,7 +1362,6 @@ func TestUnhexFunc(t *testing.T) {
 }
 
 func TestBitLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -1429,8 +1402,52 @@ func TestBitLength(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestChar(t *testing.T) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
+	ctx := createContext(t)
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	tbl := []struct {
+		str      string
+		iNum     int64
+		fNum     float64
+		charset  interface{}
+		result   interface{}
+		warnings int
+	}{
+		{"65", 66, 67.5, "utf8", "ABD", 0},                               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},                           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},                   // negative int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0},                 // invalid 'a'
+		{"65", -1, 67.5, "utf8", nil, 1},                                 // with utf8, return nil
+		{"a", -1, 67.5, "utf8", nil, 1},                                  // with utf8, return nil
+		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
+		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
+	}
+	run := func(i int, result interface{}, warnCnt int, dts ...interface{}) {
+		fc := funcs[ast.CharFunc]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
+		require.NoError(t, err, i)
+		require.NotNil(t, f, i)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err, i)
+		trequire.DatumEqual(t, types.NewDatum(result), r, i)
+		if warnCnt != 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
+			require.Equal(t, warnCnt, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
+		}
+	}
+	for i, v := range tbl {
+		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
+	}
+	// char() returns null only when the sql_mode is strict.
+	ctx.GetSessionVars().StrictSQLMode = true
+	run(-1, nil, 1, 123456, "utf8")
+	ctx.GetSessionVars().StrictSQLMode = false
+	run(-2, string([]byte{1}), 1, 123456, "utf8")
+}
+
 func TestCharLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		input  interface{}
@@ -1480,7 +1497,6 @@ func TestCharLength(t *testing.T) {
 }
 
 func TestFindInSet(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	for _, c := range []struct {
 		str    interface{}
@@ -1509,7 +1525,6 @@ func TestFindInSet(t *testing.T) {
 }
 
 func TestField(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
@@ -1545,7 +1560,6 @@ func TestField(t *testing.T) {
 }
 
 func TestLpad(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		str    string
@@ -1582,7 +1596,6 @@ func TestLpad(t *testing.T) {
 }
 
 func TestRpad(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		str    string
@@ -1619,7 +1632,6 @@ func TestRpad(t *testing.T) {
 }
 
 func TestRpadSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -1662,7 +1674,6 @@ func TestRpadSig(t *testing.T) {
 }
 
 func TestInsertBinarySig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -1754,7 +1765,6 @@ func TestInsertBinarySig(t *testing.T) {
 }
 
 func TestInstr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Args []interface{}
@@ -1800,7 +1810,6 @@ func TestInstr(t *testing.T) {
 }
 
 func TestLoadFile(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
@@ -1833,7 +1842,6 @@ func TestLoadFile(t *testing.T) {
 }
 
 func TestMakeSet(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		argList []interface{}
@@ -1860,7 +1868,6 @@ func TestMakeSet(t *testing.T) {
 }
 
 func TestOct(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	octTests := []struct {
 		origin interface{}
@@ -1910,7 +1917,6 @@ func TestOct(t *testing.T) {
 }
 
 func TestFormat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	formatTests := []struct {
 		number    interface{}
@@ -2040,7 +2046,6 @@ func TestFormat(t *testing.T) {
 }
 
 func TestFromBase64(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}
@@ -2086,7 +2091,6 @@ func TestFromBase64(t *testing.T) {
 }
 
 func TestFromBase64Sig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -2140,7 +2144,6 @@ func TestFromBase64Sig(t *testing.T) {
 }
 
 func TestInsert(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args   []interface{}
@@ -2238,7 +2241,6 @@ func TestOrd(t *testing.T) {
 }
 
 func TestElt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		argLst []interface{}
@@ -2262,7 +2264,6 @@ func TestElt(t *testing.T) {
 }
 
 func TestExportSet(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	estd := []struct {
 		argLst []interface{}
@@ -2293,7 +2294,6 @@ func TestExportSet(t *testing.T) {
 }
 
 func TestBin(t *testing.T) {
-	t.Parallel()
 	tbl := []struct {
 		Input    interface{}
 		Expected interface{}
@@ -2325,7 +2325,6 @@ func TestBin(t *testing.T) {
 }
 
 func TestQuote(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
@@ -2355,7 +2354,6 @@ func TestQuote(t *testing.T) {
 }
 
 func TestToBase64(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}
@@ -2448,7 +2446,6 @@ func TestToBase64(t *testing.T) {
 }
 
 func TestToBase64Sig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
@@ -2518,7 +2515,6 @@ func TestToBase64Sig(t *testing.T) {
 }
 
 func TestStringRight(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Right]
 	tests := []struct {
@@ -2551,7 +2547,6 @@ func TestStringRight(t *testing.T) {
 }
 
 func TestWeightString(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.WeightString]
 	tests := []struct {
@@ -2625,7 +2620,6 @@ func TestWeightString(t *testing.T) {
 }
 
 func TestTranslate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args  []interface{}
@@ -2670,4 +2664,80 @@ func TestTranslate(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCIWeightString(t *testing.T) {
+	ctx := createContext(t)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	type weightStringTest struct {
+		str     string
+		padding string
+		length  int
+		expect  interface{}
+	}
+
+	checkResult := func(collation string, tests []weightStringTest) {
+		fc := funcs[ast.WeightString]
+		for _, test := range tests {
+			str := types.NewCollationStringDatum(test.str, collation)
+			var f builtinFunc
+			var err error
+			if test.padding == "NONE" {
+				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
+			} else {
+				padding := types.NewDatum(test.padding)
+				length := types.NewDatum(test.length)
+				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
+			}
+			require.NoError(t, err)
+			result, err := evalBuiltinFunc(f, chunk.Row{})
+			require.NoError(t, err)
+			if result.IsNull() {
+				require.Nil(t, test.expect)
+				continue
+			}
+			res, err := result.ToString()
+			require.NoError(t, err)
+			require.Equal(t, test.expect, res)
+		}
+	}
+
+	generalTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
+		{"中", "NONE", 0, "\x4E\x2D"},
+		{"a", "CHAR", 5, "\x00A"},
+		{"a ", "CHAR", 5, "\x00A"},
+		{"中", "CHAR", 5, "\x4E\x2D"},
+		{"中 ", "CHAR", 5, "\x4E\x2D"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	unicodeTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x0e3"},
+		{"a ", "CHAR", 5, "\x0e3"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	checkResult("utf8mb4_general_ci", generalTests)
+	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }

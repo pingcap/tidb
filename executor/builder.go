@@ -124,6 +124,23 @@ type MockPhysicalPlan interface {
 	GetExecutor() Executor
 }
 
+// MockExecutorBuilder is a wrapper for executorBuilder.
+// ONLY used in test.
+type MockExecutorBuilder struct {
+	*executorBuilder
+}
+
+// NewMockExecutorBuilderForTest is ONLY used in test.
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
+	return &MockExecutorBuilder{
+		executorBuilder: newExecutorBuilder(ctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+}
+
+// Build builds an executor tree according to `p`.
+func (b *MockExecutorBuilder) Build(p plannercore.Plan) Executor {
+	return b.build(p)
+}
+
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
@@ -4076,6 +4093,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
@@ -4127,6 +4145,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}

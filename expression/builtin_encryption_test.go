@@ -56,7 +56,6 @@ var cryptTests = []struct {
 }
 
 func TestSQLDecode(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	for _, tt := range cryptTests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
@@ -76,7 +75,6 @@ func TestSQLDecode(t *testing.T) {
 }
 
 func TestSQLEncode(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	for _, test := range cryptTests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
@@ -145,7 +143,6 @@ var aesTests = []struct {
 }
 
 func TestAESEncrypt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.AesEncrypt]
@@ -212,7 +209,6 @@ func TestAESEncrypt(t *testing.T) {
 }
 
 func TestAESDecrypt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.AesDecrypt]
@@ -347,7 +343,6 @@ func fromHex(str interface{}) (d types.Datum) {
 }
 
 func TestSha1Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sha1Tests := []struct {
 		chs    string
@@ -386,7 +381,6 @@ func TestSha1Hash(t *testing.T) {
 }
 
 func TestSha2Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sha2Tests := []struct {
 		chs        string
@@ -457,7 +451,6 @@ func TestSha2Hash(t *testing.T) {
 }
 
 func TestMD5Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -505,7 +498,6 @@ func TestMD5Hash(t *testing.T) {
 }
 
 func TestRandomBytes(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.RandomBytes]
@@ -544,7 +536,6 @@ func decodeHex(str string) []byte {
 }
 
 func TestCompress(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
 	tests := []struct {
@@ -577,7 +568,6 @@ func TestCompress(t *testing.T) {
 }
 
 func TestUncompress(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
@@ -613,7 +603,6 @@ func TestUncompress(t *testing.T) {
 }
 
 func TestUncompressLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
@@ -644,7 +633,6 @@ func TestUncompressLength(t *testing.T) {
 }
 
 func TestPassword(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}

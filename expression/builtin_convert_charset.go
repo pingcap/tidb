@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -65,6 +66,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 			return nil, err
 		}
 		bf.tp = args[0].GetType().Clone()
+		bf.tp.Tp = mysql.TypeVarString
 		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
 		sig = &builtinInternalToBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
