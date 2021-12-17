@@ -132,7 +132,6 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// a mutex to protect dataSinks
 	dataSinks struct {
 		mu sync.Mutex
 		m  map[DataSink]struct{}
