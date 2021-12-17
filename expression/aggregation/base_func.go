@@ -463,9 +463,9 @@ func refineSumDecimalArgs(tp byte) (int, error) {
 	case mysql.TypeInt24:
 		return 8, nil
 	case mysql.TypeLong:
-		return 1, nil
+		return 10, nil
 	case mysql.TypeLonglong:
-		return 2, nil
+		return 20, nil
 	case mysql.TypeYear:
 		return 4, nil
 	default:
