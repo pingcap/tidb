@@ -881,7 +881,7 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 		if rh < 0 && uint64(-rh) > uint64(lh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
+		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 

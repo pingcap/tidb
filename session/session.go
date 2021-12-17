@@ -2576,6 +2576,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBDMLBatchSize,
 	variable.TiDBEnableOrderedResultMode,
 }
 
