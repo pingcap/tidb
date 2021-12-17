@@ -621,6 +621,10 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
+		return err
+	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
@@ -633,6 +637,40 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
+}
+
+// recoverTablePlacement is used when recover/flashback table.
+// It will replace the placement policy of table with the direct options because the original policy may be deleted
+func recoverTablePlacement(snapshotMeta *meta.Meta, tblInfo *model.TableInfo) (*model.TableInfo, error) {
+	if ref := tblInfo.PlacementPolicyRef; ref != nil {
+		policy, err := snapshotMeta.GetPolicy(ref.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tblInfo.PlacementPolicyRef = nil
+		tblInfo.DirectPlacementOpts = policy.PlacementSettings
+	}
+
+	if tblInfo.Partition != nil {
+		for idx := range tblInfo.Partition.Definitions {
+			def := &tblInfo.Partition.Definitions[idx]
+			ref := def.PlacementPolicyRef
+			if ref == nil {
+				continue
+			}
+
+			policy, err := snapshotMeta.GetPolicy(ref.ID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			def.PlacementPolicyRef = nil
+			def.DirectPlacementOpts = policy.PlacementSettings
+		}
+	}
+
+	return tblInfo, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
@@ -760,6 +798,11 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if err != nil {
 		return err
 	}
+
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
+		return err
+	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,

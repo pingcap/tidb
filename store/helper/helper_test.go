@@ -36,8 +36,6 @@ import (
 )
 
 func TestHotRegion(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -73,8 +71,6 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -86,8 +82,6 @@ func TestGetRegionsTableInfo(t *testing.T) {
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -101,8 +95,6 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -443,7 +435,9 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 
 func TestComputeTiFlashStatus(t *testing.T) {
 	regionReplica := make(map[int64]int)
+	// There are no region in this TiFlash store.
 	resp1 := "0\n\n"
+	// There are one region 1009 in this TiFlash store.
 	resp2 := "1\n1009\n"
 	br1 := bufio.NewReader(strings.NewReader(resp1))
 	br2 := bufio.NewReader(strings.NewReader(resp2))
@@ -452,4 +446,7 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
 	require.NoError(t, err)
 	require.Equal(t, len(regionReplica), 1)
+	v, ok := regionReplica[1009]
+	require.Equal(t, v, 1)
+	require.Equal(t, ok, true)
 }
