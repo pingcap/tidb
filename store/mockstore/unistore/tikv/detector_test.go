@@ -36,8 +36,6 @@ import (
 )
 
 func TestDeadlock(t *testing.T) {
-	t.Parallel()
-
 	makeDiagCtx := func(key string, resourceGroupTag string) diagnosticContext {
 		return diagnosticContext{
 			key:              []byte(key),

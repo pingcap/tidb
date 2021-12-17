@@ -115,8 +115,8 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	report := reporter.NewRemoteTopSQLReporter(client)
+	dataSink := reporter.NewSingleTargetDataSink()
+	report := reporter.NewRemoteTopSQLReporter(dataSink, mockPlanBinaryDecoderFunc)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
