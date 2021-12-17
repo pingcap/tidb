@@ -20,13 +20,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
 )
 
 const (
@@ -322,4 +325,61 @@ func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, p
 		handleRows = append(handleRows, handleRow)
 	}
 	return handleRows, lastRowID, errors.Trace(rows.Err())
+}
+
+func (em *ErrorManager) HasError(cfg *config.Config) bool {
+	errCfg := cfg.App.MaxError
+	return errCfg.Type.Load() - em.remainingError.Type.Load() > 0 ||
+		errCfg.Syntax.Load() - em.remainingError.Syntax.Load() > 0 ||
+		errCfg.Charset.Load() - em.remainingError.Charset.Load() > 0 ||
+		errCfg.Conflict.Load() - em.remainingError.Conflict.Load() > 0
+}
+
+// Output renders a table which contains error summery for each error type.
+func (em *ErrorManager) Output(cfg *config.Config) string {
+	if !em.HasError(cfg) {
+		return ""
+	}
+
+	t := table.NewWriter()
+	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Name: "#", WidthMax: 6},
+		{Name: "Error Type", WidthMax: 20},
+		{Name: "Error Count", WidthMax: 12},
+		{Name: "Error Data Table", WidthMax: 36},
+	})
+	t.SetAllowedRowLength(80)
+	t.SetRowPainter(func(row table.Row) text.Colors {
+		return text.Colors{text.FgRed}
+	})
+
+	formatTable := func(t string) string {
+		return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
+	}
+
+	count := 0
+	if errCnt := cfg.App.MaxError.Type.Load() - em.remainingError.Type.Load(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Data Type", errCnt, formatTable(typeErrorTableName)})
+	}
+	if errCnt := cfg.App.MaxError.Syntax.Load() - em.remainingError.Syntax.Load(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Data Syntax", errCnt, formatTable(syntaxErrorTableName)})
+	}
+	if errCnt := cfg.App.MaxError.Charset.Load() - em.remainingError.Charset.Load(); errCnt > 0 {
+		count++
+		// do not support record charset error now.
+		t.AppendRow(table.Row{count, "Charset Error", errCnt, ""})
+	}
+	if errCnt := cfg.App.MaxError.Conflict.Load() - em.remainingError.Conflict.Load(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, formatTable(conflictErrorTableName)})
+	}
+
+	res := "\nImport Data Error Summary: \n"
+	res += t.Render()
+	res += "\n\n"
+
+	return res
 }

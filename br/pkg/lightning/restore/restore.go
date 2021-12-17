@@ -1652,6 +1652,13 @@ func (tr *TableRestore) restoreTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
+func (rc *Controller) printErrorSummary(context.Context) error {
+	if rc.errorMgr.HasError(rc.cfg) {
+		fmt.Println(rc.errorMgr.Output(rc.cfg))
+	}
+	return nil
+}
+
 // do full compaction for the whole data.
 func (rc *Controller) fullCompact(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Compact {
@@ -1920,7 +1927,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
-		fmt.Print(rc.checkTemplate.Output())
+		fmt.Println(rc.checkTemplate.Output())
 	}
 	if !rc.checkTemplate.Success() {
 		if !taskExist && rc.taskMgr != nil {

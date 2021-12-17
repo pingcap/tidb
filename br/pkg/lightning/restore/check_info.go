@@ -739,8 +739,8 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		if _, ok := defaultCols[col]; ok {
 			continue
 		}
-		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
-			"please give a default value for %s or choose another column to ignore or add this column in data file",
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s. "+
+			"Please add default value for column '%s' or choose another column to ignore or add this column in data file",
 			tableInfo.DB, tableInfo.Name, col, col))
 	}
 	return msgs, nil
