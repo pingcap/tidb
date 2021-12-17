@@ -446,7 +446,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		a.Args[i].GetType().Tp = originTp
 		// refine each mysql integer type to the needed decimal precision for sum
 		if a.Name == ast.AggFuncSum {
-			if tpOld == mysql.TypeTiny || tpOld == mysql.TypeShort || tpOld == mysql.TypeInt24 || tpOld == mysql.TypeLong || tpOld == mysql.TypeLonglong {
+			if types.IsTypeInteger(tpOld) {
 				switch tpOld {
 				case mysql.TypeTiny:
 					a.Args[i].GetType().Flen = 3
@@ -458,6 +458,8 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 					a.Args[i].GetType().Flen = 10
 				case mysql.TypeLonglong:
 					a.Args[i].GetType().Flen = 20
+				case mysql.TypeYear:
+					a.Args[i].GetType().Flen = 4
 				}
 			}
 		}

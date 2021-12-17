@@ -93,7 +93,7 @@
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
       "Dual->Projection",
       "DataScan(t)->Projection->Projection->Window(min(test.t.a)->Column#14)->Sel([lt(test.t.a, 10) eq(test.t.b, Column#14)])->Projection->Projection",
-      "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14)->Sel([gt(Column#14, cast(test.t.b, decimal(20,0) BINARY))])->Projection->Projection"
+      "DataScan(t)->Projection->Projection->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14)->Sel([gt(Column#14, cast(test.t.b, decimal(20,0) BINARY))])->Projection->Projection"
     ]
   },
   {
@@ -189,7 +189,7 @@
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
-      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#14 over())->Sort->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
@@ -262,7 +262,7 @@
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(15,4) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
-      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#14 over())->Sort->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
