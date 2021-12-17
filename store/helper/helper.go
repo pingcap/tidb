@@ -1123,7 +1123,10 @@ func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *ma
 	}
 
 	defer func() {
-		resp.Body.Close()
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
 	}()
 
 	reader := bufio.NewReader(resp.Body)
