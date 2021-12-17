@@ -58,10 +58,9 @@ a	hex(a)
 set @@character_set_client = 'utf8mb4';
 drop table if exists t;
 create table t(a blob(100));
-set character_set_connection = 'gbk';
-set character_set_client = 'gbk';
-set character_set_results = 'gbk';
+set names gbk;
 insert into t values ("你好");
 select hex(a) from t;
 hex(a)
 E4BDA0E5A5BD
+set names utf8mb4;
