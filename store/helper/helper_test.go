@@ -36,8 +36,6 @@ import (
 )
 
 func TestHotRegion(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -73,8 +71,6 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -86,8 +82,6 @@ func TestGetRegionsTableInfo(t *testing.T) {
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 
@@ -101,8 +95,6 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
-	t.Parallel()
-
 	store, clean := createMockStore(t)
 	defer clean()
 

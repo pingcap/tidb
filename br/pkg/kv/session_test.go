@@ -22,8 +22,6 @@ import (
 )
 
 func TestSession(t *testing.T) {
-	t.Parallel()
-
 	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890, RowFormatVersion: "1"})
 	_, err := session.Txn(true)
 	require.NoError(t, err)
