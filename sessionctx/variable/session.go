@@ -1115,7 +1115,7 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
-	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.enforceMPPExecution = config.GetGlobalConfig().Performance.EnforceMPP
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
