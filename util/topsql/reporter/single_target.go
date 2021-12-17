@@ -163,7 +163,6 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 
 // CloseDataSink implements the DataSink interface.
 func (ds *SingleTargetDataSink) CloseDataSink() {
-	// reporter is closing
 	ds.cancel()
 }
 

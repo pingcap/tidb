@@ -463,15 +463,18 @@ func TestCollectInternal(t *testing.T) {
 
 func TestMultipleDataSinks(t *testing.T) {
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock"
-	})
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer tsr.Close()
 
-	chs := []chan *ReportData{make(chan *ReportData, 1), make(chan *ReportData, 1), make(chan *ReportData, 1)}
-	dss := []DataSink{newMockDataSink(chs[0]), newMockDataSink(chs[1]), newMockDataSink(chs[2])}
+	var chs []chan *ReportData
+	for i := 0; i < 7; i++ {
+		chs = append(chs, make(chan *ReportData, 1))
+	}
+	var dss []DataSink
+	for _, ch := range chs {
+		dss = append(dss, newMockDataSink(ch))
+	}
 	for _, ds := range dss {
 		require.NoError(t, tsr.Register(ds))
 	}
@@ -502,14 +505,18 @@ func TestMultipleDataSinks(t *testing.T) {
 		}}, d.PlanMetas)
 	}
 
-	tsr.Deregister(dss[0])
+	// deregister half of dataSinks
+	for i := 0; i < 7; i += 2 {
+		tsr.Deregister(dss[i])
+	}
+
 	records = []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
 	tsr.Collect(6, records)
 
-	for _, ch := range chs[1:] {
-		d := <-ch
+	for i := 1; i < 7; i += 2 {
+		d := <-chs[i]
 		require.NotNil(t, d)
 		require.Equal(t, []tipb.CPUTimeRecord{{
 			SqlDigest:              []byte("sqlDigest4"),
@@ -529,10 +536,13 @@ func TestMultipleDataSinks(t *testing.T) {
 			NormalizedPlan: "planNormalized4",
 		}}, d.PlanMetas)
 	}
-	select {
-	case <-chs[0]:
-		require.Fail(t, "unexpected to receiver message from chs[0]")
-	default:
+
+	for i := 0; i < 7; i += 2 {
+		select {
+		case <-chs[i]:
+			require.Fail(t, "unexpected to receive messages")
+		default:
+		}
 	}
 }
 
