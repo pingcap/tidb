@@ -262,7 +262,7 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 			cp := bundle.Clone()
 			bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
 		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")

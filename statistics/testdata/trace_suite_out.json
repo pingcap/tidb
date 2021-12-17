@@ -8,6 +8,41 @@
           {
             "TableID": 57,
             "TableName": "",
+            "Type": "Column Stats-Point",
+            "Expr": "((a = 1))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Point",
+            "Expr": "((a = 1))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Range",
+            "Expr": "((a > 0 and a < 2))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Point",
+            "Expr": "((a = 1))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Point",
+            "Expr": "((a = 1))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
             "Type": "Table Stats-Expression-CNF",
             "Expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
             "RowCount": 4
@@ -24,6 +59,27 @@
       {
         "Expr": "a >= 1 and a < 10",
         "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Range",
+            "Expr": "((a >= 1 and a < 10))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Range",
+            "Expr": "((a >= 1 and a < 10))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Range",
+            "Expr": "((a >= 1 and a < 10))",
+            "RowCount": 6
+          },
           {
             "TableID": 57,
             "TableName": "",
@@ -46,57 +102,15 @@
           {
             "TableID": 57,
             "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`lt`(test.t.a, 3)",
+            "Type": "Column Stats-Range",
+            "Expr": "((a < 3))",
             "RowCount": 6
           },
           {
             "TableID": 57,
             "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`lt`(test.t.a, 3)",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-DNF",
-            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`lt`(test.t.b, 4)",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`lt`(test.t.b, 4)",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-DNF",
-            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
-            "RowCount": 6
-          },
-          {
-            "TableID": 57,
-            "TableName": "",
-            "Type": "Table Stats-Expression-CNF",
-            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "Type": "Index Stats-Range",
+            "Expr": "((a < 3))",
             "RowCount": 6
           },
           {
@@ -123,6 +137,13 @@
           {
             "TableID": 57,
             "TableName": "",
+            "Type": "Column Stats-Range",
+            "Expr": "((b < 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
             "Type": "Table Stats-Expression-CNF",
             "Expr": "`lt`(test.t.b, 4)",
             "RowCount": 6
@@ -132,6 +153,83 @@
             "TableName": "",
             "Type": "Table Stats-Expression-CNF",
             "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Range",
+            "Expr": "((b < 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.b, 4)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-DNF",
+            "Expr": "`or`(`lt`(test.t.a, 3), `lt`(test.t.b, 4))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Range",
+            "Expr": "((a < 3))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Range",
+            "Expr": "((a < 3))",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
+            "RowCount": 6
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Table Stats-Expression-CNF",
+            "Expr": "`lt`(test.t.a, 3)",
             "RowCount": 6
           },
           {
@@ -160,6 +258,34 @@
       {
         "Expr": "a = 1 and b = 2",
         "Trace": [
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Point",
+            "Expr": "((a = 1) and (b = 2))",
+            "RowCount": 2
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Point",
+            "Expr": "((a = 1))",
+            "RowCount": 4
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Column Stats-Point",
+            "Expr": "((b = 2))",
+            "RowCount": 3
+          },
+          {
+            "TableID": 57,
+            "TableName": "",
+            "Type": "Index Stats-Point",
+            "Expr": "((a = 1) and (b = 2))",
+            "RowCount": 2
+          },
           {
             "TableID": 57,
             "TableName": "",

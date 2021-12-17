@@ -759,9 +759,11 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	tk.MustExec("select @@max_connections")
 	tk.MustExec("select @@global.max_connections")
 	_, err = tk.Exec("select @@session.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 	_, err = tk.Exec("select @@local.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'max_connections' is a GLOBAL variable")
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
@@ -769,6 +771,10 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// For issue 19524, test
 	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
 	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
+
+	_, err = tk.Exec("select @@global.last_insert_id")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'last_insert_id' is a SESSION variable")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {

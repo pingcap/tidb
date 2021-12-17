@@ -1281,11 +1281,11 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
 		if v.IsGlobal && !sysVar.HasGlobalScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
 		if !v.IsGlobal && !sysVar.HasSessionScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 			return
 		}
 	}

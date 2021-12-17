@@ -741,6 +741,11 @@ error = '''
 Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
 '''
 
+["domain:8243"]
+error = '''
+HTTP request failed with status %s
+'''
+
 ["domain:9009"]
 error = '''
 Prometheus address is not set in PD and etcd
