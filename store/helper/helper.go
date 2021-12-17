@@ -894,7 +894,6 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	if err != nil {
 		return err
 	}
-
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
@@ -929,14 +928,14 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("DeletePlacementRule returns error")
-	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("DeletePlacementRule returns error")
+	}
 	return nil
 }
 
@@ -957,14 +956,14 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return errors.New("SetPlacementRule returns error")
-	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("SetPlacementRule returns error")
+	}
 	return nil
 }
 
@@ -985,16 +984,15 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New("GetGroupRules returns error")
-	}
-
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("GetGroupRules returns error")
+	}
 
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(resp.Body)
@@ -1026,9 +1024,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 		util.InternalHTTPSchema(),
 		pdAddrs[0])
 
-	if err != nil {
-		return err
-	}
 	input := map[string]string{
 		"start_key": url.QueryEscape(string(startKey)),
 		"end_key":   url.QueryEscape(string(endKey)),
@@ -1038,14 +1033,14 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 		return err
 	}
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
 		}
 	}()
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -1071,7 +1066,6 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 	if err != nil {
 		return err
 	}
-
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			logutil.BgLogger().Error("err", zap.Error(err))
@@ -1116,6 +1110,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 }
 
 // CollectTiFlashStatus query sync status of one table from TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
 func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *map[int64]int) error {
 	statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
 		util.InternalHTTPSchema(),
@@ -1124,7 +1119,7 @@ func CollectTiFlashStatus(statusAddress string, tableID int64, regionReplica *ma
 	)
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
-		return nil
+		return errors.Trace(err)
 	}
 
 	defer func() {
