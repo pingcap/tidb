@@ -43,7 +43,7 @@ type AggFuncDesc struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
-// this func cannot be called twice as the TypeInfer will change return type.
+// this func cannot be called twice as the TypeInfer has changed the type of args in the first time.
 func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
 	b, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
@@ -53,8 +53,11 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 }
 
 // NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc is ready.
-func NewAggFuncDescForWindowFunc(Desc *WindowFuncDesc, hasDistinct bool) *AggFuncDesc {
-	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{Desc.Name, Desc.Args, Desc.RetTp}, HasDistinct: hasDistinct}
+func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, Desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
+	if Desc.RetTp == nil { // safety check
+		return NewAggFuncDesc(ctx, Desc.Name, Desc.Args, hasDistinct)
+	}
+	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{Desc.Name, Desc.Args, Desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
 // String implements the fmt.Stringer interface.
