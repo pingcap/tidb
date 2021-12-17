@@ -337,40 +337,55 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 
 func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
 	// Only strings are need to validate.
-	if !(types.IsTypeVarchar(col.Tp) || types.IsTypeChar(col.Tp)) {
+	if !types.IsString(col.Tp) {
 		return nil
 	}
+	fromBinary := origin.Kind() == types.KindBinaryLiteral ||
+		(origin.Kind() == types.KindString && origin.Collation() == charset.CollationBin)
+	toBinary := types.IsTypeBlob(col.Tp) || col.Charset == charset.CharsetBin
+	if fromBinary && toBinary {
+		return nil
+	}
+	if toBinary {
+		coll, err := charset.GetCollationByName(origin.Collation())
+		if err != nil {
+			logutil.BgLogger().Warn("unknown collation", zap.Error(err))
+			return nil
+		}
+		enc := charset.FindEncoding(coll.CharsetName)
+		replace, _ := enc.Transform(nil, casted.GetBytes(), charset.OpEncodeNoErr)
+		casted.SetBytesAsString(replace, charset.CollationUTF8MB4, 0)
+		return nil
+	}
+	enc := charset.FindEncoding(col.Charset)
 	// Skip utf8 check if possible.
-	if mysql.IsUTF8Charset(col.Charset) && ctx.GetSessionVars().SkipUTF8Check {
+	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
 		return nil
 	}
 	// Skip ascii check if possible.
-	if col.Charset == charset.CharsetASCII && ctx.GetSessionVars().SkipASCIICheck {
+	if enc.Tp() == charset.EncodingTpASCII && ctx.GetSessionVars().SkipASCIICheck {
 		return nil
 	}
-	// Handle string in other charsets.
-	enc := charset.FindEncoding(col.Charset)
 	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
 		// Use a strict mode implementation. 4 bytes characters are invalid.
 		enc = charset.EncodingUTF8MB3StrictImpl
 	}
-	// from_binary: convert the binary to utf8.
-	if origin.Collation() == charset.CharsetBin {
+	if fromBinary {
 		src := casted.GetBytes()
 		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
 		if err != nil {
-			casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
+			casted.SetBytesAsString(encBytes, charset.CollationUTF8MB4, 0)
 			nSrc := charset.CountValidBytesDecode(enc, src)
 			return handleWrongCharsetValue(ctx, col, src, nSrc)
 		}
-		casted.SetBytesAsString(encBytes, charset.CharsetUTF8MB4, 0)
+		casted.SetBytesAsString(encBytes, charset.CollationUTF8MB4, 0)
 		return nil
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
 	if !charset.IsValid(enc, str) {
 		replace, _ := enc.Transform(nil, str, charset.OpReplace)
-		casted.SetBytesAsString(replace, charset.CharsetUTF8MB4, 0)
+		casted.SetBytesAsString(replace, charset.CollationUTF8MB4, 0)
 		nSrc := charset.CountValidBytes(enc, str)
 		return handleWrongCharsetValue(ctx, col, str, nSrc)
 	}

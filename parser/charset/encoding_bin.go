@@ -34,6 +34,11 @@ func (e *encodingBin) Name() string {
 	return CharsetBin
 }
 
+// Tp implements Encoding interface.
+func (e *encodingBin) Tp() EncodingTp {
+	return EncodingTpBin
+}
+
 // Peek implements Encoding interface.
 func (e *encodingBin) Peek(src []byte) []byte {
 	if len(src) == 0 {

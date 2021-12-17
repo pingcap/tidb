@@ -46,6 +46,11 @@ func (e *encodingUTF8) Name() string {
 	return CharsetUTF8MB4
 }
 
+// Tp implements Encoding interface.
+func (e *encodingUTF8) Tp() EncodingTp {
+	return EncodingTpUTF8
+}
+
 // Peek implements Encoding interface.
 func (e *encodingUTF8) Peek(src []byte) []byte {
 	nextLen := 4

@@ -39,3 +39,11 @@ prepare p1 from "insert into t values ('中文');";
 execute p1;
 select a, hex(a) from t;
 set @@character_set_client = 'utf8mb4';
+
+drop table if exists t;
+create table t(a blob(100));
+set character_set_connection = 'gbk';
+set character_set_client = 'gbk';
+set character_set_results = 'gbk';
+insert into t values ("你好");
+select hex(a) from t;

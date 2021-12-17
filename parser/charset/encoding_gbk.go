@@ -37,6 +37,11 @@ func (e *encodingGBK) Name() string {
 	return CharsetGBK
 }
 
+// Tp implements Encoding interface.
+func (e *encodingGBK) Tp() EncodingTp {
+	return EncodingTpGBK
+}
+
 // Peek implements Encoding interface.
 func (e *encodingGBK) Peek(src []byte) []byte {
 	charLen := 2

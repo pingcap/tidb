@@ -53,6 +53,8 @@ var encodingMap = map[string]Encoding{
 type Encoding interface {
 	// Name is the name of the encoding.
 	Name() string
+	// Tp is the type of the encoding.
+	Tp() EncodingTp
 	// Peek returns the next char.
 	Peek(src []byte) []byte
 	// Foreach iterates the characters in in current encoding.
@@ -64,6 +66,18 @@ type Encoding interface {
 	// ToLower change a string to lowercase.
 	ToLower(src string) string
 }
+
+type EncodingTp int8
+
+const (
+	EncodingTpNone EncodingTp = iota
+	EncodingTpUTF8
+	EncodingTpUTF8MB3Strict
+	EncodingTpASCII
+	EncodingTpLatin1
+	EncodingTpBin
+	EncodingTpGBK
+)
 
 // Op is used by Encoding.Transform.
 type Op int16
@@ -81,6 +95,7 @@ const (
 const (
 	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
+	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo

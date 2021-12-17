@@ -41,6 +41,11 @@ func (e *encodingLatin1) Peek(src []byte) []byte {
 	return src[:1]
 }
 
+// Tp implements Encoding interface.
+func (e *encodingLatin1) Tp() EncodingTp {
+	return EncodingTpLatin1
+}
+
 func (e *encodingLatin1) Transform(dest, src []byte, op Op) ([]byte, error) {
 	return src, nil
 }

@@ -36,6 +36,11 @@ func (e *encodingASCII) Name() string {
 	return CharsetASCII
 }
 
+// Tp implements Encoding interface.
+func (e *encodingASCII) Tp() EncodingTp {
+	return EncodingTpASCII
+}
+
 // Peek implements Encoding interface.
 func (e *encodingASCII) Peek(src []byte) []byte {
 	if len(src) == 0 {
