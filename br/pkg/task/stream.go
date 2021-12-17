@@ -149,7 +149,6 @@ type streamMgr struct {
 	bc  *backup.Client
 }
 
-// NewStreamMgr specifies Creating a stream Mgr
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStorage bool,
 ) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),

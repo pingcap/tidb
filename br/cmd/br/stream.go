@@ -44,8 +44,8 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStartCommand(),
 		newStreamStopCommand(),
 		newStreamPauseCommand(),
-		newSteramResumeComamnd(),
-		newSteramStatusComamnd(),
+		newStreamResumeComamnd(),
+		newStreamStatusComamnd(),
 	)
 	return command
 }
@@ -94,7 +94,7 @@ func newStreamPauseCommand() *cobra.Command {
 	return command
 }
 
-func newSteramResumeComamnd() *cobra.Command {
+func newStreamResumeComamnd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "resume",
 		Short: "resume a stream task",
@@ -109,7 +109,7 @@ func newSteramResumeComamnd() *cobra.Command {
 	return command
 }
 
-func newSteramStatusComamnd() *cobra.Command {
+func newStreamStatusComamnd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "status a stream task",
