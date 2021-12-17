@@ -343,6 +343,7 @@ func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *TiFlashM
 }
 
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
+	fmt.Println("LOOP ======= LOOP")
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
@@ -415,9 +416,10 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		})
 		duplicate := false
 		pollTiFlashContext.mu.Lock()
-		if _, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
-			// If there are already pending job, we shall finish it first.
-			log.Info("TiFlash replica is pending, wait for it", zap.Int64("tableID", tb.ID))
+		if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
+			// If there is already pending job, we shall finish it first.
+			// TODO Maybe we can make immediate status check here
+			log.Info("TiFlash replica is pending, wait for it", zap.Int64("tableID", tb.ID), zap.Bool("available", a))
 			duplicate = true
 		}
 		pollTiFlashContext.mu.Unlock()
@@ -491,14 +493,12 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			//	log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
 			//}
 			pollTiFlashContext.mu.Lock()
-			if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
-				if a == avail {
-					log.Info("Neglect duplicate TiFlash status updating", zap.Int64("tableID", tb.ID))
-				}
-				pollTiFlashContext.UpdateMap[tb.ID] = avail
-			} else {
-				pollTiFlashContext.UpdateMap[tb.ID] = avail
+			oldAvailable, ok := pollTiFlashContext.UpdateMap[tb.ID]
+			if !ok || oldAvailable != avail {
+				// We witnessed a TiFlash status update.
+				log.Info("Instantly changing TiFlash status updating", zap.Int64("tableID", tb.ID), zap.Bool("value", avail))
 			}
+			pollTiFlashContext.UpdateMap[tb.ID] = avail
 			pollTiFlashContext.mu.Unlock()
 		}
 	}
