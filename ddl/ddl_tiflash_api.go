@@ -83,6 +83,7 @@ type TiFlashManagementContext struct {
 	UpdateMap                 map[int64]bool
 }
 
+// NewTiFlashManagementContext creates an instance for TiFlashManagementContext.
 func NewTiFlashManagementContext() *TiFlashManagementContext {
 	return &TiFlashManagementContext{
 		HandlePdCounter:           0,
