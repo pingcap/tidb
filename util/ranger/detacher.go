@@ -448,7 +448,8 @@ func allSinglePoints(sc *stmtctx.StatementContext, points []*point) []*point {
 		if !left.start || right.start || left.excl || right.excl {
 			return nil
 		}
-		cmp, err := left.value.CompareDatum(sc, &right.value)
+		// Since the point's collations are equal to the column's collation, we can use any of them.
+		cmp, err := left.value.Compare(sc, &right.value, collate.GetCollator(left.value.Collation()))
 		if err != nil || cmp != 0 {
 			return nil
 		}
@@ -532,7 +533,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond))
+		points[offset] = rb.intersection(points[offset], rb.build(cond), collate.GetCollator(cols[offset].GetType().Collate))
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change

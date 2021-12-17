@@ -46,7 +46,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 }
 
 func TestConvertType(t *testing.T) {
-	t.Parallel()
 	ft := NewFieldType(mysql.TypeBlob)
 	ft.Flen = 4
 	ft.Charset = "utf8"
@@ -334,7 +333,6 @@ func testToString(t *testing.T, val interface{}, expect string) {
 }
 
 func TestConvertToString(t *testing.T) {
-	t.Parallel()
 	testToString(t, "0", "0")
 	testToString(t, true, "1")
 	testToString(t, "false", "false")
@@ -436,7 +434,6 @@ func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool
 }
 
 func TestStrToNum(t *testing.T) {
-	t.Parallel()
 	testStrToInt(t, "0", 0, true, nil)
 	testStrToInt(t, "-1", -1, true, nil)
 	testStrToInt(t, "100", 100, true, nil)
@@ -515,7 +512,6 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 }
 
 func TestFieldTypeToStr(t *testing.T) {
-	t.Parallel()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
 	require.Equal(t, TypeStr(mysql.TypeUnspecified), v)
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
@@ -583,7 +579,6 @@ func strvalue(v interface{}) string {
 }
 
 func TestConvert(t *testing.T) {
-	t.Parallel()
 	// integer ranges
 	signedDeny(t, mysql.TypeTiny, -129, "-128")
 	signedAccept(t, mysql.TypeTiny, -128, "-128")
@@ -775,7 +770,6 @@ func TestConvert(t *testing.T) {
 }
 
 func TestRoundIntStr(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		a string
 		b byte
@@ -791,7 +785,6 @@ func TestRoundIntStr(t *testing.T) {
 }
 
 func TestGetValidInt(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		origin  string
 		valid   string
@@ -872,7 +865,6 @@ func TestGetValidInt(t *testing.T) {
 }
 
 func TestGetValidFloat(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		origin string
 		valid  string
@@ -933,7 +925,6 @@ func TestGetValidFloat(t *testing.T) {
 // time conversion is complicated including Date/Datetime/Time/Timestamp etc,
 // Timestamp may involving timezone.
 func TestConvertTime(t *testing.T) {
-	t.Parallel()
 	timezones := []*time.Location{
 		time.UTC,
 		time.FixedZone("", 3*3600),
@@ -989,7 +980,6 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 }
 
 func TestConvertJSONToInt(t *testing.T) {
-	t.Parallel()
 	var tests = []struct {
 		in  string
 		out int64
@@ -1022,7 +1012,6 @@ func TestConvertJSONToInt(t *testing.T) {
 }
 
 func TestConvertJSONToFloat(t *testing.T) {
-	t.Parallel()
 	var tests = []struct {
 		in  interface{}
 		out float64
@@ -1056,7 +1045,6 @@ func TestConvertJSONToFloat(t *testing.T) {
 }
 
 func TestConvertJSONToDecimal(t *testing.T) {
-	t.Parallel()
 	var tests = []struct {
 		in  string
 		out *MyDecimal
@@ -1086,7 +1074,6 @@ func TestConvertJSONToDecimal(t *testing.T) {
 }
 
 func TestNumberToDuration(t *testing.T) {
-	t.Parallel()
 	var testCases = []struct {
 		number int64
 		fsp    int
@@ -1138,7 +1125,6 @@ func TestNumberToDuration(t *testing.T) {
 }
 
 func TestStrToDuration(t *testing.T) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	var tests = []struct {
 		str        string
@@ -1158,7 +1144,6 @@ func TestStrToDuration(t *testing.T) {
 }
 
 func TestConvertScientificNotation(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		input  string
 		output string
@@ -1194,7 +1179,6 @@ func TestConvertScientificNotation(t *testing.T) {
 }
 
 func TestConvertDecimalStrToUint(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		input  string
 		result uint64

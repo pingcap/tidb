@@ -31,7 +31,6 @@ import (
 )
 
 func TestListPartitionPushDown(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -64,7 +63,6 @@ func TestListPartitionPushDown(t *testing.T) {
 }
 
 func TestListColVariousTypes(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -107,7 +105,6 @@ func TestListColVariousTypes(t *testing.T) {
 }
 
 func TestListPartitionPruning(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -151,7 +148,6 @@ func TestListPartitionPruning(t *testing.T) {
 }
 
 func TestListPartitionFunctions(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -190,7 +186,6 @@ func TestListPartitionOrderLimit(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -254,7 +249,6 @@ func TestListPartitionAgg(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -314,7 +308,6 @@ func TestListPartitionAgg(t *testing.T) {
 }
 
 func TestListPartitionDML(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -376,7 +369,6 @@ func TestListPartitionDML(t *testing.T) {
 }
 
 func TestListPartitionCreation(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -440,7 +432,6 @@ func TestListPartitionCreation(t *testing.T) {
 }
 
 func TestListPartitionDDL(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -495,7 +486,6 @@ func TestListPartitionDDL(t *testing.T) {
 }
 
 func TestListPartitionOperations(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -583,7 +573,6 @@ func TestListPartitionOperations(t *testing.T) {
 }
 
 func TestListPartitionPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -623,7 +612,6 @@ func TestListPartitionPrivilege(t *testing.T) {
 }
 
 func TestListPartitionShardBits(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -655,7 +643,6 @@ func TestListPartitionShardBits(t *testing.T) {
 }
 
 func TestListPartitionSplitRegion(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -689,7 +676,6 @@ func TestListPartitionSplitRegion(t *testing.T) {
 }
 
 func TestListPartitionView(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -734,7 +720,6 @@ func TestListPartitionView(t *testing.T) {
 }
 
 func TestListPartitionAutoIncre(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -780,7 +765,6 @@ func TestListPartitionAutoIncre(t *testing.T) {
 }
 
 func TestListPartitionAutoRandom(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -816,7 +800,6 @@ func TestListPartitionAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionInvisibleIdx(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -836,7 +819,6 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 }
 
 func TestListPartitionCTE(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -864,7 +846,6 @@ func TestListPartitionCTE(t *testing.T) {
 }
 
 func TestListPartitionTempTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -882,7 +863,6 @@ func TestListPartitionTempTable(t *testing.T) {
 }
 
 func TestListPartitionAlterPK(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -917,7 +897,6 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -971,7 +950,6 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 }
 
 func TestIssue27018(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -999,7 +977,6 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27017(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1029,7 +1006,6 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27544(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1047,7 +1023,6 @@ func TestIssue27544(t *testing.T) {
 }
 
 func TestIssue27012(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1078,7 +1053,6 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27030(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1101,7 +1075,6 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27070(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1113,7 +1086,6 @@ func TestIssue27070(t *testing.T) {
 }
 
 func TestIssue27031(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1132,7 +1104,6 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27493(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1159,4 +1130,22 @@ func genListPartition(begin, end int) string {
 	}
 	buf.WriteString(fmt.Sprintf("%v)", end-1))
 	return buf.String()
+}
+
+func TestIssue27532(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue_27532")
+	defer tk.MustExec(`drop database issue_27532`)
+	tk.MustExec("use issue_27532")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table t2 (c1 int primary key, c2 int, c3 int, c4 int, key k2 (c2), key k3 (c3)) partition by hash(c1) partitions 10`)
+	tk.MustExec(`insert into t2 values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4)`)
+	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
+	tk.MustExec(`set autocommit = 0`)
+	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
+	tk.MustQuery(`select * from t2`).Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2", "3 3 3 3", "4 4 4 4"))
+	tk.MustExec(`drop table t2`)
 }
