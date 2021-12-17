@@ -1368,6 +1368,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
@@ -3871,7 +3872,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat, seedSchema: cte.seedLP.Schema()}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -4052,11 +4053,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	} else {
 		columns = tbl.Cols()
 	}
-	var statisticTable *statistics.Table
-	if _, ok := tbl.(table.PartitionedTable); !ok || b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
-	}
-
 	// extract the IndexMergeHint
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
@@ -4101,7 +4097,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
-		statisticTable:      statisticTable,
+		physicalTableID:     tableInfo.ID,
 		astIndexHints:       tn.IndexHints,
 		IndexHints:          b.TableHints().indexHintList,
 		indexMergeHints:     indexMergeHints,
@@ -4204,12 +4200,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			result = us
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
+				startTS := txn.StartTS()
+				store := b.ctx.GetStore()
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
+					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}

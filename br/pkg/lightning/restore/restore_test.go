@@ -1118,6 +1118,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
 		saveCpCh:      saveCpCh,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
+	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates()
 
 	start := time.Now()
@@ -1489,7 +1490,6 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
-	log.InitLogger(&log.Config{}, "error")
 	cases := []struct {
 		s             string
 		ignoreColumns []*config.IgnoreColumns

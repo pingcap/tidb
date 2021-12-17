@@ -61,8 +61,6 @@ func getUnsignedFieldType() *types.FieldType {
 }
 
 func TestCalcFraction(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		lower    types.Datum
 		upper    types.Datum
@@ -179,8 +177,6 @@ func TestCalcFraction(t *testing.T) {
 }
 
 func TestEnumRangeValues(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		low         types.Datum
 		high        types.Datum

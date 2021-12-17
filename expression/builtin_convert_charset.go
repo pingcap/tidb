@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -65,6 +66,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 			return nil, err
 		}
 		bf.tp = args[0].GetType().Clone()
+		bf.tp.Tp = mysql.TypeVarString
 		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
 		sig = &builtinInternalToBinarySig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
@@ -271,7 +273,7 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			ft.Charset, ft.Collate = ec.Charset, ec.Collation
 			return BuildFromBinaryFunction(ctx, expr, ft)
 		}
-	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesDecrypt, ast.Decode, ast.Encode,
+	case ast.Hex, ast.Length, ast.OctetLength, ast.ASCII, ast.ToBase64, ast.AesEncrypt, ast.AesDecrypt, ast.Decode, ast.Encode,
 		ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1, ast.SHA2, ast.Compress:
 		if _, err := charset.GetDefaultCollationLegacy(expr.GetType().Charset); err != nil {
 			return BuildToBinaryFunction(ctx, expr)
