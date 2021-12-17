@@ -41,8 +41,8 @@ type StatementStats struct {
 // not create a valid session. So this case will never happen: "This function
 // returns nil, so this valid session will count nothing".
 func CreateStatementStats() *StatementStats {
-	if v := globalCollector.Load(); v != nil {
-		if c, ok := v.(*statementStatsCollector); ok && c != nil {
+	if v := globalAggregator.Load(); v != nil {
+		if c, ok := v.(*aggregator); ok && c != nil {
 			stats := &StatementStats{
 				data:     StatementStatsMap{},
 				finished: atomic.NewBool(false),

@@ -116,8 +116,8 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 }
 
 func TestCreateStatementStats(t *testing.T) {
-	c := newStatementStatsCollector()
-	globalCollector.Store(c)
+	c := newAggregator()
+	globalAggregator.Store(c)
 	stats := CreateStatementStats()
 	assert.NotNil(t, stats)
 	_, ok := c.statsSet.Load(stats)
@@ -128,7 +128,7 @@ func TestCreateStatementStats(t *testing.T) {
 }
 
 func TestExecCounter_AddExecCount_Take(t *testing.T) {
-	globalCollector.Store(newStatementStatsCollector())
+	globalAggregator.Store(newAggregator())
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)

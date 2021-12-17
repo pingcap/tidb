@@ -45,7 +45,7 @@ func SetupTopSQL() {
 	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(ds)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
-	stmtstats.SetupStatementStatsCollector()
+	stmtstats.SetupAggregator()
 }
 
 // Close uses to close and release the top sql resource.
@@ -53,7 +53,7 @@ func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}
-	stmtstats.CloseStatementStatsCollector()
+	stmtstats.CloseAggregator()
 }
 
 // AttachSQLInfo attach the sql information info top sql.

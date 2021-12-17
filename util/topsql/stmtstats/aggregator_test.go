@@ -24,31 +24,34 @@ import (
 )
 
 func Test_statementStatsManager_register_collect(t *testing.T) {
-	m := newStatementStatsCollector()
+	a := newAggregator()
 	stats := &StatementStats{
 		data:     StatementStatsMap{},
 		finished: atomic.NewBool(false),
 	}
-	m.register(stats)
+	a.register(stats)
 	stats.AddExecCount("SQL-1", "", 1)
-	assert.Empty(t, m.records)
-	m.collect()
-	assert.NotEmpty(t, m.records)
-	assert.Equal(t, uint64(1), m.records[0].data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	var records []StatementStatsRecord
+	a.registerCollector(CollectorFunc(func(rs []StatementStatsRecord) {
+		records = append(records, rs...)
+	}))
+	a.aggregate()
+	assert.NotEmpty(t, records)
+	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 }
 
 func Test_statementStatsManager_run_close(t *testing.T) {
 	wg := sync.WaitGroup{}
-	m := newStatementStatsCollector()
-	assert.True(t, m.closed())
+	a := newAggregator()
+	assert.True(t, a.closed())
 	wg.Add(1)
 	go func() {
-		m.run()
+		a.run()
 		wg.Done()
 	}()
 	time.Sleep(100 * time.Millisecond)
-	assert.False(t, m.closed())
-	m.close()
+	assert.False(t, a.closed())
+	a.close()
 	wg.Wait()
-	assert.True(t, m.closed())
+	assert.True(t, a.closed())
 }
