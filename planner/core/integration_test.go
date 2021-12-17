@@ -3776,3 +3776,33 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 		))
 
 }
+
+func (s *testIntegrationSuite) TestIssue27797(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27797")
+	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
+		"partition by range columns(d) (" +
+		"partition p0 values less than (20)," +
+		"partition p1 values less than(40)," +
+		"partition p2 values less than(60));")
+	tk.MustExec("insert into t27797 values(1,1,1,1), (2,2,2,2), (22,22,22,22), (44,44,44,44);")
+	tk.MustExec("set sql_mode='';")
+	result := tk.MustQuery("select count(*) from (select a, b from t27797 where d > 1 and d < 60 and b > 0 group by b, c) tt;")
+	result.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop table if exists IDT_HP24172")
+	tk.MustExec("CREATE TABLE `IDT_HP24172` ( " +
+		"`COL1` mediumint(16) DEFAULT NULL, " +
+		"`COL2` varchar(20) DEFAULT NULL, " +
+		"`COL4` datetime DEFAULT NULL, " +
+		"`COL3` bigint(20) DEFAULT NULL, " +
+		"`COL5` float DEFAULT NULL, " +
+		"KEY `UM_COL` (`COL1`,`COL3`) " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH( `COL1`+`COL3` ) " +
+		"PARTITIONS 8;")
+	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
+	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
+	result.Check(testkit.Rows("<nil>"))
+}
