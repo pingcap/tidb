@@ -3450,7 +3450,7 @@
           "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
           "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: N/A]",
           "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#40, funcs:group_concat(Column#33, Column#34, Column#35 separator \",\")->Column#28, funcs:count(Column#36)->Column#29, funcs:min(Column#37)->Column#30, funcs:count(Column#38)->Column#31, funcs:sum(Column#39)->Column#32",
-          "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#35, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(37,4) BINARY)->Column#39, test.ts.col_2",
+          "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#35, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(10,4) BINARY)->Column#39, test.ts.col_2",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ],
         "Warning": [
