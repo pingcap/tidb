@@ -770,10 +770,8 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	retTp := *args[0].GetType()
-	retTp.Tp = mysql.TypeVarString
-	retTp.Decimal = types.UnspecifiedLength
-	bf.tp = &retTp
+
+	bf.tp.Flen = args[0].GetType().Flen
 	var sig builtinFunc
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinReverseSig{bf}
