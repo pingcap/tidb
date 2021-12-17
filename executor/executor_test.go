@@ -8279,8 +8279,6 @@ func (s *testSuite) TestIssue26532(c *C) {
 	tk.MustQuery("select greatest(\"2020-01-01 01:01:01\" ,\"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
 	tk.MustQuery("select least(\"2020-01-01 01:01:01\" , \"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) TestIssue25447(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -8653,4 +8651,3 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 	}
 	c.Assert(opsAlreadyCoveredMask, Equals, opsNeedsCoveredMask, Commentf("these operators are not covered %s", commentBuf.String()))
 }
->>>>>>> 8e11e0367... *: fix the flen type datetime for union/case-when/control-funcs (#30588)
