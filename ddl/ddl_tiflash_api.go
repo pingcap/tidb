@@ -83,7 +83,6 @@ type TiFlashManagementContext struct {
 	UpdateMap                 map[int64]bool
 }
 
-
 func NewTiFlashManagementContext() *TiFlashManagementContext {
 	return &TiFlashManagementContext{
 		HandlePdCounter:           0,
