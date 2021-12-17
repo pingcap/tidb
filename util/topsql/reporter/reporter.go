@@ -57,10 +57,6 @@ type TopSQLReporter interface {
 // DataSinkRegisterer is for registering DataSink
 type DataSinkRegisterer interface {
 	Register(dataSink DataSink) error
-
-	// Deregister a datasink.
-	//
-	// Should not call Deregister in DataSink.CloseDataSink, otherwise there is a risk of deadlock.
 	Deregister(dataSink DataSink)
 }
 
@@ -132,10 +128,10 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	dataSinks struct {
-		mu sync.Mutex
-		m  map[DataSink]struct{}
-	}
+	dataSinkMu sync.Mutex
+	dataSinks  map[DataSink]struct{}
+	// a tmp slice for copying out all dataSinks and then report
+	tmpDataSinks []DataSink
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -169,10 +165,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		ctx:    ctx,
 		cancel: cancel,
 
-		dataSinks: struct {
-			mu sync.Mutex
-			m  map[DataSink]struct{}
-		}{mu: sync.Mutex{}, m: make(map[DataSink]struct{}, 10)},
+		dataSinks: make(map[DataSink]struct{}, 10),
 
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
@@ -246,20 +239,20 @@ var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
 
 // Register implements DataSinkRegisterer interface.
 func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
-	tsr.dataSinks.mu.Lock()
-	defer tsr.dataSinks.mu.Unlock()
+	tsr.dataSinkMu.Lock()
+	defer tsr.dataSinkMu.Unlock()
 
 	select {
 	case <-tsr.ctx.Done():
 		return errors.New("reporter is closed")
 	default:
-		if len(tsr.dataSinks.m) >= 10 {
+		if len(tsr.dataSinks) >= 10 {
 			return errors.New("too many datasinks")
 		}
 
-		tsr.dataSinks.m[dataSink] = struct{}{}
+		tsr.dataSinks[dataSink] = struct{}{}
 
-		if len(tsr.dataSinks.m) > 0 {
+		if len(tsr.dataSinks) > 0 {
 			variable.TopSQLVariable.Enable.Store(true)
 		}
 
@@ -269,15 +262,15 @@ func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
 
 // Deregister implements DataSinkRegisterer interface.
 func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
-	tsr.dataSinks.mu.Lock()
-	defer tsr.dataSinks.mu.Unlock()
+	tsr.dataSinkMu.Lock()
+	defer tsr.dataSinkMu.Unlock()
 
 	select {
 	case <-tsr.ctx.Done():
 	default:
-		delete(tsr.dataSinks.m, dataSink)
+		delete(tsr.dataSinks, dataSink)
 
-		if len(tsr.dataSinks.m) == 0 {
+		if len(tsr.dataSinks) == 0 {
 			variable.TopSQLVariable.Enable.Store(false)
 		}
 	}
@@ -302,15 +295,16 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
-	tsr.dataSinks.mu.Lock()
-	defer tsr.dataSinks.mu.Unlock()
+	var m map[DataSink]struct{}
 
-	for d := range tsr.dataSinks.m {
-		d.CloseDataSink()
-		delete(tsr.dataSinks.m, d)
-	}
-
+	tsr.dataSinkMu.Lock()
+	m, tsr.dataSinks = tsr.dataSinks, make(map[DataSink]struct{})
 	tsr.cancel()
+	tsr.dataSinkMu.Unlock()
+
+	for d := range m {
+		d.OnDeregisterFromReporter()
+	}
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -654,11 +648,16 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	})
 	deadline := time.Now().Add(timeout)
 
-	tsr.dataSinks.mu.Lock()
-	defer tsr.dataSinks.mu.Unlock()
-	for ds := range tsr.dataSinks.m {
+	tsr.dataSinkMu.Lock()
+	for ds := range tsr.dataSinks {
+		tsr.tmpDataSinks = append(tsr.tmpDataSinks, ds)
+	}
+	tsr.dataSinkMu.Unlock()
+
+	for _, ds := range tsr.tmpDataSinks {
 		if err := ds.TrySend(data, deadline); err != nil {
 			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
 		}
 	}
+	tsr.tmpDataSinks = tsr.tmpDataSinks[:0]
 }
