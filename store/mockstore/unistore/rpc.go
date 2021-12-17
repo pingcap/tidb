@@ -315,6 +315,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		tid := tablecodec.DecodeTableID(start)
 		if c.testGenConfig.IsTableInterested(tid) {
 			fmt.Printf("Sending Cop Request to Table %d\n", tid)
+			reqData, err := cop.Marshal()
+			if err != nil {
+				return nil, err
+			}
+			rspData, err := resp.Resp.(*coprocessor.Response).Marshal()
+			c.testGenConfig.AddRequest(req.Type, reqData, rspData)
 			dag := &tipb.DAGRequest{}
 			dag.Unmarshal(cop.Data)
 			fmt.Println("cop request")
