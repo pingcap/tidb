@@ -52,7 +52,7 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
 }
 
-// NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc is ready.
+// NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc may be ready.
 func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, Desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
 	if Desc.RetTp == nil { // safety check
 		return NewAggFuncDesc(ctx, Desc.Name, Desc.Args, hasDistinct)
