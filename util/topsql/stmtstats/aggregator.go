@@ -93,16 +93,20 @@ func (m *aggregator) register(stats *StatementStats) {
 	m.statsSet.Store(stats, struct{}{})
 }
 
+// unregister removes StatementStats from aggregator.
+// unregister is thread-safe.
 func (m *aggregator) unregister(stats *StatementStats) {
 	m.statsSet.Delete(stats)
 }
 
+// registerCollector binds a Collector to aggregator, collector ID will be returned.
 func (m *aggregator) registerCollector(collector Collector) uint64 {
 	id := atomic.AddUint64(&m.collectorId, 1)
 	m.collectors.Store(id, collector)
 	return id
 }
 
+// unregisterCollector removes Collector from aggregator by collector ID.
 func (m *aggregator) unregisterCollector(id uint64) {
 	m.collectors.Delete(id)
 }
@@ -141,6 +145,8 @@ func CloseAggregator() {
 	}
 }
 
+// RegisterCollector binds a Collector to globalAggregator, collector ID will be returned.
+// RegisterCollector is thread-safe.
 func RegisterCollector(collector Collector) uint64 {
 	if v := globalAggregator.Load(); v != nil {
 		if c, ok := v.(*aggregator); ok && c != nil {
@@ -150,6 +156,8 @@ func RegisterCollector(collector Collector) uint64 {
 	return 0
 }
 
+// UnregisterCollector removes Collector from globalAggregator by collector ID.
+// UnregisterCollector is thread-safe.
 func UnregisterCollector(id uint64) {
 	if v := globalAggregator.Load(); v != nil {
 		if c, ok := v.(*aggregator); ok && c != nil {
@@ -158,12 +166,17 @@ func UnregisterCollector(id uint64) {
 	}
 }
 
+// Collector is used to collect StatementStatsRecord.
 type Collector interface {
+	// CollectStmtStatsRecords is used to collect list of StatementStatsRecord.
 	CollectStmtStatsRecords([]StatementStatsRecord)
 }
 
+// CollectorFunc implements Collector, in order to facilitate the user to
+// write callback function directly.
 type CollectorFunc func([]StatementStatsRecord)
 
+// CollectStmtStatsRecords implements Collector.CollectStmtStatsRecords.
 func (f CollectorFunc) CollectStmtStatsRecords(records []StatementStatsRecord) {
 	f(records)
 }
