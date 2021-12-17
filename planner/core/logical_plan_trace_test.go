@@ -133,6 +133,83 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			},
 		},
 		{
+			sql:            "select * from pt3 where ptn > 3;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[6] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt3 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn in (1,2,3);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p2] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn > 100;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] doesn't have needed partition table after pruning",
+					assertAction: "Datasource[1] becomes TableDual[5]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn in (10,20);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn < 4;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
 			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
 			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
 			assertRuleName: "join_reorder",
