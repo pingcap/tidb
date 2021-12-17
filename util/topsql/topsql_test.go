@@ -116,8 +116,12 @@ func TestTopSQLReporter(t *testing.T) {
 	})
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	report.Register(context.Background(), reporter.NewSingleTargetDataSink())
-	defer report.Close()
+	ds := reporter.NewSingleTargetDataSink(report)
+
+	defer func() {
+		ds.Close()
+		report.Close()
+	}()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {

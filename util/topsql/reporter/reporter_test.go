@@ -15,7 +15,6 @@
 package reporter
 
 import (
-	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,18 +79,10 @@ func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
 	return nil
 }
 
-func (ds *mockDataSink) IsPaused() bool {
-	return false
+func (ds *mockDataSink) CloseDataSink() {
 }
 
-func (ds *mockDataSink) IsDown() bool {
-	return false
-}
-
-func (ds *mockDataSink) Close() {
-}
-
-func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
+func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.MaxCollect.Store(10000)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
@@ -100,14 +91,14 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	})
 
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
-	ts.Register(context.Background(), NewSingleTargetDataSink())
-	return ts
+	ds := NewSingleTargetDataSink(ts)
+	return ts, ds
 }
 
-func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
-	ts := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
+func initializeCache(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
+	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
 	populateCache(ts, 0, maxStatementsNum, 1)
-	return ts
+	return ts, ds
 }
 
 func TestCollectAndSendBatch(t *testing.T) {
@@ -115,8 +106,11 @@ func TestCollectAndSendBatch(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
 	agentServer.WaitCollectCnt(1, time.Second*5)
@@ -154,8 +148,11 @@ func TestCollectAndEvicted(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -219,8 +216,11 @@ func TestCollectAndTopN(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -284,8 +284,11 @@ func TestCollectAndTopN(t *testing.T) {
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	registerSQL := func(n int) {
 		for i := 0; i < n; i++ {
@@ -425,8 +428,11 @@ func TestCollectInternal(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -464,23 +470,19 @@ func TestMultipleDataSinks(t *testing.T) {
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer tsr.Close()
 
-	ch1 := make(chan *ReportData, 1)
-	ch2 := make(chan *ReportData, 1)
-	ch3 := make(chan *ReportData, 1)
-	tsr.Register(context.Background(), newMockDataSink(ch1))
-	tsr.Register(context.Background(), newMockDataSink(ch2))
-	tsr.Register(context.Background(), newMockDataSink(ch3))
+	chs := []chan *ReportData{make(chan *ReportData, 1), make(chan *ReportData, 1), make(chan *ReportData, 1)}
+	dss := []DataSink{newMockDataSink(chs[0]), newMockDataSink(chs[1]), newMockDataSink(chs[2])}
+	for _, ds := range dss {
+		require.NoError(t, tsr.Register(ds))
+	}
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
-
 	tsr.Collect(3, records)
-	data1 := <-ch1
-	data2 := <-ch2
-	data3 := <-ch3
 
-	for _, d := range []*ReportData{data1, data2, data3} {
+	for _, ch := range chs {
+		d := <-ch
 		require.NotNil(t, d)
 		require.Equal(t, []tipb.CPUTimeRecord{{
 			SqlDigest:              []byte("sqlDigest1"),
@@ -499,17 +501,50 @@ func TestMultipleDataSinks(t *testing.T) {
 			NormalizedPlan: "planNormalized1",
 		}}, d.PlanMetas)
 	}
+
+	tsr.Deregister(dss[0])
+	records = []tracecpu.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 4, 5),
+	}
+	tsr.Collect(6, records)
+
+	for _, ch := range chs[1:] {
+		d := <-ch
+		require.NotNil(t, d)
+		require.Equal(t, []tipb.CPUTimeRecord{{
+			SqlDigest:              []byte("sqlDigest4"),
+			PlanDigest:             []byte("planDigest4"),
+			RecordListTimestampSec: []uint64{6},
+			RecordListCpuTimeMs:    []uint32{5},
+		}}, d.CPUTimeRecords)
+
+		require.Equal(t, []tipb.SQLMeta{{
+			SqlDigest:     []byte("sqlDigest4"),
+			NormalizedSql: "sqlNormalized4",
+			IsInternalSql: true,
+		}}, d.SQLMetas)
+
+		require.Equal(t, []tipb.PlanMeta{{
+			PlanDigest:     []byte("planDigest4"),
+			NormalizedPlan: "planNormalized4",
+		}}, d.PlanMetas)
+	}
+	select {
+	case <-chs[0]:
+		require.Fail(t, "unexpected to receiver message from chs[0]")
+	default:
+	}
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
 	for i := 0; i < b.N; i++ {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {

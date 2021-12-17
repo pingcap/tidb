@@ -23,14 +23,6 @@ type DataSink interface {
 	// the specified deadline, or the sink is closed, an error will be returned.
 	TrySend(data *ReportData, deadline time.Time) error
 
-	// IsPaused indicates that the DataSink is not expecting to receive records for now
-	// and may resume in the future.
-	IsPaused() bool
-
-	// IsDown indicates that the DataSink has been down and can be cleared.
-	// Note that: once a DataSink is down, it cannot go back to be up.
-	IsDown() bool
-
-	// Close notifies DataSink that the reporter is dropping it.
-	Close()
+	// CloseDataSink notifies DataSink that the reporter is dropping it.
+	CloseDataSink()
 }

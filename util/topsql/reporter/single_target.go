@@ -37,10 +37,13 @@ type SingleTargetDataSink struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
+
+	registered bool
+	registerer DataSinkRegisterer
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
-func NewSingleTargetDataSink() *SingleTargetDataSink {
+func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSink {
 	ctx, cancel := context.WithCancel(context.Background())
 	dataSink := &SingleTargetDataSink{
 		ctx:    ctx,
@@ -49,7 +52,20 @@ func NewSingleTargetDataSink() *SingleTargetDataSink {
 		curRPCAddr: "",
 		conn:       nil,
 		sendTaskCh: make(chan sendTask, 1),
+
+		registered: false,
+		registerer: registerer,
 	}
+
+	addr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+	if addr != "" {
+		dataSink.curRPCAddr = addr
+		if err := registerer.Register(dataSink); err != nil {
+			logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
+			return nil
+		}
+	}
+
 	go dataSink.recoverRun()
 	return dataSink
 }
@@ -82,16 +98,35 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		}
 	}()
 
+	ticker := time.NewTicker(time.Second)
 	for {
-		var task sendTask
+		var task *sendTask
 		select {
 		case <-ds.ctx.Done():
 			return false
-		case task = <-ds.sendTaskCh:
+		case t := <-ds.sendTaskCh:
+			task = &t
+		case <-ticker.C:
 		}
 
 		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
 		if targetRPCAddr == "" {
+			if ds.registered {
+				ds.registerer.Deregister(ds)
+				ds.registered = false
+			}
+			continue
+		}
+
+		if !ds.registered {
+			if err := ds.registerer.Register(ds); err != nil {
+				logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
+				return false
+			}
+			ds.registered = true
+		}
+
+		if task == nil {
 			continue
 		}
 
@@ -105,6 +140,7 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		} else {
 			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
+		task = nil
 	}
 }
 
@@ -125,24 +161,19 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	}
 }
 
-// IsPaused implements the DataSink interface.
-func (ds *SingleTargetDataSink) IsPaused() bool {
-	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
-}
-
-// IsDown implements the DataSink interface.
-func (ds *SingleTargetDataSink) IsDown() bool {
-	select {
-	case <-ds.ctx.Done():
-		return true
-	default:
-		return false
-	}
+// CloseDataSink implements the DataSink interface.
+func (ds *SingleTargetDataSink) CloseDataSink() {
+	// reporter is closing
+	ds.cancel()
 }
 
 // Close uses to close grpc connection.
 func (ds *SingleTargetDataSink) Close() {
 	ds.cancel()
+
+	if ds.registered {
+		ds.registerer.Deregister(ds)
+	}
 }
 
 func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data *ReportData) error {
