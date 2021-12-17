@@ -151,8 +151,8 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	}
 }
 
-// OnDeregisterFromReporter implements the DataSink interface.
-func (ds *SingleTargetDataSink) OnDeregisterFromReporter() {
+// OnReporterClosing implements the DataSink interface.
+func (ds *SingleTargetDataSink) OnReporterClosing() {
 	ds.cancel()
 }
 

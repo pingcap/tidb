@@ -130,8 +130,6 @@ type RemoteTopSQLReporter struct {
 
 	dataSinkMu sync.Mutex
 	dataSinks  map[DataSink]struct{}
-	// a tmp slice for copying out all dataSinks and then report
-	tmpDataSinks []DataSink
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -295,15 +293,15 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
-	var m map[DataSink]struct{}
+	tsr.cancel()
 
+	var m map[DataSink]struct{}
 	tsr.dataSinkMu.Lock()
 	m, tsr.dataSinks = tsr.dataSinks, make(map[DataSink]struct{})
-	tsr.cancel()
 	tsr.dataSinkMu.Unlock()
 
 	for d := range m {
-		d.OnDeregisterFromReporter()
+		d.OnReporterClosing()
 	}
 }
 
@@ -649,15 +647,15 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	deadline := time.Now().Add(timeout)
 
 	tsr.dataSinkMu.Lock()
+	dataSinks := make([]DataSink, 0, len(tsr.dataSinks))
 	for ds := range tsr.dataSinks {
-		tsr.tmpDataSinks = append(tsr.tmpDataSinks, ds)
+		dataSinks = append(dataSinks, ds)
 	}
 	tsr.dataSinkMu.Unlock()
 
-	for _, ds := range tsr.tmpDataSinks {
+	for _, ds := range dataSinks {
 		if err := ds.TrySend(data, deadline); err != nil {
 			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
 		}
 	}
-	tsr.tmpDataSinks = tsr.tmpDataSinks[:0]
 }

@@ -23,6 +23,6 @@ type DataSink interface {
 	// the specified deadline, or the sink is closed, an error will be returned.
 	TrySend(data *ReportData, deadline time.Time) error
 
-	// OnDeregisterFromReporter notifies DataSink that the reporter is closing and have to deregister the datasink.
-	OnDeregisterFromReporter()
+	// OnReporterClosing notifies DataSink that the reporter is closing.
+	OnReporterClosing()
 }

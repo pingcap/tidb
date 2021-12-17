@@ -79,7 +79,7 @@ func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
 	return nil
 }
 
-func (ds *mockDataSink) OnDeregisterFromReporter() {
+func (ds *mockDataSink) OnReporterClosing() {
 }
 
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
