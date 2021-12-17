@@ -191,6 +191,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -962,6 +963,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
 	cc.rsEncoder = newResultEncoder(chs)
+}
+
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -2190,10 +2200,15 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	// if fetchedRows is not enough, getting data from recordSet.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
+		// NOTE: chunk should not be allocated from the allocator
+		// the allocator will reset every statement
+		// but it maybe stored in the result set among statements
+		// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
 		// Here server.tidbResultSet implements Next method.
+		req.Reset()
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}
@@ -2205,7 +2220,6 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		req = chunk.Renew(req, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,

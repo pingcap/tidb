@@ -154,6 +154,9 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
+	// If the binding is not used by the stmt, the value is empty
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
@@ -198,12 +201,13 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
-	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
-	WaitLockLeaseTime time.Duration
 	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
 }
 
 // StmtHints are SessionVars related sql hints.

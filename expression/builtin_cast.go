@@ -285,6 +285,11 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
+		// so we build a from_binary function to do this check.
+		ft := args[0].GetType().Clone()
+		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
+		bf.args[0] = BuildFromBinaryFunction(ctx, args[0], ft)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -1819,6 +1824,17 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 		ctx.SetValue(inUnionCastContext, nil)
 	}()
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// BuildCastCollationFunction builds a ScalarFunction which casts the collation.
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+	if expr.GetType().Collate == ec.Collation {
+		return expr
+	}
+	tp := expr.GetType().Clone()
+	tp.Charset, tp.Collate = ec.Charset, ec.Collation
+	newExpr := BuildCastFunction(ctx, expr, tp)
+	return newExpr
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
