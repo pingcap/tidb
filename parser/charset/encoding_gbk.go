@@ -45,7 +45,7 @@ func (e *encodingGBK) Tp() EncodingTp {
 // Peek implements Encoding interface.
 func (e *encodingGBK) Peek(src []byte) []byte {
 	charLen := 2
-	if len(src) == 0 || src[0] < 0x80 {
+	if len(src) == 0 || src[0] <= 0x80 {
 		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
 		charLen = 1
 	}

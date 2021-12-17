@@ -296,6 +296,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
+	enc := charset.FindEncoding(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
@@ -314,7 +315,6 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if isNull {
 				continue
 			}
-			enc := charset.FindEncoding(ec.Charset)
 			if !charset.IsValidString(enc, str) {
 				return false
 			}
