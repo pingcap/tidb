@@ -444,19 +444,21 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)
 		a.Args[i].GetType().Tp = originTp
-		// refine each mysql integer type to the needed decimal precision
-		if tpOld == mysql.TypeTiny || tpOld == mysql.TypeShort || tpOld == mysql.TypeInt24 || tpOld == mysql.TypeLong || tpOld == mysql.TypeLonglong {
-			switch tpOld {
-			case mysql.TypeTiny:
-				a.Args[i].GetType().Flen = 3
-			case mysql.TypeShort:
-				a.Args[i].GetType().Flen = 5
-			case mysql.TypeInt24:
-				a.Args[i].GetType().Flen = 8
-			case mysql.TypeLong:
-				a.Args[i].GetType().Flen = 10
-			case mysql.TypeLonglong:
-				a.Args[i].GetType().Flen = 20
+		// refine each mysql integer type to the needed decimal precision for sum
+		if a.Name == ast.AggFuncSum {
+			if tpOld == mysql.TypeTiny || tpOld == mysql.TypeShort || tpOld == mysql.TypeInt24 || tpOld == mysql.TypeLong || tpOld == mysql.TypeLonglong {
+				switch tpOld {
+				case mysql.TypeTiny:
+					a.Args[i].GetType().Flen = 3
+				case mysql.TypeShort:
+					a.Args[i].GetType().Flen = 5
+				case mysql.TypeInt24:
+					a.Args[i].GetType().Flen = 8
+				case mysql.TypeLong:
+					a.Args[i].GetType().Flen = 10
+				case mysql.TypeLonglong:
+					a.Args[i].GetType().Flen = 20
+				}
 			}
 		}
 	}
