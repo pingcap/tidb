@@ -445,23 +445,30 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		*(a.Args[i].GetType()) = *(a.RetTp)
 		a.Args[i].GetType().Tp = originTp
 		// refine each mysql integer type to the needed decimal precision for sum
-		if a.Name == ast.AggFuncSum {
-			if types.IsTypeInteger(tpOld) {
-				switch tpOld {
-				case mysql.TypeTiny:
-					a.Args[i].GetType().Flen = 3
-				case mysql.TypeShort:
-					a.Args[i].GetType().Flen = 5
-				case mysql.TypeInt24:
-					a.Args[i].GetType().Flen = 8
-				case mysql.TypeLong:
-					a.Args[i].GetType().Flen = 10
-				case mysql.TypeLonglong:
-					a.Args[i].GetType().Flen = 20
-				case mysql.TypeYear:
-					a.Args[i].GetType().Flen = 4
-				}
+		if a.Name == ast.AggFuncSum && types.IsTypeInteger(tpOld) {
+			if flen, err := refineSumDecimalArgs(tpOld); err != nil {
+				// avg could be split into sum and count, so we should take float decimal into account
+				a.Args[i].GetType().Flen = mathutil.Min(a.Args[i].GetType().Flen, flen+a.Args[i].GetType().Decimal)
 			}
 		}
+	}
+}
+
+func refineSumDecimalArgs(tp byte) (int, error) {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3, nil
+	case mysql.TypeShort:
+		return 5, nil
+	case mysql.TypeInt24:
+		return 8, nil
+	case mysql.TypeLong:
+		return 1, nil
+	case mysql.TypeLonglong:
+		return 2, nil
+	case mysql.TypeYear:
+		return 4, nil
+	default:
+		return -1, errors.New("")
 	}
 }
