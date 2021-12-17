@@ -8310,8 +8310,6 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		&plannercore.PhysicalLimit{},
 		&plannercore.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
-		&plannercore.PhysicalCTE{},
-		&plannercore.PhysicalCTETable{},
 		&plannercore.PhysicalMaxOneRow{},
 		&plannercore.PhysicalProjection{},
 		&plannercore.PhysicalSelection{},
@@ -8320,7 +8318,7 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(se, is, nil, math.MaxUint64, false, "global")
+	executorBuilder := executor.NewMockExecutorBuilderForTest(se, is)
 
 	var opsNeedsCoveredMask uint64 = 1<<len(opsNeedsCovered) - 1
 	opsAlreadyCoveredMask := uint64(0)
