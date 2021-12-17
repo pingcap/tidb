@@ -16,8 +16,9 @@ package executor_test
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
@@ -56,7 +57,7 @@ func (s *inspectionSummarySuite) TestInspectionRules(t *testing.T) {
 		require.NoError(t, err)
 		rules, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
 		require.NoError(t, err)
-		require.Equal(t, len(rules), ca.ruleCount)
+		require.Len(t, rules, ca.ruleCount)
 		require.NoError(t, rs.Close())
 	}
 }
