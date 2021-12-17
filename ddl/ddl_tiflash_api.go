@@ -648,6 +648,7 @@ func (d *ddl) PollTiFlashRoutine() {
 			pollTiflashContext.mu.Lock()
 			var id int64 = -1
 			avail := false
+			// We can take arbitrary elements from `pollTiflashContext.UpdateMap`
 			for id, avail = range pollTiflashContext.UpdateMap {
 				break
 			}
