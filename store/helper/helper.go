@@ -876,7 +876,7 @@ type PDRegionStats struct {
 func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	startKey := tablecodec.EncodeTablePrefix(tableID)
@@ -892,7 +892,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -921,12 +921,12 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 
 	req, err := http.NewRequest("DELETE", deleteURL, nil)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -954,7 +954,7 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	buf := bytes.NewBuffer(m)
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -982,7 +982,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 
 	resp, err := util.InternalHTTPClient().Get(getURL)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -1030,11 +1030,11 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	}
 	v, err := json.Marshal(input)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -1064,7 +1064,7 @@ func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) err
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
