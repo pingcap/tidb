@@ -139,14 +139,11 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
 			resultFieldType.Decimal = types.UnspecifiedLength
 		}
-<<<<<<< HEAD
-=======
 		if resultFieldType.Tp == mysql.TypeEnum || resultFieldType.Tp == mysql.TypeSet {
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	} else if resultFieldType.Tp == mysql.TypeDatetime {
 		types.TryToFixFlenOfDatetime(resultFieldType)
->>>>>>> 8e11e0367... *: fix the flen type datetime for union/case-when/control-funcs (#30588)
 	}
 	return resultFieldType
 }
