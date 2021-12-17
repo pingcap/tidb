@@ -2,7 +2,6 @@ package cpuprofile
 
 import (
 	"errors"
-	"io"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -11,15 +10,6 @@ import (
 const labelSQL = "sql"
 
 var defProfileTimeout = time.Second * 10
-
-func GetCPUProfile(seconds uint64, w io.Writer) error {
-	pc := NewPprofAPIConsumer(seconds)
-	profileData, err := pc.WaitProfilingFinish()
-	if err != nil {
-		return err
-	}
-	return profileData.Write(w)
-}
 
 type PprofAPIConsumer struct {
 	seconds  uint64

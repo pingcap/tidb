@@ -16,6 +16,7 @@ package cpuprofile
 
 import (
 	"bytes"
+	"go.uber.org/atomic"
 	"runtime/pprof"
 	"sync"
 	"time"
@@ -48,9 +49,10 @@ type ProfileConsumer chan *ProfileData
 
 type ParallelCPUProfiler struct {
 	sync.Mutex
-	cs     map[ProfileConsumer]struct{}
-	closed chan struct{}
-	wg     sync.WaitGroup
+	cs       map[ProfileConsumer]struct{}
+	closed   chan struct{}
+	isClosed atomic.Bool
+	wg       sync.WaitGroup
 
 	data         *ProfileData
 	nextData     *ProfileData
@@ -175,7 +177,9 @@ func (p *ParallelCPUProfiler) sendToConsumers() {
 }
 
 func (p *ParallelCPUProfiler) close() {
-	close(p.closed)
+	if p.isClosed.CAS(false, true) {
+		close(p.closed)
+	}
 	p.wg.Wait()
 }
 

@@ -3,6 +3,9 @@ package cpuprofile
 import (
 	"bytes"
 	"context"
+	"io/ioutil"
+	"net"
+	"net/http"
 	"runtime/pprof"
 	"sync"
 	"testing"
@@ -16,13 +19,7 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
-		goleak.IgnoreTopFunction("time.Sleep"),
-		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
-		goleak.IgnoreTopFunction("runtime/pprof.profileWriter"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(m)
 }
 
 func TestParallelCPUProfiler(t *testing.T) {
@@ -31,6 +28,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	}
 	globalProfiler = NewParallelCPUProfiler()
 	globalProfiler.Start()
+	defer globalProfiler.close()
 
 	// Test register/unregister nil
 	Register(nil)
@@ -122,6 +120,7 @@ func TestGetCPUProfile(t *testing.T) {
 	}
 	globalProfiler = NewParallelCPUProfiler()
 	globalProfiler.Start()
+	defer globalProfiler.close()
 
 	// Test profile error
 	err := pprof.StartCPUProfile(bytes.NewBuffer(nil))
@@ -157,6 +156,49 @@ func TestGetCPUProfile(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestProfileHTTPHandler(t *testing.T) {
+	if globalProfiler != nil {
+		globalProfiler.close()
+	}
+	globalProfiler = NewParallelCPUProfiler()
+	globalProfiler.Start()
+	defer globalProfiler.close()
+
+	// setup http server
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	router := http.NewServeMux()
+	router.HandleFunc("/debug/pprof/profile", ProfileHTTPHandler)
+	httpServer := &http.Server{Handler: router, WriteTimeout: time.Second * 60}
+	go func() {
+		if err = httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			require.NoError(t, err)
+		}
+	}()
+	defer func() {
+		err = httpServer.Close()
+		require.NoError(t, err)
+	}()
+
+	address := listener.Addr().String()
+
+	// Test for get profile success.
+	resp, err := http.Get("http://" + address + "/debug/pprof/profile?seconds=1")
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	profileData, err := profile.Parse(resp.Body)
+	require.NoError(t, err)
+	require.NotNil(t, profileData)
+
+	// Test for get profile failed.
+	resp, err = http.Get("http://" + address + "/debug/pprof/profile?seconds=100000")
+	require.NoError(t, err)
+	require.Equal(t, 400, resp.StatusCode)
+	body, err := ioutil.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "profile duration exceeds server's WriteTimeout\n", string(body))
 }
 
 func mockCPULoad(ctx context.Context, labels ...string) {
