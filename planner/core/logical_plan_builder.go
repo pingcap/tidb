@@ -612,10 +612,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
-		// 1. `ds.tableInfo.Partition == nil`, which means the hint takes effect in the whole table.
-		// 2. `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
-		// If it's satisfied the above two conditions, then we can make sure there are some hints conflicted.
-		if ds.preferStoreType != 0 && ds.tableInfo.Partition == nil {
+		// `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// We can't support read a table from two different storages, even partition table.
+		if ds.preferStoreType != 0 {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
@@ -937,7 +936,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	return nil
 }
 
-func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, AggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
 	b.optFlag |= flagPredicatePushDown
 	if b.curClause != havingClause {
 		b.curClause = whereClause
@@ -945,9 +944,9 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
-	selection := LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
+	selection := LogicalSelection{buildByHaving: aggMapper != nil}.Init(b.ctx, b.getSelectOffset())
 	for _, cond := range conditions {
-		expr, np, err := b.rewrite(ctx, cond, p, AggMapper, false)
+		expr, np, err := b.rewrite(ctx, cond, p, aggMapper, false)
 		if err != nil {
 			return nil, err
 		}
@@ -4830,7 +4829,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg)
+			newArgList = append(newArgList, newArg.Clone())
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
@@ -4862,7 +4861,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, a
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg)
+			newArgList = append(newArgList, newArg.Clone())
 			continue
 		}
 		col := &expression.Column{

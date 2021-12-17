@@ -3040,7 +3040,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 
@@ -3080,7 +3080,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 
 	// Create virtual tiflash replica info.
@@ -3359,6 +3359,27 @@ func (s *testIntegrationSerialSuite) TestMppAggTopNWithJoin(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestLimitIndexLookUpKeepOrder(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestDecorrelateInnerJoinInSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -3447,6 +3468,21 @@ func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c"), IsFalse)
 }
 
+// https://github.com/pingcap/tidb/issues/23802
+func (s *testIntegrationSuite) TestPanicWhileQueryTableWithIsNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists NT_HP27193")
+	tk.MustExec("CREATE TABLE `NT_HP27193` (  `COL1` int(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH ( `COL1`%`COL3` ) PARTITIONS 10;")
+	_, err := tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	c.Assert(err, IsNil)
+	tk.MustExec("INSERT INTO NT_HP27193 (COL2, COL4, COL3, COL5) VALUES ('m',  '2020-05-04 13:15:27', 8,  2602)")
+	_, err = tk.Exec("select col1 from NT_HP27193 where col1 is null;")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table if exists NT_HP27193")
+}
+
 func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3455,6 +3491,37 @@ func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk.MustExec("insert into t values(0x00A4EEF4FA55D6706ED5)")
 	tk.MustQuery("select count(*) from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("\x00\xa4\xee\xf4\xfaU\xd6pn\xd5")) // not empty
+}
+
+func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+					a int, b int, c varchar(20),
+					primary key(a), key(b), key(c)
+				) partition by range columns(a) (
+					partition p0 values less than(6),
+					partition p1 values less than(11),
+					partition p2 values less than(16));`)
+	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t], tiflash[t]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
 }
 
 func (s *testIntegrationSuite) TestIssue24281(c *C) {
@@ -3552,10 +3619,108 @@ func (s *testIntegrationSuite) TestIssue23839(c *C) {
 	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
 }
 
+// #22949: test HexLiteral Used in GetVar expr
+func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_no_idx;")
+	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
+	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
+	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use table with index on col_bit
+	tk.MustExec("drop table if exists t2_idx;")
+	tk.MustExec("create table t2_idx(id int, col_bit bit(16), key(col_bit));")
+	tk.MustExec("insert into t2_idx values(1, 0x3135);")
+	tk.MustExec("insert into t2_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustExec("set @a = 0x0F;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
+
+	// test col varchar with GetVar
+	tk.MustExec("drop table if exists t_varchar;")
+	tk.MustExec("create table t_varchar(id int, col_varchar varchar(100), key(col_varchar));")
+	tk.MustExec("insert into t_varchar values(1, '15');")
+	tk.MustExec("prepare stmt from 'select id from t_varchar where col_varchar = ?';")
+	tk.MustExec("set @a = 0x3135;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+}
+
+// test BitLiteral used with GetVar
+func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1_no_idx;")
+	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
+	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
+	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
+
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
+	// 0b11000100110101 is 0x3135
+	tk.MustExec("set @a = 0b11000100110101;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+
+	// same test, but use IN expr
+	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
+	tk.MustExec("set @a = 0b11000100110101;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a timestamp, b datetime);")
 	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}
+
+func (s *testIntegrationSuite) TestGroupBySetVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (2), (3), (4), (5), (6);")
+	rows := tk.MustQuery("select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;")
+	rows.Check(testkit.Rows("0 2", "1 2", "2 2"))
+
+	tk.MustExec("create table ta(a int, b int);")
+	tk.MustExec("set sql_mode='';")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		res := tk.MustQuery("explain format = 'brief' " + tt)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }

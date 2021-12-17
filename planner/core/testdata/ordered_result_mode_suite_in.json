@@ -63,7 +63,7 @@
       "select b from t1 where b in (1, 2, 3, 4)",
       "select * from t1 where a > 10 union all select * from t2 where b > 20",
       "select * from t1 where a > 10 union distinct select * from t2 where b > 20",
-      "select row_number() over(partition by a) as row_no, sum(b) over(partition by a) as sum_b from t1",
+      "select sum(b) over(partition by a) as sum_b from t1",
       "select min(a), max(b), sum(c) from t1 group by d",
       "select min(a), max(b), sum(c) from t1 group by d having max(b) < 20",
       "select case when a=1 then 'a1' when a=2 then 'a2' else 'ax' end from t1 "
