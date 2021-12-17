@@ -365,9 +365,9 @@ func NewRemoteDupKVStream(
 	}
 	s := &RemoteDupKVStream{cli: cli, cancel: cancel}
 	// call tryRecv to see if there are some region errors.
-	if err := s.tryRecv(); errors.Cause(err) != io.EOF {
+	if err := s.tryRecv(); err != nil && errors.Cause(err) != io.EOF {
 		cancel()
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return s, nil
 }
