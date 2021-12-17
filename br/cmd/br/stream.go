@@ -45,6 +45,7 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStopCommand(),
 		newStreamPauseCommand(),
 		newSteramResumeComamnd(),
+		newSteramStatusComamnd(),
 	)
 	return command
 }
@@ -101,6 +102,21 @@ func newSteramResumeComamnd() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			// empty db/table means full backup.
 			return streamCommand(command, task.StreamResume)
+		},
+	}
+
+	task.DefineStreamCommonFlags(command.Flags())
+	return command
+}
+
+func newSteramStatusComamnd() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "status",
+		Short: "status a stream task",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			// empty db/table means full backup.
+			return streamCommand(command, task.StreamStatus)
 		},
 	}
 
