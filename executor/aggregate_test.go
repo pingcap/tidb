@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1452,11 +1451,8 @@ func (s *testSuiteAgg) TestIssue23277(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-func TestAvgDecimal(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuiteAgg) TestAvgDecimal(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists td;")
 	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
