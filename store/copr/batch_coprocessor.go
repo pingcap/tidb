@@ -155,7 +155,11 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 				}, 2*time.Second)
 
 				if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
-					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+					errMsg := "store not ready to serve"
+					if err != nil {
+						errMsg = err.Error()
+					}
+					logutil.BgLogger().Warn("Store is not ready", zap.String("store address", s.GetAddr()), zap.String("err message", errMsg))
 					mu.Lock()
 					mppStoreLastFailTime[s.GetAddr()] = time.Now()
 					mu.Unlock()
