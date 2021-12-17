@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -75,12 +76,12 @@ func TestCompareIndexData(t *testing.T) {
 		cols := make([]*table.Column, 0)
 		indexCols := make([]*model.IndexColumn, 0)
 		for i, ft := range data.fts {
-			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{FieldType: *ft}})
+			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{Name: model.NewCIStr(fmt.Sprintf("c%d", i)), FieldType: *ft}})
 			indexCols = append(indexCols, &model.IndexColumn{Offset: i, Length: data.indexLength[i]})
 		}
-		indexInfo := &model.IndexInfo{Columns: indexCols}
+		indexInfo := &model.IndexInfo{Name: model.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(sc, cols, data.indexData, data.inputData, indexInfo)
+		err := compareIndexData(sc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: model.NewCIStr("t")})
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
@@ -166,7 +167,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 
 	for caseID, data := range testData {
 		err := checkRowInsertionConsistency(
-			sessVars, data.rowToInsert, data.rowInsertion, data.columnIDToInfo, data.columnIDToFieldType,
+			sessVars, data.rowToInsert, data.rowInsertion, data.columnIDToInfo, data.columnIDToFieldType, "t",
 		)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
@@ -309,9 +310,9 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
 					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
-					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo)
+					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, "t")
 					require.Nil(t, err)
-					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo)
+					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, "t")
 					require.NotNil(t, err)
 				}
 			}
