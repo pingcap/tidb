@@ -366,10 +366,10 @@ func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	// May fail because of Grow/Tick strategy
 	backoffctx := ddl.NewPollTiFlashBackoffContext(2, 50, 20)
 	ctx := &backoffctx
-	backoff := ddl.NewPollTiFlashReplicaStatusBackoff()
+	backoff := ddl.NewPollTiFlashBackoffElement()
 	next := func(x int) {
 		backoff.Grow(ctx)
-		for i := 0; i < x - 1; i++ {
+		for i := 0; i < x-1; i++ {
 			c.Assert(backoff.Tick(ctx), Equals, false)
 		}
 		c.Assert(backoff.Tick(ctx), Equals, true)
@@ -385,12 +385,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashBackoff(c *C) {
 	next(50)
 
 	ctx.MinTick = 1
-	backoff = ddl.NewPollTiFlashReplicaStatusBackoff()
+	backoff = ddl.NewPollTiFlashBackoffElement()
 	c.Assert(backoff.Tick(ctx), Equals, true)
 	backoff.Grow(ctx)
 	c.Assert(backoff.Tick(ctx), Equals, false)
 	c.Assert(backoff.Tick(ctx), Equals, true)
-
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
