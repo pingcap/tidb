@@ -291,14 +291,14 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 }
 
 type inputDecoder struct {
-	encoding *charset.Encoding
+	encoding charset.Encoding
 
 	buffer []byte
 }
 
 func newInputDecoder(chs string) *inputDecoder {
 	return &inputDecoder{
-		encoding: charset.NewEncoding(chs),
+		encoding: charset.FindEncoding(chs),
 		buffer:   nil,
 	}
 }
@@ -309,7 +309,7 @@ func (i *inputDecoder) clean() {
 }
 
 func (i *inputDecoder) decodeInput(src []byte) []byte {
-	result, err := i.encoding.Decode(i.buffer, src)
+	result, err := i.encoding.Transform(i.buffer, src, charset.OpDecode)
 	if err != nil {
 		return src
 	}
