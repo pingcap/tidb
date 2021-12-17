@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/paging"
 	"io"
 	"strconv"
 	"strings"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/metrics"
