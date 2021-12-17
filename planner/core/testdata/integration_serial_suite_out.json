@@ -1507,7 +1507,7 @@
           "StreamAgg 1.00 root  funcs:sum(Column#6)->Column#4",
           "└─TableReader 1.00 root  data:StreamAgg",
           "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#7)->Column#6",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#7",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#7",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -2704,7 +2704,7 @@
           "└─ExchangeSender 6400.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 6400.00 batchCop[tiflash]  Column#4",
           "    └─HashAgg 6400.00 batchCop[tiflash]  group by:Column#22, funcs:sum(Column#21)->Column#4",
-          "      └─Projection 6400.00 batchCop[tiflash]  cast(test.t.id, decimal(32,0) BINARY)->Column#21, test.t.value",
+          "      └─Projection 6400.00 batchCop[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#21, test.t.value",
           "        └─Projection 6400.00 batchCop[tiflash]  test.t.id, test.t.value",
           "          └─HashAgg 6400.00 batchCop[tiflash]  group by:test.t.id, test.t.value, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
           "            └─ExchangeReceiver 6400.00 batchCop[tiflash]  ",
@@ -2922,7 +2922,7 @@
           "        └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: N/A]",
           "            └─HashAgg 7992.00 batchCop[tiflash]  group by:Column#33, funcs:sum(Column#32)->Column#17",
-          "              └─Projection 9990.00 batchCop[tiflash]  cast(test.t.id, decimal(32,0) BINARY)->Column#32, test.t.id",
+          "              └─Projection 9990.00 batchCop[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#32, test.t.id",
           "                └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "                  ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
           "                  │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
@@ -3413,7 +3413,7 @@
           "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6, Column#7, div(Column#8, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#8",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#11, Column#12, Column#13 order by Column#14 separator \",\")->Column#5, funcs:count(Column#15)->Column#6, funcs:min(Column#16)->Column#7, funcs:count(Column#17)->Column#10, funcs:sum(Column#18)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#13, test.ts.col_0, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(37,4) BINARY)->Column#18",
+          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#13, test.ts.col_0, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(10,4) BINARY)->Column#18",
           "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
