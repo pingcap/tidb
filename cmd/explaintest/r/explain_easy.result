@@ -91,7 +91,7 @@ Selection	0.33	root		gt(test.t1.c2, 1)
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
     │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -225,7 +225,7 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
     │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -241,7 +241,7 @@ HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2
 explain format = 'brief' select sum(6 in (select c2 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(6, test.t2.c2)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
