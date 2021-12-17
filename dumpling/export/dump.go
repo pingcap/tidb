@@ -902,7 +902,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *sql.Conn, db stri
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		hasImplicitRowID, err = SelectTiDBRowID(conn, db, tbl)
 		if err != nil {
-			tctx.L().Info("cannot check has implicit rowID", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
+			tctx.L().Info("check implicit rowID failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
 	}
 
