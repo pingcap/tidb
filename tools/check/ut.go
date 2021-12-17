@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -351,7 +365,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) error {
 
 func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
 	if old {
-		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
+		// numactl --physcpubind 3 -- session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		return exec.Command(
 			"numactl", "--physcpubind", n.cpu, "--",
 			exe,
@@ -359,7 +373,7 @@ func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd
 			"-test.cpu", "1", "-test.run", "^TestT$", "-check.f", fn)
 	}
 
-	// session.test -test.run TestClusteredPrefixColum
+	// numactl --physcpubind 3 -- session.test -test.run TestClusteredPrefixColum
 	return exec.Command(
 		"numactl", "--physcpubind", n.cpu, "--",
 		exe,
