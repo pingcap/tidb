@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -90,26 +89,4 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		got := tt.in.PushDownFlags()
 		require.Equal(t, tt.out, got)
 	}
-}
-
-func TestGetResourceGroupTagByLabel(t *testing.T) {
-	ctx := stmtctx.StatementContext{OriginalSQL: "SELECT * FROM t"}
-	tagRow := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
-	tagIndex := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
-	tagUnknown := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
-	tagRow2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
-	tagIndex2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
-	tagUnknown2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
-	require.NotEmpty(t, tagRow)
-	require.NotEmpty(t, tagIndex)
-	require.NotEmpty(t, tagUnknown)
-	require.NotEmpty(t, tagRow2)
-	require.NotEmpty(t, tagIndex2)
-	require.NotEmpty(t, tagUnknown2)
-	require.Equal(t, &tagRow, &tagRow2) // mem addr
-	require.Equal(t, &tagIndex, &tagIndex2)
-	require.Equal(t, &tagUnknown, &tagUnknown2)
-	require.NotEqual(t, &tagRow, &tagIndex)
-	require.NotEqual(t, &tagRow, &tagUnknown)
-	require.NotEqual(t, &tagIndex, &tagUnknown)
 }

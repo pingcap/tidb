@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestT(t *testing.T) {
-	t.Parallel()
 	abc := NewCIStr("aBC")
 	require.Equal(t, "aBC", abc.O)
 	require.Equal(t, "abc", abc.L)
@@ -33,7 +33,6 @@ func TestT(t *testing.T) {
 }
 
 func TestModelBasic(t *testing.T) {
-	t.Parallel()
 	column := &ColumnInfo{
 		ID:           1,
 		Name:         NewCIStr("c"),
@@ -134,10 +133,11 @@ func TestModelBasic(t *testing.T) {
 
 	extraPK := NewExtraHandleColInfo()
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
+	require.Equal(t, charset.CharsetBin, extraPK.Charset)
+	require.Equal(t, charset.CollationBin, extraPK.Collate)
 }
 
 func TestJobStartTime(t *testing.T) {
-	t.Parallel()
 	job := &Job{
 		ID:         123,
 		BinlogInfo: &HistoryInfo{},
@@ -147,7 +147,6 @@ func TestJobStartTime(t *testing.T) {
 }
 
 func TestJobCodec(t *testing.T) {
-	t.Parallel()
 	type A struct {
 		Name string
 	}
@@ -244,7 +243,6 @@ func TestJobCodec(t *testing.T) {
 }
 
 func TestState(t *testing.T) {
-	t.Parallel()
 	schemaTbl := []SchemaState{
 		StateDeleteOnly,
 		StateWriteOnly,
@@ -273,7 +271,6 @@ func TestState(t *testing.T) {
 }
 
 func TestString(t *testing.T) {
-	t.Parallel()
 	acts := []struct {
 		act    ActionType
 		result string
@@ -299,7 +296,7 @@ func TestString(t *testing.T) {
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
 		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
-		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
+		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 
@@ -310,7 +307,6 @@ func TestString(t *testing.T) {
 }
 
 func TestUnmarshalCIStr(t *testing.T) {
-	t.Parallel()
 	var ci CIStr
 
 	// Test unmarshal CIStr from a single string.
@@ -330,7 +326,6 @@ func TestUnmarshalCIStr(t *testing.T) {
 }
 
 func TestDefaultValue(t *testing.T) {
-	t.Parallel()
 	srcCol := &ColumnInfo{
 		ID: 1,
 	}
@@ -366,7 +361,7 @@ func TestDefaultValue(t *testing.T) {
 	err = newBitCol.SetDefaultValue(1)
 	// Only string type is allowed in BIT column.
 	require.Error(t, err)
-	require.Regexp(t, ".*Invalid default value.*", err.Error())
+	require.Contains(t, err.Error(), "Invalid default value")
 	require.Equal(t, 1, newBitCol.GetDefaultValue())
 	err = newBitCol.SetDefaultValue(randBitStr)
 	require.NoError(t, err)
@@ -408,8 +403,6 @@ func TestDefaultValue(t *testing.T) {
 }
 
 func TestPlacementSettingsString(t *testing.T) {
-	t.Parallel()
-
 	settings := &PlacementSettings{
 		PrimaryRegion: "us-east-1",
 		Regions:       "us-east-1,us-east-2",

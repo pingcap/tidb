@@ -115,8 +115,8 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	report := reporter.NewRemoteTopSQLReporter(client)
+	dataSink := reporter.NewSingleTargetDataSink()
+	report := reporter.NewRemoteTopSQLReporter(dataSink, mockPlanBinaryDecoderFunc)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
@@ -199,7 +199,7 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
-	plan = genStr(topsql.MaxPlanTextSize + 10)
+	plan = genStr(topsql.MaxBinaryPlanSize + 10)
 	planDigest = genDigest(plan)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 

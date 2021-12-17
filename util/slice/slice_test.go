@@ -36,7 +36,6 @@ func TestSlice(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(fmt.Sprint(test.a), func(t *testing.T) {
-			t.Parallel()
 			even := func(i int) bool { return test.a[i]%2 == 0 }
 			require.Equal(t, test.anyOf, AnyOf(test.a, even))
 			require.Equal(t, test.noneOf, NoneOf(test.a, even))

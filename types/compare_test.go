@@ -26,8 +26,6 @@ import (
 )
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
-
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -156,8 +154,6 @@ func compareForTest(a, b interface{}) (int, error) {
 }
 
 func TestCompareDatum(t *testing.T) {
-	t.Parallel()
-
 	cmpTbl := []struct {
 		lhs Datum
 		rhs Datum
@@ -186,8 +182,6 @@ func TestCompareDatum(t *testing.T) {
 }
 
 func TestVecCompareIntAndUint(t *testing.T) {
-	t.Parallel()
-
 	cmpTblUU := []struct {
 		lhs []uint64
 		rhs []uint64

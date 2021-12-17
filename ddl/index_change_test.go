@@ -69,7 +69,8 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	// create table t (c1 int primary key, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo, err := testTableInfo(d, "t", 2)
+	c.Assert(err, IsNil)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
