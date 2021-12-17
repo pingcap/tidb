@@ -42,11 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-<<<<<<< HEAD
-=======
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
->>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	"go.uber.org/zap"
 )
 
