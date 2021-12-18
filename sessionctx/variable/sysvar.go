@@ -265,7 +265,7 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 	}
 	// Normalize the value and apply validation based on type.
 	// i.e. TypeBool converts 1/on/ON to ON.
-	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue, err
 	}
@@ -276,8 +276,8 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 	return normalizedValue, nil
 }
 
-// validateFromType provides automatic validation based on the SysVar's type
-func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
+// ValidateFromType provides automatic validation based on the SysVar's type
+func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// The string "DEFAULT" is a special keyword in MySQL, which restores
 	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
@@ -329,9 +329,9 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
 	warns := vars.StmtCtx.GetWarnings()
 	defer func() {
-		vars.StmtCtx.SetWarnings(warns) // RelaxedVaidation = trim warnings too.
+		vars.StmtCtx.SetWarnings(warns) // RelaxedValidation = trim warnings too.
 	}()
-	normalizedValue, err := sv.validateFromType(vars, value, scope)
+	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue
 	}
@@ -1618,10 +1618,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(enabled), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		config.GetGlobalConfig().Log.EnableSlowLog = TiDBOptOn(val)
+		config.GetGlobalConfig().Log.EnableSlowLog.Store(TiDBOptOn(val))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), nil
+		return BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))

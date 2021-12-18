@@ -188,7 +188,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
-			appendProjEliminateTraceStep(proj, child, opt)
+			appendDupProjEliminateTraceStep(proj, child, opt)
 		}
 	}
 
@@ -199,6 +199,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
+	appendProjEliminateTraceStep(proj, opt)
 	return p.Children()[0]
 }
 
@@ -296,7 +297,7 @@ func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
 
-func appendProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
+func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(
 			fmt.Sprintf("Proj[%v] is eliminated, Proj[%v]'s expressions changed into[", child.ID(), parent.ID()))
@@ -311,4 +312,10 @@ func appendProjEliminateTraceStep(parent, child *LogicalProjection, opt *logical
 	}()
 	reason := fmt.Sprintf("Proj[%v]'s child proj[%v] is redundant", parent.ID(), child.ID())
 	opt.appendStepToCurrent(child.ID(), child.TP(), reason, action)
+}
+
+func appendProjEliminateTraceStep(proj *LogicalProjection, opt *logicalOptimizeOp) {
+	reason := fmt.Sprintf("Proj[%v]'s Exprs are all Columns", proj.ID())
+	action := fmt.Sprintf("Proj[%v] is eliminated", proj.ID())
+	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

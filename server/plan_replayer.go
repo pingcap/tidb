@@ -16,7 +16,7 @@ package server
 
 import (
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,15 +69,18 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 	params := mux.Vars(req)
 	name := params[pFileName]
 	path := handler.filePath
-	if isExists(path) {
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
+	exist, err := isExists(path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if exist {
 		file, err := os.Open(path)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		_, err = io.Copy(w, file)
+		content, err := ioutil.ReadAll(file)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -92,7 +95,13 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(content)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
 		return
 	}
 	if handler.infoGetter == nil {
@@ -126,10 +135,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		if resp.StatusCode != http.StatusOK {
 			continue
 		}
-		// find dump file in one remote tidb-server, return file directly
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
-		_, err = io.Copy(w, resp.Body)
+		content, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -139,11 +145,18 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			writeError(w, err)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(content)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		// find dump file in one remote tidb-server, return file directly
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", handler.downloadedFilename))
 		return
 	}
 	// we can't find dump file in any tidb-server, return 404 directly
-	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
+	logutil.BgLogger().Error("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 }
 
@@ -157,10 +170,13 @@ type downloadFileHandler struct {
 	downloadedFilename string
 }
 
-func isExists(path string) bool {
+func isExists(path string) (bool, error) {
 	_, err := os.Stat(path)
-	if err != nil && !os.IsExist(err) {
-		return false
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
-	return true
+	return true, nil
 }

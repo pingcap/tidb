@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/stretchr/testify/require"
@@ -134,6 +135,8 @@ func TestModelBasic(t *testing.T) {
 
 	extraPK := NewExtraHandleColInfo()
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
+	require.Equal(t, charset.CharsetBin, extraPK.Charset)
+	require.Equal(t, charset.CollationBin, extraPK.Collate)
 }
 
 func TestJobStartTime(t *testing.T) {
