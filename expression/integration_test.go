@@ -6916,7 +6916,6 @@ func TestMySQLWorkbenchIntialConnect(t *testing.T) {
 	tk.MustExec("SHOW SESSION VARIABLES LIKE 'version_compile_os'")
 	tk.MustExec("SHOW SESSION VARIABLES LIKE 'wait_timeout'")
 	tk.MustExec("show variables")
-
 }
 
 func TestIssue30326(t *testing.T) {
