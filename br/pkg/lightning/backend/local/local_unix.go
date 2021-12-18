@@ -45,12 +45,12 @@ func VerifyRLimit(estimateMaxFiles Rlim_t) error {
 	}
 	var rLimit syscall.Rlimit
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	failpoint.Inject("GetRlimitValue", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("GetRlimitValue")); _err_ == nil {
 		limit := Rlim_t(v.(int))
 		rLimit.Cur = limit
 		rLimit.Max = limit
 		err = nil
-	})
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -63,11 +63,11 @@ func VerifyRLimit(estimateMaxFiles Rlim_t) error {
 	}
 	prevLimit := rLimit.Cur
 	rLimit.Cur = estimateMaxFiles
-	failpoint.Inject("SetRlimitError", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("SetRlimitError")); _err_ == nil {
 		if v.(bool) {
 			err = errors.New("Setrlimit Injected Error")
 		}
-	})
+	}
 	if err == nil {
 		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	}

@@ -1132,7 +1132,7 @@ loopWrite:
 			for errCnt < maxRetryTimes {
 				log.L().Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 				var resp *sst.IngestResponse
-				failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("FailIngestMeta")); _err_ == nil {
 					// only inject the error once
 					switch val.(string) {
 					case "notleader":
@@ -1156,7 +1156,7 @@ loopWrite:
 					if resp != nil {
 						err = nil
 					}
-				})
+				}
 				if resp == nil {
 					resp, err = local.Ingest(ctx, ingestMetas, region)
 				}

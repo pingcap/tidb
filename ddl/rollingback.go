@@ -43,11 +43,11 @@ func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 }
 
 func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
-	failpoint.Inject("mockConvertAddIdxJob2RollbackJobError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockConvertAddIdxJob2RollbackJobError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
+			return 0, errors.New("mock convert add index job to rollback job error")
 		}
-	})
+	}
 	if indexInfo.Primary {
 		nullCols, err := getNullColInfos(tblInfo, indexInfo)
 		if err != nil {

@@ -219,11 +219,11 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 		if !hasWaitedForBuild {
-			failpoint.Inject("issue30289", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 				if val.(bool) {
 					probeSideResult.Reset()
 				}
-			})
+			}
 			if probeSideResult.NumRows() == 0 && !e.useOuterToBuild {
 				e.finished.Store(true)
 			}
@@ -267,13 +267,13 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh <-chan struct{}) {
 	defer close(chkCh)
 	var err error
-	failpoint.Inject("issue30289", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("issue30289")); _err_ == nil {
 		if val.(bool) {
 			err = errors.Errorf("issue30289 build return error")
 			e.buildFinished <- errors.Trace(err)
 			return
 		}
-	})
+	}
 	for {
 		if e.finished.Load().(bool) {
 			return
@@ -284,7 +284,7 @@ func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chu
 			e.buildFinished <- errors.Trace(err)
 			return
 		}
-		failpoint.Inject("errorFetchBuildSideRowsMockOOMPanic", nil)
+		failpoint.Eval(_curpkg_("errorFetchBuildSideRowsMockOOMPanic"))
 		if chk.NumRows() == 0 {
 			return
 		}
@@ -591,11 +591,11 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 
 	for i := range selected {
 		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2Chunk")); _err_ == nil {
 			if val.(bool) {
 				killed = true
 			}
-		})
+		}
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -632,11 +632,11 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
 		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("killedInJoin2ChunkForOuterHashJoin")); _err_ == nil {
 			if val.(bool) {
 				killed = true
 			}
-		})
+		}
 		if killed {
 			joinResult.err = ErrQueryInterrupted
 			return false, joinResult
@@ -767,12 +767,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
-		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
-		})
+		}
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {

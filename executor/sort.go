@@ -180,12 +180,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
-		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testSortedRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				e.spillAction = e.rowChunks.ActionSpillForTest()
 				defer e.spillAction.WaitForTest()
 			}
-		})
+		}
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
@@ -209,12 +209,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 				e.spillAction = e.rowChunks.ActionSpill()
-				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+				if val, _err_ := failpoint.Eval(_curpkg_("testSortedRowContainerSpill")); _err_ == nil {
 					if val.(bool) {
 						e.spillAction = e.rowChunks.ActionSpillForTest()
 						defer e.spillAction.WaitForTest()
 					}
-				})
+				}
 				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}

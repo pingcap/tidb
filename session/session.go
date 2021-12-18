@@ -499,13 +499,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		return err
 	}
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
-	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockCommitError")); _err_ == nil {
 		if val.(bool) {
 			if _, err := failpoint.Eval("tikvclient/mockCommitErrorOpt"); err == nil {
-				failpoint.Return(kv.ErrTxnRetryable)
+				return kv.ErrTxnRetryable
 			}
 		}
-	})
+	}
 
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
@@ -860,11 +860,11 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
-	failpoint.Inject("keepHistory", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("keepHistory")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(err)
+			return err
 		}
-	})
+	}
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
@@ -1034,12 +1034,12 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
 			zap.Uint64("original txnStartTS", orgStartTS))
-		failpoint.Inject("preCommitHook", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("preCommitHook")); _err_ == nil {
 			hook, ok := ctx.Value("__preCommitHook").(func())
 			if ok {
 				hook()
 			}
-		})
+		}
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -1644,12 +1644,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockStmtSlow")); _err_ == nil {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
 			v, _ := val.(int)
 			time.Sleep(time.Duration(v) * time.Millisecond)
 		}
-	})
+	}
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -2857,9 +2857,9 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 			// we don't need to request tso for stale read
 			return
 		}
-		failpoint.Inject("assertTSONotRequest", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("assertTSONotRequest")); _err_ == nil {
 			panic("tso shouldn't be requested")
-		})
+		}
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)

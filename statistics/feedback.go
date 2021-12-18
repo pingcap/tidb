@@ -290,9 +290,9 @@ func (q *QueryFeedback) Actual() int64 {
 // Update updates the query feedback. `startKey` is the start scan key of the partial result, used to find
 // the range for update. `counts` is the scan counts of each range, used to update the feedback count info.
 func (q *QueryFeedback) Update(startKey kv.Key, counts, ndvs []int64) {
-	failpoint.Inject("feedbackNoNDVCollect", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("feedbackNoNDVCollect")); _err_ == nil {
 		ndvs = nil
-	})
+	}
 	// Older versions do not have the counts info.
 	if len(counts) == 0 {
 		q.Invalidate()

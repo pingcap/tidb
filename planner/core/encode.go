@@ -51,9 +51,9 @@ func EncodePlan(p Plan) string {
 	defer encoderPool.Put(pn)
 	selectPlan := getSelectPlan(p)
 	if selectPlan != nil {
-		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockPlanRowCount")); _err_ == nil {
 			selectPlan.statsInfo().RowCount = float64(val.(int))
-		})
+		}
 	}
 	return pn.encodePlanTree(p)
 }
