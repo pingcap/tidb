@@ -685,7 +685,13 @@ func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBIn
 // Regions key ranges can intersect.
 func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
 	tables := h.GetTablesInfoWithKeyRange(schemas)
-	tableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
+
+	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
+	for i := 0; i < len(regionsInfo.Regions); i++ {
+		regions = append(regions, &regionsInfo.Regions[i])
+	}
+
+	tableInfos := h.ParseRegionsTableInfos(regions, tables)
 	return tableInfos
 }
 
@@ -711,25 +717,20 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 }
 
 // ParseRegionsTableInfos parse the tables or indices in regions according to key range.
-func (h *Helper) ParseRegionsTableInfos(regionsInfo *RegionsInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
-	tableInfos := make(map[int64][]TableInfo, len(regionsInfo.Regions))
+func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
-	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
-		tableInfos[regionsInfo.Regions[i].ID] = []TableInfo{}
-		regions = append(regions, &regionsInfo.Regions[i])
-	}
-
-	if len(tables) == 0 || len(regions) == 0 {
+	if len(tables) == 0 || len(regionsInfo) == 0 {
 		return tableInfos
 	}
-
-	sort.Sort(byRegionStartKey(regions))
+	// tables is sorted in GetTablesInfoWithKeyRange func
+	sort.Sort(byRegionStartKey(regionsInfo))
 
 	idx := 0
 OutLoop:
-	for _, region := range regions {
+	for _, region := range regionsInfo {
 		id := region.ID
+		tableInfos[id] = []TableInfo{}
 		for isBehind(region, &tables[idx]) {
 			idx++
 			if idx >= len(tables) {
