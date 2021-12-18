@@ -128,6 +128,16 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasPlan4ExplainFor checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
+	for i := range result.rows {
+		if strings.Contains(result.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
@@ -222,6 +232,20 @@ func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) b
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][3], "index:"+index) {
+			return true
+		}
+	}
+	return false
+}
+
+// MustUseIndex4ExplainFor checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex4ExplainFor(result *Result, index string) bool {
+	for i := range result.rows {
+		// It depends on whether we enable to collect the execution info.
+		if strings.Contains(result.rows[i][3], "index:"+index) {
+			return true
+		}
+		if strings.Contains(result.rows[i][4], "index:"+index) {
 			return true
 		}
 	}
