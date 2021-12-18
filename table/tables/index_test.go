@@ -34,7 +34,6 @@ import (
 )
 
 func TestSingleColumnCommonHandle(t *testing.T) {
-	t.Parallel()
 	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
