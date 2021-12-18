@@ -194,9 +194,9 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	}
 
 	taskCfg.TaskID = time.Now().UnixNano()
-	if val, _err_ := failpoint.Eval(_curpkg_("SetTaskID")); _err_ == nil {
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
-	}
+	})
 
 	return l.run(taskCtx, taskCfg, glue)
 }
@@ -249,7 +249,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		web.BroadcastEndTask(err)
 	}()
 
-	if _, _err_ := failpoint.Eval(_curpkg_("SkipRunTask")); _err_ == nil {
+	failpoint.Inject("SkipRunTask", func() {
 		if notifyCh, ok := l.ctx.Value(taskRunNotifyKey).(chan struct{}); ok {
 			select {
 			case notifyCh <- struct{}{}:
@@ -260,11 +260,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
-				return ctx.Err()
+				failpoint.Return(ctx.Err())
 			}
 		}
-		return nil
-	}
+		failpoint.Return(nil)
+	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
 		return err

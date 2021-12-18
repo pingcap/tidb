@@ -124,7 +124,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	sctx.GetSessionVars().InspectionTableCache = map[string]variable.TableSnapshot{}
 	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
 
-	if _, _err_ := failpoint.EvalContext(ctx, _curpkg_("mockMergeMockInspectionTables")); _err_ == nil {
+	failpoint.InjectContext(ctx, "mockMergeMockInspectionTables", func() {
 		// Merge mock snapshots injected from failpoint for test purpose
 		mockTables, ok := ctx.Value("__mockInspectionTables").(map[string]variable.TableSnapshot)
 		if ok {
@@ -132,7 +132,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 				sctx.GetSessionVars().InspectionTableCache[strings.ToLower(name)] = snap
 			}
 		}
-	}
+	})
 
 	if e.instanceToStatusAddress == nil {
 		// Get cluster info.

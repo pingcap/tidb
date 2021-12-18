@@ -87,11 +87,11 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("mockProjectionExecBaseExecutorOpenReturnedError")); _err_ == nil {
+	failpoint.Inject("mockProjectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
-			return errors.New("mock ProjectionExec.baseExecutor.Open returned error")
+			failpoint.Return(errors.New("mock ProjectionExec.baseExecutor.Open returned error"))
 		}
-	}
+	})
 	return e.open(ctx)
 }
 

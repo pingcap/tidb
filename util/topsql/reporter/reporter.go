@@ -636,14 +636,14 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	}
 
 	timeout := reportTimeout
-	if val, _err_ := failpoint.Eval(_curpkg_("resetTimeoutForTest")); _err_ == nil {
+	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
 			interval := time.Duration(variable.TopSQLVariable.ReportIntervalSeconds.Load()) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}
 		}
-	}
+	})
 	deadline := time.Now().Add(timeout)
 
 	tsr.dataSinkMu.Lock()

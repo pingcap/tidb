@@ -95,11 +95,11 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
 		if config.GetGlobalConfig().OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
-			if val, _err_ := failpoint.Eval(_curpkg_("testMergeJoinRowContainerSpill")); _err_ == nil {
+			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
 				if val.(bool) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
-			}
+			})
 			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
@@ -120,12 +120,12 @@ func (t *mergeJoinTable) finish() error {
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.isInner {
-		if val, _err_ := failpoint.Eval(_curpkg_("testMergeJoinRowContainerSpill")); _err_ == nil {
+		failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
 			if val.(bool) {
 				actionSpill := t.rowContainer.ActionSpill()
 				actionSpill.WaitForTest()
 			}
-		}
+		})
 		if err := t.rowContainer.Close(); err != nil {
 			return err
 		}

@@ -205,7 +205,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var selected []bool
 	var err error
 	for {
-		failpoint.Eval(_curpkg_("parallelApplyOuterWorkerPanic"))
+		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
 		chk := newFirstChunk(e.outerExec)
 		if err := Next(ctx, e.outerExec, chk); err != nil {
 			e.putResult(nil, err)
@@ -243,7 +243,7 @@ func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
 		case <-e.exit:
 			return
 		}
-		failpoint.Eval(_curpkg_("parallelApplyInnerWorkerPanic"))
+		failpoint.Inject("parallelApplyInnerWorkerPanic", nil)
 		err := e.fillInnerChunk(ctx, id, chk)
 		if err == nil && chk.NumRows() == 0 { // no more data, this goroutine can exit
 			return
@@ -287,7 +287,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
-		failpoint.Eval(_curpkg_("parallelApplyGetCachePanic"))
+		failpoint.Inject("parallelApplyGetCachePanic", nil)
 		value, err := e.cache.Get(key)
 		if err != nil {
 			return err
@@ -334,7 +334,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
-		failpoint.Eval(_curpkg_("parallelApplySetCachePanic"))
+		failpoint.Inject("parallelApplySetCachePanic", nil)
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}

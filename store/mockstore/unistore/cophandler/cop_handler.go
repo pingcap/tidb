@@ -89,10 +89,10 @@ type dagContext struct {
 func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
 	resp = &coprocessor.Response{}
-	if cacheVersion, _err_ := failpoint.Eval(_curpkg_("mockCopCacheInUnistore")); _err_ == nil {
+	failpoint.Inject("mockCopCacheInUnistore", func(cacheVersion failpoint.Value) {
 		if req.IsCacheEnabled {
 			if uint64(cacheVersion.(int)) == req.CacheIfMatchVersion {
-				return &coprocessor.Response{IsCacheHit: true, CacheLastVersion: uint64(cacheVersion.(int))}
+				failpoint.Return(&coprocessor.Response{IsCacheHit: true, CacheLastVersion: uint64(cacheVersion.(int))})
 			} else {
 				defer func() {
 					resp.CanBeCached = true
@@ -107,7 +107,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 				}()
 			}
 		}
-	}
+	})
 	dagCtx, dagReq, err := buildDAG(dbReader, lockStore, req)
 	if err != nil {
 		resp.OtherError = err.Error()

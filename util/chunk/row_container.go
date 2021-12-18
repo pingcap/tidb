@@ -212,11 +212,11 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerDeadLock")); _err_ == nil {
+	failpoint.Inject("testRowContainerDeadLock", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Second)
 		}
-	}
+	})
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
 			return err

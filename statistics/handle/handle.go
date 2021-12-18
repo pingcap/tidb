@@ -918,9 +918,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("injectExtStatsLoadErr")); _err_ == nil {
-		return nil, errors.New("gofail extendedStatsFromStorage error")
-	}
+	failpoint.Inject("injectExtStatsLoadErr", func() {
+		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
+	})
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion
@@ -1400,11 +1400,11 @@ func (sr *statsReader) isHistory() bool {
 }
 
 func (h *Handle) getStatsReader(snapshot uint64) (reader *statsReader, err error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockGetStatsReaderFail")); _err_ == nil {
+	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("gofail genStatsReader error")
+			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
 		}
-	}
+	})
 	if snapshot > 0 {
 		return &statsReader{ctx: h.mu.ctx.(sqlexec.RestrictedSQLExecutor), snapshot: snapshot}, nil
 	}
@@ -1417,7 +1417,7 @@ func (h *Handle) getStatsReader(snapshot uint64) (reader *statsReader, err error
 			h.mu.Unlock()
 		}
 	}()
-	failpoint.Eval(_curpkg_("mockGetStatsReaderPanic"))
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
