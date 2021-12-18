@@ -603,6 +603,9 @@ const (
 
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
+	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
+	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
 )
 
 // TiDB vars that have only global scope
@@ -622,6 +625,8 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
+	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 )
 
 // TiDB intentional limits
@@ -779,6 +784,8 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBStatsLoadSyncWait              = 100
+	DefTiDBStatsLoadPseudoTimeout         = false
 )
 
 // Process global variables.
@@ -814,6 +821,7 @@ var (
 	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	StatsLoadPseudoTimeout  = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 )
 
 // TopSQL is the variable for control top sql feature.

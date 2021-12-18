@@ -190,8 +190,7 @@ type Config struct {
 	// one quarter of the total physical memory in the current system.
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
-	BallastObjectSize int   `toml:"ballast-object-size" json:"ballast-object-size"`
-	Stats             Stats `toml:"stats" json:"stats"`
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -621,12 +620,6 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
-// Stats controls the stats loading and usage behavior
-type Stats struct {
-	SyncLoadWait         uint `toml:"sync-load-wait" json:"sync-load-wait"`
-	PseudoForLoadTimeout bool `toml:"pseudo-for-load-timeout" json:"pseudo-for-load-timeout"`
-}
-
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -775,10 +768,6 @@ var defaultConf = Config{
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:             defTiKVCfg.EnableForwarding,
-	Stats: Stats{
-		SyncLoadWait:         100,
-		PseudoForLoadTimeout: false,
-	},
 }
 
 var (

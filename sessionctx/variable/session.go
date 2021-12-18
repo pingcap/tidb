@@ -969,6 +969,9 @@ type SessionVars struct {
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
+
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait int
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

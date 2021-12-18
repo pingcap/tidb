@@ -20,8 +20,8 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -38,8 +38,8 @@ func (c collectPredicateColumnsPoint) name() string {
 type syncWaitStatsLoadPoint struct{}
 
 func (s syncWaitStatsLoadPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
-	SyncWaitStatsLoad(plan)
-	return plan, nil
+	_, err := SyncWaitStatsLoad(plan)
+	return plan, err
 }
 
 func (s syncWaitStatsLoadPoint) name() string {
@@ -51,7 +51,7 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return
 	}
-	syncWait := int64(config.GetGlobalConfig().Stats.SyncLoadWait)
+	syncWait := int64(plan.SCtx().GetSessionVars().StatsLoadSyncWait)
 	if syncWait <= 0 {
 		return
 	}
@@ -71,14 +71,17 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
-func SyncWaitStatsLoad(plan LogicalPlan) bool {
+func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
-	if !success && config.GetGlobalConfig().Stats.PseudoForLoadTimeout {
-		err := errors.New("Timeout when sync-load full stats for needed columns")
+	if success {
+		return true, nil
+	}
+	err := errors.New("Timeout when sync-load full stats for needed columns")
+	if variable.StatsLoadPseudoTimeout.Load() {
 		stmtCtx.AppendWarning(err)
 		stmtCtx.StatsLoad.Fallback = true
-		return false
+		return false, nil
 	}
-	return true
+	return false, err
 }
