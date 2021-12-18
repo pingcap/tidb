@@ -821,7 +821,7 @@ func (b *builtinGreatestTimeSig) vectorized() bool {
 
 func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
@@ -853,7 +853,7 @@ func (b *builtinLeastTimeSig) vectorized() bool {
 
 func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
@@ -885,7 +885,7 @@ func (b *builtinGreatestDurationSig) vectorized() bool {
 
 func (b *builtinGreatestDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
@@ -917,7 +917,7 @@ func (b *builtinLeastDurationSig) vectorized() bool {
 
 func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
+	buf, err := b.bufAllocator.get(types.ETDatetime, n)
 	if err != nil {
 		return err
 	}
