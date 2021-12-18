@@ -691,7 +691,9 @@ func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, oldRanges []*range
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
 				HighVal:     []types.Datum{lower},
-				HighExclude: true}
+				HighExclude: true,
+				Collators:   ranges[0].Collators,
+			}
 			if validRange(sc, newRange, encoded) {
 				split = append(split, newRange)
 			}
@@ -1430,8 +1432,9 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, indexRange *ranger.Range) (float64, bool, error) {
 	tmpRan := []*ranger.Range{
 		{
-			LowVal:  make([]types.Datum, 1),
-			HighVal: make([]types.Datum, 1),
+			LowVal:    make([]types.Datum, 1),
+			HighVal:   make([]types.Datum, 1),
+			Collators: make([]collate.Collator, 1),
 		},
 	}
 	colsIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -1444,6 +1447,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	for i := 0; i < len(indexRange.LowVal); i++ {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
+		tmpRan[0].Collators[0] = indexRange.Collators[0]
 		if i == len(indexRange.LowVal)-1 {
 			tmpRan[0].LowExclude = indexRange.LowExclude
 			tmpRan[0].HighExclude = indexRange.HighExclude
