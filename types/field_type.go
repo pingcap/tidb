@@ -250,7 +250,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		SetBinChsClnFlag(tp)
 	case BitLiteral:
 		tp.Tp = mysql.TypeVarString
-		tp.Flen = len(x)
+		tp.Flen = len(x) * 3
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case HexLiteral:
@@ -260,8 +260,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case BinaryLiteral:
-		tp.Tp = mysql.TypeBit
-		tp.Flen = len(x) * 8
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 		tp.Flag &= ^mysql.BinaryFlag

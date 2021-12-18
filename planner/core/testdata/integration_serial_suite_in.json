@@ -3,7 +3,6 @@
     "name": "TestSelPushDownTiFlash",
     "cases": [
       "explain format = 'brief' select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
-      "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
       "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
       "explain format = 'brief' select * from t where b > 'a' order by b limit 2"
     ]
@@ -188,7 +187,8 @@
       "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)"
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
@@ -207,7 +207,8 @@
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id"
+      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
@@ -287,6 +288,13 @@
     "name": "TestMergeContinuousSelections",
     "cases": [
       "desc format = 'brief' SELECT table2 . `col_char_64` AS field1 FROM `ts` AS table2 INNER JOIN (SELECT DISTINCT SUBQUERY3_t1 . * FROM `ts` AS SUBQUERY3_t1 LEFT OUTER JOIN `ts` AS SUBQUERY3_t2 ON SUBQUERY3_t2 . `col_varchar_64_not_null` = SUBQUERY3_t1 . `col_varchar_key`) AS table3 ON (table3 . `col_varchar_key` = table2 . `col_varchar_64`) WHERE table3 . `col_char_64_not_null` >= SOME (SELECT SUBQUERY4_t1 . `col_varchar_64` AS SUBQUERY4_field1 FROM `ts` AS SUBQUERY4_t1) GROUP BY field1 ;"
+    ]
+  },
+  {
+    "name": "TestLimitIndexLookUpKeepOrder",
+    "cases": [
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10",
+      "desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10"
     ]
   }
 ]

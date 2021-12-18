@@ -96,7 +96,7 @@ type SQLExecutor interface {
 // But a session already has a parser bind in it, so we define this interface and use session as its implementation,
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
-	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)
+	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
 }
 
 // Statement is an interface for SQL execution.
