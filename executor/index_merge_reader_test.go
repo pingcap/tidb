@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -171,6 +172,38 @@ func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
 		result := tk.MustQuery("select * from tnormal where " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ USE_INDEX_MERGE(tpk, a, b) */ * from tpk where " + cond).Sort().Check(result)
 	}
+}
+
+func (s *testSuite1) TestIndexMergeWithPreparedStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));")
+	insertStr := "insert into t1 values(0, 0, 0)"
+	for i := 1; i < 100; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+
+	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
+	tk.MustExec("set @a = 10;")
+	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
+	tk.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	})
+	explainStr := "explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)
+	res := tk.MustQuery(explainStr)
+	indexMergeLine := res.Rows()[1][0].(string)
+	re, err := regexp.Compile(".*IndexMerge.*")
+	c.Assert(err, IsNil)
+	c.Assert(re.MatchString(indexMergeLine), IsTrue)
+
+	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ? and c3';")
+	tk.MustExec("set @a = 10;")
+	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
+	res = tk.MustQuery(explainStr)
+	indexMergeLine = res.Rows()[1][0].(string)
+	c.Assert(re.MatchString(indexMergeLine), IsTrue)
 }
 
 func (s *testSuite1) TestIndexMergeInTransaction(c *C) {
