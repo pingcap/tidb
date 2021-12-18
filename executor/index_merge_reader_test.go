@@ -382,7 +382,7 @@ func (s *testSuite1) TestIndexMergeReaderInTransIssue30685(c *C) {
 		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
-	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 <= 'a' or c3 < -1) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 <= 'b' or c3 < -1) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
 	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < -1) and c4 < 10;").Check(testkit.Rows())
 	tk.MustExec("commit;")
 }
