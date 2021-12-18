@@ -929,15 +929,12 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	tables []helper.TableInfoWithKeyRange,
 	tz *time.Location,
 ) ([][]types.Datum, error) {
-	regionsInfo := &helper.RegionsInfo{
-		Count: 1,
-		Regions: []helper.RegionInfo{
-			{
-				ID:       int64(hisHotRegion.RegionID),
-				StartKey: hisHotRegion.StartKey,
-				EndKey:   hisHotRegion.EndKey},
-		},
-	}
+	regionsInfo := []*helper.RegionInfo{
+		{
+			ID:       int64(hisHotRegion.RegionID),
+			StartKey: hisHotRegion.StartKey,
+			EndKey:   hisHotRegion.EndKey,
+		}}
 	regionsTableInfos := tikvHelper.ParseRegionsTableInfos(regionsInfo, tables)
 
 	var rows [][]types.Datum
