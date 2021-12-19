@@ -1575,6 +1575,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			// Logic TS
 			ts := s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS
 			fmt.Printf("tidb-0 %d %s\n", ts, stmt.Text)
+			logutil.PutRecordOrDrop(fmt.Sprintf("tidb-0 %d %s\n", ts, stmt.Text))
+
 		}
 	}
 	s.currentPlan = stmt.Plan

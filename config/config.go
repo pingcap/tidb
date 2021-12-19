@@ -141,8 +141,8 @@ type Config struct {
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// EnableReplaySQL indicates that the TiDB is replaying the sql
-	EnableReplaySQL AtomicBool   `toml:"enable-replay-sql" json:"enable_replay_sql"`
-	ReplayMetaTS    int64 `toml:"replay-meta-ts" json:"replay_meta_ts"`
+	EnableReplaySQL AtomicBool `toml:"enable-replay-sql" json:"enable_replay_sql"`
+	ReplayMetaTS    int64      `toml:"replay-meta-ts" json:"replay_meta_ts"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`

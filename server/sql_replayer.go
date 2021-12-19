@@ -16,6 +16,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"net/http"
 	"strconv"
 
@@ -52,8 +53,10 @@ func (prh SQLReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 				return
 			}
 			cfg.EnableReplaySQL.Store(true)
+			logutil.InitReplay(params[pFileName])
 		} else {
 			cfg.EnableReplaySQL.Store(false)
+			logutil.StopReplay()
 		}
 		w.WriteHeader(http.StatusOK)
 		return
