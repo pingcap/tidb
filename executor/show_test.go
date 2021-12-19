@@ -1242,11 +1242,10 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	var showSQL string
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if variable.FilterImplicitFeatureSwitch(v) {
+		if variable.FilterImplicitFeatureSwitch(v.Name) {
 			continue
 		}
 
@@ -1256,23 +1255,6 @@ func (s *testSuite5) TestShowVar(c *C) {
 			globalVars = append(globalVars, v.Name)
 		}
 	}
-
-	// When ScopeSession only. `show global variables` must return empty.
-	sessionVarsStr := strings.Join(sessionVars, "','")
-	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
-	res := tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(sessionVars))
-	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
-	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, 0)
-
-	globalVarsStr := strings.Join(globalVars, "','")
-	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
-	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(globalVars))
-	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
-	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(globalVars))
 
 	// Test for switch variable which shouldn't seen by users.
 	for _, one := range variable.FeatureSwitchVariables {

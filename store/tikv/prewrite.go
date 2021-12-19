@@ -261,7 +261,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, c.forUpdateTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}

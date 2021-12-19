@@ -43,6 +43,10 @@ const (
 	// of a Selection or a JoinCondition, we can use this default value.
 	SelectionFactor = 0.8
 	distinctFactor  = 0.8
+
+	// If the actual row count is much more than the limit count, the unordered scan may cost much more than keep order.
+	// So when a limit exists, we don't apply the DescScanFactor.
+	smallScanThreshold = 10000
 )
 
 var aggFuncFactor = map[string]float64{
@@ -864,10 +868,28 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	return indexPlan, partialCost
 }
 
+func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
+	for _, col := range cols {
+		if schema.ColumnIndex(col) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan, partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	overwritePartialTableScanSchema(ds, ts)
+	// remove ineffetive filter condition after overwriting physicalscan schema
+	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
+	for _, cond := range ts.filterCondition {
+		cols := expression.ExtractColumns(cond)
+		if checkColinSchema(cols, ts.schema) {
+			newFilterConds = append(newFilterConds, cond)
+		}
+	}
+	ts.filterCondition = newFilterConds
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ts.schema.Columns, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
@@ -1586,6 +1608,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
+	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.table,
@@ -1845,8 +1873,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		cost += rowCount * sessVars.NetworkFactor * rowSize
 	}
 	if isMatchProp {
-		if prop.SortItems[0].Desc {
-			ts.Desc = true
+		ts.Desc = prop.SortItems[0].Desc
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
@@ -1897,8 +1925,8 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
-		if prop.SortItems[0].Desc {
-			is.Desc = true
+		is.Desc = prop.SortItems[0].Desc
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		is.KeepOrder = true

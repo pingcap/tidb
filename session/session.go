@@ -933,6 +933,33 @@ func (s *session) varFromTiDBTable(name string) bool {
 	return false
 }
 
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
+func (s *session) GetAllSysVars() (map[string]string, error) {
+	if s.Value(sessionctx.Initing) != nil {
+		return nil, nil
+	}
+	stmt, err := s.ParseWithParams(context.TODO(), `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n`, mysql.SystemDB, mysql.GlobalVariablesTable)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[string]string, len(rows))
+	for _, r := range rows {
+		k, v := r.GetString(0), r.GetString(1)
+		if s.varFromTiDBTable(k) {
+			if v, err = s.getTiDBTableValue(k, v); err == nil {
+				ret[k] = v
+			}
+		} else {
+			ret[k] = v
+		}
+	}
+	return ret, nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if name == variable.TiDBSlowLogMasking {
@@ -1068,6 +1095,8 @@ func (s *session) getTiDBTableValue(name, val string) (string, error) {
 	}
 	return validatedVal, nil
 }
+
+var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1546,7 +1575,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	} else {
 		// If it is not a select statement or special query, we record its slow log here,
 		// then it could include the transaction commit time.
-		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err, false)
 	}
 	return nil, err
 }
@@ -2503,6 +2532,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBTxnMode,
 	variable.TiDBAllowBatchCop,
 	variable.TiDBAllowMPPExecution,
+	variable.TiDBMPPStoreFailTTL,
 	variable.TiDBOptBCJ,
 	variable.TiDBBCJThresholdSize,
 	variable.TiDBBCJThresholdCount,
@@ -2546,7 +2576,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
-	variable.TiDBEnableStableResultMode,
+	variable.TiDBDMLBatchSize,
+	variable.TiDBEnableOrderedResultMode,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

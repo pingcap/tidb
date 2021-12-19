@@ -273,8 +273,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 				frameCnt++
 			}
 		}
-		// Primary index is as the record frame, so frame count is 1.
-		c.Assert(frameCnt, Equals, 1)
+		// frameCnt = clustered primary key + secondary index(idx) = 2.
+		c.Assert(frameCnt, Equals, 2)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }
@@ -293,8 +293,10 @@ func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.TableName, Equals, "t")
-	c.Assert(len(data.Indices), Equals, 1)
+	c.Assert(len(data.Indices), Equals, 2)
 	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
+	_, ok = data.Indices["idx"]
 	c.Assert(ok, IsTrue)
 }
 
@@ -542,7 +544,7 @@ partition by range (a)
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
 	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered)")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b) clustered, key idx(c))")
 	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
@@ -931,6 +933,10 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	c.Assert(err, IsNil)
 	decodeKeyMvcc(resp.Body, c, true)
 
+	resp, err = ts.fetchStatus("/mvcc/index/tidb/t/idx?a=1.1&b=111&c=1")
+	c.Assert(err, IsNil)
+	decodeKeyMvcc(resp.Body, c, true)
+
 	// tests for wrong key
 	resp, err = ts.fetchStatus("/mvcc/index/tidb/test/idx1/5?a=5&b=1")
 	c.Assert(err, IsNil)
@@ -1300,64 +1306,6 @@ func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
 	c.Assert(err, IsNil)
 	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
 	c.Assert(err, NotNil)
-}
-
-func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
-	ts.startServer(c)
-	defer ts.stopServer(c)
-
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer db.Close()
-	dbt := &DBTest{c, db}
-
-	dbt.mustExec("use test")
-	dbt.mustExec("create table if not exists t (a int)")
-
-	urlValues := url.Values{
-		"sql":        {"select * from t"},
-		"current_db": {"test"},
-	}
-	resp, err := ts.formStatus("/debug/sub-optimal-plan", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err := httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?timeout=1", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	urlValues.Set("current_db", "non_exists_db")
-	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
-	b, err = ioutil.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
-	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
