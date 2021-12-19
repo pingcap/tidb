@@ -54,7 +54,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder, err := infoschema.NewBuilder(nil, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +452,7 @@ select 7;`
 	sctx.GetSessionVars().TimeZone = loc
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
-		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0)}
+		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0}
 		if extractor.Enable {
 			startTime, err := ParseTime(cas.startTime)
 			c.Assert(err, IsNil)
@@ -486,8 +486,6 @@ select 7;`
 }
 
 func TestSplitbyColon(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		line   string
 		fields []string
@@ -624,7 +622,7 @@ select 9;`
 	sctx.GetSessionVars().TimeZone = loc
 	sctx.GetSessionVars().SlowQueryFile = fileName3
 	for i, cas := range cases {
-		extractor := &plannercore.SlowQueryExtractor{Enable: (len(cas.startTime) > 0 && len(cas.endTime) > 0), Desc: true}
+		extractor := &plannercore.SlowQueryExtractor{Enable: len(cas.startTime) > 0 && len(cas.endTime) > 0, Desc: true}
 		if extractor.Enable {
 			startTime, err := ParseTime(cas.startTime)
 			c.Assert(err, IsNil)

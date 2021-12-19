@@ -2580,6 +2580,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowHistogramsInFlight
 	ShowColumnStatsUsage
 	ShowPlugins
 	ShowProfile
@@ -2765,6 +2766,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ShowStatsHealthy:
 		ctx.WriteKeyWord("STATS_HEALTHY")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowHistogramsInFlight:
+		ctx.WriteKeyWord("HISTOGRAMS_IN_FLIGHT")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}

@@ -666,6 +666,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -685,6 +686,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	target                "TARGET"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -735,6 +737,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
 	tidb                       "TIDB"
@@ -1018,6 +1021,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -4546,6 +4550,16 @@ TraceStmt:
 		startOffset := parser.startOffset(&yyS[yypt])
 		$3.SetText(string(parser.src[startOffset:]))
 	}
+|	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:            $6,
+			TracePlan:       true,
+			TracePlanTarget: $5,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(string(parser.src[startOffset:]))
+	}
 
 ExplainSym:
 	"EXPLAIN"
@@ -6068,6 +6082,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
 |	"TIDB"
@@ -6110,6 +6125,7 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
+|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -6125,6 +6141,7 @@ NotKeywordToken:
 |	"VARIANCE"
 |	"VAR_POP"
 |	"VAR_SAMP"
+|	"TARGET"
 |	"TIMESTAMPADD"
 |	"TIMESTAMPDIFF"
 |	"TOKUDB_DEFAULT"
@@ -10134,6 +10151,13 @@ AdminStmt:
 			Tp: ast.AdminResetTelemetryID,
 		}
 	}
+|	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:             ast.AdminFlushPlanCache,
+			StatementScope: $3.(ast.StatementScope),
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -10653,6 +10677,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"HISTOGRAMS_IN_FLIGHT"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
+	}
 |	"COLUMN_STATS_USAGE"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
@@ -10709,6 +10737,23 @@ GlobalScope:
 |	"SESSION"
 	{
 		$$ = false
+	}
+
+StatementScope:
+	{
+		$$ = ast.StatementScopeSession
+	}
+|	"GLOBAL"
+	{
+		$$ = ast.StatementScopeGlobal
+	}
+|	"INSTANCE"
+	{
+		$$ = ast.StatementScopeInstance
+	}
+|	"SESSION"
+	{
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:
