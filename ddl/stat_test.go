@@ -37,13 +37,6 @@ func (s *testStatSuite) TearDownSuite(c *C) {
 type testSerialStatSuite struct {
 }
 
-func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
-	m, err := d.Stats(nil)
-	c.Assert(err, IsNil)
-	v := m[ddlSchemaVersion]
-	return v.(int64)
-}
-
 func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 	store := testCreateStore(c, "test_stat")
 	defer func() {
