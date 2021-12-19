@@ -52,6 +52,7 @@ func TestExecCount(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 	}))
+	fmt.Println("<<<<<", store.Name())
 	assert.NoError(t, err)
 	defer func() {
 		assert.NoError(t, store.Close())
@@ -107,6 +108,8 @@ func TestExecCount(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 
+		fmt.Println(">>>>>", total)
+
 		assert.NotEmpty(t, total)
 		sqlDigests := map[string]struct{}{
 			insertSQLDigest.String(): {},
@@ -119,6 +122,11 @@ func TestExecCount(t *testing.T) {
 			if _, ok := sqlDigests[digest.SQLDigest]; ok {
 				found++
 				assert.Equal(t, uint64(ExecCountPerSQL), item.ExecCount)
+				var kvSum uint64
+				for _, kvCount := range item.KvStatsItem.KvExecCount {
+					kvSum += kvCount
+				}
+				assert.Equal(t, uint64(ExecCountPerSQL), kvSum)
 			}
 		}
 		assert.Equal(t, 4, found) // insert, update, select, delete

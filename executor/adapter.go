@@ -328,12 +328,17 @@ func (a *ExecStmt) countExecForTopSQL() {
 	if !variable.TopSQLEnabled() {
 		return
 	}
+	var sqlDigest, planDigest string
 	vars := a.Ctx.GetSessionVars()
-	_, sqlDigest := vars.StmtCtx.SQLDigest()
-	_, planDigest := vars.StmtCtx.GetPlanDigest()
+	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+		sqlDigest = d.String()
+	}
+	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+		planDigest = d.String()
+	}
 	if vars.StmtStats != nil {
-		vars.StmtStats.AddExecCount(sqlDigest.String(), planDigest.String(), 1)
-		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest.String(), planDigest.String())
+		vars.StmtStats.AddExecCount(sqlDigest, planDigest, 1)
+		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
 
