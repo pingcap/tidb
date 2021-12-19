@@ -410,7 +410,17 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	isPossibleIdxMerge := len(ds.allConds) > 0 && len(ds.possibleAccessPaths) > 1
+	indexMergeConds := ds.pushedDownConds
+	if len(ds.indexMergeHints) > 0 {
+		// Use allConds instread of pushedDownConds,
+		// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
+		// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
+		indexMergeConds = indexMergeConds[:0]
+		for _, expr := range ds.allConds {
+			indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
+		}
+	}
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
@@ -425,7 +435,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 
 	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
-		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
+		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
 		}
@@ -436,9 +446,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	return ds.stats, nil
 }
 
-func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
+func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expression.Expression, needPrune bool) error {
 	regularPathCount := len(ds.possibleAccessPaths)
-	err := ds.generateIndexMergeOrPaths()
+	err := ds.generateIndexMergeOrPaths(indexMergeConds)
 	if err != nil {
 		return err
 	}
@@ -455,6 +465,13 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) error {
 	// Do not need to consider the regular paths in find_best_task().
 	if needPrune {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
+		for _, path := range ds.possibleAccessPaths {
+			if minRowCount < path.CountAfterAccess {
+				minRowCount = path.CountAfterAccess
+			}
+		}
+		ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
 	}
 	return nil
 }
@@ -511,15 +528,9 @@ func (is *LogicalIndexScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-func (ds *DataSource) generateIndexMergeOrPaths() error {
-	for i, expr := range ds.allConds {
-		ds.allConds[i] = expression.PushDownNot(ds.ctx, expr)
-	}
+func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.possibleAccessPaths)
-	// Use allConds instread of pushedDownConds,
-	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
-	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
-	for i, cond := range ds.allConds {
+	for i, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
@@ -555,7 +566,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 			continue
 		}
 		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i)
 			if possiblePath == nil {
 				return nil
 			}
@@ -693,10 +704,10 @@ func (ds *DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.Access
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, current int) *util.AccessPath {
+func (ds *DataSource) buildIndexMergeOrPath(filters []expression.Expression, partialPaths []*util.AccessPath, current int) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[:current]...)
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current+1:]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
+	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
 	var addCurrentFilter bool
 	for _, path := range partialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
@@ -715,7 +726,7 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 		}
 	}
 	if addCurrentFilter {
-		indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.allConds[current])
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
 	}
 	return indexMergePath
 }
