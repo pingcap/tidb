@@ -238,6 +238,14 @@ var (
 			Help:      "Bucketed histogram of all pd api execution time (s)",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
+
+	ReplayDropCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "replay",
+			Name:      "drop_total",
+			Help:      "The number of record which dropped when replaying",
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

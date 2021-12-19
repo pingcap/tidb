@@ -2,6 +2,7 @@ package logutil
 
 import (
 	"bufio"
+	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/atomic"
 	"os"
 	"sync"
@@ -24,7 +25,7 @@ func PutRecordOrDrop(record string) {
 	select {
 	case ReplayLogger.recordChan <- record:
 	default:
-		return
+		metrics.ReplayDropCounter.Inc()
 	}
 }
 
