@@ -974,7 +974,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
 	}
-	ts, partialCost, remainedFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, remainingFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
 	}
@@ -982,8 +982,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
-	if remainedFilters != nil {
-		cop.rootTaskConds = remainedFilters
+	if remainingFilters != nil {
+		cop.rootTaskConds = remainingFilters
 	}
 	task = cop.convertToRootTask(ds.ctx)
 	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
@@ -1130,7 +1130,10 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		pushedFilters, remainedFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
+		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
+		pushedFilters = pushedFilters1
+		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
 			partialCost += totalRowCount * sessVars.CopCPUFactor
 			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
@@ -1140,28 +1143,28 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			}
 			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 			sel.SetChildren(ts)
-			return sel, partialCost, remainedFilters, nil
+			return sel, partialCost, remainingFilters, nil
 		}
-		return ts, partialCost, remainedFilters, nil
+		return ts, partialCost, remainingFilters, nil
 	}
 	return ts, partialCost, nil, nil
 }
 
 // extractFiltersForIndexMerge returns:
 // `pushed`: exprs that can be pushed to TiKV.
-// `remained`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
+// `remaing`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
 // Why do we need this func?
 // IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
 // 	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 // 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remained []expression.Expression) {
+func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaing []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.UnSpecified) {
-			remained = append(remained, expr)
+			remaing = append(remaing, expr)
 		}
 	}
 	return
