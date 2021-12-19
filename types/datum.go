@@ -1434,7 +1434,7 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 		y = ret.GetInt64()
 	}
-	y, err = AdjustYear(y, adjust)
+	y, err = CompareYear(y, adjust)
 	ret.SetInt64(y)
 	return ret, errors.Trace(err)
 }

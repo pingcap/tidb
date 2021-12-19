@@ -1248,8 +1248,8 @@ func adjustYear(y int) int {
 	return y
 }
 
-// AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, adjustZero bool) (int64, error) {
+// CompareYear is used for comparing year.
+func CompareYear(y int64, adjustZero bool) (int64, error) {
 	if y == 0 && !adjustZero {
 		return y, nil
 	}
@@ -1262,6 +1262,19 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 	}
 	if y > int64(MaxYear) {
 		return int64(MaxYear), errors.Trace(ErrWarnDataOutOfRange)
+	}
+
+	return y, nil
+}
+
+// AdjustYear is used for adjusting year and checking its validation.
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
+		return y, nil
+	}
+	y = int64(adjustYear(int(y)))
+	if y < int64(MinYear) || y > int64(MaxYear) {
+		return 0, errors.Trace(ErrWarnDataOutOfRange)
 	}
 
 	return y, nil
