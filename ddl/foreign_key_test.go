@@ -95,8 +95,6 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func TestForeignKey(t *testing.T) {
-	t.Parallel()
-
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	if err != nil {
 		t.Fatal(err)
