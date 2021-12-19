@@ -38,7 +38,7 @@ type aggregator struct {
 	cancel      context.CancelFunc
 	statsSet    sync.Map // map[*StatementStats]struct{}
 	collectors  sync.Map // map[uint64]Collector
-	collectorId uint64
+	collectorID uint64
 	running     int32
 }
 
@@ -101,7 +101,7 @@ func (m *aggregator) unregister(stats *StatementStats) {
 
 // registerCollector binds a Collector to aggregator, collector ID will be returned.
 func (m *aggregator) registerCollector(collector Collector) uint64 {
-	id := atomic.AddUint64(&m.collectorId, 1)
+	id := atomic.AddUint64(&m.collectorID, 1)
 	m.collectors.Store(id, collector)
 	return id
 }
