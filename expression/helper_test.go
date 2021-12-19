@@ -33,8 +33,6 @@ import (
 )
 
 func TestGetTimeValue(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
@@ -130,8 +128,6 @@ func TestGetTimeValue(t *testing.T) {
 }
 
 func TestIsCurrentTimestampExpr(t *testing.T) {
-	t.Parallel()
-
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -157,8 +153,6 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 }
 
 func TestCurrentTimestampTimeZone(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 

@@ -29,7 +29,6 @@ import (
 )
 
 func TestInetAton(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Input    interface{}
@@ -62,7 +61,6 @@ func TestInetAton(t *testing.T) {
 }
 
 func TestIsIPv4(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -98,7 +96,6 @@ func TestIsIPv4(t *testing.T) {
 }
 
 func TestIsUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		uuid   string
@@ -134,7 +131,6 @@ func TestIsUUID(t *testing.T) {
 }
 
 func TestUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := newFunctionForTest(ctx, ast.UUID)
 	require.NoError(t, err)
@@ -161,7 +157,6 @@ func TestUUID(t *testing.T) {
 }
 
 func TestAnyValue(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
@@ -184,7 +179,6 @@ func TestAnyValue(t *testing.T) {
 }
 
 func TestIsIPv6(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -214,7 +208,6 @@ func TestIsIPv6(t *testing.T) {
 }
 
 func TestInetNtoa(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     int
@@ -245,7 +238,6 @@ func TestInetNtoa(t *testing.T) {
 }
 
 func TestInet6NtoA(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -284,7 +276,6 @@ func TestInet6NtoA(t *testing.T) {
 }
 
 func TestInet6AtoN(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
@@ -316,7 +307,6 @@ func TestInet6AtoN(t *testing.T) {
 }
 
 func TestIsIPv4Mapped(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -346,7 +336,6 @@ func TestIsIPv4Mapped(t *testing.T) {
 }
 
 func TestIsIPv4Compat(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
@@ -377,7 +366,6 @@ func TestIsIPv4Compat(t *testing.T) {
 }
 
 func TestNameConst(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	dec := types.NewDecFromFloatForTest(123.123)
 	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
@@ -421,7 +409,6 @@ func TestNameConst(t *testing.T) {
 }
 
 func TestUUIDToBin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -521,7 +508,6 @@ func TestUUIDToBin(t *testing.T) {
 }
 
 func TestBinToUUID(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
