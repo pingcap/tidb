@@ -52,7 +52,6 @@ func TestExecCount(t *testing.T) {
 	store, err := mockstore.NewMockStore(mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 	}))
-	fmt.Println("<<<<<", store.Name())
 	assert.NoError(t, err)
 	defer func() {
 		assert.NoError(t, store.Close())
@@ -107,8 +106,6 @@ func TestExecCount(t *testing.T) {
 	func() {
 		mu.Lock()
 		defer mu.Unlock()
-
-		fmt.Println(">>>>>", total)
 
 		assert.NotEmpty(t, total)
 		sqlDigests := map[string]struct{}{
