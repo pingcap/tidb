@@ -1152,19 +1152,19 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 
 // extractFiltersForIndexMerge returns:
 // `pushed`: exprs that can be pushed to TiKV.
-// `remaing`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
+// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
 // Why do we need this func?
 // IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
 // 	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 // 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaing []expression.Expression) {
+func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
 		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.UnSpecified) {
-			remaing = append(remaing, expr)
+			remaining = append(remaining, expr)
 		}
 	}
 	return
