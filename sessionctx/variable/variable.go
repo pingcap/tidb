@@ -310,10 +310,6 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 // may be less sophisticated in normalizing values. But errors should be caught and handled,
 // because otherwise there will be upgrade issues.
 func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
-	warns := vars.StmtCtx.GetWarnings()
-	defer func() {
-		vars.StmtCtx.SetWarnings(warns) // RelaxedValidation = trim warnings too.
-	}()
 	normalizedValue, err := sv.ValidateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue
