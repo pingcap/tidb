@@ -6880,8 +6880,8 @@ func TestIssue28739(t *testing.T) {
 		"2021-03-28 02:30:00 1616891400",
 		"2021-10-31 02:30:00 1635636600",
 		"<nil> <nil>"))
-
 }
+
 func TestMySQLWorkbenchIntialConnect(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
