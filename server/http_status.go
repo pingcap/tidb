@@ -256,6 +256,9 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for generate metric profile.
 	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
+	fmt.Println("register replay sql")
+	// HTTP path for start replay sql.
+	router.Handle("/replay/sql/{status}/{startTS}", s.newSQLReplayerHandler())
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {

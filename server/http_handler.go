@@ -86,6 +86,7 @@ const (
 	pRowBin     = "rowBin"
 	pSnapshot   = "snapshot"
 	pFileName   = "filename"
+	pStatus		= "status"
 )
 
 // For query string

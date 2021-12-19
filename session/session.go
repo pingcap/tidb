@@ -1520,14 +1520,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
 	s.PrepareTxnCtx(ctx)
 	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
 		return nil, err
 	}
 
 	s.sessionVars.StartTime = time.Now()
-
+	cfg := config.GetGlobalConfig()
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
@@ -1572,6 +1571,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 	} else {
 		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
+		if cfg.EnableReplaySQL.Load() {
+			// Logic TS
+			ts := s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS
+			fmt.Printf("tidb-0 %d %s\n", ts, stmt.Text)
+		}
 	}
 	s.currentPlan = stmt.Plan
 
@@ -1587,7 +1591,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return nil, err
 	}
-	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+	if !s.isInternal() && cfg.EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
 		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
 		if tiFlashPushDown {
