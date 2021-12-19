@@ -410,15 +410,17 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
-	indexMergeConds := ds.pushedDownConds
+	var indexMergeConds []expression.Expression
 	if len(ds.indexMergeHints) > 0 {
 		// Use allConds instread of pushedDownConds,
 		// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
 		// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
-		indexMergeConds = indexMergeConds[:0]
 		for _, expr := range ds.allConds {
 			indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 		}
+	} else {
+		// Make sure index merge only handle exprs that can be pushed down to tikv.
+		indexMergeConds, _ = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, ds.pushedDownConds, ds.ctx.GetClient(), kv.TiKV)
 	}
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint

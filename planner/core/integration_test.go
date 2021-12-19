@@ -4999,6 +4999,7 @@ func (s *testIntegrationSuite) TestIssue30200(c *C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), key(c1), key(c2), c3 varchar(100));")
 	tk.MustExec("insert into t1 values('ab', '10', '10');")
+
 	// lpad has not been pushed to TiKV or TiFlash.
 	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows(
 		"Selection 15.99 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c1, 10, \"a\")), 10)))",
@@ -5008,7 +5009,7 @@ func (s *testIntegrationSuite) TestIssue30200(c *C) {
 		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows("1"))
 
-	// left has not been pushed to TiKV, but it has been pushed to TiFlash.
+	// `left` has not been pushed to TiKV, but it has been pushed to TiFlash.
 	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows(
 		"Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
 		"└─IndexMerge 19.99 root  ",
@@ -5016,6 +5017,17 @@ func (s *testIntegrationSuite) TestIssue30200(c *C) {
 		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows("1"))
+
+	// `left` cannot be pushed to TiKV, and there is no hint, so we cannot use index merge.
+	oriIndexMergeSwitcher := tk.MustQuery("select @@tidb_enable_index_merge;").Rows()[0][0].(string)
+	tk.MustExec("set tidb_enable_index_merge = on;")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_index_merge = %s;", oriIndexMergeSwitcher))
+	}()
+	tk.MustQuery("explain format=brief select * from t1 where c1 = 'ab' or c2 = '10' and length(left(c1, 10)) = 10;").Check(testkit.Rows(
+		"Selection 17.99 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(length(left(test.t1.c1, 10)), 10)))",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
