@@ -16,6 +16,7 @@ package parser_test
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -809,6 +810,11 @@ func TestDMLStmt(t *testing.T) {
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
+		// Test for 'admin flush plan_cache'
+		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
+		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
+		// We do not support the global level. We will check it in the later.
+		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
@@ -6441,4 +6447,37 @@ func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool
 
 func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
 	return n, true
+}
+
+func TestInsertStatementMemoryAllocation(t *testing.T) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	runtime.ReadMemStats(&newStats)
+	require.Less(t, int(newStats.TotalAlloc-oldStats.TotalAlloc), 1024*500)
+}
+
+func TestCharsetIntroducer(t *testing.T) {
+	p := parser.New()
+	// `_gbk` is treated as an identifier.
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
+	require.NoError(t, err)
+
+	charset.AddCharset(&charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+		Desc:             "gbk",
+		Maxlen:           2,
+	})
+	defer charset.RemoveCharset("gbk")
+	// `_gbk` is treated as a character set.
+	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
