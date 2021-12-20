@@ -20,34 +20,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"go.uber.org/atomic"
 )
 
+var defProfileDuration = time.Second
+
+// GlobalCPUProfiler is the global CPU profiler.
+// If you want to create a new global cpu profiler, you should stop the old global cpu profiler.
 var GlobalCPUProfiler = NewParallelCPUProfiler()
 
-func Register(ch ProfileConsumer) {
-	GlobalCPUProfiler.register(ch)
-}
-
-func Unregister(ch ProfileConsumer) {
-	GlobalCPUProfiler.unregister(ch)
-}
-
+// ProfileConsumer is the profile data consumer.
+// ProfileConsumer is a channel alias, if the channel is full, then the channel won't receive the latest profile data
+// until it is not blocked.
 type ProfileConsumer chan *ProfileData
 
-type ParallelCPUProfiler struct {
-	sync.Mutex
-	cs       map[ProfileConsumer]struct{}
-	closed   chan struct{}
-	isClosed atomic.Bool
-	wg       sync.WaitGroup
-
-	data         *ProfileData
-	nextData     *ProfileData
-	lastDataSize int
-}
-
+// ProfileData contains the cpu profile data and some additional information.
 type ProfileData struct {
 	Data  *bytes.Buffer
 	Begin time.Time
@@ -55,11 +44,58 @@ type ProfileData struct {
 	Error error
 }
 
+// Register register a ProfileConsumer into the global CPU profiler.
+// Normally, the registered ProfileConsumer will receive the cpu profile data per second.
+// If the ProfileConsumer (channel) is full, the latest cpu profile data will not be sent to it.
+// This function is thread-safe.
+func Register(ch ProfileConsumer) {
+	GlobalCPUProfiler.register(ch)
+}
+
+// Unregister unregister a ProfileConsumer from the global CPU profiler.
+// The unregistered ProfileConsumer won't receive the cpu profile data any more.
+// This function is thread-safe.
+func Unregister(ch ProfileConsumer) {
+	GlobalCPUProfiler.unregister(ch)
+}
+
+// ParallelCPUProfiler is a cpu profiler.
+// With ParallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
+// WARN: Only one running ParallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
+type ParallelCPUProfiler struct {
+	sync.Mutex
+	cs map[ProfileConsumer]struct{}
+
+	// some data cache for profiling.
+	data         *ProfileData
+	nextData     *ProfileData
+	lastDataSize int
+
+	closed   chan struct{}
+	isClosed atomic.Bool
+	wg       sync.WaitGroup
+}
+
+// NewParallelCPUProfiler crate a new ParallelCPUProfiler.
 func NewParallelCPUProfiler() *ParallelCPUProfiler {
 	return &ParallelCPUProfiler{
 		cs:     make(map[ProfileConsumer]struct{}),
 		closed: make(chan struct{}),
 	}
+}
+
+// Start uses to start to run ParallelCPUProfiler.
+func (p *ParallelCPUProfiler) Start() {
+	p.wg.Add(1)
+	go util.WithRecovery(p.profilingLoop, nil)
+}
+
+// Close uses to close the ParallelCPUProfiler.
+func (p *ParallelCPUProfiler) Close() {
+	if p.isClosed.CAS(false, true) {
+		close(p.closed)
+	}
+	p.wg.Wait()
 }
 
 func (p *ParallelCPUProfiler) register(ch ProfileConsumer) {
@@ -80,13 +116,6 @@ func (p *ParallelCPUProfiler) unregister(ch ProfileConsumer) {
 	p.Unlock()
 }
 
-func (p *ParallelCPUProfiler) Start() {
-	p.wg.Add(1)
-	go util.WithRecovery(p.profilingLoop, nil)
-}
-
-var defProfileDuration = time.Second
-
 func (p *ParallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(defProfileDuration)
 	defer func() {
@@ -104,6 +133,7 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 				p.sendToConsumers()
 			}
 
+			// Only do cpu profiling when there are consumers.
 			if p.needProfile() {
 				err := p.startCPUProfile()
 				if err != nil {
@@ -130,6 +160,7 @@ func (p *ParallelCPUProfiler) startCPUProfile() error {
 	} else {
 		p.data = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, 1024*8)), Begin: time.Now()}
 	}
+	metrics.CPUProfileCounter.Inc()
 	return pprof.StartCPUProfile(p.data.Data)
 }
 
@@ -164,11 +195,4 @@ func (p *ParallelCPUProfiler) sendToConsumers() {
 	p.Unlock()
 	p.lastDataSize = p.data.Data.Len()
 	p.data = nil
-}
-
-func (p *ParallelCPUProfiler) Stop() {
-	if p.isClosed.CAS(false, true) {
-		close(p.closed)
-	}
-	p.wg.Wait()
 }

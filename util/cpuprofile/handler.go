@@ -10,9 +10,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// GetCPUProfile uses to get the cpu profile data from GlobalCPUProfiler.
+// You should use GetCPUProfile instead of `pprof.StartCPUProfile`, `pprof.StopCPUProfile`.
+// Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
 func GetCPUProfile(seconds uint64, w io.Writer) error {
-	pc := NewPprofAPIConsumer(seconds)
-	profileData, err := pc.WaitProfilingFinish()
+	pc := NewPprofAPIConsumer()
+	profileData, err := pc.WaitProfilingFinish(seconds)
 	if err != nil {
 		return err
 	}
@@ -20,7 +23,7 @@ func GetCPUProfile(seconds uint64, w io.Writer) error {
 }
 
 // ProfileHTTPHandler is same as pprof.Profile.
-// The difference is ProfileHTTPHandler uses tracecpu.StartCPUProfile/StopCPUProfile to fetch profile data.
+// The difference is ProfileHTTPHandler uses cpuprofile.GetCPUProfile to fetch profile data.
 func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)

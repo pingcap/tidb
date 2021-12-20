@@ -14,26 +14,28 @@ const (
 
 var defProfileTimeout = time.Second * 10
 
+// PprofAPIConsumer is a cpu profile consumer for Pprof API usage.
 type PprofAPIConsumer struct {
-	seconds  uint64
-	cumulate time.Duration
 	dataCh   ProfileConsumer
 	profiles []*profile.Profile
 }
 
-func NewPprofAPIConsumer(seconds uint64) *PprofAPIConsumer {
+// NewPprofAPIConsumer returns a new NewPprofAPIConsumer.
+func NewPprofAPIConsumer() *PprofAPIConsumer {
 	return &PprofAPIConsumer{
-		seconds:  seconds,
-		dataCh:   make(ProfileConsumer, 1),
-		profiles: make([]*profile.Profile, 0, seconds),
+		dataCh: make(ProfileConsumer, 1),
 	}
 }
 
-func (pc *PprofAPIConsumer) WaitProfilingFinish() (*profile.Profile, error) {
+// WaitProfilingFinish waits for collecting `seconds` profile data finished.
+func (pc *PprofAPIConsumer) WaitProfilingFinish(seconds uint64) (*profile.Profile, error) {
+	// register cpu profile consumer.
 	Register(pc.dataCh)
 	defer Unregister(pc.dataCh)
 
-	profileDuration := time.Second * time.Duration(pc.seconds)
+	cumulate := time.Duration(0)
+	pc.profiles = make([]*profile.Profile, 0, int(seconds))
+	profileDuration := time.Second * time.Duration(seconds)
 	timeoutCh := time.After(profileDuration + defProfileTimeout)
 	for {
 		select {
@@ -44,7 +46,8 @@ func (pc *PprofAPIConsumer) WaitProfilingFinish() (*profile.Profile, error) {
 			if err != nil {
 				return nil, err
 			}
-			if pc.cumulate >= profileDuration {
+			cumulate += data.End.Sub(data.Begin)
+			if cumulate >= profileDuration {
 				return pc.getMergedProfile()
 			}
 		}
@@ -60,7 +63,6 @@ func (pc *PprofAPIConsumer) handleProfileData(data *ProfileData) error {
 		return err
 	}
 	pc.profiles = append(pc.profiles, pd)
-	pc.cumulate += data.End.Sub(data.Begin)
 	return nil
 }
 

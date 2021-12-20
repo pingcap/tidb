@@ -17,7 +17,7 @@ package tracecpu
 import (
 	"context"
 	"runtime/pprof"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -56,7 +56,9 @@ type SQLCPUTimeRecord struct {
 
 type sqlCPUCollector struct {
 	profileConsumer cpuprofile.ProfileConsumer
-	collector       atomic.Value
+
+	mu         sync.Mutex
+	collectors Collector
 }
 
 // newSQLCPUCollector create a sqlCPUCollector.
@@ -75,20 +77,24 @@ func (sp *sqlCPUCollector) SetCollector(c Collector) {
 	if c == nil {
 		return
 	}
-	sp.collector.Store(c)
+	sp.mu.Lock()
+	sp.collectors = c
+	sp.mu.Unlock()
 	cpuprofile.Register(sp.profileConsumer)
 }
 
 func (sp *sqlCPUCollector) ResetCollector() {
-	sp.collector.Store(nil)
+	sp.mu.Lock()
+	sp.collectors = nil
+	sp.mu.Unlock()
 	cpuprofile.Unregister(sp.profileConsumer)
 }
 
 func (sp *sqlCPUCollector) GetCollector() Collector {
-	c, ok := sp.collector.Load().(Collector)
-	if !ok || c == nil {
-		return nil
-	}
+	var c Collector
+	sp.mu.Lock()
+	c = sp.collectors
+	sp.mu.Unlock()
 	return c
 }
 

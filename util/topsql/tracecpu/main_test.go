@@ -54,4 +54,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	tracecpu.GlobalSQLCPUCollector.SetCollector(collector)
 	collector.WaitCollectCnt(1)
 	require.True(t, collector.CollectCnt() >= 1)
+
+	tracecpu.GlobalSQLCPUCollector.ResetCollector()
+	require.True(t, tracecpu.GlobalSQLCPUCollector.GetCollector() == nil)
 }

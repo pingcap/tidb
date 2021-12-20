@@ -24,11 +24,11 @@ func TestMain(m *testing.M) {
 
 func TestParallelCPUProfiler(t *testing.T) {
 	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Stop()
+		GlobalCPUProfiler.Close()
 	}
 	GlobalCPUProfiler = NewParallelCPUProfiler()
 	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Stop()
+	defer GlobalCPUProfiler.Close()
 
 	// Test register/unregister nil
 	Register(nil)
@@ -118,11 +118,11 @@ func TestParallelCPUProfiler(t *testing.T) {
 
 func TestGetCPUProfile(t *testing.T) {
 	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Stop()
+		GlobalCPUProfiler.Close()
 	}
 	GlobalCPUProfiler = NewParallelCPUProfiler()
 	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Stop()
+	defer GlobalCPUProfiler.Close()
 
 	// Test profile error
 	err := pprof.StartCPUProfile(bytes.NewBuffer(nil))
@@ -162,11 +162,11 @@ func TestGetCPUProfile(t *testing.T) {
 
 func TestProfileHTTPHandler(t *testing.T) {
 	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Stop()
+		GlobalCPUProfiler.Close()
 	}
 	GlobalCPUProfiler = NewParallelCPUProfiler()
 	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Stop()
+	defer GlobalCPUProfiler.Close()
 
 	// setup http server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
