@@ -883,7 +883,7 @@ func (e *Engine) loadEngineMeta() error {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
-			log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), zap.Error(err))
+			log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
 			return nil
 		}
 		return err
