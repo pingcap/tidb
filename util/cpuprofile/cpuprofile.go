@@ -104,7 +104,7 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 				p.sendToConsumers()
 			}
 
-			if p.consumersCount() > 0 {
+			if p.needProfile() {
 				err := p.startCPUProfile()
 				if err != nil {
 					p.data.Error = err
@@ -114,6 +114,10 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 			}
 		}
 	}
+}
+
+func (p *ParallelCPUProfiler) needProfile() bool {
+	return p.consumersCount() > 0
 }
 
 func (p *ParallelCPUProfiler) inProfilingStatus() bool {

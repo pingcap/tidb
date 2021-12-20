@@ -252,6 +252,7 @@ func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
 
 		if len(tsr.dataSinks) > 0 {
 			variable.TopSQLVariable.Enable.Store(true)
+			tracecpu.GlobalSQLCPUCollector.SetCollector(tsr)
 		}
 
 		return nil
@@ -270,6 +271,7 @@ func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
 
 		if len(tsr.dataSinks) == 0 {
 			variable.TopSQLVariable.Enable.Store(false)
+			tracecpu.GlobalSQLCPUCollector.ResetCollector()
 		}
 	}
 }

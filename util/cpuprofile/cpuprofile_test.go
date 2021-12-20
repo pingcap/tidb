@@ -35,6 +35,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
 	Unregister(nil)
 	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.False(t, GlobalCPUProfiler.inProfilingStatus())
 
 	// Test profile error and duplicate register.
 	dataCh := make(ProfileConsumer, 10)
@@ -45,6 +46,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	Register(dataCh)
 	Register(dataCh)
 	require.Equal(t, 1, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, true, GlobalCPUProfiler.needProfile())
 
 	// Test profile error
 	data := <-dataCh
