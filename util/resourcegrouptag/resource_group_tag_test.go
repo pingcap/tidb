@@ -29,8 +29,6 @@ import (
 )
 
 func TestResourceGroupTagEncoding(t *testing.T) {
-	t.Parallel()
-
 	sqlDigest := parser.NewDigest(nil)
 	tag := EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 	require.Len(t, tag, 2)
@@ -62,8 +60,6 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 }
 
 func TestResourceGroupTagEncodingPB(t *testing.T) {
-	t.Parallel()
-
 	digest1 := genDigest("abc")
 	digest2 := genDigest("abcdefg")
 	// Test for protobuf

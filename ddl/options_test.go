@@ -26,8 +26,6 @@ import (
 )
 
 func TestOptions(t *testing.T) {
-	t.Parallel()
-
 	client, err := clientv3.NewFromURL("test")
 	require.NoError(t, err)
 	callback := &ddl.BaseCallback{}

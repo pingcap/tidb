@@ -33,7 +33,6 @@ import (
 )
 
 func TestAtomicBoolUnmarshal(t *testing.T) {
-	t.Parallel()
 	type data struct {
 		Ab AtomicBool `toml:"ab"`
 	}
@@ -59,8 +58,6 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
-	t.Parallel()
-
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	require.NoError(t, err)
@@ -264,6 +261,12 @@ deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
 [top-sql]
 receiver-address = "127.0.0.1:10100"
+[status]
+grpc-keepalive-time = 20
+grpc-keepalive-timeout = 10
+grpc-concurrent-streams = 2048
+grpc-initial-window-size = 10240
+grpc-max-send-msg-size = 40960
 `)
 
 	require.NoError(t, err)
@@ -321,6 +324,11 @@ receiver-address = "127.0.0.1:10100"
 	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -480,8 +488,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 }
 
 func TestOOMActionValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		oomAction string
@@ -500,8 +506,6 @@ func TestOOMActionValid(t *testing.T) {
 }
 
 func TestTxnTotalSizeLimitValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := []struct {
 		limit uint64
@@ -521,8 +525,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestPreparePlanCacheValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
 		{Enabled: true, Capacity: 0}:                        false,
@@ -538,8 +540,6 @@ func TestPreparePlanCacheValid(t *testing.T) {
 }
 
 func TestMaxIndexLength(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {
 		conf.MaxIndexLength = indexLen
@@ -552,8 +552,6 @@ func TestMaxIndexLength(t *testing.T) {
 }
 
 func TestIndexLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLimit int, shouldBeValid bool) {
 		conf.IndexLimit = indexLimit
@@ -566,8 +564,6 @@ func TestIndexLimit(t *testing.T) {
 }
 
 func TestTableColumnCountLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
 		conf.TableColumnCountLimit = uint32(tableColumnLimit)
@@ -580,8 +576,6 @@ func TestTableColumnCountLimit(t *testing.T) {
 }
 
 func TestEncodeDefTempStorageDir(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		host       string
 		statusHost string
@@ -644,8 +638,6 @@ func TestModifyThroughLDFlags(t *testing.T) {
 }
 
 func TestSecurityValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		spilledFileEncryptionMethod string
@@ -664,8 +656,6 @@ func TestSecurityValid(t *testing.T) {
 }
 
 func TestTcpNoDelay(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	//check default value
 	require.True(t, c1.Performance.TCPNoDelay)

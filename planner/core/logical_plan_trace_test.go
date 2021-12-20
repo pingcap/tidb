@@ -87,6 +87,105 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from pt3 where ptn > 3;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[6] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt3 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn in (1,2,3);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt2 where ptn = 1;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p2] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn > 100;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] doesn't have needed partition table after pruning",
+					assertAction: "Datasource[1] becomes TableDual[5]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn in (10,20);",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has multiple needed partitions[p1,p2] after pruning",
+					assertAction: "Datasource[1] becomes PartitionUnion[7] with children[TableScan[1],TableScan[1]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from pt1 where ptn < 4;",
+			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "partition_processor",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "Datasource[1] has one needed partition[p1] after pruning",
+					assertAction: "Datasource[1] becomes TableScan[1]",
+				},
+			},
+		},
+		{
+			sql:            "select * from (t t1, t t2, t t3,t t4) union all select * from (t t5, t t6, t t7,t t8)",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
+			assertRuleName: "join_reorder",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "join order becomes [((t1*t2)*(t3*t4)),((t5*t6)*(t7*t8))] from original [(((t1*t2)*t3)*t4),(((t5*t6)*t7)*t8)]",
+					assertReason: "join cost during reorder: [[t1, cost:10000],[t2, cost:10000],[t3, cost:10000],[t4, cost:10000],[t5, cost:10000],[t6, cost:10000],[t7, cost:10000],[t8, cost:10000]]",
+				},
+			},
+		},
+		{
+			sql:            "select * from t t1, t t2, t t3 where t1.a=t2.a and t3.a=t2.a and t1.a=t3.a",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagDecorrelate, flagPredicatePushDown, flagEliminateOuterJoin, flagJoinReOrder},
+			assertRuleName: "join_reorder",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "join order becomes ((t1*t2)*t3) from original ((t1*t2)*t3)",
+					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
+				},
+			},
+		},
+		{
 			sql:            "select min(distinct a) from t group by a",
 			flags:          []uint64{flagBuildKeyInfo, flagEliminateAgg},
 			assertRuleName: "aggregation_eliminate",
@@ -142,6 +241,58 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 			},
 		},
+		{
+			sql:            "select max(a)-min(a) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add sort[8],add limit[9] during eliminating agg[4] max function",
+					assertReason: "agg[4] has only one function[max] without group by, the columns in agg[4] should be sorted",
+				},
+				{
+					assertAction: "add sort[10],add limit[11] during eliminating agg[6] min function",
+					assertReason: "agg[6] has only one function[min] without group by, the columns in agg[6] should be sorted",
+				},
+				{
+					assertAction: "agg[2] splited into aggs[4,6], and add joins[12] to connect them during eliminating agg[2] multi min/max functions",
+					assertReason: "each column is sorted and can benefit from index/primary key in agg[4,6] and none of them has group by clause",
+				},
+			},
+		},
+		{
+			sql:            "select max(e) from t",
+			flags:          []uint64{flagBuildKeyInfo, flagPrunColumns, flagMaxMinEliminate},
+			assertRuleName: "max_min_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "add selection[4],add sort[5],add limit[6] during eliminating agg[2] max function",
+					assertReason: "agg[2] has only one function[max] without group by, the columns in agg[2] shouldn't be NULL and needs NULL to be filtered out, the columns in agg[2] should be sorted",
+				},
+			},
+		},
+		{
+			sql:            "select t1.b,t1.c from t as t1 left join t as t2 on t1.a = t2.a;",
+			flags:          []uint64{flagBuildKeyInfo, flagEliminateOuterJoin},
+			assertRuleName: "outer_join_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
+					assertReason: "The columns[test.t.b,test.t.c] are from outer table, and the inner join keys[test.t.a] are unique",
+				},
+			},
+		},
+		{
+			sql:            "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagEliminateOuterJoin},
+			assertRuleName: "outer_join_eliminate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Outer join[3] is eliminated and become DataSource[1]",
+					assertReason: "The columns[test.t.a,test.t.b] in agg are from outer table, and the agg functions are duplicate agnostic",
+				},
+			},
+		},
 	}
 
 	for i, tc := range tt {
@@ -163,10 +314,8 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
-		p, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
+		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		_, ok := p.(*LogicalProjection)
-		c.Assert(ok, IsTrue)
 		otrace := sctx.GetSessionVars().StmtCtx.LogicalOptimizeTrace
 		c.Assert(otrace, NotNil)
 		assert := false

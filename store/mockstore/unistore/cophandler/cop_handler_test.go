@@ -279,8 +279,6 @@ func (dagBuilder *dagBuilder) build() *tipb.DAGRequest {
 
 // see tikv/src/coprocessor/util.rs for more detail
 func TestIsPrefixNext(t *testing.T) {
-	t.Parallel()
-
 	require.True(t, isPrefixNext([]byte{}, []byte{0}))
 	require.True(t, isPrefixNext([]byte{0}, []byte{1}))
 	require.True(t, isPrefixNext([]byte{1}, []byte{2}))
@@ -295,8 +293,6 @@ func TestIsPrefixNext(t *testing.T) {
 }
 
 func TestPointGet(t *testing.T) {
-	t.Parallel()
-
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
@@ -349,8 +345,6 @@ func TestPointGet(t *testing.T) {
 }
 
 func TestClosureExecutor(t *testing.T) {
-	t.Parallel()
-
 	data := prepareTestTableData(t, keyNumber, tableID)
 	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
 	defer clean()
