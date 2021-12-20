@@ -813,8 +813,6 @@ func TestStringBuiltin(t *testing.T) {
 }
 
 func TestInvalidStrings(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
