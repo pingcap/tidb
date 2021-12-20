@@ -1508,7 +1508,7 @@
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'mod'(signature: ModInt) can not be pushed to storage layer",
+          "Scalar function 'mod'(signature: ModInt, return type: bigint(20)) can not be pushed to storage layer",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
