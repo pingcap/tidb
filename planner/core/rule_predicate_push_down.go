@@ -57,7 +57,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 	opt.appendStepToCurrent(selection.ID(), selection.TP(), "",
-		fmt.Sprintf("add %v[%v] to connect %v[%v] and %v[%v]", selection.TP(), selection.ID(), p.TP(), p.ID(), child.TP(), child.ID()))
+		fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", selection.TP(), selection.ID(), p.TP(), p.ID(), child.TP(), child.ID()))
 }
 
 // PredicatePushDown implements LogicalPlan interface.
@@ -90,11 +90,13 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	p.Conditions = DeleteTrueExprs(p, p.Conditions)
 	var child LogicalPlan
 	var retConditions []expression.Expression
+	var originConditions []expression.Expression
 	if p.buildByHaving {
 		retConditions, child = p.children[0].PredicatePushDown(predicates, opt)
 		retConditions = append(retConditions, p.Conditions...)
 	} else {
 		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+		originConditions = canBePushDown
 		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
 		retConditions = append(retConditions, canNotBePushDown...)
 	}
@@ -108,7 +110,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		}
 		return nil, p
 	}
-	appendSelectionPredicatePushDownTraceStep(p, opt)
+	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
 	return nil, child
 }
 
@@ -652,7 +654,7 @@ func (*ppdSolver) name() string {
 }
 
 func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions []expression.Expression, opt *logicalOptimizeOp) {
-	action := fmt.Sprintf("%v[%v] is replaced by %v[%v]", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
+	action := fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
 	reason := func() string {
 		buffer := bytes.NewBufferString("The conditions[")
 		for i, cond := range conditions {
@@ -667,18 +669,22 @@ func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions
 	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
 
-func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, opt *logicalOptimizeOp) {
-	action := fmt.Sprintf("%v[%v] is removed", p.TP(), p.ID())
-	reason := func() string {
-		buffer := bytes.NewBufferString("Conditions[")
-		for i, cond := range p.Conditions {
-			if i > 0 {
+func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *logicalOptimizeOp) {
+	action := fmt.Sprintf("%v_%v is removed", p.TP(), p.ID())
+	reason := ""
+	if len(conditions) > 0 && !p.buildByHaving {
+		reason = func() string {
+			buffer := bytes.NewBufferString("The conditions[")
+			for i, cond := range conditions {
+				if i > 0 {
+					buffer.WriteString(",")
+				}
 				buffer.WriteString(cond.String())
 			}
-		}
-		buffer.WriteString("] are pushed down")
-		return buffer.String()
-	}()
+			buffer.WriteString(fmt.Sprintf("] in %v_%v are pushed down", p.TP(), p.ID()))
+			return buffer.String()
+		}()
+	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
@@ -687,13 +693,14 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 		return
 	}
 	action := func() string {
-		buffer := bytes.NewBufferString("Conditions[")
+		buffer := bytes.NewBufferString("The conditions[")
 		for i, cond := range ds.pushedDownConds {
 			if i > 0 {
-				buffer.WriteString(cond.String())
+				buffer.WriteString(",")
 			}
+			buffer.WriteString(cond.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] are pushed down across %v[%v]", ds.TP(), ds.ID()))
+		buffer.WriteString(fmt.Sprintf("] are pushed down across %v_%v", ds.TP(), ds.ID()))
 		return buffer.String()
 	}()
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), "", action)

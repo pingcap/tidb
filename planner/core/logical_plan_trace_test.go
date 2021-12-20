@@ -87,6 +87,44 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from t as t1 join t as t2 on t1.a = t2.a where t1.a < 1;",
+			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "predicate_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "The conditions[lt(test.t.a, 1)] are pushed down across DataSource_1",
+				},
+				{
+					assertReason: "",
+					assertAction: "The conditions[lt(test.t.a, 1)] are pushed down across DataSource_1",
+				},
+				{
+					assertAction: "Selection_4 is removed",
+					assertReason: "The conditions[eq(test.t.a, test.t.a)] in Selection_4 are pushed down",
+				},
+				{
+					assertAction: "Selection_5 is removed",
+					assertReason: "The conditions[lt(test.t.a, 1)] in Selection_5 are pushed down",
+				},
+			},
+		},
+		{
+			sql:            "select * from t where a < 1;",
+			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "predicate_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "The conditions[lt(test.t.a, 1)] are pushed down across DataSource_1",
+				},
+				{
+					assertReason: "The conditions[lt(test.t.a, 1)] in Selection_2 are pushed down",
+					assertAction: "Selection_2 is removed",
+				},
+			},
+		},
+		{
 			sql:            "select * from pt3 where ptn > 3;",
 			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "partition_processor",
