@@ -14,7 +14,7 @@
         "SQL": "explain format = 'brief' select * from t where cast(t.a as double) + 3 = 5.1",
         "Plan": [
           "TableReader 8000.00 root  data:Selection",
-          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a, double BINARY), 3), 5.1)",
+          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a), 3), 5.1)",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
