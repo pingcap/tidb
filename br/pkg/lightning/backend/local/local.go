@@ -1500,16 +1500,12 @@ func (local *local) WriteToTiKV(
 	size := int64(0)
 	totalCount := int64(0)
 	firstLoop := true
-<<<<<<< HEAD
-	regionMaxSize := local.regionSplitSize * 4 / 3
-=======
 	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
 	// because the range-properties is not 100% accurate
 	regionMaxSize := regionSplitSize
 	if regionSplitSize <= defaultRegionSplitSize {
 		regionMaxSize = regionSplitSize * 4 / 3
 	}
->>>>>>> 92207005e... lightning: optimize region split check logic (#30428)
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
