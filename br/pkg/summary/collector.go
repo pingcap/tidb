@@ -195,7 +195,7 @@ func (tc *logCollector) Summary(name string) {
 			if berror.Cause(reason) != context.Canceled {
 				logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
 			} else {
-				canceledUnits = canceledUnits + 1
+				canceledUnits++
 			}
 		}
 		// only print total number of cancel unit
