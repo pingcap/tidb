@@ -194,7 +194,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			}
 		case *LogicalWindow:
 			// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
-			// It seems that we don't use statistics of the columns in LogicalWindow.OrderBy currently?
+			// We don't use statistics of the columns in LogicalWindow.OrderBy currently.
 			for _, item := range x.PartitionBy {
 				c.addPredicateColumn(item.Col)
 			}
@@ -278,27 +278,17 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 	}
 }
 
-// CollectColumnStatsUsageForTest is used for test.
-// If onlyHistNeeded is true, it collects histogram-needed columns from logical plan.
-// Otherwise, it collects predicate columns from logical plan.
-func CollectColumnStatsUsageForTest(lp LogicalPlan, onlyHistNeeded bool) []model.TableColumnID {
-	var collectMode uint64
-	if onlyHistNeeded {
-		collectMode = collectHistNeededColumns
-	} else {
-		collectMode = collectPredicateColumns
-	}
-	collector := newColumnStatsUsageCollector(collectMode)
+// CollectColumnStatsUsage collects column stats usage from logical plan.
+// The first return value is predicate columns and the second return value is histogram-needed columns.
+func CollectColumnStatsUsage(lp LogicalPlan) ([]model.TableColumnID, []model.TableColumnID) {
+	collector := newColumnStatsUsageCollector(collectPredicateColumns | collectHistNeededColumns)
 	collector.collectFromPlan(lp)
-	var colSet map[model.TableColumnID]struct{}
-	if onlyHistNeeded {
-		colSet = collector.histNeededCols
-	} else {
-		colSet = collector.predicateCols
+	set2slice := func(set map[model.TableColumnID]struct{}) []model.TableColumnID {
+		ret := make([]model.TableColumnID, 0, len(set))
+		for tblColID := range set {
+			ret = append(ret, tblColID)
+		}
+		return ret
 	}
-	tblColIDs := make([]model.TableColumnID, 0, len(colSet))
-	for tblColID := range colSet {
-		tblColIDs = append(tblColIDs, tblColID)
-	}
-	return tblColIDs
+	return set2slice(collector.predicateCols), set2slice(collector.histNeededCols)
 }

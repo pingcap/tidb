@@ -66,7 +66,12 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableC
 }
 
 func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp plannercore.LogicalPlan, onlyHistNeeded bool, expected []string, comment string) {
-	tblColIDs := plannercore.CollectColumnStatsUsageForTest(lp, onlyHistNeeded)
+	var tblColIDs []model.TableColumnID
+	if onlyHistNeeded {
+		_, tblColIDs = plannercore.CollectColumnStatsUsage(lp)
+	} else {
+		tblColIDs, _ = plannercore.CollectColumnStatsUsage(lp)
+	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
 		col, ok := getColumnName(t, is, tblColID)
