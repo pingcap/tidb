@@ -961,3 +961,6 @@ StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
       └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
+delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
+admin reload opt_rule_blacklist;
+
