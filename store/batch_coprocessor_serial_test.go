@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"

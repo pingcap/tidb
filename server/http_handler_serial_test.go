@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/model"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"

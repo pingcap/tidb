@@ -28,23 +28,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/store/gcworker"
-
-	"github.com/pingcap/failpoint"
-
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
@@ -52,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.uber.org/zap"
 )
 
 type tiflashDDLTestSuite struct {
