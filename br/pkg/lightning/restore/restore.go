@@ -379,14 +379,16 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	switch {
+	case cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}

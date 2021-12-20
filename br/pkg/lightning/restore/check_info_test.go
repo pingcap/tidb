@@ -16,14 +16,17 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -401,5 +404,104 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 			c.Assert(rc.checkTemplate.FailedCount(ca.level), Equals, 1)
 		}
 	}
+}
 
+func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
+	cfg := config.NewConfig()
+	dbMetas := []*mydump.MDDatabaseMeta{
+		{
+			Name: "test1",
+			Tables: []*mydump.MDTableMeta{
+				{
+					DB: "test1",
+					Name: "tbl1",
+				},
+				{
+					DB: "test1",
+					Name: "tbl2",
+				},
+			},
+		},
+		{
+			Name: "test2",
+			Tables: []*mydump.MDTableMeta{
+				{
+					DB: "test2",
+					Name: "tbl1",
+				},
+			},
+		},
+	}
+
+	rc := &Controller{
+		cfg:       cfg,
+		dbMetas:   dbMetas,
+	}
+
+	ctx := context.Background()
+
+	// test tidb will do nothing
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	err := rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+
+	// test incremental mode
+	rc.cfg.TikvImporter.Backend = config.BackendLocal
+	rc.cfg.TikvImporter.IncrementalImport = true
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+
+	rc.cfg.TikvImporter.IncrementalImport = false
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	mock.MatchExpectationsInOrder(false)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeMsSQL)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	// not error, need not to init check template
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	// single table contains data
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeMsSQL)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	rc.checkTemplate = NewSimpleTemplate()
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	tmpl := rc.checkTemplate.(*SimpleTemplate)
+	c.Assert(len(tmpl.failedMsg), Equals, 1)
+	c.Assert(tmpl.failedMsg[0], Matches, "table\\(s\\) \\[`test2`.`tbl1`\\] are not empty")
+
+	// multi tables contains data
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeMsSQL)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
+	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
+	rc.checkTemplate = NewSimpleTemplate()
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	tmpl = rc.checkTemplate.(*SimpleTemplate)
+	c.Assert(len(tmpl.failedMsg), Equals, 1)
+	c.Assert(tmpl.failedMsg[0], Matches, "table\\(s\\) \\[`test1`.`tbl1`, `test2`.`tbl1`\\] are not empty")
 }
