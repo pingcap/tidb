@@ -1137,10 +1137,15 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 }
 
 func (d *Dumper) dumpSQL(tctx *tcontext.Context, taskChan chan<- Task) {
+	var conn *sql.Conn
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
+	fieldName, _ := pickupPossibleField(meta, conn)
+	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
+	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(c))
+	atomic.StoreInt64(&d.totalTables, int64(1))
 	d.sendTaskToChan(tctx, task, taskChan)
 }
 
