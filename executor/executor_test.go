@@ -8318,6 +8318,7 @@ func (s *testSerialSuite) TestIssue29498(c *C) {
 	row = res.Rows()[0][0].(string)
 	c.Assert(len(row), Equals, mysql.MaxDatetimeWidthNoFsp+3+1)
 	c.Assert(row[len(row)-12:], Equals, "00:00:00.567")
+}
 
 // Test invoke Close without invoking Open before for each operators.
 func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
