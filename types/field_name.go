@@ -29,6 +29,8 @@ type FieldName struct {
 	ColName     model.CIStr
 
 	Hidden bool
+
+	Redundant bool
 }
 
 const emptyName = "EMPTY_NAME"
