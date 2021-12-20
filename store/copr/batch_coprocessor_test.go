@@ -94,8 +94,6 @@ func calcReginCount(tasks []*batchCopTask) int {
 }
 
 func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
-	t.Parallel()
-
 	for replicaNum := 1; replicaNum < 6; replicaNum++ {
 		storeCount := 10
 		regionCount := 100000
