@@ -34,8 +34,6 @@ func createTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func TestClusteredUnionScan(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -59,8 +57,6 @@ func TestClusteredUnionScan(t *testing.T) {
 }
 
 func TestClusteredPrefixColumn(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -134,8 +130,6 @@ func TestClusteredPrefixColumn(t *testing.T) {
 }
 
 func TestClusteredUnionScanIndexLookup(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -155,8 +149,6 @@ func TestClusteredUnionScanIndexLookup(t *testing.T) {
 }
 
 func TestClusteredIndexLookUp(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -169,8 +161,6 @@ func TestClusteredIndexLookUp(t *testing.T) {
 }
 
 func TestClusteredIndexLookUp2(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -197,8 +187,6 @@ SELECT c_balance, c_first, c_middle, c_id FROM c3 use index (idx) WHERE c_w_id =
 }
 
 func TestClusteredTopN(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -219,8 +207,6 @@ func TestClusteredTopN(t *testing.T) {
 }
 
 func TestClusteredHint(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -231,8 +217,6 @@ func TestClusteredHint(t *testing.T) {
 }
 
 func TestClusteredBatchPointGet(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -249,8 +233,6 @@ type SnapCacheSizeGetter interface {
 }
 
 func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -270,8 +252,6 @@ func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
 }
 
 func TestClusteredPrefixingPrimaryKey(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -350,8 +330,6 @@ func TestClusteredPrefixingPrimaryKey(t *testing.T) {
 }
 
 func TestClusteredWithOldRowFormat(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -405,8 +383,6 @@ func TestClusteredWithOldRowFormat(t *testing.T) {
 }
 
 func TestIssue20002(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -423,8 +399,6 @@ func TestIssue20002(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/20727
 func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -439,8 +413,6 @@ func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
 }
 
 func TestClusteredIndexSelectWhereInNull(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

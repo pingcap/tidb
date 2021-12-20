@@ -21,7 +21,6 @@ import (
 )
 
 func TestFloat64Set(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	set := NewFloat64Set()
