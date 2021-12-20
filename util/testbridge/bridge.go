@@ -39,10 +39,10 @@ func SetupForCommonTest() {
 // [1] https://github.com/pingcap/tidb/issues/26022
 func workaroundGoCheckFlags() {
 	if flag.Lookup("check.timeout") == nil {
-		_ = flag.Duration("check.timeout", 0, "SetupForCommonTest: check.timeout")
+		_ = flag.Duration("check.timeout", 0, "workaroundGoCheckFlags: check.timeout")
 	}
 	if flag.Lookup("check.p") == nil {
-		_ = flag.Bool("check.p", false, "SetupForCommonTest: check.p")
+		_ = flag.Bool("check.p", false, "workaroundGoCheckFlags: check.p")
 	}
 }
 

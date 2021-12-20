@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package config_test
 
 import (
 	"bytes"
@@ -27,9 +27,18 @@ import (
 
 	"github.com/BurntSushi/toml"
 	zaplog "github.com/pingcap/log"
+	. "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
+)
+
+var (
+	nbUnset = NullableBoolForTest{false, false}
+	nbFalse = NullableBoolForTest{true, false}
+	nbTrue  = NullableBoolForTest{true, true}
+
+	tempStorageDirName = EncodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 func TestAtomicBoolUnmarshal(t *testing.T) {
@@ -58,21 +67,21 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
-	var nb = nullableBool{false, false}
+	var nb = NullableBoolForTest{false, false}
 	data, err := json.Marshal(nb)
 	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
 	require.NoError(t, err)
 	require.Equal(t, nbUnset, nb)
 
-	nb = nullableBool{true, false}
+	nb = NullableBoolForTest{true, false}
 	data, err = json.Marshal(nb)
 	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
 	require.NoError(t, err)
 	require.Equal(t, nbFalse, nb)
 
-	nb = nullableBool{true, true}
+	nb = NullableBoolForTest{true, true}
 	data, err = json.Marshal(nb)
 	require.NoError(t, err)
 	err = json.Unmarshal(data, &nb)
@@ -116,8 +125,8 @@ func TestLogConfig(t *testing.T) {
 		require.NoError(t, os.Remove(configFile))
 	}()
 
-	var testLoad = func(confStr string, expectedEnableErrorStack, expectedDisableErrorStack, expectedEnableTimestamp, expectedDisableTimestamp nullableBool, resultedDisableTimestamp, resultedDisableErrorVerbose bool) {
-		conf = defaultConf
+	var testLoad = func(confStr string, expectedEnableErrorStack, expectedDisableErrorStack, expectedEnableTimestamp, expectedDisableTimestamp NullableBoolForTest, resultedDisableTimestamp, resultedDisableErrorVerbose bool) {
+		conf = *NewConfig()
 		_, err = f.WriteString(confStr)
 		require.NoError(t, err)
 		require.NoError(t, conf.Load(configFile))
@@ -343,7 +352,7 @@ mem-profile-interval="1m"`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
-	require.True(t, isAllDeprecatedConfigItems(tmp.UndecodedItems))
+	require.True(t, IsAllDeprecatedConfigItems(tmp.UndecodedItems))
 
 	// Test telemetry config default value and whether it will be overwritten.
 	conf = NewConfig()
@@ -391,7 +400,10 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t,
+		logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false,
+			func(config *zaplog.Config) { config.DisableErrorVerbose = true }),
+		conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -598,12 +610,13 @@ func TestEncodeDefTempStorageDir(t *testing.T) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := EncodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		require.Equal(t, filepath.Join(dirPrefix, test.expect, "tmp-storage"), tempStorageDir)
 	}
 }
 
 func TestModifyThroughLDFlags(t *testing.T) {
+	originDefaultCfg := NewConfig()
 	tests := []struct {
 		Edition               string
 		CheckBeforeDropLDFlag string
@@ -616,23 +629,21 @@ func TestModifyThroughLDFlags(t *testing.T) {
 		{"Enterprise", "1", false, true},
 	}
 
-	originalEnableTelemetry := defaultConf.EnableTelemetry
 	originalCheckTableBeforeDrop := CheckTableBeforeDrop
 	originalGlobalConfig := GetGlobalConfig()
 
 	for _, test := range tests {
-		defaultConf.EnableTelemetry = true
+		originDefaultCfg.EnableTelemetry = true
 		CheckTableBeforeDrop = false
 
-		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
+		InitByLDFlagsForTest(test.Edition, test.CheckBeforeDropLDFlag)
 
 		conf := GetGlobalConfig()
 		require.Equal(t, test.EnableTelemetry, conf.EnableTelemetry)
-		require.Equal(t, test.EnableTelemetry, defaultConf.EnableTelemetry)
+		require.Equal(t, test.EnableTelemetry, NewConfig().EnableTelemetry)
 		require.Equal(t, test.CheckTableBeforeDrop, CheckTableBeforeDrop)
 	}
 
-	defaultConf.EnableTelemetry = originalEnableTelemetry
 	CheckTableBeforeDrop = originalCheckTableBeforeDrop
 	StoreGlobalConfig(originalGlobalConfig)
 }

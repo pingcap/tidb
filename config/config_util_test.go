@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package config_test
 
 import (
 	"encoding/json"
@@ -21,11 +21,12 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+	. "github.com/pingcap/tidb/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCloneConf(t *testing.T) {
-	c1, err := CloneConf(&defaultConf)
+	c1, err := CloneConf(NewConfig())
 	require.NoError(t, err)
 	c2, err := CloneConf(c1)
 	require.NoError(t, err)
@@ -42,7 +43,7 @@ func TestCloneConf(t *testing.T) {
 }
 
 func TestMergeConfigItems(t *testing.T) {
-	oriConf, _ := CloneConf(&defaultConf)
+	oriConf, _ := CloneConf(NewConfig())
 	oldConf, _ := CloneConf(oriConf)
 	newConf, _ := CloneConf(oldConf)
 
@@ -67,12 +68,10 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, 10, len(as))
 	require.Equal(t, 3, len(rs))
 	for _, a := range as {
-		_, ok := dynamicConfigItems[a]
-		require.True(t, ok)
+		require.True(t, IsDynamicConfigItems(a))
 	}
 	for _, a := range rs {
-		_, ok := dynamicConfigItems[a]
-		require.False(t, ok)
+		require.False(t, IsDynamicConfigItems(a))
 	}
 
 	require.Equal(t, newConf.Performance.MaxProcs, oldConf.Performance.MaxProcs)
