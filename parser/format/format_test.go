@@ -19,29 +19,18 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testFormatSuite{})
-var _ = Suite(&testRestoreCtxSuite{})
-
-type testFormatSuite struct {
-}
-
-func checkFormat(c *C, f Formatter, buf *bytes.Buffer, str, expect string) {
+func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
 	_, err := f.Format(str, 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	b, err := ioutil.ReadAll(buf)
-	c.Assert(err, IsNil)
-	c.Assert(string(b), Equals, expect)
+	require.NoError(t, err)
+	require.Equal(t, expect, string(b))
 }
 
-func (s *testFormatSuite) TestFormat(c *C) {
+func TestFormat(t *testing.T) {
 	str := "abc%d%%e%i\nx\ny\n%uz\n"
 	buf := &bytes.Buffer{}
 	f := IndentFormatter(buf, "\t")
@@ -50,19 +39,16 @@ func (s *testFormatSuite) TestFormat(c *C) {
 	y
 z
 `
-	checkFormat(c, f, buf, str, expect)
+	checkFormat(t, f, buf, str, expect)
 
 	str = "abc%d%%e%i\nx\ny\n%uz\n%i\n"
 	buf = &bytes.Buffer{}
 	f = FlatFormatter(buf)
 	expect = "abc3%e x y z\n "
-	checkFormat(c, f, buf, str, expect)
+	checkFormat(t, f, buf, str, expect)
 }
 
-type testRestoreCtxSuite struct {
-}
-
-func (s *testRestoreCtxSuite) TestRestoreCtx(c *C) {
+func TestRestoreCtx(t *testing.T) {
 	testCases := []struct {
 		flag   RestoreFlags
 		expect string
@@ -92,22 +78,22 @@ func (s *testRestoreCtxSuite) TestRestoreCtx(c *C) {
 		ctx.WriteString("str`.'\"ing\\")
 		ctx.WritePlain(" ")
 		ctx.WriteName("na`.'\"Me\\")
-		c.Assert(sb.String(), Equals, testCase.expect, Commentf("case: %#v", testCase))
+		require.Equalf(t, testCase.expect, sb.String(), "case: %#v", testCase)
 	}
 }
 
-func (s *testRestoreCtxSuite) TestRestoreSpecialComment(c *C) {
+func TestRestoreSpecialComment(t *testing.T) {
 	var sb strings.Builder
 	sb.Reset()
 	ctx := NewRestoreCtx(RestoreTiDBSpecialComment, &sb)
 	ctx.WriteWithSpecialComments("fea_id", func() {
 		ctx.WritePlain("content")
 	})
-	c.Assert(sb.String(), Equals, "/*T![fea_id] content */")
+	require.Equal(t, "/*T![fea_id] content */", sb.String())
 
 	sb.Reset()
 	ctx.WriteWithSpecialComments("", func() {
 		ctx.WritePlain("shard_row_id_bits")
 	})
-	c.Assert(sb.String(), Equals, "/*T! shard_row_id_bits */")
+	require.Equal(t, "/*T! shard_row_id_bits */", sb.String())
 }

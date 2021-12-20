@@ -15,14 +15,15 @@
 package expression
 
 import (
+	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenFieldTypes []*types.FieldType, input *chunk.Chunk, output *chunk.Column) {
@@ -59,23 +60,23 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 	return
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinRegexpForConstants(c *C) {
+func TestVectorizedBuiltinRegexpForConstants(t *testing.T) {
 	bf, childrenFieldTypes, input, output := genVecBuiltinRegexpBenchCaseForConstants()
 	err := bf.vecEvalInt(input, output)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	i64s := output.Int64s()
 
 	it := chunk.NewIterator4Chunk(input)
 	i := 0
-	commentf := func(row int) CommentInterface {
-		return Commentf("func: builtinRegexpUTF8Sig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
+	commentf := func(row int) string {
+		return fmt.Sprintf("func: builtinRegexpUTF8Sig, row: %v, rowData: %v", row, input.GetRow(row).GetDatumRow(childrenFieldTypes))
 	}
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		val, isNull, err := bf.evalInt(row)
-		c.Assert(err, IsNil)
-		c.Assert(isNull, Equals, output.IsNull(i), commentf(i))
+		require.NoError(t, err)
+		require.Equal(t, output.IsNull(i), isNull, commentf(i))
 		if !isNull {
-			c.Assert(val, Equals, i64s[i], commentf(i))
+			require.Equal(t, i64s[i], val, commentf(i))
 		}
 		i++
 	}

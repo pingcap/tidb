@@ -143,7 +143,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning1(c *C) {
 	// test query
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int as (a+1), c time)")
+	tk.MustExec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))")
 	tk.MustExec("create index idx on t(a)")
 
 	var input []string

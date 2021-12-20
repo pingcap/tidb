@@ -30,8 +30,6 @@ import (
 )
 
 func TestPartialNext(t *testing.T) {
-	t.Parallel()
-
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
@@ -57,8 +55,6 @@ func TestPartialNext(t *testing.T) {
 }
 
 func TestIsPoint(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		start   []byte
 		end     []byte
@@ -111,16 +107,12 @@ func TestIsPoint(t *testing.T) {
 }
 
 func TestBasicFunc(t *testing.T) {
-	t.Parallel()
-
 	assert.False(t, IsTxnRetryableError(nil))
 	assert.True(t, IsTxnRetryableError(ErrTxnRetryable))
 	assert.False(t, IsTxnRetryableError(errors.New("test")))
 }
 
 func TestHandle(t *testing.T) {
-	t.Parallel()
-
 	ih := IntHandle(100)
 	assert.True(t, ih.IsInt())
 
@@ -153,8 +145,6 @@ func TestHandle(t *testing.T) {
 }
 
 func TestPaddingHandle(t *testing.T) {
-	t.Parallel()
-
 	dec := types.NewDecFromInt(1)
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
@@ -171,8 +161,6 @@ func TestPaddingHandle(t *testing.T) {
 }
 
 func TestHandleMap(t *testing.T) {
-	t.Parallel()
-
 	m := NewHandleMap()
 	h := IntHandle(1)
 

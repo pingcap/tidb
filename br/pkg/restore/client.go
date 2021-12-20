@@ -501,23 +501,11 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-
-	cts, err := rc.createTables(ctx, rc.db, dom, tables, newTS)
+	err := rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+	//cts, err := rc.createTables(ctx, rc.db, dom, tables, newTS)
 
 	if err == nil {
 		defer close(outCh)
-		for _, ct := range cts {
-			log.Debug("table created and send to next",
-				zap.Int("output chan size", len(outCh)),
-				zap.Stringer("table", ct.OldTable.Info.Name),
-				zap.Stringer("database", ct.OldTable.DB.Name))
-			outCh <- ct
-			rater.Inc()
-			rater.L().Info("table created",
-				zap.Stringer("table", ct.OldTable.Info.Name),
-				zap.Stringer("database", ct.OldTable.DB.Name))
-		}
-
 		// fall back to old create table (sequential create table)
 	} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
 		log.Info("fall back to the old DDL way to create table.")
@@ -587,6 +575,43 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 			db := dbPool[id%uint64(len(dbPool))]
 			return createOneTable(ectx, db, table)
 		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+	eg, ectx := errgroup.WithContext(ctx)
+	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	numOfTables := len(tables)
+	lastSent := 0
+	for i := int(rc.batchDllSize); i <= numOfTables; i = i + int(rc.batchDllSize) {
+		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
+		if i > numOfTables {
+			i = numOfTables
+		}
+		tableSlice := tables[lastSent:i]
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			db := dbPool[id%uint64(len(dbPool))]
+			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
+			if err != nil {
+				log.Error("create tables fail")
+				return err
+			}
+			for _, ct := range cts {
+				log.Debug("table created and send to next",
+					zap.Int("output chan size", len(outCh)),
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+				outCh <- ct
+				rater.Inc()
+				rater.L().Info("table created",
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+			}
+			return err
+		})
+		lastSent = i
 	}
 	return eg.Wait()
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
@@ -138,6 +139,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.cacheable = false
 				return in, true
 			}
+			if checker.isTempTable(node) {
+				checker.cacheable = false
+				return in, true
+			}
 		}
 	}
 	return in, false
@@ -153,6 +158,18 @@ func (checker *cacheableChecker) hasGeneratedCol(tn *ast.TableName) bool {
 		if col.IsGenerated() {
 			return true
 		}
+	}
+	return false
+}
+
+func (checker *cacheableChecker) isTempTable(tn *ast.TableName) bool {
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+		return false
+	}
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return true
 	}
 	return false
 }

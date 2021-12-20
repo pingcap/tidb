@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -30,11 +31,10 @@ import (
 )
 
 func TestImplGroupZeroCost(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	require.NoError(t, err)
@@ -55,11 +55,10 @@ func TestImplGroupZeroCost(t *testing.T) {
 }
 
 func TestInitGroupSchema(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
 	require.NoError(t, err)
@@ -78,11 +77,10 @@ func TestInitGroupSchema(t *testing.T) {
 }
 
 func TestFillGroupStats(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	require.NoError(t, err)
@@ -100,11 +98,10 @@ func TestFillGroupStats(t *testing.T) {
 }
 
 func TestPreparePossibleProperties(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
 	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
@@ -193,11 +190,10 @@ func (rule *fakeTransformation) OnTransform(old *memo.ExprIter) (newExprs []*mem
 }
 
 func TestAppliedRuleSet(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}

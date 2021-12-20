@@ -19,7 +19,6 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -155,12 +154,12 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinCompareCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinCompareCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinCompareEvalOneVec(b *testing.B) {

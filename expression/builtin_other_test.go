@@ -16,21 +16,21 @@ package expression
 
 import (
 	"math"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestBitCount(c *C) {
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestBitCount(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -57,100 +57,32 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 	}
 	for _, test := range bitCountCases {
 		in := types.NewDatum(test.origin)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
+		require.NoError(t, err)
+		require.NotNil(t, f)
 		count, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if count.IsNull() {
-			c.Assert(test.count, IsNil)
+			require.Nil(t, test.count)
 			continue
 		}
 		sc := new(stmtctx.StatementContext)
 		sc.IgnoreTruncate = true
 		res, err := count.ToInt64(sc)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.count)
+		require.NoError(t, err)
+		require.Equal(t, test.count, res)
 	}
 }
 
-func (s *testEvaluatorSuite) TestInFunc(c *C) {
-	fc := funcs[ast.In]
-	decimal1 := types.NewDecFromFloatForTest(123.121)
-	decimal2 := types.NewDecFromFloatForTest(123.122)
-	decimal3 := types.NewDecFromFloatForTest(123.123)
-	decimal4 := types.NewDecFromFloatForTest(123.124)
-	time1 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 1, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
-	time2 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 2, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
-	time3 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 3, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
-	time4 := types.NewTime(types.FromGoTime(time.Date(2017, 1, 4, 1, 1, 1, 1, time.UTC)), mysql.TypeDatetime, 6)
-	duration1 := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
-	duration2 := types.Duration{Duration: 12*time.Hour + 1*time.Minute}
-	duration3 := types.Duration{Duration: 12*time.Hour + 1*time.Second}
-	duration4 := types.Duration{Duration: 12 * time.Hour}
-	json1 := json.CreateBinary("123")
-	json2 := json.CreateBinary("123.1")
-	json3 := json.CreateBinary("123.2")
-	json4 := json.CreateBinary("123.3")
-	testCases := []struct {
-		args []interface{}
-		res  interface{}
-	}{
-		{[]interface{}{1, 1, 2, 3}, int64(1)},
-		{[]interface{}{1, 0, 2, 3}, int64(0)},
-		{[]interface{}{1, nil, 2, 3}, nil},
-		{[]interface{}{nil, nil, 2, 3}, nil},
-		{[]interface{}{uint64(0), 0, 2, 3}, int64(1)},
-		{[]interface{}{uint64(math.MaxUint64), uint64(math.MaxUint64), 2, 3}, int64(1)},
-		{[]interface{}{-1, uint64(math.MaxUint64), 2, 3}, int64(0)},
-		{[]interface{}{uint64(math.MaxUint64), -1, 2, 3}, int64(0)},
-		{[]interface{}{1, 0, 2, 3}, int64(0)},
-		{[]interface{}{1.1, 1.2, 1.3}, int64(0)},
-		{[]interface{}{1.1, 1.1, 1.2, 1.3}, int64(1)},
-		{[]interface{}{decimal1, decimal2, decimal3, decimal4}, int64(0)},
-		{[]interface{}{decimal1, decimal2, decimal3, decimal1}, int64(1)},
-		{[]interface{}{"1.1", "1.1", "1.2", "1.3"}, int64(1)},
-		{[]interface{}{"1.1", hack.Slice("1.1"), "1.2", "1.3"}, int64(1)},
-		{[]interface{}{hack.Slice("1.1"), "1.1", "1.2", "1.3"}, int64(1)},
-		{[]interface{}{time1, time2, time3, time1}, int64(1)},
-		{[]interface{}{time1, time2, time3, time4}, int64(0)},
-		{[]interface{}{duration1, duration2, duration3, duration4}, int64(0)},
-		{[]interface{}{duration1, duration2, duration1, duration4}, int64(1)},
-		{[]interface{}{json1, json2, json3, json4}, int64(0)},
-		{[]interface{}{json1, json1, json3, json4}, int64(1)},
-	}
-	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
-		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
-		c.Assert(err, IsNil)
-		c.Assert(d.GetValue(), Equals, tc.res, Commentf("%v", types.MakeDatums(tc.args)))
-	}
-	collate.SetNewCollationEnabledForTest(true)
-	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci", 0)
-	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci", 0)
-	fn, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{strD1, strD2}))
-	c.Assert(err, IsNil)
-	d, isNull, err := fn.evalInt(chunk.Row{})
-	c.Assert(isNull, IsFalse)
-	c.Assert(err, IsNil)
-	c.Assert(d, Equals, int64(1), Commentf("%v, %v", strD1, strD2))
-	chk1 := chunk.NewChunkWithCapacity(nil, 1)
-	chk1.SetNumVirtualRows(1)
-	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
-	err = fn.vecEvalInt(chk1, chk2.Column(0))
-	c.Assert(err, IsNil)
-	c.Assert(chk2.Column(0).GetInt64(0), Equals, int64(1))
-	collate.SetNewCollationEnabledForTest(false)
-}
-
-func (s *testEvaluatorSuite) TestRowFunc(c *C) {
+func TestRowFunc(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.RowFunc]
-	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
-	c.Assert(err, IsNil)
+	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestSetVar(c *C) {
+func TestSetVar(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.SetVar]
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
@@ -169,22 +101,23 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 		{[]interface{}{"g", timeDec}, timeDec},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
-		c.Assert(err, IsNil)
+		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		require.NoError(t, err)
 		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
-		c.Assert(err, IsNil)
-		c.Assert(d.GetValue(), Equals, tc.res)
+		require.NoError(t, err)
+		require.Equal(t, tc.res, d.GetValue())
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
-			c.Assert(ok, Equals, true)
-			sessionVar, ok := s.ctx.GetSessionVars().Users[key]
-			c.Assert(ok, Equals, true)
-			c.Assert(sessionVar.GetValue(), Equals, tc.res)
+			require.Equal(t, true, ok)
+			sessionVar, ok := ctx.GetSessionVars().Users[key]
+			require.Equal(t, true, ok)
+			require.Equal(t, tc.res, sessionVar.GetValue())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestGetVar(c *C) {
+func TestGetVar(t *testing.T) {
+	ctx := createContext(t)
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	sessionVars := []struct {
@@ -200,7 +133,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"h", timeDec},
 	}
 	for _, kv := range sessionVars {
-		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
+		ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
 		var tp *types.FieldType
 		if _, ok := kv.val.(types.Time); ok {
 			tp = types.NewFieldType(mysql.TypeDatetime)
@@ -208,7 +141,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
 		types.DefaultParamTypeForValue(kv.val, tp)
-		s.ctx.GetSessionVars().UserVarTypes[kv.key] = tp
+		ctx.GetSessionVars().UserVarTypes[kv.key] = tp
 	}
 
 	testCases := []struct {
@@ -225,46 +158,49 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{[]interface{}{"h"}, timeDec.String()},
 	}
 	for _, tc := range testCases {
-		tp, ok := s.ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
+		tp, ok := ctx.GetSessionVars().UserVarTypes[tc.args[0].(string)]
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		fn, err := BuildGetVarFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
-		c.Assert(err, IsNil)
+		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+		require.NoError(t, err)
 		d, err := fn.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d.GetValue(), Equals, tc.res)
+		require.NoError(t, err)
+		require.Equal(t, tc.res, d.GetValue())
 	}
 }
 
-func (s *testEvaluatorSuite) TestValues(c *C) {
+func TestValues(t *testing.T) {
+	ctx := createContext(t)
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
-	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
-	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
+	_, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("")))
+	require.Error(t, err)
+	require.Regexp(t, "Incorrect parameter count in the call to native function 'values'$", err.Error())
 
-	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
-	c.Assert(err, IsNil)
+	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
+	require.NoError(t, err)
 
 	ret, err := evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(ret.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, ret.IsNull())
 
-	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
+	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "Session current insert values len.*")
+	require.Error(t, err)
+	require.Regexp(t, "^Session current insert values len", err.Error())
 
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
+	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
-	c.Assert(err, IsNil)
-	c.Assert(cmp, Equals, 0)
+	cmp, err := ret.Compare(nil, &currInsertValues[1], collate.GetBinaryCollator())
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 }
 
-func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
+func TestSetVarFromColumn(t *testing.T) {
+	ctx := createContext(t)
 	// Construct arguments.
 	argVarName := &Constant{
 		Value:   types.NewStringDatum("a"),
@@ -277,12 +213,12 @@ func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 
 	// Construct SetVar function.
 	funcSetVar, err := NewFunction(
-		s.ctx,
+		ctx,
 		ast.SetVar,
 		&types.FieldType{Tp: mysql.TypeVarString, Flen: 20},
 		[]Expression{argVarName, argCol}...,
 	)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Construct input and output Chunks.
 	inputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
@@ -290,19 +226,19 @@ func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
 
 	// Evaluate the SetVar function.
-	err = evalOneCell(s.ctx, funcSetVar, inputChunk.GetRow(0), outputChunk, 0)
-	c.Assert(err, IsNil)
-	c.Assert(outputChunk.GetRow(0).GetString(0), Equals, "a")
+	err = evalOneCell(ctx, funcSetVar, inputChunk.GetRow(0), outputChunk, 0)
+	require.NoError(t, err)
+	require.Equal(t, "a", outputChunk.GetRow(0).GetString(0))
 
 	// Change the content of the underlying Chunk.
 	inputChunk.Reset()
 	inputChunk.AppendString(0, "b")
 
 	// Check whether the user variable changed.
-	sessionVars := s.ctx.GetSessionVars()
+	sessionVars := ctx.GetSessionVars()
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
 	sessionVar, ok := sessionVars.Users["a"]
-	c.Assert(ok, Equals, true)
-	c.Assert(sessionVar.GetString(), Equals, "a")
+	require.Equal(t, true, ok)
+	require.Equal(t, "a", sessionVar.GetString())
 }

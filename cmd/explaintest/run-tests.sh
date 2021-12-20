@@ -31,6 +31,8 @@ stats="s"
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+# make tests stable time zone wise
+export TZ="Asia/Shanghai"
 
 function help_message()
 {

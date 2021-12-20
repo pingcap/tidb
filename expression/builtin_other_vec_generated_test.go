@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -283,12 +282,12 @@ var vecBuiltinOtherGeneratedCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherEvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinOtherGeneratedCases)
+func TestVectorizedBuiltinOtherEvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinOtherGeneratedCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOtherGeneratedCases)
+func TestVectorizedBuiltinOtherFuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinOtherGeneratedCases)
 }
 
 func BenchmarkVectorizedBuiltinOtherEvalOneVecGenerated(b *testing.B) {

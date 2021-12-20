@@ -5426,7 +5426,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(tidb_tikvclient_safets_gap_seconds{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (instance, store)",
+              "expr": "tidb_tikvclient_min_safets_gap_seconds{tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}-store-{{store}}",
@@ -5438,7 +5438,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Max SafeTS gap",
+          "title": "Max SafeTS Gap",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -6657,7 +6657,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_distsql_copr_cache_count{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_distsql_copr_cache_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
@@ -8051,7 +8051,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "999-{{type}}",
@@ -8059,14 +8059,14 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "99-{{type}}",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type!~\"tso|tso_async_wait\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "90-{{type}}",
@@ -8521,7 +8521,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The duration of the waiting time for getting the start timestamp oracle",
+          "description": "The duration of the async TS until called the Wait function.",
           "editable": true,
           "error": false,
           "fill": 1,
@@ -8556,7 +8556,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso_async_wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "999",
@@ -8564,14 +8564,14 @@
               "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso_async_wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "99",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_pdclient_ts_future_wait_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"tso_async_wait\"}[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "90",
@@ -8582,7 +8582,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Start TSO Wait Duration",
+          "title": "Async TSO Duration",
           "tooltip": {
             "msResolution": false,
             "shared": true,

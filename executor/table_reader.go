@@ -179,6 +179,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
+	// cached table and temporary table are similar
 	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {

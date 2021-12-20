@@ -3,9 +3,12 @@
 package task
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	. "github.com/pingcap/check"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/spf13/pflag"
 )
@@ -61,4 +64,100 @@ func (s *testCommonSuite) TestStripingPDURL(c *C) {
 	noChange, err := normalizePDURL("127.0.0.1:2379", false)
 	c.Assert(err, IsNil)
 	c.Assert(noChange, Equals, "127.0.0.1:2379")
+}
+
+func (s *testCommonSuite) TestCheckCipherKeyMatch(c *C) {
+	testCases := []struct {
+		CipherType encryptionpb.EncryptionMethod
+		CipherKey  string
+		ok         bool
+	}{
+		{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			ok:         true,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_UNKNOWN,
+			ok:         false,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+			CipherKey:  "0123456789abcdef0123456789abcdef",
+			ok:         true,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+			CipherKey:  "0123456789abcdef0123456789abcd",
+			ok:         false,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
+			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdef",
+			ok:         true,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
+			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdefff",
+			ok:         false,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			ok:         true,
+		},
+		{
+			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+			CipherKey:  "",
+			ok:         false,
+		},
+	}
+
+	for _, t := range testCases {
+		cipherKey, err := hex.DecodeString(t.CipherKey)
+		c.Assert(err, IsNil)
+
+		r := checkCipherKeyMatch(&backuppb.CipherInfo{
+			CipherType: t.CipherType,
+			CipherKey:  cipherKey,
+		})
+		c.Assert(r, Equals, t.ok)
+	}
+}
+
+func (s *testCommonSuite) TestCheckCipherKey(c *C) {
+	cases := []struct {
+		cipherKey string
+		keyFile   string
+		ok        bool
+	}{
+		{
+			cipherKey: "0123456789abcdef0123456789abcdef",
+			keyFile:   "",
+			ok:        true,
+		},
+		{
+			cipherKey: "0123456789abcdef0123456789abcdef",
+			keyFile:   "/tmp/abc",
+			ok:        false,
+		},
+		{
+			cipherKey: "",
+			keyFile:   "/tmp/abc",
+			ok:        true,
+		},
+		{
+			cipherKey: "",
+			keyFile:   "",
+			ok:        false,
+		},
+	}
+
+	for _, t := range cases {
+		err := checkCipherKey(t.cipherKey, t.keyFile)
+		if t.ok {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }

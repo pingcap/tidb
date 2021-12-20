@@ -153,8 +153,7 @@ type DDL interface {
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist,
-		tryRetainID bool) error
+		onExist OnExist) error
 
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
@@ -259,10 +258,10 @@ func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
 			case d.ddlEventCh <- e:
 				return
 			default:
-				logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 				time.Sleep(time.Microsecond * 10)
 			}
 		}
+		logutil.BgLogger().Warn("[ddl] fail to notify DDL event", zap.String("event", e.String()))
 	}
 }
 
@@ -552,6 +551,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
+	if err != nil {
+		// The transaction of enqueuing job is failed.
+		return errors.Trace(err)
+	}
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -593,7 +596,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
-		} else if historyJob == nil {
+		}
+		if historyJob == nil {
 			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}

@@ -25,5 +25,17 @@ set @@character_set_results = "BINARY";
 select * from t;
 set names utf8mb4;
 select * from t;
-
 set @@character_set_results = 'utf8mb4';
+
+-- Test for @@character_set_client.
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+select a, hex(a) from t;
+set @@character_set_client = 'utf8mb4';
