@@ -56,11 +56,3 @@ a	hex(a)
 中文	E4B8ADE69687
 涓?枃	E6B6933FE69E83
 set @@character_set_client = 'utf8mb4';
-drop table if exists t;
-create table t(a blob(100));
-set names gbk;
-insert into t values ("你好");
-select hex(a) from t;
-hex(a)
-E4BDA0E5A5BD
-set names utf8mb4;

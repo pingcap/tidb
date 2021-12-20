@@ -346,17 +346,6 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	if fromBinary && toBinary {
 		return nil
 	}
-	if toBinary {
-		coll, err := charset.GetCollationByName(origin.Collation())
-		if err != nil {
-			logutil.BgLogger().Warn("unknown collation", zap.Error(err))
-			return nil
-		}
-		enc := charset.FindEncoding(coll.CharsetName)
-		replace, _ := enc.Transform(nil, casted.GetBytes(), charset.OpEncodeNoErr)
-		casted.SetBytesAsString(replace, charset.CollationUTF8MB4, 0)
-		return nil
-	}
 	enc := charset.FindEncoding(col.Charset)
 	// Skip utf8 check if possible.
 	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
