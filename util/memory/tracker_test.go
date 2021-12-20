@@ -29,8 +29,6 @@ import (
 )
 
 func TestSetLabel(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, -1)
 	require.Equal(t, 1, tracker.label)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
@@ -73,8 +71,6 @@ func TestConsume(t *testing.T) {
 }
 
 func TestOOMAction(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
@@ -144,8 +140,6 @@ func (a *mockAction) GetPriority() int64 {
 }
 
 func TestAttachTo(t *testing.T) {
-	t.Parallel()
-
 	oldParent := NewTracker(1, -1)
 	newParent := NewTracker(2, -1)
 	child := NewTracker(3, -1)
@@ -168,8 +162,6 @@ func TestAttachTo(t *testing.T) {
 }
 
 func TestDetach(t *testing.T) {
-	t.Parallel()
-
 	parent := NewTracker(1, -1)
 	child := NewTracker(2, -1)
 	child.Consume(100)
@@ -187,8 +179,6 @@ func TestDetach(t *testing.T) {
 }
 
 func TestReplaceChild(t *testing.T) {
-	t.Parallel()
-
 	oldChild := NewTracker(1, -1)
 	oldChild.Consume(100)
 	newChild := NewTracker(2, -1)
@@ -231,8 +221,6 @@ func TestReplaceChild(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
-	t.Parallel()
-
 	parent := NewTracker(1, -1)
 	child1 := NewTracker(2, 1000)
 	child2 := NewTracker(3, -1)
@@ -270,8 +258,6 @@ func TestToString(t *testing.T) {
 }
 
 func TestMaxConsumed(t *testing.T) {
-	t.Parallel()
-
 	r := NewTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -299,8 +285,6 @@ func TestMaxConsumed(t *testing.T) {
 }
 
 func TestGlobalTracker(t *testing.T) {
-	t.Parallel()
-
 	r := NewGlobalTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -388,8 +372,6 @@ func parseByte(str string) (int64, error) {
 }
 
 func TestFormatBytesWithPrune(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		b string
 		s string
@@ -435,14 +417,10 @@ func TestFormatBytesWithPrune(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, errno.ErrMemExceedThreshold, int(terror.ToSQLError(errMemExceedThreshold).Code))
 }
 
 func TestOOMActionPriority(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)

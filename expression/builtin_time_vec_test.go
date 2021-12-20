@@ -589,7 +589,6 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 }
 
 func TestVecMonth(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true

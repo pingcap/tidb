@@ -151,7 +151,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
 	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
-		tctx.L().Info("get global metadata failed", zap.Error(err))
+		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
 	//init charset and default collation map
@@ -167,7 +167,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 	if err = d.renewSelectTableRegionFuncForLowerTiDB(tctx); err != nil {
-		tctx.L().Info("cannot update select table region info for TiDB", zap.Error(err))
+		tctx.L().Info("cannot update select table region info for TiDB", log.ShortError(err))
 	}
 
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
@@ -220,7 +220,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		// record again, to provide a location to exit safe mode for DM
 		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
 		if err != nil {
-			tctx.L().Info("get global metadata (after connection pool established) failed", zap.Error(err))
+			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
 		}
 	}
 
@@ -362,7 +362,7 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 		for _, table := range tables {
 			tctx.L().Debug("start dumping table...", zap.String("database", dbName),
 				zap.String("table", table.Name))
-			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
+			meta, err := dumpTableMeta(tctx, conf, metaConn, dbName, table)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -454,25 +454,33 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 		return originSQL, nil
 	}
 	var charset string
+	var collation string
 	for _, createOption := range createStmt.Options {
 		// already have 'Collation'
 		if createOption.Tp == ast.TableOptionCollate {
-			return originSQL, nil
+			collation = createOption.StrValue
+			break
 		}
 		if createOption.Tp == ast.TableOptionCharset {
 			charset = createOption.StrValue
 		}
 	}
 
-	// get db collation
-	collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
-	if !ok {
-		tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
-		return originSQL, nil
+	if collation == "" && charset != "" {
+		// get db collation
+		collation, ok := charsetAndDefaultCollationMap[strings.ToLower(charset)]
+		if !ok {
+			tctx.L().Warn("not found table charset default collation.", zap.String("originSQL", originSQL), zap.String("charset", strings.ToLower(charset)))
+			return originSQL, nil
+		}
+
+		// add collation
+		createStmt.Options = append(createStmt.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: collation})
 	}
 
-	// add collation
-	createStmt.Options = append(createStmt.Options, &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: collation})
+	// adjust columns collation
+	adjustColumnsCollation(tctx, createStmt, charsetAndDefaultCollationMap)
+
 	// rewrite sql
 	var b []byte
 	bf := bytes.NewBuffer(b)
@@ -484,6 +492,31 @@ func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originS
 		return "", errors.Trace(err)
 	}
 	return bf.String(), nil
+}
+
+// adjustColumnsCollation adds column's collation.
+func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableStmt, charsetAndDefaultCollationMap map[string]string) {
+	for _, col := range createStmt.Cols {
+		for _, options := range col.Options {
+			// already have 'Collation'
+			if options.Tp == ast.ColumnOptionCollate {
+				continue
+			}
+		}
+		fieldType := col.Tp
+		if fieldType.Collate != "" {
+			continue
+		}
+		if fieldType.Charset != "" {
+			// just have charset
+			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.Charset)]
+			if !ok {
+				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.Charset)))
+				continue
+			}
+			fieldType.Collate = collation
+		}
+	}
 }
 
 func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
@@ -944,7 +977,7 @@ func selectTiDBTableRegion(tctx *tcontext.Context, conn *sql.Conn, meta TableMet
 		pkVal, err2 := extractTiDBRowIDFromDecodedKey(tidbRowID, decodedKey.String)
 		if err2 != nil {
 			logger.Debug("cannot extract pkVal from decoded start key",
-				zap.Int("rowID", rowID), zap.String("startKey", startKey.String), zap.String("decodedKey", decodedKey.String), zap.Error(err2))
+				zap.Int("rowID", rowID), zap.String("startKey", startKey.String), zap.String("decodedKey", decodedKey.String), log.ShortError(err2))
 		} else {
 			pkVals = append(pkVals, []string{pkVal})
 		}
@@ -980,7 +1013,7 @@ func selectTiDBPartitionRegion(tctx *tcontext.Context, conn *sql.Conn, dbName, t
 		pkVal, err2 := extractTiDBRowIDFromDecodedKey(regionRowKey, startKey)
 		if err2 != nil {
 			logger.Debug("show table region start key doesn't have rowID",
-				zap.Int("rowID", rowID), zap.String("startKey", startKey), zap.Error(err2))
+				zap.Int("rowID", rowID), zap.String("startKey", startKey), log.ShortError(err2))
 		} else {
 			pkVals = append(pkVals, []string{pkVal})
 		}
@@ -1020,7 +1053,20 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
-	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, getListTableTypeByConf(conf), tableTypes...)
+
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		tctx.L().Warn("dumpling tableType `sequence` is unsupported for now")
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
+	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
 	if err != nil {
 		return err
 	}
@@ -1029,7 +1075,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	return nil
 }
 
-func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
+func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
 	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
 	if err != nil {
@@ -1042,7 +1088,7 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		hasImplicitRowID, err = SelectTiDBRowID(conn, db, tbl)
 		if err != nil {
-			return nil, err
+			tctx.L().Info("check implicit rowID failed", zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
 	}
 
@@ -1320,7 +1366,7 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 			if err == nil {
 				break
 			}
-			tctx.L().Debug("update PD safePoint failed", zap.Error(err), zap.Int("retryTime", retryCnt))
+			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
 			select {
 			case <-tctx.Done():
 				return
@@ -1413,7 +1459,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 
 			key, err := hex.DecodeString(region.StartKey)
 			if err != nil {
-				d.L().Debug("invalid region start key", zap.Error(err), zap.String("key", region.StartKey))
+				d.L().Debug("invalid region start key", log.ShortError(err), zap.String("key", region.StartKey))
 				continue
 			}
 			// Auto decode byte if needed.
@@ -1424,13 +1470,13 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 			// Try to decode it as a record key.
 			tableID, handle, err := tablecodec.DecodeRecordKey(key)
 			if err != nil {
-				d.L().Debug("cannot decode region start key", zap.Error(err), zap.String("key", region.StartKey), zap.Int64("tableID", tableID))
+				d.L().Debug("cannot decode region start key", log.ShortError(err), zap.String("key", region.StartKey), zap.Int64("tableID", tableID))
 				continue
 			}
 			if handle.IsInt() {
 				tableInfoMap[db][tbl] = append(tableInfoMap[db][tbl], handle.IntValue())
 			} else {
-				d.L().Debug("not an int handle", zap.Error(err), zap.Stringer("handle", handle))
+				d.L().Debug("not an int handle", log.ShortError(err), zap.Stringer("handle", handle))
 			}
 		}
 	}

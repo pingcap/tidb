@@ -24,7 +24,6 @@ import (
 
 func TestStrLenOfUint64Fast(t *testing.T) {
 	t.Run("RandomInput", func(t *testing.T) {
-		t.Parallel()
 		for i := 0; i < 1000000; i++ {
 			num := rand.Uint64()
 			expected := len(strconv.FormatUint(num, 10))
@@ -34,7 +33,6 @@ func TestStrLenOfUint64Fast(t *testing.T) {
 	})
 
 	t.Run("ManualInput", func(t *testing.T) {
-		t.Parallel()
 		nums := [22]uint64{0,
 			1, 12, 123, 1234, 12345,
 			123456, 1234567, 12345678, 123456789, 1234567890,
