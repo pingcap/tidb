@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/helper"
 
 	"github.com/pingcap/errors"
@@ -250,8 +249,9 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 					RegionCache: tikvStore.GetRegionCache(),
 				}
 				ruleID := fmt.Sprintf("table-%v-r", tableID)
+				// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
 				if err := tikvHelper.DeletePlacementRule("tiflash", ruleID); err != nil {
-					log.Warn("delManager: delete tiflash pd rule failed", zap.Error(err))
+					logutil.BgLogger().Error("delManager: delete tiflash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
 				}
 			}
 			logutil.BgLogger().Info("[ddl] delRange emulator complete task",

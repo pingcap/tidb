@@ -17,11 +17,11 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/helper"
 	"go.uber.org/zap"
 
@@ -582,7 +582,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
-	// Clear the tiflash replica available status.
+	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
@@ -598,7 +598,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 					newPartRule := MakeNewRule(d.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 					err := tikvHelper.SetPlacementRule(*newPartRule)
 					if err != nil {
-						log.Warn("SetPlacementRule fails", zap.Error(err))
+						logutil.BgLogger().Warn("Set new pd rule fail while truncate table partition", zap.Error(err), zap.Int64("tableID", tblInfo.ID), zap.Int64("partitionID", d.ID))
 						atomic.StoreUint32(&ReschePullTiFlash, 1)
 					}
 				}
@@ -606,12 +606,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 				newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 				err := tikvHelper.SetPlacementRule(*newRule)
 				if err != nil {
-					log.Warn("SetPlacementRule fails", zap.Error(err))
+					logutil.BgLogger().Warn("Set new pd rule fail while truncate table", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
 					atomic.StoreUint32(&ReschePullTiFlash, 1)
 				}
 			}
 		} else {
-			log.Warn("Set new pd rule fail while truncate table")
+			logutil.BgLogger().Warn("Set new pd rule fail while truncate table")
 			atomic.StoreUint32(&ReschePullTiFlash, 1)
 		}
 	}

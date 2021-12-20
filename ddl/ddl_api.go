@@ -3258,14 +3258,14 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		// Must set placement rule before the ActionAddTablePartition job is in queue.
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
-			log.Error("can not get Helper")
+			logutil.BgLogger().Error("can not get Helper")
 		} else {
 			tikvHelper := &helper.Helper{
 				Store:       tikvStore,
 				RegionCache: tikvStore.GetRegionCache(),
 			}
 			for _, p := range partInfo.Definitions {
-				log.Info(fmt.Sprintf("AddTablePartitions add partition %v\n", p.ID))
+				logutil.BgLogger().Info("add partition for TiFlash", zap.Int64("ID", p.ID))
 				ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -4761,6 +4761,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			for _, p := range pi.Definitions {
+				logutil.BgLogger().Info("set TiFlash replica", zap.Int64("partitionID", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -4768,6 +4769,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			}
 			// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
 			for _, p := range pi.AddingDefinitions {
+				logutil.BgLogger().Info("set TiFlash replica", zap.Int64("addPartitionID", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -4777,6 +4779,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 				}
 			}
 		} else {
+			logutil.BgLogger().Info("set TiFlash replica", zap.Int64("tableID", tblInfo.ID))
 			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)

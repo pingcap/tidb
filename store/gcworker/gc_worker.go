@@ -1906,7 +1906,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 
 	deletePdRuleFunc := func() {
 		// Delete pd rule
-		log.Info("try delete pd rule", zap.String("endKey", string(dr.EndKey)))
+		logutil.BgLogger().Info("try delete pd rule", zap.String("endKey", string(dr.EndKey)))
 		tableID := helper.GetTiFlashTableIDFromEndKey(string(dr.EndKey))
 		tikvStore, ok := w.store.(helper.Storage)
 		if ok {
@@ -1916,7 +1916,8 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			}
 			ruleID := fmt.Sprintf("table-%v-r", tableID)
 			if err := tikvHelper.DeletePlacementRule("tiflash", ruleID); err != nil {
-				log.Warn("delete tiflash pd rule failed", zap.Error(err))
+				// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
+				logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
 			}
 		}
 	}
@@ -1930,6 +1931,8 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		// Since the original implementation doesn't handle pd rules for ActionDropSchema etc.,
+		// we don't handle TiFlash pd rules for them either.
 		deletePdRuleFunc()
 	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
