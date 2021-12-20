@@ -219,7 +219,7 @@ func (s FastIntSet) Difference(rhs FastIntSet) FastIntSet {
 }
 
 // DifferenceWith removes any elements in rhs from source.
-func (s FastIntSet) DifferenceWith(rhs FastIntSet) {
+func (s *FastIntSet) DifferenceWith(rhs FastIntSet) {
 	s.small &^= rhs.small
 	if s.large == nil {
 		return

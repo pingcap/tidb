@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/tools/container/intsets"
 )
 
 func TestAddStrictFunctionalDependency(t *testing.T) {
@@ -99,7 +98,7 @@ func TestFDSet_ClosureOf(t *testing.T) {
 	}
 	fd.fdEdges = append(fd.fdEdges, fe1, fe2, fe3, fe4)
 	// A -> ADEH
-	closure := fd.closureOf(NewFastIntSet(1)).SortedArray()
+	closure := fd.closureOfStrict(NewFastIntSet(1)).SortedArray()
 	ass.Equal(len(closure), 4)
 	ass.Equal(closure[0], 1)
 	ass.Equal(closure[1], 4)
@@ -107,7 +106,7 @@ func TestFDSet_ClosureOf(t *testing.T) {
 	ass.Equal(closure[3], 8)
 	// AB -> ABCDEFGH
 	fd.fdEdges = append(fd.fdEdges, fe1, fe2, fe3, fe4)
-	closure = fd.closureOf(NewFastIntSet(1, 2)).SortedArray()
+	closure = fd.closureOfStrict(NewFastIntSet(1, 2)).SortedArray()
 	ass.Equal(len(closure), 8)
 	ass.Equal(closure[0], 1)
 	ass.Equal(closure[1], 2)
@@ -202,139 +201,111 @@ func TestFDSet_InClosure(t *testing.T) {
 	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7, 8)))
 }
 
-func BenchmarkMapIntSet_Difference(b *testing.B) {
-	intSetA := NewIntSet()
-	for i := 0; i < 200000; i++ {
-		intSetA[i] = struct{}{}
-	}
-	intSetB := NewIntSet()
-	for i := 100000; i < 300000; i++ {
-		intSetB[i] = struct{}{}
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tmp := NewIntSet()
-		tmp.Difference2(intSetA, intSetB)
-		//intSetA.SubsetOf(intSetB)
-	}
+func TestFDSet_AddConstant(t *testing.T) {
+	t.Parallel()
+	ass := assert.New(t)
+
+	fd := FDSet{}
+	ass.Equal("()", fd.ConstantCols().String())
+
+	fd.AddConstants(NewFastIntSet(1, 2)) // {} --> {a,b}
+	ass.Equal(len(fd.fdEdges), 1)
+	ass.True(fd.fdEdges[0].strict)
+	ass.False(fd.fdEdges[0].equiv)
+	ass.Equal("()", fd.fdEdges[0].from.String())
+	ass.Equal("(1,2)", fd.fdEdges[0].to.String())
+	ass.Equal("(1,2)", fd.ConstantCols().String())
+
+	fd.AddConstants(NewFastIntSet(3)) // c, {} --> {a,b,c}
+	ass.Equal(len(fd.fdEdges), 1)
+	ass.True(fd.fdEdges[0].strict)
+	ass.False(fd.fdEdges[0].equiv)
+	ass.Equal("()", fd.fdEdges[0].from.String())
+	ass.Equal("(1-3)", fd.fdEdges[0].to.String())
+	ass.Equal("(1-3)", fd.ConstantCols().String())
+
+	fd.AddStrictFunctionalDependency(NewFastIntSet(3, 4), NewFastIntSet(5, 6)) // {c,d} --> {e,f}
+	ass.Equal(len(fd.fdEdges), 2)
+	ass.True(fd.fdEdges[0].strict)
+	ass.False(fd.fdEdges[0].equiv)
+	ass.Equal("()", fd.fdEdges[0].from.String())
+	ass.Equal("(1-3)", fd.fdEdges[0].to.String())
+	ass.Equal("(1-3)", fd.ConstantCols().String())
+	ass.True(fd.fdEdges[1].strict)
+	ass.False(fd.fdEdges[1].equiv)
+	ass.Equal("(4)", fd.fdEdges[1].from.String()) // determinant 3 reduced as constant, leaving FD {d} --> {f,g}.
+	ass.Equal("(5,6)", fd.fdEdges[1].to.String())
+
+	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6)) // {g} ~~> {e,f}
+	ass.Equal(len(fd.fdEdges), 3)
+	ass.False(fd.fdEdges[2].strict)
+	ass.False(fd.fdEdges[2].equiv)
+	ass.Equal("(7)", fd.fdEdges[2].from.String())
+	ass.Equal("(5,6)", fd.fdEdges[2].to.String())
+
+	fd.AddConstants(NewFastIntSet(4)) // add d, {} --> {a,b,c,d}, and FD {d} --> {f,g} is transferred to constant closure.
+	ass.Equal(1, len(fd.fdEdges))     // => {} --> {a,b,c,d,e,f}, for lax FD {g} ~~> {e,f}, dependencies are constants, removed.
+	ass.True(fd.fdEdges[0].strict)
+	ass.False(fd.fdEdges[0].equiv)
+	ass.Equal("()", fd.fdEdges[0].from.String())
+	ass.Equal("(1-6)", fd.fdEdges[0].to.String())
+	ass.Equal("(1-6)", fd.ConstantCols().String())
 }
 
-func BenchmarkIntSet_Difference(b *testing.B) {
-	intSetA := &intsets.Sparse{}
-	for i := 0; i < 200000; i++ {
-		intSetA.Insert(i)
-	}
-	intSetB := &intsets.Sparse{}
-	for i := 100000; i < 300000; i++ {
-		intSetA.Insert(i)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		tmp := &intsets.Sparse{}
-		tmp.Difference(intSetA, intSetB)
-		//intSetA.SubsetOf(intSetB)
-	}
-}
+func TestFDSet_AddEquivalence(t *testing.T) {
+	t.Parallel()
+	ass := assert.New(t)
 
-func BenchmarkFastIntSet_Difference(b *testing.B) {
-	intSetA := NewFastIntSet()
-	for i := 0; i < 200000; i++ {
-		intSetA.Insert(i)
-	}
-	intSetB := NewFastIntSet()
-	for i := 100000; i < 300000; i++ {
-		intSetA.Insert(i)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		intSetA.Difference(intSetB)
-		//intSetA.SubsetOf(intSetB)
-	}
-}
+	fd := FDSet{}
+	ass.Equal(0, len(fd.EquivalenceCols()))
 
-func BenchmarkIntSet_Insert(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		intSet := NewIntSet()
-		for j := 0; j < 64; j++ {
-			intSet.Insert(j)
-		}
-	}
-}
+	fd.AddEquivalence(NewFastIntSet(1), NewFastIntSet(2)) // {a} == {b}
+	ass.Equal(1, len(fd.fdEdges))                         // res: {a} == {b}
+	ass.Equal(1, len(fd.EquivalenceCols()))
+	ass.True(fd.fdEdges[0].strict)
+	ass.True(fd.fdEdges[0].equiv)
+	ass.Equal("(1,2)", fd.fdEdges[0].from.String())
+	ass.Equal("(1,2)", fd.fdEdges[0].to.String())
+	ass.Equal("(1,2)", fd.EquivalenceCols()[0].String())
 
-func BenchmarkSparse_Insert(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		intSet := &intsets.Sparse{}
-		for j := 0; j < 64; j++ {
-			intSet.Insert(j)
-		}
-	}
-}
+	fd.AddEquivalence(NewFastIntSet(3), NewFastIntSet(4)) // {c} == {d}
+	ass.Equal(2, len(fd.fdEdges))                         // res: {a,b} == {a,b}, {c,d} == {c,d}
+	ass.Equal(2, len(fd.EquivalenceCols()))
+	ass.True(fd.fdEdges[0].strict)
+	ass.True(fd.fdEdges[0].equiv)
+	ass.Equal("(1,2)", fd.fdEdges[0].from.String())
+	ass.Equal("(1,2)", fd.fdEdges[0].to.String())
+	ass.Equal("(1,2)", fd.EquivalenceCols()[0].String())
+	ass.True(fd.fdEdges[1].strict)
+	ass.True(fd.fdEdges[1].equiv)
+	ass.Equal("(3,4)", fd.fdEdges[1].from.String())
+	ass.Equal("(3,4)", fd.fdEdges[1].to.String())
+	ass.Equal("(3,4)", fd.EquivalenceCols()[1].String())
 
-func BenchmarkFastIntSet_Insert(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		intSet := NewFastIntSet()
-		for j := 0; j < 64; j++ {
-			intSet.Insert(j)
-		}
-	}
-}
+	fd.AddConstants(NewFastIntSet(4, 5)) // {} --> {d,e}
+	ass.Equal(3, len(fd.fdEdges))        // res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}
+	ass.True(fd.fdEdges[2].strict)       // explain: constant closure is extended by equivalence {c,d} == {c,d}
+	ass.False(fd.fdEdges[2].equiv)
+	ass.Equal("()", fd.fdEdges[2].from.String())
+	ass.Equal("(3-5)", fd.fdEdges[2].to.String())
+	ass.Equal("(3-5)", fd.ConstantCols().String())
 
-// BenchMarkResult
-//
-// Test with Difference (traverse and allocation) (size means the intersection size)
-// +--------------------------------------------------------------------------------+
-// |     size   |   map int set   |  basic sparse int set  |   fast sparse int set  |
-// +------------+-----------------+------------------------+------------------------+
-// |       64   |     3203 ns/op  |         64 ns/op       |        5.750 ns/op     |
-// |     1000   |   244284 ns/op  |        822 ns/op       |        919.8 ns/op     |
-// |    10000   |  2940130 ns/op  |       8071 ns/op       |         8686 ns/op     |
-// |   100000   | 41283606 ns/op  |      83320 ns/op       |        85563 ns/op     |
-// +------------+-----------------+------------------------+------------------------+
-//
-// This test is under same operation with same data with following analysis:
-// MapInt and Sparse are all temporarily allocated for intermediate result. Since
-// MapInt need to reallocate the capacity with unit as int(64) which is expensive
-// than a bit of occupation in Sparse reallocation.
-//
-// From the space utilization and allocation times, here in favour of sparse.
-//
-// Test with Insert (allocation)
-// +----------------------------------------------------------------------------+
-// |  size  |   map int set   |  basic sparse int set  |   fast sparse int set  |
-// +--------+-----------------+------------------------+------------------------+
-// |     64 |     5705 ns/op  |         580 ns/op      |           234 ns/op    |
-// |   1000 |   122906 ns/op  |        7991 ns/op      |         10606 ns/op    |
-// |  10000 |   845961 ns/op  |      281134 ns/op      |        303006 ns/op    |
-// | 100000 | 15529859 ns/op  |    31273573 ns/op      |      30752177 ns/op    |
-// +--------------------------+------------------------+------------------------+
-//
-// From insert, map insert take much time than sparse does when insert size is under
-// 100 thousand. While when the size grows bigger, map insert take less time to do that
-// (maybe cost more memory usage), that because sparse need to traverse the chain to
-// find the suitable block to insert.
-//
-// From insert, if set size is larger than 100 thousand, map-set is preferred, otherwise, sparse is good.
-//
-// Test with Subset (traverse) (sizes means the size A / B)
-// +---------------------------------------------------------------------------------+
-// |  size  |   map int set   |  basic sparse int set  |   fast sparse int set  |
-// +--------+-----------------+------------------------+------------------------+
-// |     64 |    59.47 ns/op  |       3.775 ns/op      |        2.727 ns/op     |
-// |   1000 |    68.9 ns/op   |       3.561 ns/op      |        22.64 ns/op     |
-// |  20000 |   104.7 ns/op   |       3.502 ns/op      |        23.92 ns/op     |
-// | 200000 |   249.8 ns/op   |       3.504 ns/op      |        22.11 ns/op     |
-// +--------------------------+------------------------+------------------------+
-//
-// This is the most amazing part we have been tested. Map set need to compute the equality
-// about the every key int in the map with others. While sparse only need to do is just to
-// fetch every bitmap (every bit implies a number) and to the bit operation together.
-//
-// FastIntSet's performance is quite like Sparse IntSet, because they have the same implementation
-// inside. While FastIntSet have some optimizations with small range (0-63), so we add an
-// extra test for size with 64, from the number above, they did have some effects, especially
-// in computing the difference (bit | technically).
-//
-// From all above, we are in favour of sparse. sparse to store fast-int-set instead of using map.
+	fd.AddStrictFunctionalDependency(NewFastIntSet(2, 3), NewFastIntSet(5, 6)) // {b,c} --> {e,f}
+	ass.Equal(4, len(fd.fdEdges))                                              // res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}, {b} --> {e,f}
+	ass.True(fd.fdEdges[3].strict)                                             // explain: strict FD's from side c is eliminated by constant closure.
+	ass.False(fd.fdEdges[3].equiv)
+	ass.Equal("(2)", fd.fdEdges[3].from.String())
+	ass.Equal("(5,6)", fd.fdEdges[3].to.String())
+
+	fd.AddEquivalence(NewFastIntSet(2), NewFastIntSet(3)) // {b} == {d}
+	// res: {a,b,c,d} == {a,b,c,d}, {} --> {a,b,c,d,e,f}
+	// explain:
+	// b = d build the connection between {a,b} == {a,b}, {c,d} == {c,d}, make the superset of equivalence closure.
+	// the superset equivalence closure extend the existed constant closure in turn, resulting {} --> {a,b,c,d,e}
+	// the superset constant closure eliminate existed strict FD, since determinants is constant, so the dependencies must be constant as well.
+	// so extending the current constant closure as to {} --> {a,b,c,d,e,f}
+	ass.Equal(2, len(fd.fdEdges))
+	ass.Equal(1, len(fd.EquivalenceCols()))
+	ass.Equal("(1-4)", fd.EquivalenceCols()[0].String())
+	ass.Equal("(1-6)", fd.ConstantCols().String())
+}
