@@ -3450,8 +3450,6 @@ func (s *testIntegrationSuite) TestIndexMergeClusterIndex(c *C) {
 	))
 }
 
-<<<<<<< HEAD
-=======
 func (s *testIntegrationSuite) TestJoinSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3461,119 +3459,6 @@ func (s *testIntegrationSuite) TestJoinSchemaChange(c *C) {
 	tk.MustQuery("select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b)").Check(testkit.Rows())
 }
 
-// #22949: test HexLiteral Used in GetVar expr
-func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1_no_idx;")
-	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
-	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
-	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
-
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
-	tk.MustExec("set @a = 0x3135;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-	tk.MustExec("set @a = 0x0F;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
-
-	// same test, but use IN expr
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
-	tk.MustExec("set @a = 0x3135;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-	tk.MustExec("set @a = 0x0F;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
-
-	// same test, but use table with index on col_bit
-	tk.MustExec("drop table if exists t2_idx;")
-	tk.MustExec("create table t2_idx(id int, col_bit bit(16), key(col_bit));")
-	tk.MustExec("insert into t2_idx values(1, 0x3135);")
-	tk.MustExec("insert into t2_idx values(2, 0x0f);")
-
-	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit = ?';")
-	tk.MustExec("set @a = 0x3135;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-	tk.MustExec("set @a = 0x0F;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
-
-	// same test, but use IN expr
-	tk.MustExec("prepare stmt from 'select id from t2_idx where col_bit in (?)';")
-	tk.MustExec("set @a = 0x3135;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-	tk.MustExec("set @a = 0x0F;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("2"))
-
-	// test col varchar with GetVar
-	tk.MustExec("drop table if exists t_varchar;")
-	tk.MustExec("create table t_varchar(id int, col_varchar varchar(100), key(col_varchar));")
-	tk.MustExec("insert into t_varchar values(1, '15');")
-	tk.MustExec("prepare stmt from 'select id from t_varchar where col_varchar = ?';")
-	tk.MustExec("set @a = 0x3135;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-}
-
-// test BitLiteral used with GetVar
-func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1_no_idx;")
-	tk.MustExec("create table t1_no_idx(id int, col_bit bit(16));")
-	tk.MustExec("insert into t1_no_idx values(1, 0x3135);")
-	tk.MustExec("insert into t1_no_idx values(2, 0x0f);")
-
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit = ?';")
-	// 0b11000100110101 is 0x3135
-	tk.MustExec("set @a = 0b11000100110101;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-
-	// same test, but use IN expr
-	tk.MustExec("prepare stmt from 'select id from t1_no_idx where col_bit in (?)';")
-	tk.MustExec("set @a = 0b11000100110101;")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
-}
-
-func (s *testIntegrationSuite) TestIndexMergeClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c1 float, c2 int, c3 int, primary key (c1) /*T![clustered_index] CLUSTERED */, key idx_1 (c2), key idx_2 (c3))")
-	tk.MustExec("insert into t values(1.0,1,2),(2.0,2,1),(3.0,1,1),(4.0,2,2)")
-	tk.MustQuery("select /*+ use_index_merge(t) */ c3 from t where c3 = 1 or c2 = 1").Sort().Check(testkit.Rows(
-		"1",
-		"1",
-		"2",
-	))
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t (a int, b int, c int, primary key (a,b) /*T![clustered_index] CLUSTERED */, key idx_c(c))")
-	tk.MustExec("insert into t values (0,1,2)")
-	tk.MustQuery("select /*+ use_index_merge(t) */ c from t where c > 10 or a < 1").Check(testkit.Rows(
-		"2",
-	))
-}
-
-func (s *testIntegrationSuite) TestMultiColMaxOneRow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
->>>>>>> 5d7c85277... planner: keep the original join schema in predicate pushdown (#24862)
 func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
