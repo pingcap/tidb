@@ -773,6 +773,52 @@ func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
 	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
+<<<<<<< HEAD
+=======
+func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// avg int
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(1,0))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(9)")
+	for i := 0; i < 16; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
+	tk.MustExec("drop table if exists t")
+
+	// avg decimal
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("alter table td set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "td")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
+	tk.MustExec("drop table if exists td;")
+}
+
+>>>>>>> e3c56b75e... executor: buildWindow cannot call typeInfer twice (#30773)
 func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
