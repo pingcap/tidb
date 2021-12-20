@@ -432,7 +432,7 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	c.Assert(tmpl.warnFailedCount, Equals, 1)
 	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.warnMsgs[1], Matches, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB")
+	c.Assert(tmpl.normalMsgs[1], Matches, "local disk resources are rich, estimate sorted data size 1000B, local available is 2KiB")
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
@@ -451,5 +451,5 @@ func (s *checkInfoSuite) TestLocalResource(c *C) {
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	c.Assert(tmpl.warnFailedCount, Equals, 1)
 	c.Assert(tmpl.criticalFailedCount, Equals, 0)
-	c.Assert(tmpl.warnMsgs[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import")
+	c.Assert(tmpl.normalMsgs[1], Matches, "local disk space may not enough to finish import, estimate sorted data size is 4KiB, but local available is 2KiB,we will use disk-quota \\(size: 1KiB\\) to finish imports, which may slow down import")
 }
