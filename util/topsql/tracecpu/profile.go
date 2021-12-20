@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
@@ -201,11 +200,6 @@ func (s *sqlStats) tune() {
 		return
 	}
 	s.plans[""] += optimize
-}
-
-// IsEnabled return true if it is(should be) enabled. It exports for tests.
-func (sp *sqlCPUCollector) IsEnabled() bool {
-	return variable.TopSQLEnabled()
 }
 
 // CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.

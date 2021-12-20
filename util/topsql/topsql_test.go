@@ -61,16 +61,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		}(req.sql, req.plan)
 	}
 
-	// test for StartCPUProfile.
-	//buf := bytes.NewBuffer(nil)
-	//err := tracecpu.StartCPUProfile(buf)
-	//require.NoError(t, err)
-	//collector.WaitCollectCnt(2)
-	//err = tracecpu.StopCPUProfile()
-	//require.NoError(t, err)
-	//_, err = profile.Parse(buf)
-	//require.NoError(t, err)
-
 	for _, req := range reqs {
 		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
 		require.Equal(t, 1, len(stats))
@@ -79,25 +69,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.Equal(t, req.sql, sql)
 		require.Equal(t, req.plan, plan)
 	}
-}
-
-func TestIsEnabled(t *testing.T) {
-	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUCollector.IsEnabled())
-
-	setTopSQLEnable(true)
-	//err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
-	//require.NoError(t, err)
-	//require.True(t, tracecpu.GlobalSQLCPUCollector.IsEnabled())
-	//setTopSQLEnable(false)
-	//require.True(t, tracecpu.GlobalSQLCPUCollector.IsEnabled())
-	//err = tracecpu.StopCPUProfile()
-	//require.NoError(t, err)
-
-	setTopSQLEnable(false)
-	require.False(t, tracecpu.GlobalSQLCPUCollector.IsEnabled())
-	setTopSQLEnable(true)
-	require.True(t, tracecpu.GlobalSQLCPUCollector.IsEnabled())
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {

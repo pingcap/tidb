@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 	tracecpu.GlobalSQLCPUCollector.Run()
 
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
