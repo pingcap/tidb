@@ -1877,6 +1877,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
 		return err
 	}

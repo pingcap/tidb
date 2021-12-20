@@ -1027,7 +1027,7 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 }
 
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
-	return true, false, nil, nil
+	return true, false, &verify.KVChecksum{}, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
@@ -1071,8 +1071,8 @@ func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {
-	return false, true, nil
+func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
+	return true, true, nil
 }
 
 func (m *singleTaskMetaMgr) Cleanup(ctx context.Context) error {
