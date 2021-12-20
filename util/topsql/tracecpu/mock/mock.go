@@ -168,6 +168,11 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
+// CollectCnt uses for testing.
+func (c *TopSQLCollector) CollectCnt() int64 {
+	return c.collectCnt.Load()
+}
+
 // Close implements the interface.
 func (c *TopSQLCollector) Close() {}
 

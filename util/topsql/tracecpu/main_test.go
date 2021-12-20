@@ -19,8 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -33,14 +36,22 @@ func TestMain(m *testing.M) {
 	})
 	variable.TopSQLVariable.PrecisionSeconds.Store(1)
 	tracecpu.GlobalSQLCPUCollector.Run()
+	cpuprofile.GlobalCPUProfiler.Start()
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUCollector).startAnalyzeProfileWorker"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestPProfCPUProfile(t *testing.T) {
+	collector := mock.NewTopSQLCollector()
+	tracecpu.GlobalSQLCPUCollector.SetCollector(collector)
+	collector.WaitCollectCnt(1)
+	require.True(t, collector.CollectCnt() >= 1)
 }

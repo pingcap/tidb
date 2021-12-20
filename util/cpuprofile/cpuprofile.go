@@ -16,32 +16,22 @@ package cpuprofile
 
 import (
 	"bytes"
-	"go.uber.org/atomic"
 	"runtime/pprof"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/util"
+	"go.uber.org/atomic"
 )
 
-var (
-	globalProfiler *ParallelCPUProfiler
-	onceInit       sync.Once
-)
-
-func init() {
-	onceInit.Do(func() {
-		globalProfiler = NewParallelCPUProfiler()
-		globalProfiler.Start()
-	})
-}
+var GlobalCPUProfiler = NewParallelCPUProfiler()
 
 func Register(ch ProfileConsumer) {
-	globalProfiler.register(ch)
+	GlobalCPUProfiler.register(ch)
 }
 
 func Unregister(ch ProfileConsumer) {
-	globalProfiler.unregister(ch)
+	GlobalCPUProfiler.unregister(ch)
 }
 
 type ProfileConsumer chan *ProfileData
@@ -172,7 +162,7 @@ func (p *ParallelCPUProfiler) sendToConsumers() {
 	p.data = nil
 }
 
-func (p *ParallelCPUProfiler) close() {
+func (p *ParallelCPUProfiler) Stop() {
 	if p.isClosed.CAS(false, true) {
 		close(p.closed)
 	}

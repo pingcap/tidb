@@ -2,12 +2,12 @@ package cpuprofile
 
 import (
 	"fmt"
-	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func GetCPUProfile(seconds uint64, w io.Writer) error {

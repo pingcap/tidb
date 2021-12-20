@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -48,6 +49,7 @@ func SetupTopSQL() {
 
 	globalTopSQLReport = remoteReporter
 
+	cpuprofile.GlobalCPUProfiler.Start()
 	tracecpu.GlobalSQLCPUCollector.SetCollector(remoteReporter)
 	tracecpu.GlobalSQLCPUCollector.Run()
 }

@@ -33,7 +33,7 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
-// GlobalSQLCPUCollector is the global SQL stats profiler.
+// GlobalSQLCPUCollector is the global SQL CPU stats collector.
 var GlobalSQLCPUCollector = newSQLCPUCollector()
 
 // Collector uses to collect SQL execution cpu time.
@@ -61,9 +61,8 @@ type sqlCPUCollector struct {
 
 // newSQLCPUCollector create a sqlCPUCollector.
 func newSQLCPUCollector() *sqlCPUCollector {
-	cm := make(cpuprofile.ProfileConsumer, 1)
 	return &sqlCPUCollector{
-		profileConsumer: cm,
+		profileConsumer: make(cpuprofile.ProfileConsumer, 1),
 	}
 }
 
