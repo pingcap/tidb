@@ -37,10 +37,13 @@ type SingleTargetDataSink struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
+
+	registered bool
+	registerer DataSinkRegisterer
 }
 
 // NewSingleTargetDataSink returns a new SingleTargetDataSink
-func NewSingleTargetDataSink() *SingleTargetDataSink {
+func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSink {
 	ctx, cancel := context.WithCancel(context.Background())
 	dataSink := &SingleTargetDataSink{
 		ctx:    ctx,
@@ -49,13 +52,37 @@ func NewSingleTargetDataSink() *SingleTargetDataSink {
 		curRPCAddr: "",
 		conn:       nil,
 		sendTaskCh: make(chan sendTask, 1),
+
+		registered: false,
+		registerer: registerer,
 	}
+
+	addr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+	if addr != "" {
+		dataSink.curRPCAddr = addr
+		if err := registerer.Register(dataSink); err != nil {
+			logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
+			return nil
+		}
+	}
+
 	go dataSink.recoverRun()
 	return dataSink
 }
 
 // recoverRun will run until SingleTargetDataSink is closed.
 func (ds *SingleTargetDataSink) recoverRun() {
+	defer func() {
+		if ds.conn == nil {
+			return
+		}
+		err := ds.conn.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
+		}
+		ds.conn = nil
+	}()
+
 	for ds.run() {
 	}
 }
@@ -71,30 +98,40 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		}
 	}()
 
+	ticker := time.NewTicker(time.Second)
 	for {
-		var task sendTask
+		var targetRPCAddr string
 		select {
 		case <-ds.ctx.Done():
 			return false
-		case task = <-ds.sendTaskCh:
+		case task := <-ds.sendTaskCh:
+			targetRPCAddr = config.GetGlobalConfig().TopSQL.ReceiverAddress
+			ds.doSend(targetRPCAddr, task)
+		case <-ticker.C:
+			targetRPCAddr = config.GetGlobalConfig().TopSQL.ReceiverAddress
 		}
 
-		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
-		if targetRPCAddr == "" {
-			continue
-		}
-
-		ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
-		start := time.Now()
-		err := ds.doSend(ctx, targetRPCAddr, task.data)
-		cancel()
-		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
-			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-		} else {
-			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		if err := ds.tryRegister(targetRPCAddr); err != nil {
+			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
+			return false
 		}
 	}
+}
+
+func (ds *SingleTargetDataSink) tryRegister(addr string) error {
+	if addr == "" && ds.registered {
+		ds.registerer.Deregister(ds)
+		ds.registered = false
+		return nil
+	}
+
+	if addr != "" && !ds.registered {
+		if err := ds.registerer.Register(ds); err != nil {
+			return err
+		}
+		ds.registered = true
+	}
+	return nil
 }
 
 var _ DataSink = &SingleTargetDataSink{}
@@ -114,38 +151,39 @@ func (ds *SingleTargetDataSink) TrySend(data *ReportData, deadline time.Time) er
 	}
 }
 
-// IsPaused implements the DataSink interface.
-func (ds *SingleTargetDataSink) IsPaused() bool {
-	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
-}
-
-// IsDown implements the DataSink interface.
-func (ds *SingleTargetDataSink) IsDown() bool {
-	select {
-	case <-ds.ctx.Done():
-		return true
-	default:
-		return false
-	}
+// OnReporterClosing implements the DataSink interface.
+func (ds *SingleTargetDataSink) OnReporterClosing() {
+	ds.cancel()
 }
 
 // Close uses to close grpc connection.
 func (ds *SingleTargetDataSink) Close() {
 	ds.cancel()
-	if ds.conn == nil {
-		return
+
+	if ds.registered {
+		ds.registerer.Deregister(ds)
 	}
-	err := ds.conn.Close()
-	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] single target dataSink close connection failed", zap.Error(err))
-	}
-	ds.conn = nil
 }
 
-func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data *ReportData) error {
-	err := ds.tryEstablishConnection(ctx, addr)
+func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
+	if addr == "" {
+		return
+	}
+
+	var err error
+	start := time.Now()
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
+		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+	} else {
+		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
+	defer cancel()
+
+	if err = ds.tryEstablishConnection(ctx, addr); err != nil {
+		return
 	}
 
 	var wg sync.WaitGroup
@@ -154,24 +192,23 @@ func (ds *SingleTargetDataSink) doSend(ctx context.Context, addr string, data *R
 
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchSQLMeta(ctx, data.SQLMetas)
+		errCh <- ds.sendBatchSQLMeta(ctx, task.data.SQLMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchPlanMeta(ctx, data.PlanMetas)
+		errCh <- ds.sendBatchPlanMeta(ctx, task.data.PlanMetas)
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchCPUTimeRecord(ctx, data.CPUTimeRecords)
+		errCh <- ds.sendBatchCPUTimeRecord(ctx, task.data.CPUTimeRecords)
 	}()
 	wg.Wait()
 	close(errCh)
-	for err := range errCh {
+	for err = range errCh {
 		if err != nil {
-			return err
+			return
 		}
 	}
-	return nil
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
