@@ -206,7 +206,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	origin := ""
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	if err != nil {
-		// If there is no key,
+		// Try to update.
 		for _, kv := range resp.Kvs {
 			if string(kv.Key) == key {
 				origin = string(kv.Value)
