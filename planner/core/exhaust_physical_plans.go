@@ -1869,27 +1869,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	} else {
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-<<<<<<< HEAD
-			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
-				matches = prop.IsSubsetOf(rkeys)
-=======
 			if p.JoinType == InnerJoin {
-				if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
-					matches = prop.IsSubsetOf(rPartitionKeys)
+				if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+					matches = prop.IsSubsetOf(rkeys)
 				}
 			} else if p.JoinType == RightOuterJoin {
-				// for right out join, only the right partition keys can possibly matches the prop, because
-				// the left partition keys will generate NULL values randomly
-				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
+				// for right out join, only the right keys can possibly matches the prop, because
+				// the left keys will generate NULL values randomly
+				// todo maybe we can add a null-sensitive flag in the key columns to indicate whether the column is
 				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
-				matches = prop.IsSubsetOf(rPartitionKeys)
+				matches = prop.IsSubsetOf(rKeys)
 			} else {
-				// for left out join, only the left partition keys can possibly matches the prop, because
-				// the right partition keys will generate NULL values randomly
-				// for semi/anti semi/left out semi/anti left out semi join, only left partition keys are returned,
-				// so just check the left partition keys
-				matches = prop.IsSubsetOf(lPartitionKeys)
->>>>>>> d1a3279b7... planner: fix can not found column bug (#28067)
+				// for left out join, only the left keys can possibly matches the prop, because
+				// the right keys will generate NULL values randomly
+				// for semi/anti semi/left out semi/anti left out semi join, only left keys are returned,
+				// so just check the left keys
+				matches = prop.IsSubsetOf(lKeys)
 			}
 			if len(matches) == 0 {
 				return nil
