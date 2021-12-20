@@ -924,10 +924,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
 		p.Paging = true
-		// we want the diff between idxCst and pagingCst here,
-		// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
-		pagingCstDiff := calcPagingCost(ctx, t) - sessVars.GetSeekFactor(nil)
-		idxCst = math.Min(idxCst, pagingCstDiff)
+		pagingCst := calcPagingCost(ctx, t)
+		idxCst = math.Min(idxCst, pagingCst)
 	}
 	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
@@ -978,6 +976,7 @@ func extractRows(p PhysicalPlan) float64 {
 	return f
 }
 
+// calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
 func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
 	sessVars := ctx.GetSessionVars()
 	indexRows := t.indexPlan.statsInfo().RowCount
@@ -994,7 +993,10 @@ func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
 	}
 	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
 	pagingCst *= indexSelectivity
-	return pagingCst
+
+	// we want the diff between idxCst and pagingCst here,
+	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
+	return pagingCst - sessVars.GetSeekFactor(nil)
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
