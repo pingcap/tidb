@@ -123,3 +123,42 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		gRPCError,
 	}, multierr.Errors(err))
 }
+
+func TestNewImportSSTBackofferWithSucess(t *testing.T) {
+	t.Parallel()
+
+	var counter int
+	backoffer := utils.NewImportSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		switch counter {
+		case 15:
+			return nil
+		}
+		return berrors.ErrKVDownloadFailed
+	}, backoffer)
+	require.Equal(t, 16, counter)
+	require.Nil(t, err)
+}
+
+func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
+	t.Parallel()
+
+	var counter int
+	backoffer := utils.NewDownloadSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		switch counter {
+		case 3:
+			return context.Canceled
+		}
+		return berrors.ErrKVIngestFailed
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.Equal(t, []error{
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		context.Canceled,
+	}, multierr.Errors(err))
+}
