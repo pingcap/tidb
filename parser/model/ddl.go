@@ -175,6 +175,11 @@ type HistoryInfo struct {
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
 	FinishedTS    uint64
+
+	// MultipleDBInfo is like DBInfo but only for operations updating multiple DBs.
+	MultipleDBInfo []*DBInfo
+	// MultipleTableInfo is like TableInfo but only for operations updating multiple DBs.
+	MultipleTableInfo []*TableInfo
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
@@ -279,12 +284,30 @@ func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver i
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
 }
 
+// FinishMultipleTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfos to the binlog.
+func (job *Job) FinishMultipleTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfos []*TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.SchemaVersion = ver
+	job.BinlogInfo.MultipleTableInfo = tblInfos
+}
+
 // FinishDBJob is called when a job is finished.
 // It updates the job's state information and adds dbInfo the binlog.
 func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfo *DBInfo) {
 	job.State = jobState
 	job.SchemaState = schemaState
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
+}
+
+// FinishDBJob is called when a job is finished.
+// It updates the job's state information and adds dbInfos the binlog.
+func (job *Job) FinishMultipleDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfos []*DBInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.SchemaVersion = ver
+	job.BinlogInfo.MultipleDBInfo = dbInfos
 }
 
 // TSConvert2Time converts timestamp to time.
