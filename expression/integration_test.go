@@ -9367,6 +9367,15 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
 
+func (s *testIntegrationSuite) TestIssue30101(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
+	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
+	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
+}
+
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
