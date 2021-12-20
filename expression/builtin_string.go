@@ -174,10 +174,12 @@ func reverseRunes(origin []rune) []rune {
 
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
+// We need to check if the tp is enum or set, if so, don't add binary flag directly unless it has binary flag.
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	nonEnumOrSet := !(argTp.Tp == mysql.TypeEnum || argTp.Tp == mysql.TypeSet)
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if (mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp)) && !(argTp.Tp == mysql.TypeEnum || argTp.Tp == mysql.TypeSet) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || (!types.IsNonBinaryStr(argTp) && nonEnumOrSet) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -772,8 +774,8 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 
 	argTp := args[0].GetType()
-	bf.tp.Flen = argTp.Flen
-	SetBinFlagOrBinStr(argTp, bf.tp)
+	bf.tp.Flen = args[0].GetType().Flen
+	addBinFlag(bf.tp)
 	var sig builtinFunc
 	if types.IsBinaryStr(argTp) {
 		sig = &builtinReverseSig{bf}
