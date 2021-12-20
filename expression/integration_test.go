@@ -3604,6 +3604,43 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustQuery("SELECT a/b FROM t;").Check(testkit.Rows("0.0000", "0.8264"))
 }
 
+func (s *testIntegrationSuite) TestGreatestTimeType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c_time time(5), c_dt datetime(4), c_ts timestamp(3), c_d date, c_str varchar(100));")
+	tk.MustExec("insert into t1 values('-800:10:10', '2021-10-10 10:10:10.1234', '2021-10-10 10:10:10.1234', '2021-10-11', '2021-10-10 10:10:10.1234');")
+
+	for i := 0; i < 2; i++ {
+		if i == 0 {
+			tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
+		} else {
+			tk.MustExec("set @@tidb_enable_vectorized_expression = on;")
+		}
+		tk.MustQuery("select greatest(c_time, c_time) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+		tk.MustQuery("select greatest(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select greatest(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
+		tk.MustQuery("select greatest(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select greatest(c_str, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+
+		tk.MustQuery("select least(c_time, c_time) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+		tk.MustQuery("select least(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select least(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
+		tk.MustQuery("select least(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select least(c_str, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+
+		tk.MustQuery("select greatest(c_time, cast('10:01:01' as time)) from t1;").Check(testkit.Rows("10:01:01.00000"))
+		tk.MustQuery("select least(c_time, cast('10:01:01' as time)) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+
+		tk.MustQuery("select greatest(c_d, cast('1999-10-10' as date)) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select least(c_d, cast('1999-10-10' as date)) from t1;").Check(testkit.Rows("1999-10-10"))
+
+		tk.MustQuery("select greatest(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;").Check(testkit.Rows("1999-10-10 10:10:10"))
+	}
+}
+
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -3760,8 +3797,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("3 c 1.3 2"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
-	// todo: MySQL returns "2018-01-01 <nil>"
-	result.Check(testkit.Rows("2018-01-01 00:00:00 <nil>"))
+	result.Check(testkit.Rows("234 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
@@ -4641,7 +4677,7 @@ func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
 	r.Check(testkit.Rows("5", "6", "7", "8", "9223372036854775810", "18446744073709551615"))
 
 	// for issue #4473
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (some_id smallint(5) unsigned,key (some_id) )")
 	tk.MustExec("insert into t1 values (1),(2)")
 	r = tk.MustQuery(`select some_id from t1 where some_id not in(2,-1);`)
@@ -9274,6 +9310,33 @@ func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
 		Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue29434(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 datetime);")
+	tk.MustExec("insert into t1 values('2021-12-12 10:10:10.000');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
+}
+
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+}
+
 func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9290,4 +9353,116 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
 	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue28643(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
+	tk.MustExec("insert into t values(\"838:59:59.000000\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+}
+
+func (s *testIntegrationSuite) TestIssue29244(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-700:10:10.123456111\");")
+	tk.MustExec("insert into t values(\"700:10:10.123456111\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+}
+
+func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
+	defer s.cleanEnv(c)
+
+	// issue 23114
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists e;")
+	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
+	tk.MustExec("insert into e values ('a'),('b'),('a'),('b');")
+	tk.MustQuery("select e from e where if(e>1, e, e);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select e from e where case e when 1 then e else e end;").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select e from e where case 1 when e then e end;").Check(testkit.Rows())
+
+	tk.MustQuery("select if(e>1,e,e)='a' from e").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select if(e>1,e,e)=1 from e").Sort().Check(
+		testkit.Rows("0", "0", "0", "0"))
+	// if and if
+	tk.MustQuery("select if(e>2,e,e) and if(e<=2,e,e) from e;").Sort().Check(
+		testkit.Rows("1", "1", "1", "1"))
+	tk.MustQuery("select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and if(e<=2,e,e);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));").Sort().Check(
+		testkit.Rows("a", "a"))
+
+	// issue 24494
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int,b enum(\"b\",\"y\",\"1\"));")
+	tk.MustExec("insert into t values(0,\"y\"),(1,\"b\"),(null,null),(2,\"1\");")
+	tk.MustQuery("SELECT count(*) FROM t where if(a,b ,null);").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int,b enum(\"b\"),c enum(\"c\"));")
+	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"b\";").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=\"c\";").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select a from t where if(a=1,b,c)=1;").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+	tk.MustQuery("select a from t where if(a=1,b,c);").Sort().Check(testkit.Rows("1", "1", "2", "2"))
+
+	tk.MustExec("drop table if exists e;")
+	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
+	tk.MustExec("insert into e values(3)")
+	tk.MustQuery("select elt(1,e) = 'a' from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select elt(1,e) = 3 from e").Check(testkit.Rows("1"))
+	tk.MustQuery("select e from e where elt(1,e)").Check(testkit.Rows("a"))
+
+	// test set type
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into s values ('a'),('b'),('a'),('b');")
+	tk.MustQuery("select s from s where if(s>1, s, s);").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select s from s where case s when 1 then s else s end;").Sort().Check(
+		testkit.Rows("a", "a", "b", "b"))
+	tk.MustQuery("select s from s where case 1 when s then s end;").Check(testkit.Rows())
+
+	tk.MustQuery("select if(s>1,s,s)='a' from s").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+	tk.MustQuery("select if(s>1,s,s)=4 from s").Sort().Check(
+		testkit.Rows("0", "0", "1", "1"))
+
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table s(s set('c', 'b', 'a'));")
+	tk.MustExec("insert into s values('a')")
+	tk.MustQuery("select elt(1,s) = 'a' from s").Check(testkit.Rows("1"))
+	tk.MustQuery("select elt(1,s) = 4 from s").Check(testkit.Rows("1"))
+	tk.MustQuery("select s from s where elt(1,s)").Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSuite) TestIssue29513(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
