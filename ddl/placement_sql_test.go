@@ -19,10 +19,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/tidb/ddl"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
