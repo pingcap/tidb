@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"

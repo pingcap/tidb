@@ -371,8 +371,9 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	// The following loop updates TiFlash store's status address.
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		s := store
-		err := d.UpdateTiFlashHTTPAddress(&s)
-		logutil.BgLogger().Error("Update TiFlash status address failed", zap.Error(err))
+		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
+			logutil.BgLogger().Error("Update TiFlash status address failed", zap.Error(err))
+		}
 	}
 
 	// Start to process every table.
