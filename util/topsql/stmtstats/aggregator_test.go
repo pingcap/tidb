@@ -27,12 +27,10 @@ func Test_SetupCloseAggregator(t *testing.T) {
 	for n := 0; n < 3; n++ {
 		SetupAggregator()
 		time.Sleep(100 * time.Millisecond)
-		v := globalAggregator.Load()
-		assert.NotNil(t, v)
-		assert.False(t, v.(*aggregator).closed())
+		assert.False(t, globalAggregator.closed())
 		CloseAggregator()
 		time.Sleep(100 * time.Millisecond)
-		assert.True(t, v.(*aggregator).closed())
+		assert.True(t, globalAggregator.closed())
 	}
 }
 
@@ -42,11 +40,10 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	collector := newMockCollector(func(records []StatementStatsRecord) {})
 	RegisterCollector(collector)
-	agg := globalAggregator.Load().(*aggregator)
-	_, ok := agg.collectors.Load(collector)
+	_, ok := globalAggregator.collectors.Load(collector)
 	assert.True(t, ok)
 	UnregisterCollector(collector)
-	_, ok = agg.collectors.Load(collector)
+	_, ok = globalAggregator.collectors.Load(collector)
 	assert.False(t, ok)
 }
 

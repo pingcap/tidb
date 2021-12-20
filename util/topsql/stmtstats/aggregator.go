@@ -22,7 +22,7 @@ import (
 )
 
 // globalAggregator is global *aggregator.
-var globalAggregator atomic.Value
+var globalAggregator = newAggregator()
 
 // StatementStatsRecord is the merged StatementStatsMap with timestamp.
 type StatementStatsRecord struct {
@@ -120,39 +120,28 @@ func (m *aggregator) closed() bool {
 
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.
 func SetupAggregator() {
-	if v := globalAggregator.Load(); v != nil {
-		go v.(*aggregator).run()
-		return
+	if globalAggregator.closed() {
+		go globalAggregator.run()
 	}
-	c := newAggregator()
-	go c.run()
-	globalAggregator.Store(c)
 }
 
 // CloseAggregator is used to stop the background aggregator goroutine of the stmtstats module.
 func CloseAggregator() {
-	if v := globalAggregator.Load(); v != nil {
-		c := v.(*aggregator)
-		if !c.closed() {
-			c.close()
-		}
+	if !globalAggregator.closed() {
+		globalAggregator.close()
 	}
 }
 
 // RegisterCollector binds a Collector to globalAggregator.
 // RegisterCollector is thread-safe.
 func RegisterCollector(collector Collector) {
-	if v := globalAggregator.Load(); v != nil {
-		v.(*aggregator).registerCollector(collector)
-	}
+	globalAggregator.registerCollector(collector)
 }
 
 // UnregisterCollector removes Collector from globalAggregator.
 // UnregisterCollector is thread-safe.
 func UnregisterCollector(collector Collector) {
-	if v := globalAggregator.Load(); v != nil {
-		v.(*aggregator).unregisterCollector(collector)
-	}
+	globalAggregator.unregisterCollector(collector)
 }
 
 // Collector is used to collect StatementStatsRecord.

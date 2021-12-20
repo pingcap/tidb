@@ -31,24 +31,13 @@ type StatementStats struct {
 }
 
 // CreateStatementStats try to create and register an StatementStats.
-// If we are in the initialization phase and have not yet called SetupTopSQL
-// to initialize the top-sql, nothing will happen, and we will get nil. But
-// this scene should never appear, because we always call SetupTopSQL before
-// starting the server, at this moment we cannot receive connections and will
-// not create a valid session. So this case will never happen: "This function
-// returns nil, so this valid session will count nothing".
 func CreateStatementStats() *StatementStats {
-	if v := globalAggregator.Load(); v != nil {
-		if c, ok := v.(*aggregator); ok && c != nil {
-			stats := &StatementStats{
-				data:     StatementStatsMap{},
-				finished: atomic.NewBool(false),
-			}
-			c.register(stats)
-			return stats
-		}
+	stats := &StatementStats{
+		data:     StatementStatsMap{},
+		finished: atomic.NewBool(false),
 	}
-	return nil
+	globalAggregator.register(stats)
+	return stats
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
