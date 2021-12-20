@@ -124,6 +124,23 @@ type MockPhysicalPlan interface {
 	GetExecutor() Executor
 }
 
+// MockExecutorBuilder is a wrapper for executorBuilder.
+// ONLY used in test.
+type MockExecutorBuilder struct {
+	*executorBuilder
+}
+
+// NewMockExecutorBuilderForTest is ONLY used in test.
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
+	return &MockExecutorBuilder{
+		executorBuilder: newExecutorBuilder(ctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+}
+
+// Build builds an executor tree according to `p`.
+func (b *MockExecutorBuilder) Build(p plannercore.Plan) Executor {
+	return b.build(p)
+}
+
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
@@ -283,15 +300,13 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	e.errs, b.err = admin.CancelJobs(txn, e.jobIDs)
-	if b.err != nil {
-		return nil
+	// Run within a new transaction. If it runs within the session transaction, commit failure won't be reported to the user.
+	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
+		return
+	})
+	if errInTxn != nil {
+		b.err = errInTxn
 	}
 	return e
 }
@@ -978,11 +993,13 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	t := &TraceExec{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		stmtNode:       v.StmtNode,
-		builder:        b,
-		format:         v.Format,
-		optimizerTrace: v.OptimizerTrace,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmtNode:     v.StmtNode,
+		builder:      b,
+		format:       v.Format,
+
+		optimizerTrace:       v.OptimizerTrace,
+		optimizerTraceTarget: v.OptimizerTraceTarget,
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
 		return &SortExec{
@@ -4076,6 +4093,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
@@ -4127,6 +4145,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
@@ -4173,7 +4192,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.ctx, desc, false)
 		if err != nil {
 			b.err = err
 			return nil
@@ -4736,7 +4755,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 						zap.Stack("stack trace"))
 				}
 			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}

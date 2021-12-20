@@ -16,6 +16,7 @@ package variable
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -481,4 +483,22 @@ func (v *serverGlobalVariable) GetVal() string {
 		return v.serverVal
 	}
 	return v.globalVal
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	var str []string
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }

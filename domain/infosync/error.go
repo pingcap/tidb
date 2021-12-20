@@ -8,27 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package charset
+package infosync
 
 import (
-	"golang.org/x/text/encoding"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
-var UTF8Encoding = &Encoding{
-	enc:  encoding.Nop,
-	name: CharsetUTF8MB4,
-	charLength: func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			return 1
-		} else if bs[0] < 0xe0 {
-			return 2
-		} else if bs[0] < 0xf0 {
-			return 3
-		}
-		return 4
-	},
-	specialCase: nil,
-}
+var (
+	// ErrHTTPServiceError means we got a http response with a status code which is not '2xx'
+	ErrHTTPServiceError = dbterror.ClassDomain.NewStdErr(
+		errno.ErrHTTPServiceError, mysql.Message("HTTP request failed with status %s", nil),
+	)
+)

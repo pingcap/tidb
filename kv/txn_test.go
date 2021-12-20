@@ -35,8 +35,6 @@ func mustBackOff(t *testing.T, cnt uint, sleep int) {
 }
 
 func TestRetryExceedCountError(t *testing.T) {
-	t.Parallel()
-
 	defer func(cnt uint) {
 		maxRetryCnt = cnt
 	}(maxRetryCnt)

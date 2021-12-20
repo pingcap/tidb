@@ -387,7 +387,7 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasI
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
