@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -38,7 +39,7 @@ type SingleTargetDataSink struct {
 	conn       *grpc.ClientConn
 	sendTaskCh chan sendTask
 
-	registered bool
+	registered *atomic.Bool
 	registerer DataSinkRegisterer
 }
 
@@ -53,7 +54,7 @@ func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSin
 		conn:       nil,
 		sendTaskCh: make(chan sendTask, 1),
 
-		registered: false,
+		registered: atomic.NewBool(false),
 		registerer: registerer,
 	}
 
@@ -64,6 +65,7 @@ func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSin
 			logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
 			return nil
 		}
+		dataSink.registered.Store(true)
 	}
 
 	go dataSink.recoverRun()
@@ -119,17 +121,17 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 }
 
 func (ds *SingleTargetDataSink) tryRegister(addr string) error {
-	if addr == "" && ds.registered {
+	if addr == "" && ds.registered.Load() {
 		ds.registerer.Deregister(ds)
-		ds.registered = false
+		ds.registered.Store(false)
 		return nil
 	}
 
-	if addr != "" && !ds.registered {
+	if addr != "" && !ds.registered.Load() {
 		if err := ds.registerer.Register(ds); err != nil {
 			return err
 		}
-		ds.registered = true
+		ds.registered.Store(true)
 	}
 	return nil
 }
@@ -160,7 +162,7 @@ func (ds *SingleTargetDataSink) OnReporterClosing() {
 func (ds *SingleTargetDataSink) Close() {
 	ds.cancel()
 
-	if ds.registered {
+	if ds.registered.Load() {
 		ds.registerer.Deregister(ds)
 	}
 }
