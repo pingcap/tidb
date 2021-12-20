@@ -36,18 +36,27 @@ const (
 	MaxBinaryPlanSize = 2 * 1024
 )
 
-var globalTopSQLReport reporter.TopSQLReporter
+var (
+	globalTopSQLReport   reporter.TopSQLReporter
+	singleTargetDataSink *reporter.SingleTargetDataSink
+)
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	ds := reporter.NewSingleTargetDataSink()
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(ds, plancodec.DecodeNormalizedPlan)
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+
+	globalTopSQLReport = remoteReporter
+
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
 // Close uses to close and release the top sql resource.
 func Close() {
+	if singleTargetDataSink != nil {
+		singleTargetDataSink.Close()
+	}
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}

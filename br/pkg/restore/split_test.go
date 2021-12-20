@@ -445,3 +445,70 @@ func (s *testRangeSuite) TestNeedSplit(c *C) {
 	// Out of region
 	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
 }
+
+func (s *testRangeSuite) TestRegionConsistency(c *C) {
+	cases := []struct {
+		startKey []byte
+		endKey   []byte
+		err      string
+		regions  []*restore.RegionInfo
+	}{
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
+			[]*restore.RegionInfo{},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"first region's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("b")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"last region's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region endKey not equal to next region startKey(.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
+					},
+				},
+			},
+		},
+	}
+	for _, ca := range cases {
+		c.Assert(
+			restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions),
+			ErrorMatches,
+			ca.err)
+	}
+}
