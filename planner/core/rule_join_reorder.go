@@ -323,16 +323,16 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 		return
 	}
 	if len(t.initial) > 0 {
-		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace()))
 		return
 	}
-	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace()))
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
-	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))
+	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace()))
 	t.cost[joinMapKey] = cost
 }

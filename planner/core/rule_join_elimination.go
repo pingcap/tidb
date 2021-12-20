@@ -259,7 +259,7 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan LogicalPlan,
 		buffer.WriteString("] are unique")
 		return buffer.String()
 	}()
-	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v]", join.ID(), outerPlan.TP(), outerPlan.ID())
+	action := fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
 	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
@@ -275,6 +275,6 @@ func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan L
 		buffer.WriteString("] in agg are from outer table, and the agg functions are duplicate agnostic")
 		return buffer.String()
 	}()
-	action := fmt.Sprintf("Outer join[%v] is eliminated and become %v[%v]", join.ID(), outerPlan.TP(), outerPlan.ID())
+	action := fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
 	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }

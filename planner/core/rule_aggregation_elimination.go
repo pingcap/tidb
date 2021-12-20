@@ -67,7 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
 			proj.SetChildren(agg.children[0])
-			appendAggregationEliminateTraceStep(agg, uniqueKey, opt)
+			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
 			return proj
 		}
 	}
@@ -116,10 +116,10 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 	}
 }
 
-func appendAggregationEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
+func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
 	opt.appendStepToCurrent(agg.ID(), agg.TP(),
 		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
-		"aggregation is simplified to a projection")
+		fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID()))
 }
 
 func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
