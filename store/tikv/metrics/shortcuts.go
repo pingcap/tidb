@@ -33,14 +33,16 @@ var (
 	RawkvSizeHistogramWithKey          prometheus.Observer
 	RawkvSizeHistogramWithValue        prometheus.Observer
 
-	BackoffHistogramRPC        prometheus.Observer
-	BackoffHistogramLock       prometheus.Observer
-	BackoffHistogramLockFast   prometheus.Observer
-	BackoffHistogramPD         prometheus.Observer
-	BackoffHistogramRegionMiss prometheus.Observer
-	BackoffHistogramServerBusy prometheus.Observer
-	BackoffHistogramStaleCmd   prometheus.Observer
-	BackoffHistogramEmpty      prometheus.Observer
+	BackoffHistogramRPC            prometheus.Observer
+	BackoffHistogramLock           prometheus.Observer
+	BackoffHistogramLockFast       prometheus.Observer
+	BackoffHistogramPD             prometheus.Observer
+	BackoffHistogramRegionMiss     prometheus.Observer
+	BackoffHistogramServerBusy     prometheus.Observer
+	BackoffHistogramStaleCmd       prometheus.Observer
+	BackoffHistogramTxnNotFound    prometheus.Observer
+	BackoffHistogramMaxTsNotSynced prometheus.Observer
+	BackoffHistogramEmpty          prometheus.Observer
 
 	TxnRegionsNumHistogramWithSnapshot         prometheus.Observer
 	TxnRegionsNumHistogramPrewrite             prometheus.Observer
@@ -122,6 +124,8 @@ func initShortcuts() {
 	BackoffHistogramRegionMiss = TiKVBackoffHistogram.WithLabelValues("regionMiss")
 	BackoffHistogramServerBusy = TiKVBackoffHistogram.WithLabelValues("serverBusy")
 	BackoffHistogramStaleCmd = TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	BackoffHistogramTxnNotFound = TiKVBackoffHistogram.WithLabelValues("txnNotFound")
+	BackoffHistogramMaxTsNotSynced = TiKVBackoffHistogram.WithLabelValues("maxTsNotSynced")
 	BackoffHistogramEmpty = TiKVBackoffHistogram.WithLabelValues("")
 
 	TxnRegionsNumHistogramWithSnapshot = TiKVTxnRegionsNumHistogram.WithLabelValues("snapshot")
