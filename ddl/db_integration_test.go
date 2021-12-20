@@ -2676,7 +2676,7 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t force auto_increment = 1;")
 	c.Assert(getNextGlobalID(), Equals, uint64(1))
-	// inserting new rows can overwrite the existing data.
+	// Inserting new rows will cause duplicate entry error.
 	tk.MustExec("insert into t values (3);")
 	c.Assert(tk.ExecToErr("insert into t values (3);").Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'PRIMARY'")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))

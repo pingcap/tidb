@@ -74,6 +74,8 @@ const (
 	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
 	// Save them here to reduce redundant computations.
 	TableToColumnMaps
+	// AssertionLevel controls how strict the assertions on data during transactions should be.
+	AssertionLevel
 )
 
 // ReplicaReadType is the type of replica to read data from
