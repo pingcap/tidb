@@ -324,24 +324,6 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
-func (a *ExecStmt) observeStmtBeginForTopSQL() {
-	if !variable.TopSQLEnabled() {
-		return
-	}
-	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
-		var sqlDigest, planDigest []byte
-		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-			sqlDigest = d.Bytes()
-		}
-		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-			planDigest = d.Bytes()
-		}
-		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
-		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
-	}
-}
-
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
@@ -916,17 +898,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	// Observe statement execution for TopSQL.
-	if sessVars.StmtStats != nil {
-		var sqlDigest, planDigest []byte
-		if _, d := sessVars.StmtCtx.SQLDigest(); d != nil {
-			sqlDigest = d.Bytes()
-		}
-		if _, d := sessVars.StmtCtx.GetPlanDigest(); d != nil {
-			planDigest = d.Bytes()
-		}
-		sessVars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
-	}
+	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
@@ -1277,4 +1249,38 @@ func (a *ExecStmt) GetTextToLog() string {
 		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	}
 	return sql
+}
+
+func (a *ExecStmt) observeStmtBeginForTopSQL() {
+	if !variable.TopSQLEnabled() {
+		return
+	}
+	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
+		var sqlDigest, planDigest []byte
+		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+			sqlDigest = d.Bytes()
+		}
+		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+			planDigest = d.Bytes()
+		}
+		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		// This is a special logic prepared for TiKV's SQLExecCount.
+		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
+	}
+}
+
+func (a *ExecStmt) observeStmtFinishedForTopSQL() {
+	if !variable.TopSQLEnabled() {
+		return
+	}
+	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
+		var sqlDigest, planDigest []byte
+		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+			sqlDigest = d.Bytes()
+		}
+		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+			planDigest = d.Bytes()
+		}
+		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+	}
 }
