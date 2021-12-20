@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
