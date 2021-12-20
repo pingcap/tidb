@@ -185,6 +185,10 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 		u.Scheme = "gcs"
 		u.Host = b.Gcs.Bucket
 		u.Path = b.Gcs.Prefix
+	case *backuppb.StorageBackend_AzureBlobStorage:
+		u.Scheme = "azure"
+		u.Host = b.AzureBlobStorage.Bucket
+		u.Path = b.AzureBlobStorage.Prefix
 	}
 	return
 }

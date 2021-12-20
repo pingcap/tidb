@@ -34,7 +34,10 @@ func checkAzuriteRunning() bool {
 
 func (r *testStorageSuite) TestAzBlob(c *C) {
 	if !checkAzuriteRunning() {
+		c.Log("azurite is not running, skip test")
 		return
+	} else {
+		c.Log("found port 10000 is occupied, run test")
 	}
 
 	ctx := context.Background()

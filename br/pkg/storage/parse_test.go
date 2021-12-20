@@ -132,6 +132,16 @@ func (r *testStorageSuite) TestCreateStorage(c *C) {
 	c.Assert(gcs.Prefix, Equals, "backup")
 	c.Assert(gcs.CredentialsBlob, Equals, "fakeCreds2")
 
+	s, err = ParseBackend(`azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user`, nil)
+	c.Assert(err, IsNil)
+	azblob := s.GetAzureBlobStorage()
+	c.Assert(azblob, NotNil)
+	c.Assert(azblob.Bucket, Equals, "bucket1")
+	c.Assert(azblob.Prefix, Equals, "prefix/path")
+	c.Assert(azblob.Endpoint, Equals, "http://127.0.0.1/user")
+	c.Assert(azblob.AccountName, Equals, "user")
+	c.Assert(azblob.SharedKey, Equals, "cGFzc3dk")
+
 	s, err = ParseBackend("/test", nil)
 	c.Assert(err, IsNil)
 	local := s.GetLocal()
@@ -139,6 +149,7 @@ func (r *testStorageSuite) TestCreateStorage(c *C) {
 	expectedLocalPath, err := filepath.Abs("/test")
 	c.Assert(err, IsNil)
 	c.Assert(local.GetPath(), Equals, expectedLocalPath)
+
 }
 
 func (r *testStorageSuite) TestFormatBackendURL(c *C) {
@@ -177,4 +188,15 @@ func (r *testStorageSuite) TestFormatBackendURL(c *C) {
 		},
 	})
 	c.Assert(url.String(), Equals, "gcs://bucket/some%20prefix/")
+
+	url = FormatBackendURL(&backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_AzureBlobStorage{
+			AzureBlobStorage: &backuppb.AzureBlobStorage{
+				Bucket:   "bucket",
+				Prefix:   "/some prefix/",
+				Endpoint: "https://azure.example.com/",
+			},
+		},
+	})
+	c.Assert(url.String(), Equals, "azure://bucket/some%20prefix/")
 }

@@ -31,9 +31,9 @@ const (
 
 type AzblobBackendOptions struct {
 	Endpoint     string `json:"endpoint" toml:"endpoint"`
-	AccountName  string `json:"account_name" toml:"account_name"`
-	AccountKey   string `json:"account_key" toml:"account_key"`
-	StorageClass string `json:"storage_class" toml:"storage_class"`
+	AccountName  string `json:"account-name" toml:"account-name"`
+	AccountKey   string `json:"account-key" toml:"account-key"`
+	StorageClass string `json:"storage-class" toml:"storage-class"`
 }
 
 func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
