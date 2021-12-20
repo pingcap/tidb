@@ -155,7 +155,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
 	}
 
-	s3.Endpoint = options.Endpoint
+	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	s3.Region = options.Region
 	// StorageClass, SSE and ACL are acceptable to be empty
 	s3.StorageClass = options.StorageClass

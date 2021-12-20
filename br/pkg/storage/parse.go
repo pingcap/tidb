@@ -140,7 +140,7 @@ func ExtractQueryParameters(u *url.URL, options interface{}) {
 					field.SetBool(v)
 				}
 			case reflect.String:
-				field.SetString(strings.TrimSuffix(param, "/"))
+				field.SetString(param)
 			default:
 				panic("BackendOption introduced an unsupported kind, please handle it! " + f.kind.String())
 			}
