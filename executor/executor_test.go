@@ -8367,10 +8367,6 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 				}
 				c.Assert(found, IsTrue, Commentf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
 				switch x := ch.(type) {
-				case *plannercore.PhysicalCTE:
-					newChild = append(newChild, x.RecurPlan)
-					newChild = append(newChild, x.SeedPlan)
-					continue
 				case *plannercore.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
