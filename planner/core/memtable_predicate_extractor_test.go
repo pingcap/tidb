@@ -1528,6 +1528,15 @@ func (s *extractorSuite) TestTikvRegionPeersExtractor(c *C) {
 							and region_id in (103,104)`,
 			skipRequest: true,
 		},
+		// Test columns that is not extracted by TikvRegionPeersExtractor
+		{
+			sql: `select * from information_schema.tikv_region_peers 
+							where peer_id=100 
+							and is_learner=0 
+							and is_leader=1 
+							and status='NORMAL' 
+							and down_seconds=1000`,
+		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
