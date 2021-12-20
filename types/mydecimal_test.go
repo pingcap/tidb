@@ -23,7 +23,6 @@ import (
 )
 
 func TestFromInt(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  int64
 		output string
@@ -42,7 +41,6 @@ func TestFromInt(t *testing.T) {
 }
 
 func TestFromUint(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  uint64
 		output string
@@ -60,7 +58,6 @@ func TestFromUint(t *testing.T) {
 }
 
 func TestToInt(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  string
 		output int64
@@ -86,7 +83,6 @@ func TestToInt(t *testing.T) {
 }
 
 func TestToUint(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  string
 		output uint64
@@ -112,7 +108,6 @@ func TestToUint(t *testing.T) {
 }
 
 func TestFromFloat(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		s string
 		f float64
@@ -131,7 +126,6 @@ func TestFromFloat(t *testing.T) {
 }
 
 func TestToFloat(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		in  string
 		out string
@@ -189,7 +183,6 @@ func TestToFloat(t *testing.T) {
 }
 
 func TestToHashKey(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		numbers []string
 	}{
@@ -267,7 +260,6 @@ func TestToHashKey(t *testing.T) {
 }
 
 func TestRemoveTrailingZeros(t *testing.T) {
-	t.Parallel()
 	tests := []string{
 		"0", "0.0", ".0", ".00000000", "0.0000", "0000", "0000.0", "0000.000",
 		"-0", "-0.0", "-.0", "-.00000000", "-0.0000", "-0000", "-0000.0", "-0000.000",
@@ -301,7 +293,6 @@ func TestRemoveTrailingZeros(t *testing.T) {
 }
 
 func TestRoundWithHalfEven(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -338,7 +329,6 @@ func TestRoundWithHalfEven(t *testing.T) {
 }
 
 func TestRoundWithTruncate(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -374,7 +364,6 @@ func TestRoundWithTruncate(t *testing.T) {
 }
 
 func TestRoundWithCeil(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -411,7 +400,6 @@ func TestRoundWithCeil(t *testing.T) {
 }
 
 func TestToString(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		input  string
 		output string
@@ -431,7 +419,6 @@ func TestToString(t *testing.T) {
 }
 
 func TestToBinFromBin(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		input     string
 		precision int
@@ -502,7 +489,6 @@ func TestToBinFromBin(t *testing.T) {
 }
 
 func TestCompareMyDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		a   string
 		b   string
@@ -532,7 +518,6 @@ func TestCompareMyDecimal(t *testing.T) {
 }
 
 func TestMaxDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		prec   int
 		frac   int
@@ -564,7 +549,6 @@ func TestMaxDecimal(t *testing.T) {
 }
 
 func TestNegMyDecimal(t *testing.T) {
-	t.Parallel()
 	type testCase struct {
 		a      string
 		result string
@@ -583,7 +567,6 @@ func TestNegMyDecimal(t *testing.T) {
 }
 
 func TestAddMyDecimal(t *testing.T) {
-	t.Parallel()
 	type testCase struct {
 		a      string
 		b      string
@@ -620,7 +603,6 @@ func TestAddMyDecimal(t *testing.T) {
 }
 
 func TestSubMyDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -658,7 +640,6 @@ func TestSubMyDecimal(t *testing.T) {
 }
 
 func TestMulMyDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -693,7 +674,6 @@ func TestMulMyDecimal(t *testing.T) {
 }
 
 func TestDivModMyDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -801,7 +781,6 @@ func TestDivModMyDecimal(t *testing.T) {
 }
 
 func TestMaxOrMinMyDecimal(t *testing.T) {
-	t.Parallel()
 	type tcase struct {
 		neg    bool
 		prec   int
@@ -822,7 +801,6 @@ func TestMaxOrMinMyDecimal(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	t.Parallel()
 	var x1, y1, z1 MyDecimal
 	require.NoError(t, x1.FromString([]byte("38520.130741106671")))
 	require.NoError(t, y1.FromString([]byte("9863.944799797851")))

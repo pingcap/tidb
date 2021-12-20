@@ -44,7 +44,6 @@ import (
 )
 
 func TestMalformHandshakeHeader(t *testing.T) {
-	t.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
 	_, err := parseHandshakeResponseHeader(context.Background(), &p, data)
@@ -52,7 +51,6 @@ func TestMalformHandshakeHeader(t *testing.T) {
 }
 
 func TestParseHandshakeResponse(t *testing.T) {
-	t.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	data := []byte{
 		0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x40, 0x08, 0x00, 0x00, 0x00,
@@ -120,7 +118,6 @@ func TestParseHandshakeResponse(t *testing.T) {
 }
 
 func TestIssue1768(t *testing.T) {
-	t.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
 	// the ClientPluginAuthLenencClientData capability.
@@ -147,7 +144,6 @@ func TestIssue1768(t *testing.T) {
 }
 
 func TestAuthSwitchRequest(t *testing.T) {
-	t.Parallel()
 	// this data is from a MySQL 8.0 client
 	data := []byte{
 		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -173,14 +169,11 @@ func TestAuthSwitchRequest(t *testing.T) {
 }
 
 func TestInitialHandshake(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -228,8 +221,6 @@ type dispatchInput struct {
 }
 
 func TestDispatch(t *testing.T) {
-	t.Parallel()
-
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -349,8 +340,6 @@ func TestDispatch(t *testing.T) {
 }
 
 func TestDispatchClientProtocol41(t *testing.T) {
-	t.Parallel()
-
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -489,7 +478,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -526,8 +514,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 }
 
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -562,8 +548,6 @@ func mapBelong(m1, m2 map[string]string) bool {
 }
 
 func TestConnExecutionTimeout(t *testing.T) {
-	t.Parallel()
-
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -639,8 +623,6 @@ func TestConnExecutionTimeout(t *testing.T) {
 }
 
 func TestShutDown(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -656,8 +638,6 @@ func TestShutDown(t *testing.T) {
 }
 
 func TestShutdownOrNotify(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	se, err := session.CreateSession4Test(store)
@@ -688,8 +668,6 @@ type snapshotCache interface {
 }
 
 func TestPrefetchPointKeys(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -751,8 +729,6 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 }
 
 func TestTiFlashFallback(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
@@ -883,8 +859,6 @@ func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql str
 
 // For issue https://github.com/pingcap/tidb/issues/25069
 func TestShowErrors(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	cc := &clientConn{
@@ -911,8 +885,6 @@ func TestShowErrors(t *testing.T) {
 }
 
 func TestHandleAuthPlugin(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1132,14 +1104,10 @@ func TestHandleAuthPlugin(t *testing.T) {
 }
 
 func TestAuthPlugin2(t *testing.T) {
-
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	cfg := newTestConfig()
-	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 

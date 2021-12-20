@@ -11,8 +11,6 @@ import (
 )
 
 func TestSumDurationInt(t *testing.T) {
-	t.Parallel()
-
 	fields := []zap.Field{}
 	logger := func(msg string, fs ...zap.Field) {
 		fields = append(fields, fs...)

@@ -332,8 +332,7 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
+func getAccessObjectForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan, partitionInfo PartitionInfo) string {
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
@@ -346,7 +345,51 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+	return partitionAccessObject(sctx, tbl, pi, &partitionInfo)
+}
+
+func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
+	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+	if len(p.PartitionInfos) == 0 {
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		return getAccessObjectForTableScan(sctx, ts, p.PartitionInfo)
+	}
+	if len(p.PartitionInfos) == 1 {
+		return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].tableScan, p.PartitionInfos[0].partitionInfo)
+	}
+	containsPartitionTable := false
+	for _, info := range p.PartitionInfos {
+		if info.tableScan.Table.GetPartitionInfo() != nil {
+			containsPartitionTable = true
+			break
+		}
+	}
+	if !containsPartitionTable {
+		return ""
+	}
+	var buffer bytes.Buffer
+	for index, info := range p.PartitionInfos {
+		if index > 0 {
+			buffer.WriteString(", ")
+		}
+
+		tblName := info.tableScan.Table.Name.O
+		if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
+			tblName = info.tableScan.TableAsName.O
+		}
+
+		if info.tableScan.Table.GetPartitionInfo() == nil {
+			buffer.WriteString("table of ")
+			buffer.WriteString(tblName)
+			continue
+		}
+		buffer.WriteString(getAccessObjectForTableScan(sctx, info.tableScan, info.partitionInfo))
+		buffer.WriteString(" of ")
+		buffer.WriteString(tblName)
+	}
+	return buffer.String()
 }
 
 func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {

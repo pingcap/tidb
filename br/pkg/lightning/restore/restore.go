@@ -787,6 +787,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		os.Exit(0)
 	})
 
+	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
@@ -993,7 +994,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *Controller) listenCheckpointUpdates() {
-	rc.checkpointsWg.Add(1)
+	defer rc.checkpointsWg.Done()
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
@@ -1082,7 +1083,6 @@ func (rc *Controller) listenCheckpointUpdates() {
 			}
 		})
 	}
-	rc.checkpointsWg.Done()
 }
 
 // buildRunPeriodicActionAndCancelFunc build the runPeriodicAction func and a cancel func
