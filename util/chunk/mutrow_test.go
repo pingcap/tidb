@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"github.com/pingcap/tidb/util/hack"
 	"testing"
 	"time"
 
@@ -103,8 +104,8 @@ func (s *testChunkSuite) TestIssue29947(c *check.C) {
 		for _, off := range col.offsets {
 			c.Assert(off, check.Equals, int64(0))
 		}
-		c.Assert(col.data, check.Equals, dataBefore[i])
-		c.Assert(col.elemBuf, check.Equals, elemBufBefore[i])
+		c.Assert(hack.String(col.data), check.Equals, hack.String(dataBefore[i]))
+		c.Assert(hack.String(col.elemBuf), check.Equals, hack.String(elemBufBefore[i]))
 	}
 }
 
