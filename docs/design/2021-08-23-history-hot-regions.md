@@ -169,8 +169,8 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
      	FlowBytes     float64 `json:"flow_bytes,omitempty"`
      	KeyRate       float64 `json:"key_rate,omitempty"`
      	QueryRate     float64 `json:"query_rate,omitempty"`
-     	StartKey      []byte  `json:"start_key,omitempty"`
-     	EndKey        []byte  `json:"end_key,omitempty"`
+     	StartKey      string  `json:"start_key,omitempty"`
+     	EndKey        string  `json:"end_key,omitempty"`
      	EncryptionMeta *encryptionpb.EncryptionMeta `json:"encryption_meta,omitempty"`
      }
      ```
@@ -239,8 +239,8 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
     FlowBytes     float64 `json:"flow_bytes,omitempty"`
     KeyRate       float64 `json:"key_rate,omitempty"`
     QueryRate     float64 `json:"query_rate,omitempty"`
-    StartKey      []byte  `json:"start_key,omitempty"`
-    EndKey        []byte  `json:"end_key,omitempty"`
+    StartKey      string  `json:"start_key,omitempty"`
+    EndKey        string  `json:"end_key,omitempty"`
    }
    ```
 
