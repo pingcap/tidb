@@ -443,6 +443,10 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 	})
 }
 
+func (e *ShowExec) fetchShowHistogramsInFlight() {
+	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
+}
+
 func (e *ShowExec) fetchShowAnalyzeStatus() {
 	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {

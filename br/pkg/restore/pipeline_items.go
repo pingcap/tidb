@@ -360,6 +360,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
+					r.done()
 					return e
 				}
 				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
