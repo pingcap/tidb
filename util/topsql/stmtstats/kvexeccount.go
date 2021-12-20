@@ -24,10 +24,10 @@ import (
 // CreateKvExecCounter creates an associated KvExecCounter from StatementStats.
 // The created KvExecCounter can only be used during a single statement execution
 // and cannot be reused.
-func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest string) *KvExecCounter {
+func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest},
+		digest: SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)},
 		marked: map[string]struct{}{},
 	}
 }
@@ -64,6 +64,6 @@ func (c *KvExecCounter) mark(target string) {
 	defer c.mu.Unlock()
 	if _, ok := c.marked[target]; !ok {
 		c.marked[target] = struct{}{}
-		c.stats.AddKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, target, 1)
+		c.stats.AddKvExecCount([]byte(c.digest.SQLDigest), []byte(c.digest.PlanDigest), target, 1)
 	}
 }

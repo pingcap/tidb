@@ -328,13 +328,13 @@ func (a *ExecStmt) countExecForTopSQL() {
 	if !variable.TopSQLEnabled() {
 		return
 	}
-	var sqlDigest, planDigest string
+	var sqlDigest, planDigest []byte
 	vars := a.Ctx.GetSessionVars()
 	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-		sqlDigest = d.String()
+		sqlDigest = d.Bytes()
 	}
 	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-		planDigest = d.String()
+		planDigest = d.Bytes()
 	}
 	if vars.StmtStats != nil {
 		vars.StmtStats.AddExecCount(sqlDigest, planDigest, 1)

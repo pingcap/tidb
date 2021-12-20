@@ -58,8 +58,8 @@ func CreateStatementStats() *StatementStats {
 // for the specified SQLPlanDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest string) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
+func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []byte) *StatementStatsItem {
+	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -70,7 +70,7 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest str
 
 // AddExecCount is used to count the number of executions of a certain SQLPlanDigest.
 // AddExecCount is thread-safe.
-func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, n uint64) {
+func (s *StatementStats) AddExecCount(sqlDigest, planDigest []byte, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
@@ -79,7 +79,7 @@ func (s *StatementStats) AddExecCount(sqlDigest, planDigest string, n uint64) {
 
 // AddKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
 // AddKvExecCount is thread-safe.
-func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest string, target string, n uint64) {
+func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest []byte, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
@@ -108,11 +108,15 @@ func (s *StatementStats) Finished() bool {
 	return s.finished.Load()
 }
 
+// BinaryDigest is converted from parser.Digest.Bytes(), and the purpose
+// is to be used as the key of the map.
+type BinaryDigest string
+
 // SQLPlanDigest is used as the key of StatementStatsMap to
 // distinguish different sql.
 type SQLPlanDigest struct {
-	SQLDigest  string
-	PlanDigest string
+	SQLDigest  BinaryDigest
+	PlanDigest BinaryDigest
 }
 
 // String is only used for debugging.

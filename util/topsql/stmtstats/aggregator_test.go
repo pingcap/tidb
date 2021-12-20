@@ -30,7 +30,7 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	stats.AddExecCount("SQL-1", "", 1)
+	stats.AddExecCount([]byte("SQL-1"), []byte(""), 1)
 	var records []StatementStatsRecord
 	a.registerCollector(CollectorFunc(func(rs []StatementStatsRecord) {
 		records = append(records, rs...)

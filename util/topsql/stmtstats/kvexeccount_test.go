@@ -24,7 +24,7 @@ import (
 func TestKvExecCounter(t *testing.T) {
 	globalAggregator.Store(newAggregator())
 	stats := CreateStatementStats()
-	counter := stats.CreateKvExecCounter("SQL-1", "")
+	counter := stats.CreateKvExecCounter([]byte("SQL-1"), []byte(""))
 	interceptor := counter.RPCInterceptor()
 	for n := 0; n < 10; n++ {
 		_, _ = interceptor(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {

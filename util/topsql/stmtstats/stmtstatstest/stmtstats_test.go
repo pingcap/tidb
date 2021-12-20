@@ -108,11 +108,11 @@ func TestExecCount(t *testing.T) {
 		defer mu.Unlock()
 
 		assert.NotEmpty(t, total)
-		sqlDigests := map[string]struct{}{
-			insertSQLDigest.String(): {},
-			updateSQLDigest.String(): {},
-			selectSQLDigest.String(): {},
-			deleteSQLDigest.String(): {},
+		sqlDigests := map[stmtstats.BinaryDigest]struct{}{
+			stmtstats.BinaryDigest(insertSQLDigest.Bytes()): {},
+			stmtstats.BinaryDigest(updateSQLDigest.Bytes()): {},
+			stmtstats.BinaryDigest(selectSQLDigest.Bytes()): {},
+			stmtstats.BinaryDigest(deleteSQLDigest.Bytes()): {},
 		}
 		found := 0
 		for digest, item := range total {
