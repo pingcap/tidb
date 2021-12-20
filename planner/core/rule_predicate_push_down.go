@@ -215,7 +215,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
-	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self
 }
@@ -287,10 +286,14 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
+	// reset ParseToJSONFlag in order to keep the flag away from json column
+	if col.GetType().Tp == mysql.TypeJSON {
+		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	return col
 }
 
