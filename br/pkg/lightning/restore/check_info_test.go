@@ -408,6 +408,7 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 }
 
 func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
+	dir := c.MkDir()
 	cfg := config.NewConfig()
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
@@ -437,6 +438,7 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	rc := &Controller{
 		cfg:     cfg,
 		dbMetas: dbMetas,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 
 	ctx := context.Background()
@@ -464,6 +466,37 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	// not error, need not to init check template
+	err = rc.checkTableEmpty(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	// init checkpoint with only two of the three tables
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
+		"test1": {
+			Name: "test1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"tbl1": {
+					Name: "tbl1",
+				},
+			},
+		},
+		"test2": {
+			Name: "test2",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"tbl1": {
+					Name: "tbl1",
+				},
+			},
+		},
+	}
+	rc.checkpointsDB = checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
+	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
+	c.Check(err, IsNil)
+	db, mock, err = sqlmock.New()
+	c.Assert(err, IsNil)
+	// only need to check the one that is not in checkpoint
+	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)

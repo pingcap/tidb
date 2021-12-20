@@ -1077,6 +1077,18 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for tblName := range ch {
+				// skip tables that have checkpoint
+				if rc.cfg.Checkpoint.Enable {
+					_, err := rc.checkpointsDB.Get(gCtx, tblName)
+					switch {
+					case err == nil:
+						continue
+					case errors.IsNotFound(err):
+					default:
+						return errors.Trace(err)
+					}
+				}
+
 				hasData, err1 := tableContainsData(gCtx, db, tblName)
 				if err1 != nil {
 					return err1

@@ -1877,10 +1877,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if err := rc.checkTableEmpty(ctx); err != nil {
-		return errors.Trace(err)
-	}
-
 	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
 		return err
 	}
@@ -1973,11 +1969,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
-	err = rc.checkCSVHeader(ctx, rc.dbMetas)
-	if err != nil {
-		return err
-	}
-
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -1988,6 +1979,14 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+		return err
+	}
+
 	return nil
 }
 
