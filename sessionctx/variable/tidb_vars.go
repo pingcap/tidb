@@ -784,7 +784,7 @@ const (
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 	DefTiDBEnableMutationChecker          = false
-	DefTiDBTxnAssertionLevel              = AssertionFastStr
+	DefTiDBTxnAssertionLevel              = AssertionOffStr
 )
 
 // Process global variables.

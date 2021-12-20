@@ -1751,6 +1751,9 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBEnableMutationChecker {
 				vVal = variable.On
 			}
+			if v.Name == variable.TiDBTxnAssertionLevel {
+				vVal = variable.AssertionFastStr
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
