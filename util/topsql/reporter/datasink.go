@@ -21,16 +21,8 @@ type DataSink interface {
 	// TrySend pushes a report data into the sink, which will later be sent to a target by the sink. A deadline can be
 	// specified to control how late it should be sent. If the sink is kept full and cannot schedule a send within
 	// the specified deadline, or the sink is closed, an error will be returned.
-	TrySend(data ReportData, deadline time.Time) error
+	TrySend(data *ReportData, deadline time.Time) error
 
-	// IsPaused indicates that the DataSink is not expecting to receive records for now
-	// and may resume in the future.
-	IsPaused() bool
-
-	// IsDown indicates that the DataSink has been down and can be cleared.
-	// Note that: once a DataSink is down, it cannot go back to be up.
-	IsDown() bool
-
-	// Close cleans up resources owned by this DataSink
-	Close()
+	// OnReporterClosing notifies DataSink that the reporter is closing.
+	OnReporterClosing()
 }

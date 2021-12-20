@@ -236,6 +236,7 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			LowVal:      lowVal,
 			HighVal:     highVal,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(len(lowVal)),
 		}))
 	}
 	return ranges, nil

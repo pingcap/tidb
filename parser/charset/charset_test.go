@@ -144,6 +144,24 @@ func TestGetCollationByName(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'non_exist'")
 }
 
+func TestValidCustomCharset(t *testing.T) {
+	AddCharset(&Charset{"custom", "custom_collation", make(map[string]*Collation), "Custom", 4})
+	defer RemoveCharset("custom")
+	AddCollation(&Collation{99999, "custom", "custom_collation", true})
+
+	tests := []struct {
+		cs   string
+		co   string
+		succ bool
+	}{
+		{"custom", "custom_collation", true},
+		{"utf8", "utf8_invalid_ci", false},
+	}
+	for _, tt := range tests {
+		testValidCharset(t, tt.cs, tt.co, tt.succ)
+	}
+}
+
 func BenchmarkGetCharsetDesc(b *testing.B) {
 	b.ResetTimer()
 	charsets := []string{CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin}
