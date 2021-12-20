@@ -115,9 +115,11 @@ func (d *Dumper) Dump() (dumpErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
-			conn.Close()
-			return err
+		if conf.Tables == nil {
+			if err = prepareTableListToDump(tctx, conf, conn); err != nil {
+				conn.Close()
+				return err
+			}
 		}
 		conn.Close()
 	}

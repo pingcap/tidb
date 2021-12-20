@@ -439,6 +439,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	conf.Tables, err = GetConfTables(tablesList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	conf.TableFilter, err = ParseTableFilter(tablesList, filters)
 	if err != nil {
 		return errors.Errorf("failed to parse filter: %s", err)

@@ -65,6 +65,15 @@ func (b *dumpChunkBackoffer) Attempt() int {
 }
 
 func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}) *lockTablesBackoffer {
+	d := &Dumper{}
+	conf := d.conf
+	if conf.Consistency == consistencyTypeLock {
+		return &lockTablesBackoffer{
+			tctx:      tctx,
+			attempt:   1,
+			blockList: blockList,
+		}
+	}
 	return &lockTablesBackoffer{
 		tctx:      tctx,
 		attempt:   lockTablesRetryTime,
