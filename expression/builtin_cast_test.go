@@ -1420,6 +1420,9 @@ func TestWrapWithCastAsString(t *testing.T) {
 			require.Equal(t, c.ret, res)
 		}
 	}
+
+	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
+	require.NotContains(t, expr.String(), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {
