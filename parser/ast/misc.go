@@ -1868,9 +1868,10 @@ type HandleRange struct {
 type StatementScope int
 
 const (
-	SessionScope StatementScope = iota
-	InstanceScope
-	GlobalScope
+	StatementScopeNone StatementScope = iota
+	StatementScopeSession
+	StatementScopeInstance
+	StatementScopeGlobal
 )
 
 // ShowSlowType defines the type for SlowSlow statement.
@@ -2081,11 +2082,11 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
-		if n.StatementScope == SessionScope {
+		if n.StatementScope == StatementScopeSession {
 			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
-		} else if n.StatementScope == InstanceScope {
+		} else if n.StatementScope == StatementScopeInstance {
 			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
-		} else if n.StatementScope == GlobalScope {
+		} else if n.StatementScope == StatementScopeGlobal {
 			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
 		}
 	default:

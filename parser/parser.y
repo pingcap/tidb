@@ -10741,19 +10741,19 @@ GlobalScope:
 
 StatementScope:
 	{
-		$$ = ast.SessionScope
+		$$ = ast.StatementScopeSession
 	}
 |	"GLOBAL"
 	{
-		$$ = ast.GlobalScope
+		$$ = ast.StatementScopeGlobal
 	}
 |	"INSTANCE"
 	{
-		$$ = ast.InstanceScope
+		$$ = ast.StatementScopeInstance
 	}
 |	"SESSION"
 	{
-		$$ = ast.SessionScope
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:
