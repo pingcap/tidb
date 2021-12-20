@@ -92,23 +92,23 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "topn_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "Limit[6] is converted into TopN[7]",
-					assertReason: "Limit can be converted into TopN",
+					assertAction: "Limit_6 is converted into TopN_7",
+					assertReason: "",
 				},
 				{
-					assertAction: "Sort[5] passes ByItems[test.t.a] to TopN[7]",
-					assertReason: "TopN[7] is Limit originally",
+					assertAction: "Sort_5 passes ByItems[test.t.a] to TopN_7",
+					assertReason: "TopN_7 is Limit originally",
 				},
 				{
-					assertAction: "TopN[8] is added and pushed into Join[3]'s left table",
-					assertReason: "Join[3]'s joinType is left outer join, and all ByItems[test.t.a] contained in left table",
+					assertAction: "TopN_8 is added and pushed into Join_3's left table",
+					assertReason: "Join_3's joinType is left outer join, and all ByItems[test.t.a] contained in left table",
 				},
 				{
-					assertAction: "TopN[8] is added as DataSource[1]'s parent",
+					assertAction: "TopN_8 is added as DataSource_1's parent",
 					assertReason: "TopN is pushed down",
 				},
 				{
-					assertAction: "TopN[7] is added as Join[3]'s parent",
+					assertAction: "TopN_7 is added as Join_3's parent",
 					assertReason: "TopN is pushed down",
 				},
 			},
@@ -119,15 +119,15 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			assertRuleName: "topn_push_down",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertAction: "Limit[4] is converted into TopN[5]",
-					assertReason: "Limit can be converted into TopN",
+					assertAction: "Limit_4 is converted into TopN_5",
+					assertReason: "",
 				},
 				{
-					assertAction: "Sort[3] passes ByItems[test.t.a] to TopN[5]",
-					assertReason: "TopN[5] is Limit originally",
+					assertAction: "Sort_3 passes ByItems[test.t.a] to TopN_5",
+					assertReason: "TopN_5 is Limit originally",
 				},
 				{
-					assertAction: "TopN[5] is added as DataSource[1]'s parent",
+					assertAction: "TopN_5 is added as DataSource_1's parent",
 					assertReason: "TopN is pushed down",
 				},
 			},

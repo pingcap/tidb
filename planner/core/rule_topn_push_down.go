@@ -87,7 +87,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 
 func (p *LogicalLimit) convertToTopN(opt *logicalOptimizeOp) *LogicalTopN {
 	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
-	opt.appendStepToCurrent(topn.ID(), topn.TP(), "Limit can be converted into TopN", fmt.Sprintf("%v[%v] is converted into %v[%v]",
+	opt.appendStepToCurrent(topn.ID(), topn.TP(), "", fmt.Sprintf("%v_%v is converted into %v_%v",
 		p.TP(), p.ID(), topn.TP(), topn.ID()))
 	return topn
 }
@@ -110,7 +110,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 			}
 			// newTopN to push down Union's child
 			opt.appendStepToCurrent(newTopN.ID(), newTopN.TP(), "",
-				fmt.Sprintf("%v[%v] is added and pushed down across %v[%v]",
+				fmt.Sprintf("%v_%v is added and pushed down across %v_%v",
 					newTopN.TP(), newTopN.ID(), p.TP(), p.ID()))
 		}
 		p.children[i] = child.pushDownTopN(newTopN, opt)
@@ -202,14 +202,14 @@ func (*pushDownTopNOptimizer) name() string {
 }
 
 func appendTopNPushDownTraceStep(parent LogicalPlan, child LogicalPlan, opt *logicalOptimizeOp) {
-	action := fmt.Sprintf("%v[%v] is added as %v[%v]'s parent", parent.TP(), parent.ID(), child.TP(), child.ID())
+	action := fmt.Sprintf("%v_%v is added as %v_%v's parent", parent.TP(), parent.ID(), child.TP(), child.ID())
 	reason := fmt.Sprintf("%v is pushed down", parent.TP())
 	opt.appendStepToCurrent(parent.ID(), parent.TP(), reason, action)
 }
 
 func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *logicalOptimizeOp) {
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v] is added and pushed into %v[%v]'s ",
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
 			topN.TP(), topN.ID(), p.TP(), p.ID()))
 		if idx == 0 {
 			buffer.WriteString("left ")
@@ -220,7 +220,7 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 		return buffer.String()
 	}()
 	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v]'s joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
 		for i, item := range topN.ByItems {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -241,16 +241,16 @@ func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int,
 
 func appendSortPassByItemsTraceStep(sort *LogicalSort, topN *LogicalTopN, opt *logicalOptimizeOp) {
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v[%v] passes ByItems[", sort.TP(), sort.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v passes ByItems[", sort.TP(), sort.ID()))
 		for i, item := range sort.ByItems {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
 			buffer.WriteString(item.String())
 		}
-		buffer.WriteString(fmt.Sprintf("] to %v[%v]", topN.TP(), topN.ID()))
+		buffer.WriteString(fmt.Sprintf("] to %v_%v", topN.TP(), topN.ID()))
 		return buffer.String()
 	}()
-	reason := fmt.Sprintf("%v[%v] is Limit originally", topN.TP(), topN.ID())
+	reason := fmt.Sprintf("%v_%v is Limit originally", topN.TP(), topN.ID())
 	opt.appendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
