@@ -846,6 +846,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	lColumns, rColumns := lsc.Columns, rsc.Columns
 	lNames, rNames := leftPlan.OutputNames().Shallow(), rightPlan.OutputNames().Shallow()
 	if joinTp == ast.RightJoin {
+		leftPlan, rightPlan = rightPlan, leftPlan
 		lNames, rNames = rNames, lNames
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
@@ -943,23 +944,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-<<<<<<< HEAD
-	if joinTp == ast.RightJoin {
-		leftPlan, rightPlan = rightPlan, leftPlan
-	}
-	// We record the full `rightPlan.Schema` as `redundantSchema` in order to
-	// record the redundant column in `rightPlan` and the output columns order
-	// of the `rightPlan`.
-	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
-	// retrieve the column order of `t2.*` from the `redundantSchema`.
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
-	p.redundantNames = append(p.redundantNames.Shallow(), rightPlan.OutputNames().Shallow()...)
-	if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
-		resetNotNullFlag(p.redundantSchema, 0, p.redundantSchema.Len())
-	}
-=======
 
->>>>>>> 4d16aabf9... planner: change `redundantSchema` to `fullSchema` to correctly handle natural and "using" joins (#29599)
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
@@ -1005,6 +990,19 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	}
 	if len(cnfExpres) == 0 {
 		return p, nil
+	}
+	// check expr field types.
+	for i, expr := range cnfExpres {
+		if expr.GetType().EvalType() == types.ETString {
+			tp := &types.FieldType{
+				Tp:      mysql.TypeDouble,
+				Flag:    expr.GetType().Flag,
+				Flen:    mysql.MaxRealWidth,
+				Decimal: types.UnspecifiedLength,
+			}
+			types.SetBinChsClnFlag(tp)
+			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
+		}
 	}
 	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
@@ -2507,6 +2505,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
+				g.err = ErrAmbiguous.GenWithStackByArgs(v.Name.Name.L, clauseMsg[groupByClause])
 				return inNode, false
 			}
 			if idx >= 0 {
