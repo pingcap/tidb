@@ -39,14 +39,13 @@ func TestExecCount(t *testing.T) {
 	// Register stmt stats collector.
 	var mu sync.Mutex
 	total := stmtstats.StatementStatsMap{}
-	id := stmtstats.RegisterCollector(newMockCollector(func(rs []stmtstats.StatementStatsRecord) {
+	stmtstats.RegisterCollector(newMockCollector(func(rs []stmtstats.StatementStatsRecord) {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, r := range rs {
 			total.Merge(r.Data)
 		}
 	}))
-	assert.NotEqual(t, uint64(0), id)
 
 	// Create mock store.
 	store, err := mockstore.NewMockStore(mockstore.WithClusterInspector(func(c testutils.Cluster) {
