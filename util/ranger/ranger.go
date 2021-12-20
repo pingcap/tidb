@@ -86,6 +86,7 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
+			Collators:   []collate.Collator{collate.GetCollator(tp.Collate)},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -211,11 +212,15 @@ func appendPoints2IndexRange(sctx sessionctx.Context, origin *Range, rangePoints
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
+		collators := make([]collate.Collator, len(origin.Collators)+1)
+		copy(collators, origin.Collators)
+		collators[len(origin.Collators)] = collate.GetCollator(ft.Collate)
 		ir := &Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
 			HighExclude: endPoint.excl,
+			Collators:   collators,
 		}
 		newRanges = append(newRanges, ir)
 	}
@@ -231,11 +236,13 @@ func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
 		for _, r := range ranges {
 			lowVal := append(pointRange.LowVal, r.LowVal...)
 			highVal := append(pointRange.HighVal, r.HighVal...)
+			collators := append(pointRange.Collators, r.Collators...)
 			newRange := &Range{
 				LowVal:      lowVal,
 				LowExclude:  r.LowExclude,
 				HighVal:     highVal,
 				HighExclude: r.HighExclude,
+				Collators:   collators,
 			}
 			newRanges = append(newRanges, newRange)
 		}
@@ -288,6 +295,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
+			Collators:   []collate.Collator{collate.GetCollator(tp.Collate)},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -341,7 +349,7 @@ func BuildTableRange(accessConditions []expression.Expression, sctx sessionctx.C
 // BuildColumnRange builds range from access conditions for general columns.
 func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
-		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
+		return FullRange(), nil
 	}
 	return buildColumnRange(conds, sctx, tp, false, colLen)
 }
@@ -631,7 +639,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].CompareDatum(sc, &ran.HighVal[j])
+				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[i])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -639,8 +647,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 					return "", errors.New("unexpected form of range")
 				}
 			}
-
-			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j])
+			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[i])
 			if err != nil {
 				return "false", err
 			}
@@ -667,7 +674,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 }
 
 // RangeSingleColToString prints a single column of a Range into a string which can appear in an SQL as a condition.
-func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string) (string, error) {
+func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string, collator collate.Collator) (string, error) {
 	// case 1: low and high are both special values(null, min not null, max value)
 	lowKind := lowVal.Kind()
 	highKind := highVal.Kind()
@@ -689,7 +696,7 @@ func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
 
 	// case 2: low value and high value are the same, and low value and high value are both inclusive.
-	cmp, err := lowVal.CompareDatum(sc, &highVal)
+	cmp, err := lowVal.Compare(sc, &highVal, collator)
 	if err != nil {
 		return "false", errors.Trace(err)
 	}
