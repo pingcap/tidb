@@ -1599,7 +1599,7 @@ func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
 }
 
 // TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
-func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
+func (s *testSerialSuite) TestInsertIssue29892(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 
