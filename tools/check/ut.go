@@ -25,6 +25,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	// Set the correct when it runs inside docker.
+	_ "go.uber.org/automaxprocs"
 )
 
 func usage() {
@@ -65,7 +68,7 @@ type task struct {
 	old  bool
 }
 
-var P = runtime.NumCPU()
+var P int
 var workDir string
 
 func cmdList(args ...string) {
@@ -261,6 +264,8 @@ func cmdRun(args ...string) {
 }
 
 func main() {
+	// Get the correct count of CPU if it's in docker.
+	P = runtime.GOMAXPROCS(0)
 	rand.Seed(time.Now().Unix())
 	var err error
 	workDir, err = os.Getwd()
@@ -289,22 +294,22 @@ func main() {
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
-	xxx, err := listNewTestCases(pkg)
+	newCases, err := listNewTestCases(pkg)
 	if err != nil {
 		fmt.Println("list test case error", pkg, err)
 		return nil, withTrace(err)
 	}
-	for _, x := range xxx {
-		tasks = append(tasks, task{pkg, x, false})
+	for _, c := range newCases {
+		tasks = append(tasks, task{pkg, c, false})
 	}
 
-	yyy, err := listOldTestCases(pkg)
+	oldCases, err := listOldTestCases(pkg)
 	if err != nil {
 		fmt.Println("list old test case error", pkg, err)
 		return nil, withTrace(err)
 	}
-	for _, y := range yyy {
-		tasks = append(tasks, task{pkg, y, true})
+	for _, c := range oldCases {
+		tasks = append(tasks, task{pkg, c, true})
 	}
 	return tasks, nil
 }
