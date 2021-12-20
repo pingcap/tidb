@@ -219,10 +219,10 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsCollector) UpdateColStatsUsage(usageMap colStatsUsageMap) {
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
 	s.Lock()
 	defer s.Unlock()
-	s.colMap.merge(usageMap)
+	s.colMap.merge(colMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.
