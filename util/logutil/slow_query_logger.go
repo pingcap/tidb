@@ -27,6 +27,11 @@ import (
 
 var _pool = buffer.NewPool()
 
+// NewSlowQueryLoggerForTest is exported for tests.
+func NewSlowQueryLoggerForTest(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
+	return newSlowQueryLogger(cfg)
+}
+
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// create the slow query logger
 	sqLogger, prop, err := log.InitLogger(newSlowQueryLogConfig(cfg))
@@ -42,6 +47,11 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 	prop.Core = newCore
 
 	return sqLogger, prop, nil
+}
+
+// NewSlowQueryLogConfigForTest is exported for tests.
+func NewSlowQueryLogConfigForTest(cfg *LogConfig) *log.Config {
+	return newSlowQueryLogConfig(cfg)
 }
 
 func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {

@@ -119,6 +119,11 @@ func InitLogger(cfg *LogConfig) error {
 	return nil
 }
 
+// InitGRPCLoggerForTest is exported for test.
+func InitGRPCLoggerForTest(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
+	return initGRPCLogger(cfg)
+}
+
 func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// Copy Config struct by assignment.
 	config := cfg.Config

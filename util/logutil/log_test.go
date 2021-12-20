@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logutil
+//go:build !codes
+// +build !codes
+
+package logutil_test
 
 import (
 	"bufio"
@@ -23,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
+	. "github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -103,14 +107,14 @@ func TestSetLevel(t *testing.T) {
 func TestGrpcLoggerCreation(t *testing.T) {
 	level := "info"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	_, p, err := initGRPCLogger(conf)
+	_, p, err := InitGRPCLoggerForTest(conf)
 	// assert after init grpc logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
 	require.Equal(t, p.Level.Level(), zap.ErrorLevel)
 	os.Setenv("GRPC_DEBUG", "1")
 	defer os.Unsetenv("GRPC_DEBUG")
-	_, newP, err := initGRPCLogger(conf)
+	_, newP, err := InitGRPCLoggerForTest(conf)
 	require.Nil(t, err)
 	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
 }
@@ -118,7 +122,7 @@ func TestGrpcLoggerCreation(t *testing.T) {
 func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "Error"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	_, prop, err := newSlowQueryLogger(conf)
+	_, prop, err := NewSlowQueryLoggerForTest(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
@@ -138,7 +142,7 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 		},
 	}
 	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
-	slowQueryConf := newSlowQueryLogConfig(conf)
+	slowQueryConf := NewSlowQueryLogConfigForTest(conf)
 	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
 	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
 }
