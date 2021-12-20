@@ -34,7 +34,7 @@ dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_par
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt unconvert lint tidy testSuite check-static vet errdoc
+check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -74,6 +74,13 @@ tidy:
 testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
+
+check-parallel:
+	# Make sure no tests are run in parallel to prevent possible unstable tests.
+    # See https://github.com/pingcap/tidb/pull/30692.
+	@! find . -name "*_test.go" -not -path "./vendor/*" -print0 | \
+      xargs -0 grep -E -n "t.Parallel()" || \
+      ! echo "Error: all the go tests should be run in serial."
 
 clean: failpoint-disable
 	$(GO) clean -i ./...
