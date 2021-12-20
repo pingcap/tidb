@@ -303,6 +303,16 @@ func TestCastValue(t *testing.T) {
 	colInfoS.Charset = charset.CharsetASCII
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
 	require.NoError(t, err)
+
+	colInfoY := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeYear),
+		State:     model.StatePublic,
+	}
+	_, err = CastValue(ctx, types.NewDatum("2156"), &colInfoY, false, false)
+	require.Error(t, err)
+
+	_, err = CastValue(ctx, types.NewDatum("2155"), &colInfoY, false, false)
+	require.NoError(t, err)
 }
 
 func TestGetDefaultValue(t *testing.T) {

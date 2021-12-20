@@ -493,6 +493,38 @@ func (s *testSuite3) TestInsertZeroYear(c *C) {
 	))
 }
 
+func (s *testSuite3) TestInsertInvalidYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(y YEAR);`)
+
+	tk.MustExec(`set sql_mode = 'STRICT_TRANS_TABLES';`)
+	_, err := tk.Exec(`insert into t1 values(1900), (2156), ("1900"), ("2156");`)
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+
+	_, err = tk.Exec(`insert ignore into t1 values(1900), (2156), ("1900"), ("2156");`)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+	))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`, `0`, `0`))
+
+	tk.MustExec(`set sql_mode = '';`)
+	_, err = tk.Exec(`insert into t1 values(1900), (2156), ("1900"), ("2156");`)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+	))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`, `0`, `0`, `0`, `0`, `0`, `0`))
+}
+
 func (s *testSuiteP1) TestAllowInvalidDates(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)

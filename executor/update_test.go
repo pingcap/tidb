@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -528,4 +529,34 @@ func (s *testSuite11) TestIssue23553(c *C) {
 	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)
 	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
 	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
+}
+
+func (s *testSuite3) TestUpdateInvalidYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(y YEAR);`)
+
+	_, err := tk.Exec(`insert into t1 values(1901), (2155);`)
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`set sql_mode = 'STRICT_TRANS_TABLES';`)
+	_, err = tk.Exec(`update t1 set y=1900;`)
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+	_, err = tk.Exec(`update ignore t1 set y=1900;`)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+	))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`))
+
+	tk.MustExec(`set sql_mode = '';`)
+	_, err = tk.Exec(`update ignore t1 set y=1900;`)
+	c.Assert(err, IsNil)
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+	))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`))
 }
