@@ -120,12 +120,6 @@ var defaultSysVars = []*SysVar{
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
-		// It's GetGlobal func will only be called when "set timestamp = default".
-		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
-		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
-		return DefTimestamp, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
@@ -1036,10 +1030,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreLimit, Value: strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBStoreLimit, Value: strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(tikvstore.StoreLimit.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		tikvstore.StoreLimit.Store(tidbOptInt64(val, DefTiDBStoreLimit))
@@ -1205,7 +1196,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin", GetSession: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Plugin.Dir, nil
 	}},
-
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
+		return getTiDBTableValue(s, "tidb_enable_historical_stats", Off)
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTiDBTableValue(s, "tidb_enable_historical_stats", val, "Current historical statistics enable status")
+	}},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -1276,7 +1271,7 @@ var defaultSysVars = []*SysVar{
 		TopSQLVariable.MaxStatementCount.Store(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxCollect, Value: strconv.Itoa(DefTiDBTopSQLMaxCollect), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 500000, GetGlobal: func(s *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxCollect, Value: strconv.Itoa(DefTiDBTopSQLMaxCollect), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(TopSQLVariable.MaxCollect.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
