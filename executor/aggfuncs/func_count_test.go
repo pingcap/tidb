@@ -42,8 +42,6 @@ func genApproxDistinctMergePartialResult(begin, end uint64) string {
 }
 
 func TestMergePartialResult4Count(t *testing.T) {
-	t.Parallel()
-
 	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
 	testMergePartialResult(t, tester)
 
@@ -52,8 +50,6 @@ func TestMergePartialResult4Count(t *testing.T) {
 }
 
 func TestCount(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 0, 5),
 		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 5, 0, 5),
@@ -118,8 +114,6 @@ func TestCount(t *testing.T) {
 }
 
 func TestMemCount(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
@@ -164,8 +158,6 @@ func TestMemCount(t *testing.T) {
 }
 
 func TestWriteTime(t *testing.T) {
-	t.Parallel()
-
 	tt, err := types.ParseDate(&(stmtctx.StatementContext{}), "2020-11-11")
 	require.NoError(t, err)
 
