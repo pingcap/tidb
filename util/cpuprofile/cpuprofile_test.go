@@ -81,7 +81,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	Register(dataCh)
 	data = <-dataCh
 	require.NoError(t, data.Error)
-	profileData, err := data.Parse()
+	profileData, err := profile.ParseData(data.Data.Bytes())
 	require.NoError(t, err)
 	require.NotNil(t, profileData)
 	Unregister(dataCh)
@@ -133,7 +133,7 @@ func TestGetCPUProfile(t *testing.T) {
 	// test parallel get CPU profile.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockCPULoad(ctx, labelSQL, "other")
+	mockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
 	var wg sync.WaitGroup
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
@@ -148,7 +148,7 @@ func TestGetCPUProfile(t *testing.T) {
 			labelCnt := 0
 			for _, s := range profileData.Sample {
 				for k := range s.Label {
-					require.Equal(t, labelSQL, k)
+					require.Equal(t, "sql", k)
 					labelCnt++
 				}
 			}

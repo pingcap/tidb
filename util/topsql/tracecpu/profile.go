@@ -15,34 +15,27 @@
 package tracecpu
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"runtime/pprof"
-	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 const (
-	labelSQL        = "sql"
 	labelSQLDigest  = "sql_digest"
 	labelPlanDigest = "plan_digest"
 )
 
-// GlobalSQLCPUProfiler is the global SQL stats profiler.
-var GlobalSQLCPUProfiler = newSQLCPUProfiler()
+// GlobalSQLCPUCollector is the global SQL stats profiler.
+var GlobalSQLCPUCollector = newSQLCPUCollector()
 
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
@@ -62,43 +55,38 @@ type SQLCPUTimeRecord struct {
 	CPUTimeMs  uint32
 }
 
-type sqlCPUProfiler struct {
-	taskCh chan *profileData
-
-	mu struct {
-		sync.Mutex
-		ept *exportProfileTask
-	}
-	collector atomic.Value
+type sqlCPUCollector struct {
+	profileConsumer cpuprofile.ProfileConsumer
+	collector       atomic.Value
 }
 
-var (
-	defaultProfileBufSize = 100 * 1024
-	profileBufPool        = sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(make([]byte, 0, defaultProfileBufSize))
-		},
-	}
-)
-
-// newSQLCPUProfiler create a sqlCPUProfiler.
-func newSQLCPUProfiler() *sqlCPUProfiler {
-	return &sqlCPUProfiler{
-		taskCh: make(chan *profileData, 128),
+// newSQLCPUCollector create a sqlCPUCollector.
+func newSQLCPUCollector() *sqlCPUCollector {
+	cm := make(cpuprofile.ProfileConsumer, 1)
+	return &sqlCPUCollector{
+		profileConsumer: cm,
 	}
 }
 
-func (sp *sqlCPUProfiler) Run() {
-	logutil.BgLogger().Info("cpu profiler started")
-	go sp.startCPUProfileWorker()
+func (sp *sqlCPUCollector) Run() {
+	logutil.BgLogger().Info("sql cpu collector started")
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlCPUProfiler) SetCollector(c Collector) {
+func (sp *sqlCPUCollector) SetCollector(c Collector) {
+	if c == nil {
+		return
+	}
 	sp.collector.Store(c)
+	cpuprofile.Register(sp.profileConsumer)
 }
 
-func (sp *sqlCPUProfiler) GetCollector() Collector {
+func (sp *sqlCPUCollector) ResetCollector() {
+	sp.collector.Store(nil)
+	cpuprofile.Unregister(sp.profileConsumer)
+}
+
+func (sp *sqlCPUCollector) GetCollector() Collector {
 	c, ok := sp.collector.Load().(Collector)
 	if !ok || c == nil {
 		return nil
@@ -106,79 +94,34 @@ func (sp *sqlCPUProfiler) GetCollector() Collector {
 	return c
 }
 
-func (sp *sqlCPUProfiler) startCPUProfileWorker() {
-	defer util.Recover("top-sql", "profileWorker", nil, false)
+func (sp *sqlCPUCollector) startAnalyzeProfileWorker() {
+	defer util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 	for {
-		if sp.IsEnabled() {
-			sp.doCPUProfile()
-		} else {
-			time.Sleep(time.Second)
+		data := <-sp.profileConsumer
+		ts := data.End.Unix()
+		if data.Error != nil || ts <= 0 {
+			continue
 		}
-	}
-}
 
-func (sp *sqlCPUProfiler) doCPUProfile() {
-	intervalSecond := variable.TopSQLVariable.PrecisionSeconds.Load()
-	task := sp.newProfileTask()
-	if err := pprof.StartCPUProfile(task.buf); err != nil {
-		// Sleep a while before retry.
-		time.Sleep(time.Second)
-		sp.putTaskToBuffer(task)
-		return
-	}
-	ns := int64(time.Second)*intervalSecond - int64(time.Now().Nanosecond())
-	time.Sleep(time.Nanosecond * time.Duration(ns))
-	pprof.StopCPUProfile()
-	task.end = time.Now().Unix()
-	if task.end < 0 {
-		task.end = 0
-	}
-	sp.taskCh <- task
-}
-
-func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
-	defer util.Recover("top-sql", "analyzeProfileWorker", nil, false)
-	for {
-		task := <-sp.taskCh
-		p, err := profile.ParseData(task.buf.Bytes())
+		p, err := profile.ParseData(data.Data.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("parse profile error", zap.Error(err))
-			sp.putTaskToBuffer(task)
 			continue
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
-		sp.handleExportProfileTask(p)
 		if c := sp.GetCollector(); c != nil {
-			c.Collect(uint64(task.end), stats)
+			c.Collect(uint64(ts), stats)
 		}
-		sp.putTaskToBuffer(task)
 	}
-}
-
-type profileData struct {
-	buf *bytes.Buffer
-	end int64
-}
-
-func (sp *sqlCPUProfiler) newProfileTask() *profileData {
-	buf := profileBufPool.Get().(*bytes.Buffer)
-	return &profileData{
-		buf: buf,
-	}
-}
-
-func (sp *sqlCPUProfiler) putTaskToBuffer(task *profileData) {
-	task.buf.Reset()
-	profileBufPool.Put(task.buf)
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,
 // output the TopSQLCPUTimeRecord slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
-// Since `sqlCPUProfiler` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
+// Since `sqlCPUCollector` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
+func (sp *sqlCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -206,7 +149,7 @@ func (sp *sqlCPUProfiler) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCP
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *sqlCPUProfiler) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
+func (sp *sqlCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
 	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
@@ -260,45 +203,9 @@ func (s *sqlStats) tune() {
 	s.plans[""] += optimize
 }
 
-func (sp *sqlCPUProfiler) handleExportProfileTask(p *profile.Profile) {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	if sp.mu.ept == nil {
-		return
-	}
-	sp.mu.ept.mergeProfile(p)
-}
-
-func (sp *sqlCPUProfiler) hasExportProfileTask() bool {
-	sp.mu.Lock()
-	has := sp.mu.ept != nil
-	sp.mu.Unlock()
-	return has
-}
-
 // IsEnabled return true if it is(should be) enabled. It exports for tests.
-func (sp *sqlCPUProfiler) IsEnabled() bool {
-	return variable.TopSQLEnabled() || sp.hasExportProfileTask()
-}
-
-// StartCPUProfile same like pprof.StartCPUProfile.
-// Because the GlobalSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
-// other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
-func StartCPUProfile(w io.Writer) error {
-	if GlobalSQLCPUProfiler.IsEnabled() {
-		return GlobalSQLCPUProfiler.startExportCPUProfile(w)
-	}
-	return pprof.StartCPUProfile(w)
-}
-
-// StopCPUProfile same like pprof.StopCPUProfile.
-// other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
-func StopCPUProfile() error {
-	if GlobalSQLCPUProfiler.hasExportProfileTask() {
-		return GlobalSQLCPUProfiler.stopExportCPUProfile()
-	}
-	pprof.StopCPUProfile()
-	return nil
+func (sp *sqlCPUCollector) IsEnabled() bool {
+	return variable.TopSQLEnabled()
 }
 
 // CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
@@ -308,125 +215,4 @@ func CtxWithDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Co
 	}
 	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
 		labelPlanDigest, string(hack.String(planDigest))))
-}
-
-func (sp *sqlCPUProfiler) startExportCPUProfile(w io.Writer) error {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	if sp.mu.ept != nil {
-		return errors.New("cpu profiling already in use")
-	}
-	sp.mu.ept = &exportProfileTask{w: w}
-	return nil
-}
-
-func (sp *sqlCPUProfiler) stopExportCPUProfile() error {
-	sp.mu.Lock()
-	ept := sp.mu.ept
-	sp.mu.ept = nil
-	sp.mu.Unlock()
-	if ept.err != nil {
-		return ept.err
-	}
-	if w := ept.w; w != nil && ept.cpuProfile != nil {
-		sp.removeLabel(ept.cpuProfile)
-		return ept.cpuProfile.Write(w)
-	}
-	return nil
-}
-
-// removeLabel uses to remove labels for export cpu profile data.
-// Since the sql_digest and plan_digest label is strange for other users.
-// If `variable.EnablePProfSQLCPU` is true means wanto keep the `sql` label, otherwise, remove the `sql` label too.
-func (sp *sqlCPUProfiler) removeLabel(p *profile.Profile) {
-	if p == nil {
-		return
-	}
-	keepLabelSQL := variable.EnablePProfSQLCPU.Load()
-	for _, s := range p.Sample {
-		for k := range s.Label {
-			switch k {
-			case labelSQL:
-				if !keepLabelSQL {
-					delete(s.Label, k)
-				}
-			case labelSQLDigest, labelPlanDigest:
-				delete(s.Label, k)
-			}
-		}
-	}
-}
-
-type exportProfileTask struct {
-	cpuProfile *profile.Profile
-	err        error
-	w          io.Writer
-}
-
-func (t *exportProfileTask) mergeProfile(p *profile.Profile) {
-	if t.err != nil || p == nil {
-		return
-	}
-	ps := make([]*profile.Profile, 0, 2)
-	if t.cpuProfile != nil {
-		ps = append(ps, t.cpuProfile)
-	}
-	ps = append(ps, p)
-	t.cpuProfile, t.err = profile.Merge(ps)
-}
-
-// ProfileHTTPHandler is same as pprof.Profile.
-// The difference is ProfileHTTPHandler uses tracecpu.StartCPUProfile/StopCPUProfile to fetch profile data.
-func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	sec, err := strconv.ParseInt(r.FormValue("seconds"), 10, 64)
-	if sec <= 0 || err != nil {
-		sec = 30
-	}
-
-	if durationExceedsWriteTimeout(r, float64(sec)) {
-		serveError(w, http.StatusBadRequest, "profile duration exceeds server's WriteTimeout")
-		return
-	}
-
-	// Set Content Type assuming StartCPUProfile will work,
-	// because if it does it starts writing.
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="profile"`)
-
-	err = StartCPUProfile(w)
-	if err != nil {
-		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
-		return
-	}
-	// TODO: fix me.
-	// This can be fixed by always starts a 1 second profiling one by one,
-	// but to aggregate (merge) multiple profiles into one according to the precision.
-	//  |<-- 1s -->|
-	// -|----------|----------|----------|----------|----------|-----------|-----> Background profile task timeline.
-	//                            |________________________________|
-	//       (start cpu profile)  v                                v (stop cpu profile)    // expected profile timeline
-	//                        |________________________________|                           // actual profile timeline
-	time.Sleep(time.Second * time.Duration(sec))
-	err = StopCPUProfile()
-	if err != nil {
-		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
-		return
-	}
-}
-
-func durationExceedsWriteTimeout(r *http.Request, seconds float64) bool {
-	srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server)
-	return ok && srv.WriteTimeout != 0 && seconds >= srv.WriteTimeout.Seconds()
-}
-
-func serveError(w http.ResponseWriter, status int, txt string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("X-Go-Pprof", "1")
-	w.Header().Del("Content-Disposition")
-	w.WriteHeader(status)
-	_, err := fmt.Fprintln(w, txt)
-	if err != nil {
-		logutil.BgLogger().Info("write http response error", zap.Error(err))
-	}
 }

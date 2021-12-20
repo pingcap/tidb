@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 		conf.TopSQL.ReceiverAddress = "mock"
 	})
 	variable.TopSQLVariable.PrecisionSeconds.Store(1)
-	tracecpu.GlobalSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUCollector.Run()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),

@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -64,9 +63,6 @@ type ProfileData struct {
 	Begin time.Time
 	End   time.Time
 	Error error
-
-	once sync.Once
-	p    *profile.Profile
 }
 
 func NewParallelCPUProfiler() *ParallelCPUProfiler {
@@ -181,11 +177,4 @@ func (p *ParallelCPUProfiler) close() {
 		close(p.closed)
 	}
 	p.wg.Wait()
-}
-
-func (pd *ProfileData) Parse() (*profile.Profile, error) {
-	pd.once.Do(func() {
-		pd.p, pd.Error = profile.ParseData(pd.Data.Bytes())
-	})
-	return pd.p, pd.Error
 }

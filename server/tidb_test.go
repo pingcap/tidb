@@ -131,7 +131,7 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
-	tracecpu.GlobalSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUCollector.Run()
 
 	return ts, cleanup
 }
@@ -1283,7 +1283,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}()
 
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
+	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{collector})
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
@@ -1543,7 +1543,7 @@ func TestTopSQLAgent(t *testing.T) {
 		s.Close()
 	}()
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
+	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{r})
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {

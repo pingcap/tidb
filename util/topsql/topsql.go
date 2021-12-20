@@ -48,8 +48,8 @@ func SetupTopSQL() {
 
 	globalTopSQLReport = remoteReporter
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
-	tracecpu.GlobalSQLCPUProfiler.Run()
+	tracecpu.GlobalSQLCPUCollector.SetCollector(remoteReporter)
+	tracecpu.GlobalSQLCPUCollector.Run()
 }
 
 // Close uses to close and release the top sql resource.
@@ -120,7 +120,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUCollector.GetCollector()
 	if c == nil {
 		return
 	}
@@ -136,7 +136,7 @@ func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
 		return
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
+	c := tracecpu.GlobalSQLCPUCollector.GetCollector()
 	if c == nil {
 		return
 	}

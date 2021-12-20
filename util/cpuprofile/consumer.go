@@ -7,7 +7,10 @@ import (
 	"github.com/google/pprof/profile"
 )
 
-const labelSQL = "sql"
+const (
+	labelSQLDigest  = "sql_digest"
+	labelPlanDigest = "plan_digest"
+)
 
 var defProfileTimeout = time.Second * 10
 
@@ -52,7 +55,7 @@ func (pc *PprofAPIConsumer) handleProfileData(data *ProfileData) error {
 	if data.Error != nil {
 		return data.Error
 	}
-	pd, err := data.Parse()
+	pd, err := profile.ParseData(data.Data.Bytes())
 	if err != nil {
 		return err
 	}
@@ -70,10 +73,12 @@ func (pc *PprofAPIConsumer) getMergedProfile() (*profile.Profile, error) {
 	return profileData, nil
 }
 
+// removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
+// Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
 func (pc *PprofAPIConsumer) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
-			if k != labelSQL {
+			if k == labelSQLDigest || k == labelPlanDigest {
 				delete(s.Label, k)
 			}
 		}
