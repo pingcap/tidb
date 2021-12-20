@@ -14,83 +14,81 @@
 package mysql
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testPrivsSuite{})
-
-type testPrivsSuite struct{}
-
-func (s *testPrivsSuite) TestPrivString(c *C) {
+func TestPrivString(t *testing.T) {
 	for i := 0; ; i++ {
 		p := PrivilegeType(1 << i)
 		if p > AllPriv {
 			break
 		}
-		c.Assert(p.String(), Not(Equals), "", Commentf("%d-th", i))
+		require.NotEqualf(t, "", p.String(), "%d-th", i)
 	}
 }
 
-func (s *testPrivsSuite) TestPrivColumn(c *C) {
+func TestPrivColumn(t *testing.T) {
 	for _, p := range AllGlobalPrivs {
-		c.Assert(p.ColumnString(), Not(Equals), "", Commentf("%s", p))
+		require.NotEmptyf(t, p.ColumnString(), "%s", p)
 		np, ok := NewPrivFromColumn(p.ColumnString())
-		c.Assert(ok, IsTrue, Commentf("%s", p))
-		c.Assert(np, Equals, p)
+		require.Truef(t, ok, "%s", p)
+		require.Equal(t, p, np)
 	}
 	for _, p := range StaticGlobalOnlyPrivs {
-		c.Assert(p.ColumnString(), Not(Equals), "", Commentf("%s", p))
+		require.NotEmptyf(t, p.ColumnString(), "%s", p)
 		np, ok := NewPrivFromColumn(p.ColumnString())
-		c.Assert(ok, IsTrue, Commentf("%s", p))
-		c.Assert(np, Equals, p)
+		require.Truef(t, ok, "%s", p)
+		require.Equal(t, p, np)
 	}
 	for _, p := range AllDBPrivs {
-		c.Assert(p.ColumnString(), Not(Equals), "", Commentf("%s", p))
+		require.NotEmptyf(t, p.ColumnString(), "%s", p)
 		np, ok := NewPrivFromColumn(p.ColumnString())
-		c.Assert(ok, IsTrue, Commentf("%s", p))
-		c.Assert(np, Equals, p)
+		require.Truef(t, ok, "%s", p)
+		require.Equal(t, p, np)
 	}
 }
 
-func (s *testPrivsSuite) TestPrivSetString(c *C) {
+func TestPrivSetString(t *testing.T) {
 	for _, p := range AllTablePrivs {
-		c.Assert(p.SetString(), Not(Equals), "", Commentf("%s", p))
+		require.NotEmptyf(t, p.SetString(), "%s", p)
 		np, ok := NewPrivFromSetEnum(p.SetString())
-		c.Assert(ok, IsTrue, Commentf("%s", p))
-		c.Assert(np, Equals, p)
+		require.Truef(t, ok, "%s", p)
+		require.Equal(t, p, np)
 	}
 	for _, p := range AllColumnPrivs {
-		c.Assert(p.SetString(), Not(Equals), "", Commentf("%s", p))
+		require.NotEmptyf(t, p.SetString(), "%s", p)
 		np, ok := NewPrivFromSetEnum(p.SetString())
-		c.Assert(ok, IsTrue, Commentf("%s", p))
-		c.Assert(np, Equals, p)
+		require.Truef(t, ok, "%s", p)
+		require.Equal(t, p, np)
 	}
 }
 
-func (s *testPrivsSuite) TestPrivsHas(c *C) {
+func TestPrivsHas(t *testing.T) {
 	// it is a simple helper, does not handle all&dynamic privs
 	privs := Privileges{AllPriv}
-	c.Assert(privs.Has(AllPriv), IsTrue)
-	c.Assert(privs.Has(InsertPriv), IsFalse)
+	require.True(t, privs.Has(AllPriv))
+	require.False(t, privs.Has(InsertPriv))
 
 	// multiple privs
 	privs = Privileges{InsertPriv, SelectPriv}
-	c.Assert(privs.Has(SelectPriv), IsTrue)
-	c.Assert(privs.Has(InsertPriv), IsTrue)
-	c.Assert(privs.Has(DropPriv), IsFalse)
+	require.True(t, privs.Has(SelectPriv))
+	require.True(t, privs.Has(InsertPriv))
+	require.False(t, privs.Has(DropPriv))
 }
 
-func (s *testPrivsSuite) TestPrivAllConsistency(c *C) {
+func TestPrivAllConsistency(t *testing.T) {
 	// AllPriv in mysql.user columns.
-	for priv := PrivilegeType(CreatePriv); priv != AllPriv; priv = priv << 1 {
+	for priv := CreatePriv; priv != AllPriv; priv = priv << 1 {
 		_, ok := Priv2UserCol[priv]
-		c.Assert(ok, IsTrue, Commentf("priv fail %d", priv))
+		require.Truef(t, ok, "priv fail %d", priv)
 	}
 
-	c.Assert(len(Priv2UserCol), Equals, len(AllGlobalPrivs)+1)
+	require.Equal(t, len(AllGlobalPrivs)+1, len(Priv2UserCol))
 
 	// USAGE privilege doesn't have a column in Priv2UserCol
 	// ALL privilege doesn't have a column in Priv2UserCol
 	// so it's +2
-	c.Assert(len(Priv2Str), Equals, len(Priv2UserCol)+2)
+	require.Equal(t, len(Priv2UserCol)+2, len(Priv2Str))
 }

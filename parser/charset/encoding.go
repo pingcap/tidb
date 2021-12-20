@@ -28,8 +28,6 @@ import (
 	"golang.org/x/text/transform"
 )
 
-const encodingLegacy = "utf-8" // utf-8 encoding is compatible with old default behavior.
-
 var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 type EncodingLabel string
@@ -54,7 +52,7 @@ type Encoding struct {
 
 // enabled indicates whether the non-utf8 encoding is used.
 func (e *Encoding) enabled() bool {
-	return e.enc != nil && e.charLength != nil
+	return e != UTF8Encoding
 }
 
 // Name returns the name of the current encoding.
@@ -62,35 +60,21 @@ func (e *Encoding) Name() string {
 	return e.name
 }
 
+// CharLength returns the next character length in bytes.
+func (e *Encoding) CharLength(bs []byte) int {
+	return e.charLength(bs)
+}
+
 // NewEncoding creates a new Encoding.
 func NewEncoding(label string) *Encoding {
 	if len(label) == 0 {
-		return &Encoding{}
+		return UTF8Encoding
 	}
-	e, name := Lookup(label)
-	if e != nil && name != encodingLegacy {
-		return &Encoding{
-			enc:         e,
-			name:        name,
-			charLength:  FindNextCharacterLength(name),
-			specialCase: LookupSpecialCase(name),
-		}
-	}
-	return &Encoding{name: name}
-}
 
-// UpdateEncoding updates to a new Encoding.
-func (e *Encoding) UpdateEncoding(label EncodingLabel) {
-	enc, name := lookup(label)
-	e.name = name
-	if enc != nil && name != encodingLegacy {
-		e.enc = enc
-		e.charLength = FindNextCharacterLength(name)
-	} else {
-		e.enc = nil
-		e.charLength = nil
+	if e, exist := encodingMap[Format(label)]; exist {
+		return e
 	}
-	e.specialCase = LookupSpecialCase(e.name)
+	return UTF8Encoding
 }
 
 // Encode convert bytes from utf-8 charset to a specific charset.
@@ -108,6 +92,46 @@ func (e *Encoding) EncodeString(src string) (string, error) {
 	}
 	bs, err := e.transform(e.enc.NewEncoder(), nil, Slice(src), false)
 	return string(bs), err
+}
+
+// EncodeFirstChar convert first code point of bytes from utf-8 charset to a specific charset.
+func (e *Encoding) EncodeFirstChar(dest, src []byte) ([]byte, error) {
+	srcNextLen := e.nextCharLenInSrc(src, false)
+	srcEnd := mathutil.Min(srcNextLen, len(src))
+	if !e.enabled() {
+		return src[:srcEnd], nil
+	}
+	return e.transform(e.enc.NewEncoder(), dest, src[:srcEnd], false)
+}
+
+// EncodeInternal convert bytes from utf-8 charset to a specific charset, we actually do not do the real convert, just find the inconvertible character and use ? replace.
+// The code below is equivalent to
+//		expr, _ := e.Encode(dest, src)
+//		ret, _ := e.Decode(nil, expr)
+//		return ret
+func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
+	if !e.enabled() {
+		return src
+	}
+	if dest == nil {
+		dest = make([]byte, 0, len(src))
+	}
+	var srcOffset int
+
+	var buf [4]byte
+	transformer := e.enc.NewEncoder()
+	for srcOffset < len(src) {
+		length := UTF8Encoding.CharLength(src[srcOffset:])
+		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
+		if err != nil {
+			dest = append(dest, byte('?'))
+		} else {
+			dest = append(dest, src[srcOffset:srcOffset+length]...)
+		}
+		srcOffset += length
+	}
+
+	return dest
 }
 
 // Decode convert bytes from a specific charset to utf-8 charset.
@@ -130,6 +154,9 @@ func (e *Encoding) DecodeString(src string) (string, error) {
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
 	if len(dest) < len(src) {
 		dest = make([]byte, len(src)*2)
+	}
+	if len(src) == 0 {
+		return src, nil
 	}
 	var destOffset, srcOffset int
 	var encodingErr error
@@ -162,7 +189,7 @@ func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
 		}
 		return len(srcRest)
 	}
-	return characterLengthUTF8(srcRest)
+	return UTF8Encoding.CharLength(srcRest)
 }
 
 func enlargeCapacity(dest []byte) []byte {

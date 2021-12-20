@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )

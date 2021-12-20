@@ -34,10 +34,10 @@ import (
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
-	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks)
+	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
 	if resp == nil {
-		err := errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 
 	encodeType := tipb.EncodeType_TypeDefault
@@ -90,8 +90,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
 	if resp == nil {
-		err := errors.New("client returns nil response")
-		return nil, err
+		return nil, errors.New("client returns nil response")
 	}
 
 	label := metrics.LblGeneral
@@ -138,13 +137,14 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
-	if err == nil {
-		if selectResult, ok := sr.(*selectResult); ok {
-			selectResult.copPlanIDs = copPlanIDs
-			selectResult.rootPlanID = rootPlanID
-		}
+	if err != nil {
+		return nil, err
 	}
-	return sr, err
+	if selectResult, ok := sr.(*selectResult); ok {
+		selectResult.copPlanIDs = copPlanIDs
+		selectResult.rootPlanID = rootPlanID
+	}
+	return sr, nil
 }
 
 // Analyze do a analyze request.

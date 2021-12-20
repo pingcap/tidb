@@ -227,11 +227,11 @@ func (importer *importer) CleanupEngine(ctx context.Context, engineUUID uuid.UUI
 	return errors.Trace(err)
 }
 
-func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (importer *importer) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (importer *importer) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 

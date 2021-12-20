@@ -14,24 +14,21 @@
 package mysql
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSQLErrorSuite{})
-
-type testSQLErrorSuite struct {
-}
-
-func (s *testSQLErrorSuite) TestSQLError(c *C) {
+func TestSQLError(t *testing.T) {
 	e := NewErrf(ErrNoDB, "no db error", nil)
-	c.Assert(len(e.Error()), Greater, 0)
+	require.Greater(t, len(e.Error()), 0)
 
 	e = NewErrf(0, "customized error", nil)
-	c.Assert(len(e.Error()), Greater, 0)
+	require.Greater(t, len(e.Error()), 0)
 
 	e = NewErr(ErrNoDB)
-	c.Assert(len(e.Error()), Greater, 0)
+	require.Greater(t, len(e.Error()), 0)
 
 	e = NewErr(0, "customized error", nil)
-	c.Assert(len(e.Error()), Greater, 0)
+	require.Greater(t, len(e.Error()), 0)
 }

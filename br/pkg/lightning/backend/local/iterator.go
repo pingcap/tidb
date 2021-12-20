@@ -20,13 +20,14 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/util/codec"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
 )
 
 type pebbleIter struct {
@@ -54,10 +55,11 @@ type duplicateIter struct {
 	nextKey   []byte
 	err       error
 
-	engineFile     *File
+	engine         *Engine
 	keyAdapter     KeyAdapter
 	writeBatch     *pebble.Batch
 	writeBatchSize int64
+	logger         log.Logger
 }
 
 func (d *duplicateIter) Seek(key []byte) bool {
@@ -98,7 +100,7 @@ func (d *duplicateIter) flush() {
 }
 
 func (d *duplicateIter) record(key []byte, val []byte) {
-	d.engineFile.Duplicates.Inc()
+	d.engine.Duplicates.Inc()
 	d.err = d.writeBatch.Set(key, val, nil)
 	if d.err != nil {
 		return
@@ -110,11 +112,6 @@ func (d *duplicateIter) record(key []byte, val []byte) {
 }
 
 func (d *duplicateIter) Next() bool {
-	logger := log.With(
-		zap.String("table", common.UniqueTable(d.engineFile.tableInfo.DB, d.engineFile.tableInfo.Name)),
-		zap.Int64("tableID", d.engineFile.tableInfo.ID),
-		zap.Stringer("engineUUID", d.engineFile.UUID))
-
 	recordFirst := false
 	for d.err == nil && d.ctx.Err() == nil && d.iter.Next() {
 		d.nextKey, _, _, d.err = d.keyAdapter.Decode(d.nextKey[:0], d.iter.Key())
@@ -127,7 +124,7 @@ func (d *duplicateIter) Next() bool {
 			d.curVal = append(d.curVal[:0], d.iter.Value()...)
 			return true
 		}
-		logger.Debug("[detect-dupe] local duplicate key detected",
+		d.logger.Debug("[detect-dupe] local duplicate key detected",
 			logutil.Key("key", d.curKey),
 			logutil.Key("prevValue", d.curVal),
 			logutil.Key("value", d.iter.Value()))
@@ -173,7 +170,7 @@ func (d *duplicateIter) OpType() sst.Pair_OP {
 
 var _ kv.Iter = &duplicateIter{}
 
-func newDuplicateIter(ctx context.Context, engineFile *File, opts *pebble.IterOptions) kv.Iter {
+func newDuplicateIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) kv.Iter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = codec.EncodeBytes(nil, opts.LowerBound)
@@ -181,23 +178,28 @@ func newDuplicateIter(ctx context.Context, engineFile *File, opts *pebble.IterOp
 	if len(opts.UpperBound) > 0 {
 		newOpts.UpperBound = codec.EncodeBytes(nil, opts.UpperBound)
 	}
+	logger := log.With(
+		zap.String("table", common.UniqueTable(engine.tableInfo.DB, engine.tableInfo.Name)),
+		zap.Int64("tableID", engine.tableInfo.ID),
+		zap.Stringer("engineUUID", engine.UUID))
 	return &duplicateIter{
 		ctx:        ctx,
-		iter:       engineFile.db.NewIter(newOpts),
-		engineFile: engineFile,
-		keyAdapter: engineFile.keyAdapter,
-		writeBatch: engineFile.duplicateDB.NewBatch(),
+		iter:       engine.db.NewIter(newOpts),
+		engine:     engine,
+		keyAdapter: engine.keyAdapter,
+		writeBatch: engine.duplicateDB.NewBatch(),
+		logger:     logger,
 	}
 }
 
-func newKeyIter(ctx context.Context, engineFile *File, opts *pebble.IterOptions) kv.Iter {
+func newKVIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) kv.Iter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
 		opts = &newOpts
 	}
-	if !engineFile.duplicateDetection {
-		return pebbleIter{Iterator: engineFile.db.NewIter(opts)}
+	if !engine.duplicateDetection {
+		return pebbleIter{Iterator: engine.db.NewIter(opts)}
 	}
-	return newDuplicateIter(ctx, engineFile, opts)
+	return newDuplicateIter(ctx, engine, opts)
 }

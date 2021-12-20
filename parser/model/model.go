@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -341,6 +342,9 @@ type TableInfo struct {
 	TableCacheStatusType `json:"cache_table_status"`
 	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
 	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+
+	// StatsOptions is used when do analyze/auto-analyze for each table
+	StatsOptions *StatsOptions `json:"stats_options"`
 }
 type TableCacheStatusType int
 
@@ -625,6 +629,7 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.Charset, colInfo.Collate = charset.CharsetBin, charset.CollationBin
 	return colInfo
 }
 
@@ -649,6 +654,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// HasClusteredIndex checks whether the table has a clustered index.
+func (t *TableInfo) HasClusteredIndex() bool {
+	return t.PKIsHandle || t.IsCommonHandle
 }
 
 // IsView checks if TableInfo is a view.
@@ -826,6 +836,17 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 		}
 	}
 	return ""
+}
+
+// GetPlacementByID gets the partition placement by ID.
+func (pi *PartitionInfo) GetPlacementByID(id int64) (*PolicyRefInfo, *PlacementSettings) {
+	definitions := pi.Definitions
+	for i := range definitions {
+		if id == definitions[i].ID {
+			return definitions[i].PlacementPolicyRef, definitions[i].DirectPlacementOpts
+		}
+	}
+	return nil, nil
 }
 
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
@@ -1218,4 +1239,82 @@ func (p *PlacementSettings) String() string {
 	}
 
 	return sb.String()
+}
+
+type StatsOptions struct {
+	*StatsWindowSettings
+	AutoRecalc   bool         `json:"auto_recalc"`
+	ColumnChoice ColumnChoice `json:"column_choice"`
+	ColumnList   []CIStr      `json:"column_list"`
+	SampleNum    uint64       `json:"sample_num"`
+	SampleRate   float64      `json:"sample_rate"`
+	Buckets      uint64       `json:"buckets"`
+	TopN         uint64       `json:"topn"`
+	Concurrency  uint         `json:"concurrency"`
+}
+
+func NewStatsOptions() *StatsOptions {
+	return &StatsOptions{
+		AutoRecalc:   true,
+		ColumnChoice: DefaultChoice,
+		ColumnList:   []CIStr{},
+		SampleNum:    uint64(0),
+		SampleRate:   0.0,
+		Buckets:      uint64(0),
+		TopN:         uint64(0),
+		Concurrency:  uint(0),
+	}
+}
+
+type ColumnChoice byte
+
+const (
+	DefaultChoice ColumnChoice = iota
+	AllColumns
+	PredicateColumns
+	ColumnList
+)
+
+func (s ColumnChoice) String() string {
+	switch s {
+	case AllColumns:
+		return "AllColumns"
+	case PredicateColumns:
+		return "PredicateColumns"
+	case ColumnList:
+		return "ColumnList"
+	default:
+		return ""
+	}
+}
+
+type StatsWindowSettings struct {
+	WindowStart    time.Time        `json:"window_start"`
+	WindowEnd      time.Time        `json:"window_end"`
+	RepeatType     WindowRepeatType `json:"repeat_type"`
+	RepeatInterval uint             `json:"repeat_interval"`
+}
+
+type WindowRepeatType byte
+
+const (
+	Never WindowRepeatType = iota
+	Day
+	Week
+	Month
+)
+
+func (s WindowRepeatType) String() string {
+	switch s {
+	case Never:
+		return "Never"
+	case Day:
+		return "Day"
+	case Week:
+		return "Week"
+	case Month:
+		return "Month"
+	default:
+		return ""
+	}
 }

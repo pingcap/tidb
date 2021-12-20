@@ -661,6 +661,12 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		return errors.Trace(err)
 	}
 	sql := new(strings.Builder)
+	// when an active role of current user is revoked,
+	// it should be removed from activeRoles
+	activeRoles, curUser, curHost := e.ctx.GetSessionVars().ActiveRoles, "", ""
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		curUser, curHost = user.AuthUsername, user.AuthHostname
+	}
 	for _, user := range s.Users {
 		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
@@ -693,10 +699,28 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 				}
 				return ErrCannotUser.GenWithStackByArgs("REVOKE ROLE", role.String())
 			}
+
+			// delete from activeRoles
+			if curUser == user.Username && curHost == user.Hostname {
+				for i := 0; i < len(activeRoles); i++ {
+					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
+						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+						break
+					}
+				}
+			}
 		}
 	}
 	if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 		return err
+	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
+		u := e.ctx.GetSessionVars().User
+		return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
@@ -789,6 +813,13 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
+
+		switch authPlugin {
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket:
+		default:
+			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+		}
+
 		hostName := strings.ToLower(spec.User.Hostname)
 		if s.IsCreateRole {
 			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
@@ -917,20 +948,28 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
-		authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
-		}
-		if spec.AuthOpt != nil {
-			spec.AuthOpt.AuthPlugin = authplugin
-		}
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		if spec.AuthOpt != nil {
+			if spec.AuthOpt.AuthPlugin == "" {
+				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				if err != nil {
+					return err
+				}
+				spec.AuthOpt.AuthPlugin = authplugin
+			}
+			switch spec.AuthOpt.AuthPlugin {
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket, "":
+			default:
+				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+			stmt, err := exec.ParseWithParams(ctx,
+				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
+				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
+			)
 			if err != nil {
 				return err
 			}
@@ -1143,7 +1182,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
 		mysql.SystemDB, tableName,
 		usernameColumn, users.NewUser.Username, hostColumn, strings.ToLower(users.NewUser.Hostname),
-		usernameColumn, users.OldUser.Username, hostColumn, users.OldUser.Hostname)
+		usernameColumn, users.OldUser.Username, hostColumn, strings.ToLower(users.OldUser.Hostname))
 	_, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	return err
 }
@@ -1210,7 +1249,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// begin a transaction to delete a user.
 		sql.Reset()
-		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.UserTable, strings.ToLower(user.Hostname), user.Username)
 		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
 			failedUsers = append(failedUsers, user.String())
 			break
@@ -1281,12 +1320,29 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete from activeRoles
+		if s.IsDropRole {
+			for i := 0; i < len(activeRoles); i++ {
+				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
+					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					break
+				}
+			}
+		}
+
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 			return err
+		}
+		if s.IsDropRole {
+			// apply new activeRoles
+			if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
+				u := e.ctx.GetSessionVars().User
+				return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+			}
 		}
 	} else {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
@@ -1302,7 +1358,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
 	}
@@ -1316,12 +1372,12 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
 func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	if err != nil {
 		return false, err
 	}
-	req := recordSet.NewChunk()
+	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(context.TODO(), req)
 	var rows int = 0
 	if err == nil {
@@ -1373,15 +1429,19 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	var pwd string
-	if authplugin == mysql.AuthCachingSha2Password {
+	switch authplugin {
+	case mysql.AuthCachingSha2Password:
 		pwd = auth.NewSha2Password(s.Password)
-	} else {
+	case mysql.AuthSocket:
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
+		pwd = ""
+	default:
 		pwd = auth.EncodePassword(s.Password)
 	}
 
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, h)
+	stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	if err != nil {
 		return err
 	}
@@ -1497,12 +1557,6 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
 		}
 	case ast.FlushPrivileges:
-		// If skip-grant-table is configured, do not flush privileges.
-		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-		// Call dom.PrivilegeHandle().Update would panic.
-		if config.GetGlobalConfig().Security.SkipGrantTable {
-			return nil
-		}
 		dom := domain.GetDomain(e.ctx)
 		return dom.NotifyUpdatePrivilege()
 	case ast.FlushTiDBPlugin:

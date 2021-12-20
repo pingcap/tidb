@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -492,7 +493,6 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -541,12 +541,12 @@ var vecBuiltin{{.Category}}Cases = map[string][]vecExprBenchCase{
 {{ end }}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinControlCases)
+func TestVectorizedBuiltin{{.Category}}EvalOneVecGenerated(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinControlCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltin{{.Category}}FuncGenerated(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinControlCases)
+func TestVectorizedBuiltin{{.Category}}FuncGenerated(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinControlCases)
 }
 
 func BenchmarkVectorizedBuiltin{{.Category}}EvalOneVecGenerated(b *testing.B) {

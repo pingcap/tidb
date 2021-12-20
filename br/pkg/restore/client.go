@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -753,6 +754,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			gctx,
 			store.GetAddress(),
 			opt,
+			grpc.WithBlock(),
+			grpc.FailOnNonTempDialError(true),
 			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 			// we don't need to set keepalive timeout here, because the connection lives
 			// at most 5s. (shorter than minimal value for keepalive time!)
@@ -789,17 +792,25 @@ func (rc *Client) GoValidateChecksum(
 ) <-chan struct{} {
 	log.Info("Start to validate checksum")
 	outCh := make(chan struct{}, 1)
+	wg := new(sync.WaitGroup)
+	wg.Add(2)
+	loadStatCh := make(chan *CreatedTable, 1024)
+	// run the stat loader
+	go func() {
+		defer wg.Done()
+		rc.updateMetaAndLoadStats(ctx, loadStatCh)
+	}()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go func() {
-		wg, ectx := errgroup.WithContext(ctx)
+		eg, ectx := errgroup.WithContext(ctx)
 		defer func() {
-			log.Info("all checksum ended")
-			if err := wg.Wait(); err != nil {
+			if err := eg.Wait(); err != nil {
 				errCh <- err
 			}
-			outCh <- struct{}{}
-			close(outCh)
+			close(loadStatCh)
+			wg.Done()
 		}()
+
 		for {
 			select {
 			// if we use ectx here, maybe canceled will mask real error.
@@ -809,14 +820,14 @@ func (rc *Client) GoValidateChecksum(
 				if !ok {
 					return
 				}
-				workers.ApplyOnErrorGroup(wg, func() error {
+
+				workers.ApplyOnErrorGroup(eg, func() error {
 					start := time.Now()
 					defer func() {
 						elapsed := time.Since(start)
-						summary.CollectDuration("restore checksum", elapsed)
 						summary.CollectSuccessUnit("table checksum", 1, elapsed)
 					}()
-					err := rc.execChecksum(ectx, tbl, kvClient, concurrency)
+					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -826,10 +837,21 @@ func (rc *Client) GoValidateChecksum(
 			}
 		}
 	}()
+	go func() {
+		wg.Wait()
+		log.Info("all checksum ended")
+		close(outCh)
+	}()
 	return outCh
 }
 
-func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient kv.Client, concurrency uint) error {
+func (rc *Client) execChecksum(
+	ctx context.Context,
+	tbl CreatedTable,
+	kvClient kv.Client,
+	concurrency uint,
+	loadStatCh chan<- *CreatedTable,
+) error {
 	logger := log.With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
@@ -878,16 +900,49 @@ func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient k
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	if table.Stats != nil {
-		logger.Info("start loads analyze after validate checksum",
-			zap.Int64("old id", tbl.OldTable.Info.ID),
-			zap.Int64("new id", tbl.Table.ID),
-		)
-		if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-			logger.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+
+	loadStatCh <- &tbl
+	return nil
+}
+
+func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tbl, ok := <-input:
+			if !ok {
+				return
+			}
+
+			// Not need to return err when failed because of update analysis-meta
+			restoreTS, err := rc.GetTS(ctx)
+			if err != nil {
+				log.Error("getTS failed", zap.Error(err))
+			} else {
+				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
+				if err != nil {
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+				}
+			}
+
+			table := tbl.OldTable
+			if table.Stats != nil {
+				log.Info("start loads analyze after validate checksum",
+					zap.Int64("old id", tbl.OldTable.Info.ID),
+					zap.Int64("new id", tbl.Table.ID),
+				)
+				start := time.Now()
+				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
+					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+				}
+				log.Info("restore stat done",
+					zap.String("table", table.Info.Name.L),
+					zap.String("db", table.DB.Name.L),
+					zap.Duration("cost", time.Since(start)))
+			}
 		}
 	}
-	return nil
 }
 
 const (

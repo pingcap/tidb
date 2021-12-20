@@ -28,8 +28,6 @@ import (
 )
 
 func TestGetDDLInfo(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -79,8 +77,6 @@ func TestGetDDLInfo(t *testing.T) {
 }
 
 func TestGetDDLJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -134,8 +130,6 @@ func TestGetDDLJobs(t *testing.T) {
 }
 
 func TestGetDDLJobsIsSort(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -165,8 +159,6 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestCancelJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -210,7 +202,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{-1})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*DDL Job:-1 not found", errs[0].Error())
+	require.Regexp(t, "DDL Job:-1 not found$", errs[0].Error())
 
 	// test cancel finish job.
 	job := &model.Job{
@@ -224,7 +216,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{100})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*This job:100 is finished, so can't be cancelled", errs[0].Error())
+	require.Regexp(t, "This job:100 is finished, so can't be cancelled$", errs[0].Error())
 
 	// test can't cancelable job.
 	job.Type = model.ActionDropIndex
@@ -236,7 +228,7 @@ func TestCancelJobs(t *testing.T) {
 	errs, err = CancelJobs(txn, []int64{101})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
-	require.Regexp(t, ".*This job:101 is almost finished, can't be cancelled now", errs[0].Error())
+	require.Regexp(t, "This job:101 is almost finished, can't be cancelled now$", errs[0].Error())
 
 	// When both types of jobs exist in the DDL queue,
 	// we first cancel the job with a larger ID.
@@ -280,8 +272,6 @@ func TestCancelJobs(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -340,8 +330,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 }
 
 func TestIsJobRollbackable(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		tp     model.ActionType
 		state  model.SchemaState
@@ -364,8 +352,6 @@ func TestIsJobRollbackable(t *testing.T) {
 }
 
 func TestError(t *testing.T) {
-	t.Parallel()
-
 	kvErrs := []*terror.Error{
 		ErrDataInConsistent,
 		ErrDDLJobNotFound,
