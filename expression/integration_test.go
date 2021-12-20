@@ -9257,6 +9257,15 @@ func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
 		Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+}
+
 func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9275,6 +9284,19 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
 
+func (s *testIntegrationSuite) TestIssue29244(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-700:10:10.123456111\");")
+	tk.MustExec("insert into t values(\"700:10:10.123456111\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+}
+
 func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9287,3 +9309,4 @@ func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
 	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
+
