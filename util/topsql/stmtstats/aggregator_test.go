@@ -23,7 +23,34 @@ import (
 	"go.uber.org/atomic"
 )
 
-func Test_statementStatsManager_register_collect(t *testing.T) {
+func Test_SetupCloseAggregator(t *testing.T) {
+	for n := 0; n < 3; n++ {
+		SetupAggregator()
+		time.Sleep(100 * time.Millisecond)
+		v := globalAggregator.Load()
+		assert.NotNil(t, v)
+		assert.False(t, v.(*aggregator).closed())
+		CloseAggregator()
+		time.Sleep(100 * time.Millisecond)
+		assert.True(t, v.(*aggregator).closed())
+	}
+}
+
+func Test_RegisterUnregisterCollector(t *testing.T) {
+	SetupAggregator()
+	defer CloseAggregator()
+	time.Sleep(100 * time.Millisecond)
+	collector := newMockCollector(func(records []StatementStatsRecord) {})
+	RegisterCollector(collector)
+	agg := globalAggregator.Load().(*aggregator)
+	_, ok := agg.collectors.Load(collector)
+	assert.True(t, ok)
+	UnregisterCollector(collector)
+	_, ok = agg.collectors.Load(collector)
+	assert.False(t, ok)
+}
+
+func Test_aggregator_register_collect(t *testing.T) {
 	a := newAggregator()
 	stats := &StatementStats{
 		data:     StatementStatsMap{},
@@ -32,7 +59,7 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 	a.register(stats)
 	stats.AddExecCount([]byte("SQL-1"), []byte(""), 1)
 	var records []StatementStatsRecord
-	a.registerCollector(CollectorFunc(func(rs []StatementStatsRecord) {
+	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
 		records = append(records, rs...)
 	}))
 	a.aggregate()
@@ -40,7 +67,7 @@ func Test_statementStatsManager_register_collect(t *testing.T) {
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 }
 
-func Test_statementStatsManager_run_close(t *testing.T) {
+func Test_aggregator_run_close(t *testing.T) {
 	wg := sync.WaitGroup{}
 	a := newAggregator()
 	assert.True(t, a.closed())
@@ -54,4 +81,16 @@ func Test_statementStatsManager_run_close(t *testing.T) {
 	a.close()
 	wg.Wait()
 	assert.True(t, a.closed())
+}
+
+type mockCollector struct {
+	f func(records []StatementStatsRecord)
+}
+
+func newMockCollector(f func(records []StatementStatsRecord)) Collector {
+	return &mockCollector{f: f}
+}
+
+func (c *mockCollector) CollectStmtStatsRecords(records []StatementStatsRecord) {
+	c.f(records)
 }

@@ -39,7 +39,7 @@ func TestExecCount(t *testing.T) {
 	// Register stmt stats collector.
 	var mu sync.Mutex
 	total := stmtstats.StatementStatsMap{}
-	id := stmtstats.RegisterCollector(stmtstats.CollectorFunc(func(rs []stmtstats.StatementStatsRecord) {
+	id := stmtstats.RegisterCollector(newMockCollector(func(rs []stmtstats.StatementStatsRecord) {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, r := range rs {
@@ -136,4 +136,16 @@ func TestExecCount(t *testing.T) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+}
+
+type mockCollector struct {
+	f func(records []stmtstats.StatementStatsRecord)
+}
+
+func newMockCollector(f func(records []stmtstats.StatementStatsRecord)) stmtstats.Collector {
+	return &mockCollector{f: f}
+}
+
+func (c *mockCollector) CollectStmtStatsRecords(records []stmtstats.StatementStatsRecord) {
+	c.f(records)
 }

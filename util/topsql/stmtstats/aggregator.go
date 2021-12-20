@@ -34,12 +34,11 @@ type StatementStatsRecord struct {
 // It is responsible for collecting data from all StatementStats, aggregating
 // them together, uploading them and regularly cleaning up the closed StatementStats.
 type aggregator struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	statsSet    sync.Map // map[*StatementStats]struct{}
-	collectors  sync.Map // map[uint64]Collector
-	collectorID uint64
-	running     int32
+	ctx        context.Context
+	cancel     context.CancelFunc
+	statsSet   sync.Map // map[*StatementStats]struct{}
+	collectors sync.Map // map[Collector]struct{}
+	running    int32
 }
 
 // newAggregator creates an empty aggregator.
@@ -81,7 +80,7 @@ func (m *aggregator) aggregate() {
 		r.Data.Merge(stats.Take())
 		return true
 	})
-	m.collectors.Range(func(_, c interface{}) bool {
+	m.collectors.Range(func(c, _ interface{}) bool {
 		c.(Collector).CollectStmtStatsRecords([]StatementStatsRecord{r})
 		return true
 	})
@@ -99,16 +98,14 @@ func (m *aggregator) unregister(stats *StatementStats) {
 	m.statsSet.Delete(stats)
 }
 
-// registerCollector binds a Collector to aggregator, collector ID will be returned.
-func (m *aggregator) registerCollector(collector Collector) uint64 {
-	id := atomic.AddUint64(&m.collectorID, 1)
-	m.collectors.Store(id, collector)
-	return id
+// registerCollector binds a Collector to aggregator.
+func (m *aggregator) registerCollector(collector Collector) {
+	m.collectors.Store(collector, struct{}{})
 }
 
-// unregisterCollector removes Collector from aggregator by collector ID.
-func (m *aggregator) unregisterCollector(id uint64) {
-	m.collectors.Delete(id)
+// unregisterCollector removes Collector from aggregator.
+func (m *aggregator) unregisterCollector(collector Collector) {
+	m.collectors.Delete(collector)
 }
 
 // close ends the execution of the current aggregator.
@@ -124,12 +121,8 @@ func (m *aggregator) closed() bool {
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.
 func SetupAggregator() {
 	if v := globalAggregator.Load(); v != nil {
-		if c, ok := v.(*aggregator); ok && c != nil {
-			if c.closed() {
-				go c.run()
-			}
-			return
-		}
+		go v.(*aggregator).run()
+		return
 	}
 	c := newAggregator()
 	go c.run()
@@ -139,30 +132,26 @@ func SetupAggregator() {
 // CloseAggregator is used to stop the background aggregator goroutine of the stmtstats module.
 func CloseAggregator() {
 	if v := globalAggregator.Load(); v != nil {
-		if c, ok := v.(*aggregator); ok && c != nil && !c.closed() {
+		c := v.(*aggregator)
+		if !c.closed() {
 			c.close()
 		}
 	}
 }
 
-// RegisterCollector binds a Collector to globalAggregator, collector ID will be returned.
+// RegisterCollector binds a Collector to globalAggregator.
 // RegisterCollector is thread-safe.
-func RegisterCollector(collector Collector) uint64 {
+func RegisterCollector(collector Collector) {
 	if v := globalAggregator.Load(); v != nil {
-		if c, ok := v.(*aggregator); ok && c != nil {
-			return c.registerCollector(collector)
-		}
+		v.(*aggregator).registerCollector(collector)
 	}
-	return 0
 }
 
-// UnregisterCollector removes Collector from globalAggregator by collector ID.
+// UnregisterCollector removes Collector from globalAggregator.
 // UnregisterCollector is thread-safe.
-func UnregisterCollector(id uint64) {
+func UnregisterCollector(collector Collector) {
 	if v := globalAggregator.Load(); v != nil {
-		if c, ok := v.(*aggregator); ok && c != nil {
-			c.unregisterCollector(id)
-		}
+		v.(*aggregator).unregisterCollector(collector)
 	}
 }
 
@@ -170,13 +159,4 @@ func UnregisterCollector(id uint64) {
 type Collector interface {
 	// CollectStmtStatsRecords is used to collect list of StatementStatsRecord.
 	CollectStmtStatsRecords([]StatementStatsRecord)
-}
-
-// CollectorFunc implements Collector, in order to facilitate the user to
-// write callback function directly.
-type CollectorFunc func([]StatementStatsRecord)
-
-// CollectStmtStatsRecords implements Collector.CollectStmtStatsRecords.
-func (f CollectorFunc) CollectStmtStatsRecords(records []StatementStatsRecord) {
-	f(records)
 }
