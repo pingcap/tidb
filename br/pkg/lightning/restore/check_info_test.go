@@ -436,8 +436,8 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	}
 
 	rc := &Controller{
-		cfg:     cfg,
-		dbMetas: dbMetas,
+		cfg:           cfg,
+		dbMetas:       dbMetas,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 
