@@ -414,14 +414,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			available = val.(bool)
 		})
 		duplicate := false
-		pollTiFlashContext.mu.Lock()
-		if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
-			// If there is already pending job, we shall finish it first.
-			// TODO Maybe we can make immediate status check here
-			logutil.BgLogger().Info("TiFlash replica is pending, wait for it", zap.Int64("tableID", tb.ID), zap.Bool("available", a))
-			duplicate = true
-		}
-		pollTiFlashContext.mu.Unlock()
+		//pollTiFlashContext.mu.Lock()
+		//if a, ok := pollTiFlashContext.UpdateMap[tb.ID]; ok {
+		//	// If there is already pending job, we shall finish it first.
+		//	// TODO Maybe we can make immediate status check here
+		//	logutil.BgLogger().Info("TiFlash replica is pending, wait for it", zap.Int64("tableID", tb.ID), zap.Bool("available", a))
+		//	duplicate = true
+		//}
+		//pollTiFlashContext.mu.Unlock()
 		if !available && !duplicate {
 			bo, ok := pollTiFlashContext.BackoffContext.Get(tb.ID)
 			if !ok {
