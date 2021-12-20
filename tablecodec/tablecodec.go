@@ -622,7 +622,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		val := datum.GetUint64()
 		byteSize := (ft.Flen + 7) >> 3
 		datum.SetUint64(0)
-		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
+		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize), ft.Collate)
 	}
 	return datum, nil
 }

@@ -108,6 +108,15 @@ func (d *Datum) SetCollation(collation string) {
 	d.collation = collation
 }
 
+// Charset gets the charset of the datum.
+func (d *Datum) Charset() string {
+	collation, err := charset.GetCollationByName(d.collation)
+	if err != nil {
+		return charset.CharsetUTF8MB4
+	}
+	return collation.CharsetName
+}
+
 // Frac gets the frac of the datum.
 func (d *Datum) Frac() int {
 	return int(d.decimal)
@@ -274,9 +283,10 @@ func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
 }
 
 // SetMysqlBit sets MysqlBit value
-func (d *Datum) SetMysqlBit(b BinaryLiteral) {
+func (d *Datum) SetMysqlBit(b BinaryLiteral, collation string) {
 	d.k = KindMysqlBit
 	d.b = b
+	d.collation = collation
 }
 
 // GetMysqlDecimal gets Decimal value
@@ -981,7 +991,24 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
+
+	var err, err1 error
+	var transform []byte
+	if d.Charset() == charset.CharsetBin && target.Charset != charset.CharsetBin {
+		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpDecodeReplace)
+		s = string(transform)
+	} else if d.Charset() != charset.CharsetBin && target.Charset == charset.CharsetBin {
+		transform, err1 = charset.FindEncoding(d.Charset()).Transform(nil, hack.Slice(s), charset.OpEncode)
+		s = string(transform)
+	} else if d.Charset() != target.Charset {
+		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpReplace)
+		s = string(transform)
+	}
+
+	s, err = ProduceStrWithSpecifiedTp(s, target, sc, true)
+	if err == nil {
+		err = err1
+	}
 	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -1488,7 +1515,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
 	}
 	byteSize := (target.Flen + 7) >> 3
-	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))
+	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize), target.Collate)
 	return ret, errors.Trace(err)
 }
 
@@ -1982,7 +2009,7 @@ func NewBinaryLiteralDatum(b BinaryLiteral) (d Datum) {
 
 // NewMysqlBitDatum creates a new MysqlBit Datum for a BinaryLiteral value.
 func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
-	d.SetMysqlBit(b)
+	d.SetMysqlBit(b, charset.CharsetBin)
 	return d
 }
 

@@ -166,7 +166,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		d.SetMysqlSet(set, col.Ft.Collate)
 	case mysql.TypeBit:
 		byteSize := (col.Ft.Flen + 7) >> 3
-		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize))
+		d.SetMysqlBit(types.NewBinaryLiteralFromUint(decodeUint(colData), byteSize), col.Ft.Collate)
 	case mysql.TypeJSON:
 		var j json.BinaryJSON
 		j.TypeCode = colData[0]

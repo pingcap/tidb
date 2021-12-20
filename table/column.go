@@ -340,12 +340,7 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	if !types.IsString(col.Tp) {
 		return nil
 	}
-	fromBinary := origin.Kind() == types.KindBinaryLiteral ||
-		(origin.Kind() == types.KindString && origin.Collation() == charset.CollationBin)
-	toBinary := types.IsTypeBlob(col.Tp) || col.Charset == charset.CharsetBin
-	if fromBinary && toBinary {
-		return nil
-	}
+
 	enc := charset.FindEncoding(col.Charset)
 	// Skip utf8 check if possible.
 	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
@@ -355,28 +350,20 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	if enc.Tp() == charset.EncodingTpASCII && ctx.GetSessionVars().SkipASCIICheck {
 		return nil
 	}
+	// Skip binary check.
+	if enc.Tp() == charset.EncodingTpBin {
+		return nil
+	}
 	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
 		// Use a strict mode implementation. 4 bytes characters are invalid.
 		enc = charset.EncodingUTF8MB3StrictImpl
 	}
-	if fromBinary {
-		src := casted.GetBytes()
-		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
-		if err != nil {
-			casted.SetBytesAsString(encBytes, col.Collate, 0)
-			nSrc := charset.CountValidBytesDecode(enc, src)
-			return handleWrongCharsetValue(ctx, col, src, nSrc)
-		}
-		casted.SetBytesAsString(encBytes, col.Collate, 0)
-		return nil
-	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
-	if !enc.IsValid(str) {
-		replace, _ := enc.Transform(nil, str, charset.OpReplace)
-		casted.SetBytesAsString(replace, col.Collate, 0)
-		nSrc := charset.CountValidBytes(enc, str)
-		return handleWrongCharsetValue(ctx, col, str, nSrc)
+	validBytesLen := charset.CountValidBytes(enc, str)
+	if validBytesLen != len(str) {
+		casted.SetBytesAsString(str[:validBytesLen], casted.Collation(), uint32(validBytesLen))
+		return handleWrongCharsetValue(ctx, col, str, validBytesLen)
 	}
 	return nil
 }
@@ -689,7 +676,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	case mysql.TypeDatetime:
 		d.SetMysqlTime(types.ZeroDatetime)
 	case mysql.TypeBit:
-		d.SetMysqlBit(types.ZeroBinaryLiteral)
+		d.SetMysqlBit(types.ZeroBinaryLiteral, col.Collate)
 	case mysql.TypeSet:
 		d.SetMysqlSet(types.Set{}, col.Collate)
 	case mysql.TypeEnum:
