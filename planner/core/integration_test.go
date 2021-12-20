@@ -3499,6 +3499,15 @@ func (s *testIntegrationSuite) TestIndexMergeClusterIndex(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestJoinSchemaChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int(11))")
+	tk.MustExec("create table t2(a decimal(40,20) unsigned, b decimal(40,20))")
+	tk.MustQuery("select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b)").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
