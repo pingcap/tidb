@@ -19,18 +19,42 @@ package testbridge
 
 import (
 	"flag"
+	"fmt"
+	"os"
+
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
-// WorkaroundGoCheckFlags registers flags of go-check for pkg does not import go-check
+// SetupForCommonTest runs before all the tests.
+func SetupForCommonTest() {
+	workaroundGoCheckFlags()
+	applyOSLogLevel()
+}
+
+// workaroundGoCheckFlags registers flags of go-check for pkg does not import go-check
 // to workaround the go-check flags passed in Makefile.
 //
 // TODO: Remove this function when the migration from go-check to testify[1] is done.
 // [1] https://github.com/pingcap/tidb/issues/26022
-func WorkaroundGoCheckFlags() {
+func workaroundGoCheckFlags() {
 	if flag.Lookup("check.timeout") == nil {
-		_ = flag.Duration("check.timeout", 0, "WorkaroundGoCheckFlags: check.timeout")
+		_ = flag.Duration("check.timeout", 0, "SetupForCommonTest: check.timeout")
 	}
 	if flag.Lookup("check.p") == nil {
-		_ = flag.Bool("check.p", false, "WorkaroundGoCheckFlags: check.p")
+		_ = flag.Bool("check.p", false, "SetupForCommonTest: check.p")
+	}
+}
+
+func applyOSLogLevel() {
+	cfg := config.GetGlobalConfig().Log.ToLogConfig()
+	osLoglevel := os.Getenv("log_level")
+	if len(osLoglevel) > 0 {
+		cfg.Level = osLoglevel
+		err := logutil.ReplaceLogger(cfg)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "applyOSLogLevel failed: %v", err)
+			os.Exit(-1)
+		}
 	}
 }
