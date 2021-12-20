@@ -54,6 +54,20 @@ func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	c.Assert(h.IntValue(), Equals, int64(2))
 }
 
+// https://github.com/pingcap/tidb/issues/27687.
+func (s *testTableCodecSuite) TestTableCodecInvalid(c *C) {
+	tableID := int64(100)
+	buf := make([]byte, 0, 11)
+	buf = append(buf, 't')
+	buf = codec.EncodeInt(buf, tableID)
+	buf = append(buf, '_', 'r')
+	buf = codec.EncodeInt(buf, -9078412423848787968)
+	buf = append(buf, '0')
+	_, err := DecodeRowKey(buf)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "invalid encoded key")
+}
+
 // column is a structure used for test
 type column struct {
 	id int64
