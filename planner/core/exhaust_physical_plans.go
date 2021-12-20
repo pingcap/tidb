@@ -1878,13 +1878,13 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 				// the left keys will generate NULL values randomly
 				// todo maybe we can add a null-sensitive flag in the key columns to indicate whether the column is
 				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
-				matches = prop.IsSubsetOf(rKeys)
+				matches = prop.IsSubsetOf(rkeys)
 			} else {
 				// for left out join, only the left keys can possibly matches the prop, because
 				// the right keys will generate NULL values randomly
 				// for semi/anti semi/left out semi/anti left out semi join, only left keys are returned,
 				// so just check the left keys
-				matches = prop.IsSubsetOf(lKeys)
+				matches = prop.IsSubsetOf(lkeys)
 			}
 			if len(matches) == 0 {
 				return nil
