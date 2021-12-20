@@ -680,6 +680,55 @@ func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
+	tk.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("create table t3(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("insert into t1 values(1,1,1),(2,2,2)")
+	tk.MustExec("insert into t2 values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)")
+	tk.MustExec("insert into t3 values(1,1,1)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" || tblInfo.Name.L == "t3" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestJoinNotSupportedByTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3667,6 +3716,18 @@ func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
 	tk.MustExec("prepare stmt from 'select id from t_varchar where col_varchar = ?';")
 	tk.MustExec("set @a = 0x3135;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestIssue29834(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MC21814;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
 // test BitLiteral used with GetVar

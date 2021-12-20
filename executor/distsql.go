@@ -200,8 +200,10 @@ type IndexReaderExecutor struct {
 }
 
 // Close clears all resources hold by current object.
-func (e *IndexReaderExecutor) Close() error {
-	err := e.result.Close()
+func (e *IndexReaderExecutor) Close() (err error) {
+	if e.result != nil {
+		err = e.result.Close()
+	}
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
