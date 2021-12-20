@@ -498,7 +498,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			pollTiFlashContext.mu.Lock()
 			oldAvailable, ok := pollTiFlashContext.UpdateMap[tb.ID]
 			if !ok || oldAvailable != avail {
-				// We witnessed a TiFlash status update.
+				// We witnessed a TiFlash status change.
 				logutil.BgLogger().Info("Instantly changing TiFlash status updating", zap.Int64("tableID", tb.ID), zap.Bool("value", avail))
 			}
 			pollTiFlashContext.UpdateMap[tb.ID] = avail
