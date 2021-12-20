@@ -447,7 +447,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		// refine each mysql integer type to the needed decimal precision for sum
 		if a.Name == ast.AggFuncSum && types.IsTypeInteger(tpOld) {
 			if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err != nil {
-				// avg could be split into sum and count, so we should take float decimal into account
+				// avg could be split into sum and count, so we should take float Decimal into account
 				a.Args[i].GetType().Flen = mathutil.Min(a.Args[i].GetType().Flen, flen+a.Args[i].GetType().Decimal)
 			}
 		}
@@ -469,6 +469,6 @@ func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
 	case mysql.TypeYear:
 		return 4, nil
 	default:
-		return -1, errors.New("")
+		return -1, errors.New(fmt.Sprintf("Invalid type: %v", tp))
 	}
 }
