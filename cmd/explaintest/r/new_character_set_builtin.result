@@ -1,3 +1,4 @@
+set @@sql_mode = '';
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰');
@@ -244,8 +245,8 @@ insert into t values ('65'), ('123456'), ('123456789');
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-é‡¦	â@	â@
-NULL	[Í	[Í
+é‡¦		â@
+[	[	[Í
 select char(12345678 using gbk);
 char(12345678 using gbk)
 ç³°N
@@ -253,8 +254,8 @@ set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-é‡¦	â@	â@
-NULL	[Í	[Í
+é‡¦		â@
+[	[	[Í
 select char(12345678 using gbk);
 char(12345678 using gbk)
 ç³°N
