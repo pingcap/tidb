@@ -20,6 +20,21 @@ import (
 	"go.uber.org/atomic"
 )
 
+var _ StatementObserver = &StatementStats{}
+
+// StatementObserver is an abstract interface as a callback to the corresponding
+// position of TiDB's SQL statement execution process. StatementStats implements
+// StatementObserver and performs counting such as SQLExecCount/SQLDuration internally.
+// The caller only needs to be responsible for calling different methods at the
+// corresponding locations, without paying attention to implementation details.
+type StatementObserver interface {
+	// OnExecutionBegin should be called before statement execution.
+	OnExecutionBegin(sqlDigest, planDigest []byte)
+
+	// OnExecutionFinished should be called after the statement is executed.
+	OnExecutionFinished(sqlDigest, planDigest []byte)
+}
+
 // StatementStats is a counter used locally in each session.
 // We can use StatementStats to count data such as "the number of SQL executions",
 // and it is expected that these statistics will eventually be collected and merged
@@ -38,6 +53,17 @@ func CreateStatementStats() *StatementStats {
 	}
 	globalAggregator.register(stats)
 	return stats
+}
+
+// OnExecutionBegin implements StatementObserver.OnExecutionBegin.
+func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+	s.AddExecCount(sqlDigest, planDigest, 1)
+	// Count more data here.
+}
+
+// OnExecutionFinished implements StatementObserver.OnExecutionFinished.
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
+	// Count more data here.
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem

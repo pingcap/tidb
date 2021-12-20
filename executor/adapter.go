@@ -233,7 +233,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.countExecForTopSQL()
+	a.observeStmtBeginForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -324,20 +324,20 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
-func (a *ExecStmt) countExecForTopSQL() {
+func (a *ExecStmt) observeStmtBeginForTopSQL() {
 	if !variable.TopSQLEnabled() {
 		return
 	}
-	var sqlDigest, planDigest []byte
-	vars := a.Ctx.GetSessionVars()
-	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-		sqlDigest = d.Bytes()
-	}
-	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-		planDigest = d.Bytes()
-	}
-	if vars.StmtStats != nil {
-		vars.StmtStats.AddExecCount(sqlDigest, planDigest, 1)
+	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
+		var sqlDigest, planDigest []byte
+		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+			sqlDigest = d.Bytes()
+		}
+		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+			planDigest = d.Bytes()
+		}
+		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
@@ -402,7 +402,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.countExecForTopSQL()
+	a.observeStmtBeginForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -916,6 +916,17 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	// Observe statement execution for TopSQL.
+	if sessVars.StmtStats != nil {
+		var sqlDigest, planDigest []byte
+		if _, d := sessVars.StmtCtx.SQLDigest(); d != nil {
+			sqlDigest = d.Bytes()
+		}
+		if _, d := sessVars.StmtCtx.GetPlanDigest(); d != nil {
+			planDigest = d.Bytes()
+		}
+		sessVars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+	}
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
