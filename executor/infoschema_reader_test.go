@@ -23,13 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/ddl"
-
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor"
