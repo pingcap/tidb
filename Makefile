@@ -79,7 +79,7 @@ check-parallel:
 	# Make sure no tests are run in parallel to prevent possible unstable tests.
     # See https://github.com/pingcap/tidb/pull/30692.
 	@! find . -name "*_test.go" -not -path "./vendor/*" -print0 | \
-      xargs -0 grep -E -n "t.Parallel()" || \
+      xargs -0 grep -F -n "t.Parallel()" || \
       ! echo "Error: all the go tests should be run in serial."
 
 clean: failpoint-disable
