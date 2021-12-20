@@ -314,11 +314,14 @@ func TestCastFuncSig(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	originTZ := sc.TimeZone
+	originTimestamp := sc.Timestamp
 	sc.IgnoreTruncate = true
 	sc.TimeZone = time.UTC
+	sc.Timestamp = time.Now()
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 		sc.TimeZone = originTZ
+		sc.Timestamp = originTimestamp
 	}()
 	var sig builtinFunc
 
