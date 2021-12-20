@@ -1,6 +1,7 @@
 package cpuprofile
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,9 +14,9 @@ import (
 // GetCPUProfile uses to get the cpu profile data from GlobalCPUProfiler.
 // You should use GetCPUProfile instead of `pprof.StartCPUProfile`, `pprof.StopCPUProfile`.
 // Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
-func GetCPUProfile(seconds uint64, w io.Writer) error {
+func GetCPUProfile(ctx context.Context, seconds uint64, w io.Writer) error {
 	pc := NewPprofAPIConsumer()
-	profileData, err := pc.WaitProfilingFinish(seconds)
+	profileData, err := pc.WaitProfilingFinish(ctx, seconds)
 	if err != nil {
 		return err
 	}
@@ -49,7 +50,7 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	//                            |________________________________|
 	//       (start cpu profile)  v                                v (stop cpu profile)    // expected profile timeline
 	//                        |________________________________|                           // actual profile timeline
-	err = GetCPUProfile(uint64(sec), w)
+	err = GetCPUProfile(r.Context(), uint64(sec), w)
 	if err != nil {
 		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
 	}

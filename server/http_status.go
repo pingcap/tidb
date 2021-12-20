@@ -351,7 +351,7 @@ func (s *Server) startHTTPServer() {
 		if sec <= 0 || err != nil {
 			sec = 10
 		}
-		err = cpuprofile.GetCPUProfile(uint64(sec), fw)
+		err = cpuprofile.GetCPUProfile(r.Context(), uint64(sec), fw)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Could not enable CPU profiling: %s", err))

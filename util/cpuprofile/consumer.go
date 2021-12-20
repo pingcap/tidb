@@ -1,6 +1,7 @@
 package cpuprofile
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -28,7 +29,7 @@ func NewPprofAPIConsumer() *PprofAPIConsumer {
 }
 
 // WaitProfilingFinish waits for collecting `seconds` profile data finished.
-func (pc *PprofAPIConsumer) WaitProfilingFinish(seconds uint64) (*profile.Profile, error) {
+func (pc *PprofAPIConsumer) WaitProfilingFinish(ctx context.Context, seconds uint64) (*profile.Profile, error) {
 	// register cpu profile consumer.
 	Register(pc.dataCh)
 	defer Unregister(pc.dataCh)
@@ -39,6 +40,8 @@ func (pc *PprofAPIConsumer) WaitProfilingFinish(seconds uint64) (*profile.Profil
 	timeoutCh := time.After(profileDuration + defProfileTimeout)
 	for {
 		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case <-timeoutCh:
 			return nil, errors.New("profiling failed, should never happen")
 		case data := <-pc.dataCh:

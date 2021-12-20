@@ -127,7 +127,7 @@ func TestGetCPUProfile(t *testing.T) {
 	// Test profile error
 	err := pprof.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
-	err = GetCPUProfile(1, bytes.NewBuffer(nil))
+	err = GetCPUProfile(context.Background(), 1, bytes.NewBuffer(nil))
 	require.Error(t, err)
 	require.Equal(t, "cpu profiling already in use", err.Error())
 	pprof.StopCPUProfile()
@@ -142,7 +142,7 @@ func TestGetCPUProfile(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			buf := bytes.NewBuffer(nil)
-			err = GetCPUProfile(2, buf)
+			err = GetCPUProfile(context.Background(), 2, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)
@@ -158,6 +158,13 @@ func TestGetCPUProfile(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+
+	// test for ctx timeout.
+	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel1()
+	err = GetCPUProfile(ctx1, 2, bytes.NewBuffer(nil))
+	require.Error(t, err)
+	require.Equal(t, context.DeadlineExceeded, err)
 }
 
 func TestProfileHTTPHandler(t *testing.T) {
