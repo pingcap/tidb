@@ -5020,3 +5020,17 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 
 }
+
+func (s *testIntegrationSuite) TestIssue30804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	// minimal reproduction of https://github.com/pingcap/tidb/issues/30804
+	tk.MustExec("select avg(0) over w from t1 window w as (order by (select 1))")
+	// named window cannot be used in subquery
+	err := tk.ExecToErr("select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b)")
+	c.Assert(core.ErrWindowNoSuchWindow.Equal(err), IsTrue)
+	tk.MustExec("select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b)")
+}
