@@ -11,8 +11,6 @@
         ]
       },
       {
-<<<<<<< HEAD
-=======
         "SQL": "explain format = 'brief' select * from t where cast(t.a as double) + 3 = 5.1",
         "Plan": [
           "TableReader 8000.00 root  data:Selection",
@@ -21,7 +19,6 @@
         ]
       },
       {
->>>>>>> 36d0b4067... expression: not push invalid cast to tiflash (#28458)
         "SQL": "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
         "Plan": [
           "Projection 2.00 root  test.t.a, test.t.b",

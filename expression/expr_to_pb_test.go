@@ -871,10 +871,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-<<<<<<< HEAD
 	// RoundDecimal: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
-=======
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// Cast to Int32: not supported
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
 	c.Assert(err, IsNil)
@@ -894,7 +895,6 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
 	unsignedInt32Type.Flag = mysql.UnsignedFlag
 	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
->>>>>>> 36d0b4067... expression: not push invalid cast to tiflash (#28458)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 

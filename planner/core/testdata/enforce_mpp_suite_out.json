@@ -352,22 +352,14 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-<<<<<<< HEAD
-          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
           "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
           "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
           "MPP mode may be blocked because groupByItems contain unsupported exprs",
-=======
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
-          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
-          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
->>>>>>> 36d0b4067... expression: not push invalid cast to tiflash (#28458)
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
