@@ -177,7 +177,7 @@ func reverseRunes(origin []rune) []rune {
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
+	} else if (mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp)) && !(argTp.Tp == mysql.TypeEnum || argTp.Tp == mysql.TypeSet) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -771,9 +771,11 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 
-	bf.tp.Flen = args[0].GetType().Flen
+	argTp := args[0].GetType()
+	bf.tp.Flen = argTp.Flen
+	SetBinFlagOrBinStr(argTp, bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(bf.tp) {
+	if types.IsBinaryStr(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
