@@ -1684,13 +1684,13 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminFlushPlanCache {
 		return errors.New("This AdminStmt is not ADMIN FLUSH PLAN_CACHE")
 	}
-	if s.StatementScope == ast.GlobalScope {
+	if s.StatementScope == ast.StatementScopeGlobal {
 		return errors.New("Do not support the 'admin flush global scope.'")
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.ctx.GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
 	e.ctx.GetSessionVars().LastUpdateTime4PC = now
 	e.ctx.PreparedPlanCache().DeleteAll()
-	if s.StatementScope == ast.InstanceScope {
+	if s.StatementScope == ast.StatementScopeInstance {
 		// Record the timestamp. When other sessions want to use the plan cache,
 		// it will check the timestamp first to decide whether the plan cache should be flushed.
 		domain.GetDomain(e.ctx).ExpiredTimeStamp4PC = now
