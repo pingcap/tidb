@@ -34,6 +34,19 @@ type encodingBase struct {
 	self Encoding
 }
 
+func (b encodingBase) DecodeRuneInString(src string) (r rune, size int) {
+	srcBytes := b.self.Peek(Slice(src))
+	_, err := b.Transform(nil, srcBytes, OpDecode)
+	if err != nil {
+		return rune(src[0]), 1
+	}
+	r = 0
+	for _, v := range srcBytes {
+		r = r<<8 + rune(v)
+	}
+	return r, len(srcBytes)
+}
+
 func (b encodingBase) ToUpper(src string) string {
 	return strings.ToUpper(src)
 }

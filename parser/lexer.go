@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -90,6 +89,11 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
 	s.r = reader{s: sql, p: Pos{Line: 1}}
+	if s.encoding != nil {
+		s.r.decodeRuneInString = s.encoding.DecodeRuneInString
+	} else {
+		s.r.decodeRuneInString = charset.FindEncoding(mysql.DefaultCharset).DecodeRuneInString
+	}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -146,7 +150,7 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	if mysql.IsUTF8Charset(s.encoding.Name()) {
+	if s.encoding == nil || mysql.IsUTF8Charset(s.encoding.Name()) {
 		// Skip utf8 encoding because `ToUTF8` validates the whole SQL.
 		// This can cause failure when the SQL contains BLOB values.
 		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
@@ -182,6 +186,7 @@ func (s *Scanner) getNextToken() int {
 // return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
+	lit = s.tryDecodeToUTF8String(lit)
 	s.lastScanOffset = pos.Offset
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
@@ -275,7 +280,7 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 // InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
-		r:                 reader{s: sql},
+		r:                 reader{s: sql, decodeRuneInString: s.r.decodeRuneInString},
 		encoding:          s.encoding,
 		sqlMode:           s.sqlMode,
 		supportWindowFunc: s.supportWindowFunc,
@@ -924,9 +929,10 @@ func (s *Scanner) lastErrorAsWarn() {
 }
 
 type reader struct {
-	s string
-	p Pos
-	w int
+	s                  string
+	p                  Pos
+	w                  int
+	decodeRuneInString func(src string) (r rune, size int)
 
 	peekRune        rune
 	peekRuneUpdated bool
@@ -948,13 +954,7 @@ func (r *reader) peek() rune {
 	if r.eof() {
 		return unicode.ReplacementChar
 	}
-	v, w := rune(r.s[r.p.Offset]), 1
-	if v >= 0x80 {
-		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
-		if v == utf8.RuneError && w == 1 {
-			v = rune(r.s[r.p.Offset]) // illegal encoding
-		}
-	}
+	v, w := r.decodeRuneInString(r.s[r.p.Offset:])
 	r.w = w
 	r.peekRune = v
 	r.peekRuneUpdated = true

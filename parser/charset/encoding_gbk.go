@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 // EncodingGBKImpl is the instance of encodingGBK
@@ -40,6 +41,35 @@ func (e *encodingGBK) Name() string {
 // Tp implements Encoding interface.
 func (e *encodingGBK) Tp() EncodingTp {
 	return EncodingTpGBK
+}
+
+// Foreach implements Encoding interface.
+func (e *encodingGBK) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
+	var tfm transform.Transformer
+	var peek func([]byte) []byte
+	if op&opFromUTF8 != 0 {
+		tfm = e.enc.NewEncoder()
+		peek = EncodingUTF8Impl.Peek
+	} else {
+		tfm = e.enc.NewDecoder()
+		peek = e.self.Peek
+	}
+	var buf [4]byte
+	var nDst int
+	var err error
+	for i, w := 0, 0; i < len(src); i += w {
+		w = len(peek(src[i:]))
+		// for compatible with mysql, see https://github.com/pingcap/tidb/issues/30581 get details
+		if src[i] != 0x80 {
+			nDst, _, err = tfm.Transform(buf[:], src[i:i+w], false)
+		} else {
+			err = errInvalidCharacterString
+		}
+		meetErr := err != nil || (op&opToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
+		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
+			return
+		}
+	}
 }
 
 // Peek implements Encoding interface.
