@@ -8338,7 +8338,6 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		"select a + 1 from t",
 		"select count(*) a from t having a > 1",
 		"select * from t where a = 1.1",
-		"with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 5 offset 0) select * from cte1",
 		"select /*+use_index_merge(t, c_d_e, f)*/ * from t where c < 1 or f > 2",
 		"select sum(f) over (partition by f) from t",
 		"select /*+ merge_join(t1)*/ * from t t1 join t t2 on t1.d = t2.d",
