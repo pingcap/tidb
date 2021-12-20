@@ -1036,8 +1036,8 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			}
 			// remove dup region
 			for _, region := range regionsInfo.Regions {
-				if !regionMap[region.ID] {
-					regionMap[region.ID] = true
+				if _, ok := regionMap[region.ID]; !ok {
+					regionMap[region.ID] = struct{}{}
 					regionsInfoByStoreID = append(regionsInfoByStoreID, region)
 				}
 			}
@@ -1062,7 +1062,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 
 	// intersect
 	for _, region := range regionsInfoByRegionID {
-		if regionMap[region.ID] {
+		if _, ok := regionMap[region.ID]; !ok {
 			regionsInfo = append(regionsInfo, region)
 		}
 	}
