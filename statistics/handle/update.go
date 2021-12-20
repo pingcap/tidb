@@ -32,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1175,8 +1177,9 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		}
 		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
@@ -1266,7 +1269,18 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 		return nil
 	}
 
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	timeZone := sctx.GetSessionVars().StmtCtx.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sctx.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)
@@ -1274,10 +1288,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, nil, ranges, t.Count)
+		expected, err = idx.GetRowCount(sctx, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.Count, true)
+		expected, err = c.GetColumnRowCount(sctx, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err
@@ -1354,7 +1368,20 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	if !ok {
 		return nil
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+	timeZone := sc.TimeZone
+	defer func() {
+		sctx.GetSessionVars().StmtCtx.TimeZone = timeZone
+		h.pool.Put(se)
+	}()
+	sc.TimeZone = time.UTC
+
 	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
@@ -1369,7 +1396,6 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
 			continue
 		}
-
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
@@ -1377,20 +1403,21 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		}
 		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
 		rangeFB := &statistics.QueryFeedback{PhysicalID: q.PhysicalID}
 		// prefer index stats over column stats
 		if idx := t.IndexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{rang})
+			rangeCount, err = t.GetRowCountByIndexRanges(sctx, idx.ID, []*ranger.Range{rang})
 			rangeFB.Tp, rangeFB.Hist = statistics.IndexType, &idx.Histogram
 		} else if col := t.ColumnByName(colName); col != nil && col.Histogram.Len() != 0 {
 			err = convertRangeType(rang, col.Tp, time.UTC)
 			if err == nil {
-				rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{rang})
+				rangeCount, err = t.GetRowCountByColumnRanges(sctx, col.ID, []*ranger.Range{rang})
 				rangeFB.Tp, rangeFB.Hist = statistics.ColType, &col.Histogram
 			}
 		} else {
