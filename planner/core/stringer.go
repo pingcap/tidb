@@ -27,10 +27,25 @@ func ToString(p Plan) string {
 	return strings.Join(strs, "->")
 }
 
+func needIncludeChildrenString(plan Plan) bool {
+	switch x := plan.(type) {
+	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
+		// after https://github.com/pingcap/tidb/pull/25218, the union may contain less than 2 children,
+		// but we still wants to include its child plan's information when calling `toString` on union.
+		return true
+	case LogicalPlan:
+		return len(x.Children()) > 1
+	case PhysicalPlan:
+		return len(x.Children()) > 1
+	default:
+		return false
+	}
+}
+
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case LogicalPlan:
-		if len(x.Children()) > 1 {
+		if needIncludeChildrenString(in) {
 			idxs = append(idxs, len(strs))
 		}
 
@@ -39,7 +54,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
-		if len(x.Children()) > 1 {
+		if needIncludeChildrenString(in) {
 			idxs = append(idxs, len(strs))
 		}
 
