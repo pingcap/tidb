@@ -15,10 +15,49 @@
 package stmtstats
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// String is only used for debugging.
+func (d SQLPlanDigest) String() string {
+	bs := bytes.NewBufferString("")
+	if len(d.SQLDigest) >= 5 {
+		bs.Write([]byte(d.SQLDigest)[:5])
+	}
+	if len(d.PlanDigest) >= 5 {
+		bs.WriteRune('-')
+		bs.Write([]byte(d.PlanDigest)[:5])
+	}
+	return bs.String()
+}
+
+// String is only used for debugging.
+func (m StatementStatsMap) String() string {
+	if len(m) == 0 {
+		return "StatementStatsMap {}"
+	}
+	bs := bytes.NewBufferString("")
+	bs.WriteString("StatementStatsMap {\n")
+	for k, v := range m {
+		bs.WriteString(fmt.Sprintf("    %s => %s\n", k, v))
+	}
+	bs.WriteString("}")
+	return bs.String()
+}
+
+// String is only used for debugging.
+func (i *StatementStatsItem) String() string {
+	if i == nil {
+		return "<nil>"
+	}
+	b, _ := json.Marshal(i)
+	return string(b)
+}
 
 func TestKvStatementStatsItem_Merge(t *testing.T) {
 	item1 := &KvStatementStatsItem{
