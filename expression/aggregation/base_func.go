@@ -454,7 +454,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	}
 }
 
-func refineSumDecimalArgs(tp byte) (int, error) {
+func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
 	switch tp {
 	case mysql.TypeTiny:
 		return 3, nil
