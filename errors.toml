@@ -1801,6 +1801,21 @@ error = '''
 column %s can't be in none state
 '''
 
+["table:8138"]
+error = '''
+writing inconsistent data in table: %s, expected-values:{%s} != record-values:{%s}
+'''
+
+["table:8139"]
+error = '''
+writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v
+'''
+
+["table:8140"]
+error = '''
+writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}
+'''
+
 ["tikv:1105"]
 error = '''
 Unknown error
