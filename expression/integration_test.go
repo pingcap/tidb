@@ -9284,6 +9284,19 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
 
+func (s *testIntegrationSuite) TestIssue28643(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
+	tk.MustExec("insert into t values(\"838:59:59.000000\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+}
+
 func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9368,4 +9381,17 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	tk.MustQuery("select elt(1,s) = 'a' from s").Check(testkit.Rows("1"))
 	tk.MustQuery("select elt(1,s) = 4 from s").Check(testkit.Rows("1"))
 	tk.MustQuery("select s from s where elt(1,s)").Check(testkit.Rows("a"))
+}
+
+func (s *testIntegrationSuite) TestIssue29513(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
