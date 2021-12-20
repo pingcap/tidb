@@ -4377,22 +4377,17 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
+func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	origin := se.GetSessionVars().InRestrictedSQL
-	se.GetSessionVars().InRestrictedSQL = true
-	defer func() {
-		se.GetSessionVars().InRestrictedSQL = origin
-	}()
-	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
+	_, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParams(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4402,15 +4397,15 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParams(context.TODO(), "SELECT")
+	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParams(context.TODO(), "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParams(context.TODO(), "SELECT 3")
+	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()
