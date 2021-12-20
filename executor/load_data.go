@@ -565,6 +565,26 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 
 	// terminated symbol in the middle of prevData and curData
 	lineLen := startingLen + endIdx + terminatedLen
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.BgLogger().Info("load data",
+				zap.String("Field Terminated", e.FieldsInfo.Terminated),
+				zap.String("Field Enclosed", string(e.FieldsInfo.Enclosed)),
+				zap.Bool("Field OptEnclosed", e.FieldsInfo.OptEnclosed),
+				zap.String("Line Starting", e.LinesInfo.Starting),
+				zap.String("Line Terminated", e.LinesInfo.Terminated),
+				zap.Int("endIdx", endIdx),
+				zap.Int("prevLen", prevLen),
+				zap.Int("lineLen", lineLen),
+				zap.Int("nextDataIdx", nextDataIdx),
+				zap.Bool("inquotor", inquotor),
+				zap.Bool("ignore", ignore),
+				zap.ByteString("prevData", prevData),
+				zap.ByteString("curData", curData),
+			)
+		}
+	}()
 	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
 }
 
