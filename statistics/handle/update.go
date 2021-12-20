@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1224,8 +1225,9 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		}
 		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
@@ -1449,8 +1451,9 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		}
 		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
