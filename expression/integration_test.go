@@ -9309,4 +9309,3 @@ func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
 	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }
-
