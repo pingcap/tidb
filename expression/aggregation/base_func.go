@@ -469,6 +469,6 @@ func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
 	case mysql.TypeYear:
 		return 4, nil
 	default:
-		return -1, errors.New(fmt.Sprintf("Invalid type: %v", tp))
+		return -1, errors.Errorf("Invalid type: %v", tp)
 	}
 }
