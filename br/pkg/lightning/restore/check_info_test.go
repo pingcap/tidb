@@ -413,11 +413,11 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 			Name: "test1",
 			Tables: []*mydump.MDTableMeta{
 				{
-					DB: "test1",
+					DB:   "test1",
 					Name: "tbl1",
 				},
 				{
-					DB: "test1",
+					DB:   "test1",
 					Name: "tbl2",
 				},
 			},
@@ -426,7 +426,7 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 			Name: "test2",
 			Tables: []*mydump.MDTableMeta{
 				{
-					DB: "test2",
+					DB:   "test2",
 					Name: "tbl1",
 				},
 			},
@@ -434,8 +434,8 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	}
 
 	rc := &Controller{
-		cfg:       cfg,
-		dbMetas:   dbMetas,
+		cfg:     cfg,
+		dbMetas: dbMetas,
 	}
 
 	ctx := context.Background()

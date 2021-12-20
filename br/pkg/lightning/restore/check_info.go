@@ -1076,7 +1076,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
-	for i := 0; i < concurrency; i ++ {
+	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for tblName := range ch {
 				hasData, err1 := tableContainsData(gCtx, db, tblName)

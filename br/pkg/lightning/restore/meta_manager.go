@@ -1034,7 +1034,7 @@ func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
 	return nil
 }
 
-type singleMgrBuilder struct {}
+type singleMgrBuilder struct{}
 
 func (b singleMgrBuilder) Init(context.Context) error {
 	return nil
@@ -1050,7 +1050,7 @@ func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 	return noopTableMetaMgr{}
 }
 
-type singleTaskMetaMgr struct{
+type singleTaskMetaMgr struct {
 	pd *pdutil.PdController
 }
 
