@@ -1570,7 +1570,7 @@ type AnalyzeFastExec struct {
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}
@@ -2117,7 +2117,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) *statistics.A
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
-	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}}
+	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hist, cms, fms, topN, err := idxExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
@@ -2172,7 +2172,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		maxVal = types.NewIntDatum(math.MaxInt64)
 	}
 	startPos := *colExec.oldHist.GetUpper(colExec.oldHist.Len() - 1)
-	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hists, _, _, _, _, err := colExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
