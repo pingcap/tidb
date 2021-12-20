@@ -3089,7 +3089,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 
@@ -3129,7 +3129,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 
 	// Create virtual tiflash replica info.
@@ -3718,6 +3718,18 @@ func (s *testIntegrationSuite) TestGetVarExprWithHexLiteral(c *C) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite) TestIssue29834(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MC21814;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+}
+
 // test BitLiteral used with GetVar
 func (s *testIntegrationSuite) TestGetVarExprWithBitLiteral(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -3772,4 +3784,70 @@ func (s *testIntegrationSuite) TestGroupBySetVar(c *C) {
 		})
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIssues29711(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tbl_29711")
+	tk.MustExec("CREATE TABLE `tbl_29711` (" +
+		"`col_250` text COLLATE utf8_unicode_ci NOT NULL," +
+		"`col_251` varchar(10) COLLATE utf8_unicode_ci NOT NULL," +
+		"PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);")
+	tk.MustQuery("explain " +
+		"select /*+ LIMIT_TO_COP() */ col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;").
+		Check(testkit.Rows(
+			"TopN_9 6.00 root  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"└─IndexLookUp_16 6.00 root  ",
+			"  ├─IndexRangeScan_13(Build) 250.00 cop[tikv] table:tbl_29711, index:PRIMARY(col_251, col_250) range:[\"Bob\",\"David\"], keep order:false, stats:pseudo",
+			"  └─TopN_15(Probe) 6.00 cop[tikv]  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"    └─TableRowIDScan_14 250.00 cop[tikv] table:tbl_29711 keep order:false, stats:pseudo",
+		))
+
+	tk.MustExec("drop table if exists t29711")
+	tk.MustExec("CREATE TABLE `t29711` (" +
+		"`a` varchar(10) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) DEFAULT NULL," +
+		"KEY `ia` (`a`(2)))")
+	tk.MustQuery("explain select /*+ LIMIT_TO_COP() */ * from t29711 use index (ia) order by a limit 10;").
+		Check(testkit.Rows(
+			"TopN_8 10.00 root  test.t29711.a, offset:0, count:10",
+			"└─IndexLookUp_15 10.00 root  ",
+			"  ├─IndexFullScan_12(Build) 10000.00 cop[tikv] table:t29711, index:ia(a) keep order:false, stats:pseudo",
+			"  └─TopN_14(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
+			"    └─TableRowIDScan_13 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
+		))
+
+}
+
+func (s *testIntegrationSuite) TestIssue27797(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27797")
+	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
+		"partition by range columns(d) (" +
+		"partition p0 values less than (20)," +
+		"partition p1 values less than(40)," +
+		"partition p2 values less than(60));")
+	tk.MustExec("insert into t27797 values(1,1,1,1), (2,2,2,2), (22,22,22,22), (44,44,44,44);")
+	tk.MustExec("set sql_mode='';")
+	result := tk.MustQuery("select count(*) from (select a, b from t27797 where d > 1 and d < 60 and b > 0 group by b, c) tt;")
+	result.Check(testkit.Rows("3"))
+
+	tk.MustExec("drop table if exists IDT_HP24172")
+	tk.MustExec("CREATE TABLE `IDT_HP24172` ( " +
+		"`COL1` mediumint(16) DEFAULT NULL, " +
+		"`COL2` varchar(20) DEFAULT NULL, " +
+		"`COL4` datetime DEFAULT NULL, " +
+		"`COL3` bigint(20) DEFAULT NULL, " +
+		"`COL5` float DEFAULT NULL, " +
+		"KEY `UM_COL` (`COL1`,`COL3`) " +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"PARTITION BY HASH( `COL1`+`COL3` ) " +
+		"PARTITIONS 8;")
+	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
+	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
+	result.Check(testkit.Rows("<nil>"))
 }
