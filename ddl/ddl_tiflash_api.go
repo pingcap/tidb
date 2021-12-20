@@ -64,7 +64,6 @@ type TiFlashManagementContext struct {
 	TiFlashStores             map[int64]helper.StoreStat
 	HandlePdCounter           int
 	UpdateTiFlashStoreCounter int
-	mu                        sync.Mutex
 	UpdateMap                 map[int64]bool
 }
 
