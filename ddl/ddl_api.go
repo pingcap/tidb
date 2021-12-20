@@ -31,7 +31,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/expression"
@@ -4752,7 +4751,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		// Must set placement rule before the ActionSetTiFlashReplica job is in queue.
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
-			log.Error("can not get Helper")
+			logutil.BgLogger().Error("can not get Helper")
 		}
 		tikvHelper := &helper.Helper{
 			Store:       tikvStore,

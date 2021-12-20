@@ -1224,12 +1224,12 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
 				err := tikvHelper.SetPlacementRule(*newRule)
 				if err != nil {
-					log.Warn("SetPlacementRule fails", zap.Error(err))
+					logutil.BgLogger().Warn("SetPlacementRule fails", zap.Error(err))
 					atomic.StoreUint32(&ReschePullTiFlash, 1)
 				}
 			}
 		} else {
-			log.Warn("Set new pd rule fail while truncate partition")
+			logutil.BgLogger().Warn("Set new pd rule fail while truncate partition")
 			atomic.StoreUint32(&ReschePullTiFlash, 1)
 		}
 	}
