@@ -16,6 +16,7 @@ package placement
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -62,6 +63,18 @@ func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
 	}
 }
 
+var wrongSeparatorRegexp = regexp.MustCompile(`[^"':]+:\d`)
+
+func getYamlMapFormatError(str string) error {
+	if !strings.Contains(str, ":") {
+		return ErrInvalidConstraintsMappingNoColonFound
+	}
+	if wrongSeparatorRegexp.MatchString(str) {
+		return ErrInvalidConstraintsMappingWrongSeparator
+	}
+	return nil
+}
+
 // NewRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
@@ -87,6 +100,9 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 		ruleCnt := 0
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
+				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
+					return rules, err
+				}
 				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
 			}
 			ruleCnt += cnt
