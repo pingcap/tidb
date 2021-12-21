@@ -1932,7 +1932,12 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		// Since the original implementation doesn't handle pd rules for ActionDropSchema etc.,
 		// we don't handle TiFlash pd rules for them either.
 		deletePdRuleFunc()
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
+			return
+		}
+		deletePdRuleFunc()
+	case model.ActionDropSchema:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}

@@ -303,6 +303,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 
 // Truncate partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -316,6 +317,21 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk.MustExec("alter table ddltiflash truncate partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
+}
+
+
+// Drop partition shall not block.
+func (s *tiflashDDLTestSuite) TestTiFlashDropPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	tk.MustExec("alter table ddltiflash drop partition p1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable * 5)
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash")
 }
 
 func CheckTableAvailableWithTableName(dom *domain.Domain, c *C, count uint64, labels []string, db string, table string) {
