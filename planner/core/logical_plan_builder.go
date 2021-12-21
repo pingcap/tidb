@@ -58,6 +58,8 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -4202,16 +4204,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
 				startTS := txn.StartTS()
 				store := b.ctx.GetStore()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
+				_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
+					go func() {
+						defer func() {
+							if r := recover(); r != nil {
+							}
+						}()
+						err := cachedTable.UpdateLockForRead(ctx, store, startTS)
+						if err != nil {
+							log.Warn("Update Lock Info Error", zap.Error(err))
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
-				}()
+					return nil, nil
+				})
+				terror.Log(err)
 			}
 		}
 	}
@@ -4237,6 +4243,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	return result, nil
 }
+
+var sf singleflight.Group
 
 func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {
 	const defaultSummaryDuration = 30 * time.Minute
