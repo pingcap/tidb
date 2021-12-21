@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -38,7 +40,7 @@ const (
 )
 
 var (
-	globalTopSQLReport   reporter.TopSQLReporter
+	globalTopSQLReport   *reporter.RemoteTopSQLReporter
 	singleTargetDataSink *reporter.SingleTargetDataSink
 )
 
@@ -52,6 +54,14 @@ func SetupTopSQL() {
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 	stmtstats.SetupAggregator()
+}
+
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
+func RegisterPubSubServer(s *grpc.Server) {
+	if globalTopSQLReport != nil {
+		service := reporter.NewTopSQLPubSubService(globalTopSQLReport)
+		tipb.RegisterTopSQLPubSubServer(s, service)
+	}
 }
 
 // Close uses to close and release the top sql resource.
