@@ -87,6 +87,52 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select * from t as t1 left join t as t2 on t1.a = t2.a order by t1.a limit 10;",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			assertRuleName: "topn_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Limit_6 is converted into TopN_7",
+					assertReason: "",
+				},
+				{
+					assertAction: "Sort_5 passes ByItems[test.t.a] to TopN_7",
+					assertReason: "TopN_7 is Limit originally",
+				},
+				{
+					assertAction: "TopN_8 is added and pushed into Join_3's left table",
+					assertReason: "Join_3's joinType is left outer join, and all ByItems[test.t.a] contained in left table",
+				},
+				{
+					assertAction: "TopN_8 is added as DataSource_1's parent",
+					assertReason: "TopN is pushed down",
+				},
+				{
+					assertAction: "TopN_7 is added as Join_3's parent",
+					assertReason: "TopN is pushed down",
+				},
+			},
+		},
+		{
+			sql:            "select * from t order by a limit 10",
+			flags:          []uint64{flagPrunColumns, flagBuildKeyInfo, flagPushDownTopN},
+			assertRuleName: "topn_push_down",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Limit_4 is converted into TopN_5",
+					assertReason: "",
+				},
+				{
+					assertAction: "Sort_3 passes ByItems[test.t.a] to TopN_5",
+					assertReason: "TopN_5 is Limit originally",
+				},
+				{
+					assertAction: "TopN_5 is added as DataSource_1's parent",
+					assertReason: "TopN is pushed down",
+				},
+			},
+		},
+		{
 			sql:            "select * from pt3 where ptn > 3;",
 			flags:          []uint64{flagPartitionProcessor, flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "partition_processor",
