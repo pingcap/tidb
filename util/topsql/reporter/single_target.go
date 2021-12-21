@@ -114,7 +114,6 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		}
 
 		if err := ds.trySwitchRegistration(targetRPCAddr); err != nil {
-			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
 			return false
 		}
 	}
@@ -131,6 +130,7 @@ func (ds *SingleTargetDataSink) trySwitchRegistration(addr string) error {
 	// register if `add` is not empty and not registered before
 	if addr != "" && !ds.registered.Load() {
 		if err := ds.registerer.Register(ds); err != nil {
+			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
 			return err
 		}
 		ds.registered.Store(true)
