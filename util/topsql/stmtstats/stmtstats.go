@@ -57,7 +57,11 @@ func CreateStatementStats() *StatementStats {
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
 func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
-	s.AddExecCount(sqlDigest, planDigest, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+
+	item.ExecCount++
 	// Count more data here.
 }
 
@@ -80,25 +84,16 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []b
 	return item
 }
 
-// AddExecCount is used to count the number of executions of a certain SQLPlanDigest.
-// AddExecCount is thread-safe.
-func (s *StatementStats) AddExecCount(sqlDigest, planDigest []byte, n uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
-	item.ExecCount += n
-}
-
-// AddKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
-// AddKvExecCount is thread-safe.
-func (s *StatementStats) AddKvExecCount(sqlDigest, planDigest []byte, target string, n uint64) {
+// addKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
+// addKvExecCount is thread-safe.
+func (s *StatementStats) addKvExecCount(sqlDigest, planDigest []byte, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 	item.KvStatsItem.KvExecCount[target] += n
 }
 
-// Take removes all existing StatementStatsMap data from StatementStats.
+// Take takes out all existing StatementStatsMap data from StatementStats.
 // Take is thread-safe.
 func (s *StatementStats) Take() StatementStatsMap {
 	s.mu.Lock()
@@ -108,9 +103,11 @@ func (s *StatementStats) Take() StatementStatsMap {
 	return data
 }
 
-// SetFinished marks StatementStats as "finished".
-// The background goroutine will periodically detect whether each
-// StatementStats has been finished, if so, it will be cleaned up.
+// SetFinished marks this StatementStats as "finished" and no more counting or
+// aggregation should happen. Associated resources will be cleaned up, like background
+// aggregators.
+// Generally, as the StatementStats is created when a session starts, SetFinished
+// should be called when the session ends.
 func (s *StatementStats) SetFinished() {
 	s.finished.Store(true)
 }
@@ -165,7 +162,7 @@ type StatementStatsItem struct {
 	ExecCount uint64
 
 	// KvStatsItem contains all indicators of kv layer.
-	KvStatsItem *KvStatementStatsItem
+	KvStatsItem KvStatementStatsItem
 }
 
 // NewStatementStatsItem creates an empty StatementStatsItem.
@@ -187,11 +184,7 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 		return
 	}
 	i.ExecCount += other.ExecCount
-	if i.KvStatsItem == nil {
-		i.KvStatsItem = other.KvStatsItem
-	} else {
-		i.KvStatsItem.Merge(other.KvStatsItem)
-	}
+	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 
 // KvStatementStatsItem is part of StatementStatsItem, it only contains
@@ -202,8 +195,8 @@ type KvStatementStatsItem struct {
 }
 
 // NewKvStatementStatsItem creates an empty KvStatementStatsItem.
-func NewKvStatementStatsItem() *KvStatementStatsItem {
-	return &KvStatementStatsItem{
+func NewKvStatementStatsItem() KvStatementStatsItem {
+	return KvStatementStatsItem{
 		KvExecCount: map[string]uint64{},
 	}
 }
@@ -215,10 +208,7 @@ func NewKvStatementStatsItem() *KvStatementStatsItem {
 // other unless you understand what you are doing.
 //
 // If you add additional indicators, you need to add their merge code here.
-func (i *KvStatementStatsItem) Merge(other *KvStatementStatsItem) {
-	if i == nil || other == nil {
-		return
-	}
+func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 	if i.KvExecCount == nil {
 		i.KvExecCount = other.KvExecCount
 	} else {

@@ -39,12 +39,12 @@ type aggregator struct {
 	cancel     context.CancelFunc
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
-	running    atomic.Bool
+	running    *atomic.Bool
 }
 
 // newAggregator creates an empty aggregator.
 func newAggregator() *aggregator {
-	return &aggregator{}
+	return &aggregator{running: atomic.NewBool(false)}
 }
 
 // run will block the current goroutine and execute the main loop of aggregator.
@@ -118,7 +118,7 @@ func (m *aggregator) close() {
 
 // closed returns whether the aggregator has been closed.
 func (m *aggregator) closed() bool {
-	return m.running.Load()
+	return !m.running.Load()
 }
 
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.

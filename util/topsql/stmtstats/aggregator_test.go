@@ -54,7 +54,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	stats.AddExecCount([]byte("SQL-1"), []byte(""), 1)
+	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
 		records = append(records, rs...)

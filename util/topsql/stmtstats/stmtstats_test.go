@@ -60,13 +60,13 @@ func (i *StatementStatsItem) String() string {
 }
 
 func TestKvStatementStatsItem_Merge(t *testing.T) {
-	item1 := &KvStatementStatsItem{
+	item1 := KvStatementStatsItem{
 		KvExecCount: map[string]uint64{
 			"127.0.0.1:10001": 1,
 			"127.0.0.1:10002": 2,
 		},
 	}
-	item2 := &KvStatementStatsItem{
+	item2 := KvStatementStatsItem{
 		KvExecCount: map[string]uint64{
 			"127.0.0.1:10002": 2,
 			"127.0.0.1:10003": 3,
@@ -99,7 +99,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	m1 := StatementStatsMap{
 		SQLPlanDigest{SQLDigest: "SQL-1"}: &StatementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: &KvStatementStatsItem{
+			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -108,7 +108,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 		},
 		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: &KvStatementStatsItem{
+			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -119,7 +119,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	m2 := StatementStatsMap{
 		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: &KvStatementStatsItem{
+			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -128,7 +128,7 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 		},
 		SQLPlanDigest{SQLDigest: "SQL-3"}: &StatementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: &KvStatementStatsItem{
+			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -168,9 +168,15 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats := CreateStatementStats()
 	m := stats.Take()
 	assert.Len(t, m, 0)
-	stats.AddExecCount([]byte("SQL-1"), []byte(""), 1)
-	stats.AddExecCount([]byte("SQL-2"), []byte(""), 2)
-	stats.AddExecCount([]byte("SQL-3"), []byte(""), 3)
+	for n := 0; n < 1; n++ {
+		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
+	}
+	for n := 0; n < 2; n++ {
+		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""))
+	}
+	for n := 0; n < 3; n++ {
+		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
+	}
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)

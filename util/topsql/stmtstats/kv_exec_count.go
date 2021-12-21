@@ -33,7 +33,7 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvEx
 }
 
 // KvExecCounter is used to count the number of SQL executions of the kv layer.
-// It internally calls AddKvExecCount of StatementStats at the right time, to
+// It internally calls addKvExecCount of StatementStats at the right time, to
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
 	stats  *StatementStats
@@ -60,10 +60,14 @@ func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
 // If this target is marked for the first time, then increase the number of execution.
 // mark is thread-safe.
 func (c *KvExecCounter) mark(target string) {
+	firstMark := false
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if _, ok := c.marked[target]; !ok {
 		c.marked[target] = struct{}{}
-		c.stats.AddKvExecCount([]byte(c.digest.SQLDigest), []byte(c.digest.PlanDigest), target, 1)
+		firstMark = true
+	}
+	c.mu.Unlock()
+	if firstMark {
+		c.stats.addKvExecCount([]byte(c.digest.SQLDigest), []byte(c.digest.PlanDigest), target, 1)
 	}
 }
