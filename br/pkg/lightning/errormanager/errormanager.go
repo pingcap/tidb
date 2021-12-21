@@ -329,7 +329,7 @@ func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, p
 	return handleRows, lastRowID, errors.Trace(rows.Err())
 }
 
-func (em *ErrorManager) errorCount(typeVal func (*config.MaxError) int64) int64 {
+func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
 	cfgVal := typeVal(em.configError)
 	val := typeVal(&em.remainingError)
 	if val < 0 {

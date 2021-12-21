@@ -87,9 +87,9 @@ func (e errorManagerSuite) TestInit(c *C) {
 func (e errorManagerSuite) TestHasError(c *C) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
-		Syntax: *atomic.NewInt64(100),
-		Charset: *atomic.NewInt64(100),
-		Type: *atomic.NewInt64(100),
+		Syntax:   *atomic.NewInt64(100),
+		Charset:  *atomic.NewInt64(100),
+		Type:     *atomic.NewInt64(100),
 		Conflict: *atomic.NewInt64(100),
 	}
 	em := &ErrorManager{
@@ -104,20 +104,20 @@ func (e errorManagerSuite) TestHasError(c *C) {
 	em.remainingError.Syntax.Sub(1)
 	c.Assert(em.HasError(), IsTrue)
 
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Charset.Sub(1)
 	c.Assert(em.HasError(), IsTrue)
 
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Type.Sub(1)
 	c.Assert(em.HasError(), IsTrue)
 
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Conflict.Sub(1)
 	c.Assert(em.HasError(), IsTrue)
 
 	// change multiple keys
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Store(0)
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
@@ -128,15 +128,15 @@ func (e errorManagerSuite) TestHasError(c *C) {
 func (e errorManagerSuite) TestErrorOutput(c *C) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
-		Syntax: *atomic.NewInt64(100),
-		Charset: *atomic.NewInt64(100),
-		Type: *atomic.NewInt64(100),
+		Syntax:   *atomic.NewInt64(100),
+		Charset:  *atomic.NewInt64(100),
+		Type:     *atomic.NewInt64(100),
 		Conflict: *atomic.NewInt64(100),
 	}
 	em := &ErrorManager{
 		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
-		schemaEscaped: "`error_info`",
+		schemaEscaped:  "`error_info`",
 	}
 
 	output := em.Output()
@@ -148,7 +148,7 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
 	c.Assert(checkStr, Equals, expected)
 
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Sub(10)
 	em.remainingError.Type.Store(10)
 	output = em.Output()
@@ -157,7 +157,7 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	c.Assert(checkStr, Equals, expected)
 
 	// change multiple keys
-	em.remainingError =  cfg.App.MaxError
+	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Store(0)
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
