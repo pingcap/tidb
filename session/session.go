@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
@@ -548,6 +549,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	if sessVars.StmtCtx.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
@@ -749,14 +754,15 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
 
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
 	tid := tablecodec.DecodeTableID(key)
 	if _, ok := m[tid]; ok {
-		return true
+		return true, nil
 	}
 
 	// This is the default filter for all tables.
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
@@ -2311,6 +2317,9 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
+		if s.sessionVars.StmtStats != nil {
+			s.sessionVars.StmtStats.SetFinished()
+		}
 	}
 	s.ClearDiskFullOpt()
 }
