@@ -643,8 +643,6 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 }
 
 func TestCopPaging(t *testing.T) {
-	t.Parallel()
-
 	store, clean := kit.CreateMockStore(t)
 	defer clean()
 
