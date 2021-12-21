@@ -242,7 +242,7 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
 		checkColumnStatsUsage(c, s.is, lp, false, tt.res, comment)
-		lp, err = LogicalOptimize(ctx, builder.GetOptFlag(), lp)
+		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
 		c.Assert(err, IsNil, comment)
 		checkColumnStatsUsage(c, s.is, lp, false, tt.res, comment)
 	}
@@ -306,7 +306,7 @@ func (s *testPlanSuite) TestCollectHistNeededColumns(c *C) {
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
 		// Hence we disable JoinReOrder and PruneColumnsAgain here.
 		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
-		lp, err = LogicalOptimize(ctx, flags, lp)
+		lp, err = logicalOptimize(ctx, flags, lp)
 		c.Assert(err, IsNil, comment)
 		checkColumnStatsUsage(c, s.is, lp, true, tt.res, comment)
 	}
