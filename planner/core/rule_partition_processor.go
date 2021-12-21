@@ -1580,12 +1580,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		appendNoPartitionChildTraceStep(ds, plan, opt)
 		return
 	}
-	action := func() string {
-		return ""
-	}
-	reason := func() string {
-		return ""
-	}
+	var action, reason func() string
 	var used []model.PartitionDefinition
 	for _, def := range usedMap {
 		used = append(used, def)
