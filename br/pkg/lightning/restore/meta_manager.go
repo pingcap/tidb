@@ -1027,7 +1027,7 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 }
 
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
-	return true, false, &verify.KVChecksum{}, nil
+	return true, true, &verify.KVChecksum{}, nil
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
