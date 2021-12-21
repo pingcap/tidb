@@ -60,43 +60,6 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		stores: stores,
 	}
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Error(t, err)
-	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
-}
-
-func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "return(true)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
-	}()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stores := []*metapb.Store{
-		{
-			Id:    1,
-			State: metapb.StoreState_Up,
-			Labels: []*metapb.StoreLabel{
-				{
-					Key:   "engine",
-					Value: "tiflash",
-				},
-			},
-		},
-		{
-			Id:    2,
-			State: metapb.StoreState_Offline,
-			Labels: []*metapb.StoreLabel{
-				{
-					Key:   "engine",
-					Value: "tiflash",
-				},
-			},
-		},
-	}
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
 	require.Error(t, err)
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
@@ -133,23 +96,12 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		},
 	}
 
->>>>>>> fix issue 27015
 	fpdc := fakePDClient{
 		stores: stores,
 	}
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
 	require.Error(t, err)
-=======
-	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Len(t, kvStores, 0)
->>>>>>> fix issue 27015
-=======
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Error(t, err)
->>>>>>> fix comments - add general function isRetryableError
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
 }
 func TestCheckStoresAlive(t *testing.T) {
