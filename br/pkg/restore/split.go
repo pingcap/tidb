@@ -24,6 +24,8 @@ import (
 	"github.com/tikv/pd/pkg/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Constants for split retry machinery.
@@ -112,6 +114,7 @@ SplitRegions:
 			regionMap[region.Region.GetId()] = region
 		}
 		for regionID, keys := range splitKeyMap {
+			log.Info("get split keys for region", zap.Int("len", len(keys)), zap.Uint64("region", regionID))
 			var newRegions []*RegionInfo
 			region := regionMap[regionID]
 			log.Info("split regions",
@@ -142,6 +145,7 @@ SplitRegions:
 					logutil.Keys(keys), rtree.ZapRanges(ranges))
 				continue SplitRegions
 			}
+			log.Info("scattered regions", zap.Int("count", len(newRegions)))
 			if len(newRegions) != len(keys) {
 				log.Warn("split key count and new region count mismatch",
 					zap.Int("new region count", len(newRegions)),
@@ -294,8 +298,6 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 		log.Info("trying to scatter regions...", zap.Int("remain", len(newRegionSet)))
 		var errs error
 		for _, region := range newRegionSet {
-			// Wait for a while until the regions successfully split.
-			rs.waitForSplit(ctx, region.Region.Id)
 			err := rs.client.ScatterRegion(ctx, region)
 			if err == nil {
 				// it is safe accroding to the Go language spec.
@@ -330,13 +332,26 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 
 // ScatterRegions scatter the regions.
 func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*RegionInfo) {
-	rs.ScatterRegionsWithBackoffer(
-		ctx, newRegions,
-		// backoff about 6s, or we give up scattering this region.
-		&exponentialBackoffer{
-			attempt:     7,
-			baseBackoff: 100 * time.Millisecond,
-		})
+	for _, region := range newRegions {
+		// Wait for a while until the regions successfully split.
+		rs.waitForSplit(ctx, region.Region.Id)
+	}
+
+	err := rs.client.ScatterRegions(ctx, newRegions)
+	if status.Code(err) == codes.Unimplemented {
+		log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+		rs.ScatterRegionsWithBackoffer(
+			ctx, newRegions,
+			// backoff about 6s, or we give up scattering this region.
+			&exponentialBackoffer{
+				attempt:     7,
+				baseBackoff: 100 * time.Millisecond,
+			})
+		return
+	}
+	if err != nil {
+		log.Warn("failed to batch scatter region", logutil.ShortError(err))
+	}
 }
 
 func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
