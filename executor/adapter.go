@@ -1252,17 +1252,8 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
-	if !variable.TopSQLEnabled() {
-		return
-	}
-	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
-		var sqlDigest, planDigest []byte
-		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-			sqlDigest = d.Bytes()
-		}
-		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-			planDigest = d.Bytes()
-		}
+	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
 		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
@@ -1270,17 +1261,20 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
-	if !variable.TopSQLEnabled() {
-		return
-	}
-	if vars := a.Ctx.GetSessionVars(); vars.StmtStats != nil {
-		var sqlDigest, planDigest []byte
-		if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-			sqlDigest = d.Bytes()
-		}
-		if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-			planDigest = d.Bytes()
-		}
+	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
 		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
 	}
+}
+
+func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
+	var sqlDigest, planDigest []byte
+	vars := a.Ctx.GetSessionVars()
+	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+		sqlDigest = d.Bytes()
+	}
+	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+		planDigest = d.Bytes()
+	}
+	return sqlDigest, planDigest
 }
