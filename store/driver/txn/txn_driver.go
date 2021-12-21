@@ -32,6 +32,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -232,6 +233,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
 	case kv.CommitTSUpperBoundCheck:
 		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
+	case kv.RPCInterceptor:
+		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	}
 }
 

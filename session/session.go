@@ -124,9 +124,9 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	// ExecuteStmt executes a parsed statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
-	// Parse is deprecated, use ParseWithParams() instead.
+	// Parse is deprecated, use ParseWithParams() or ParseWithParamsInternal() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	// ExecuteInternal is a helper around ParseWithParamsInternal() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
@@ -548,6 +548,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
 	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	if sessVars.StmtCtx.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
@@ -1153,7 +1157,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
-	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	stmt, err := s.ParseWithParamsInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
 	}
@@ -1175,7 +1179,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
-	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
+	stmt, err := s.ParseWithParamsInternal(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
@@ -1250,7 +1254,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	stmt, err := s.ParseWithParams(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	stmt, err := s.ParseWithParamsInternal(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	if err != nil {
 		return err
 	}
@@ -1518,6 +1522,16 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		}
 	}
 	return stmts[0], nil
+}
+
+// ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
+func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+	}()
+	return s.ParseWithParams(ctx, sql, args...)
 }
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
@@ -2301,6 +2315,9 @@ func (s *session) Close() {
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
+		if s.sessionVars.StmtStats != nil {
+			s.sessionVars.StmtStats.SetFinished()
+		}
 	}
 	s.ClearDiskFullOpt()
 }
