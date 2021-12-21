@@ -1233,3 +1233,51 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 	require.NotNil(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"))
 }
+
+func TestSavedAnalyzeOptions(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9)")
+
+	h := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	require.NoError(t, h.Update(is))
+	tk.MustQuery("select * from t where c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo := table.Meta()
+	tbl := h.GetTableStats(tableInfo)
+	col := tbl.Columns[tableInfo.Columns[0].ID]
+	require.Equal(t, 2, len(col.TopN.TopN))
+	require.Equal(t, 2, len(col.Buckets))
+
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "2", rs.Rows()[0][4])
+
+	// auto-analyze uses the table-level options
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	tk.MustExec("insert into t values (10,10,10)")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
+	h.HandleAutoAnalyze(is)
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[tableInfo.Columns[0].ID]
+	require.Equal(t, 2, len(col.TopN.TopN))
+	require.Equal(t, 2, len(col.Buckets))
+}

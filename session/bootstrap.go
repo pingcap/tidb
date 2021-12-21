@@ -365,6 +365,17 @@ const (
 		oldReadLease bigint(20) NOT NULL DEFAULT 0,
 		PRIMARY KEY (tid)
 	);`
+	// CreateAnalyzeOptionsTable stores the analyze options used by analyze and auto analyze.
+	CreateAnalyzeOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_options (
+		table_id BIGINT(64) NOT NULL,
+        sample_num BIGINT(64),
+        sample_rate DOUBLE NOT NULL DEFAULT -1,
+        buckets BIGINT(64),
+        topn BIGINT(64),
+        column_choice enum('UNDEFINED','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'UNDEFINED',
+        column_ids varchar(1024),
+		PRIMARY KEY (table_id) CLUSTERED
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -541,11 +552,13 @@ const (
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
 	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
 	version80 = 80
+	// version81 adds the mysql.analyze_options table
+	version81 = 81
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version80
+var currentBootstrapVersion int64 = version81
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -629,6 +642,7 @@ var (
 		upgradeToVer78,
 		upgradeToVer79,
 		upgradeToVer80,
+		upgradeToVer81,
 	}
 )
 
@@ -1655,6 +1669,13 @@ func upgradeToVer80(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
 }
 
+func upgradeToVer81(s Session, ver int64) {
+	if ver >= version81 {
+		return
+	}
+	doReentrantDDL(s, CreateAnalyzeOptionsTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1739,6 +1760,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateColumnStatsUsageTable)
 	// Create table_cache_meta table.
 	mustExecute(s, CreateTableCacheMetaTable)
+	// Create analyze_options table.
+	mustExecute(s, CreateAnalyzeOptionsTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

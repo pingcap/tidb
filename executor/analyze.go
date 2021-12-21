@@ -70,6 +70,7 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 	wg    *sync.WaitGroup
 	opts  map[ast.AnalyzeOptionType]uint64
+	*core.V2AnalyzeOptions
 }
 
 var (
@@ -187,7 +188,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
+			globalOpts := e.opts
+			if e.V2AnalyzeOptions != nil {
+				globalOpts = e.V2AnalyzeOptions.FilledOpts
+			}
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -206,7 +211,68 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
+	err = e.saveAnalyzeOptsV2()
+	if err != nil {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+}
+
+func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+	if e.V2AnalyzeOptions == nil {
+		return nil
+	}
+	err := saveAnalyzeOpts(e.V2AnalyzeOptions, e.ctx.(sqlexec.RestrictedSQLExecutor))
+	if err != nil {
+		return err
+	}
+	for _, task := range e.tasks {
+		if task.colExec != nil && task.colExec.PhyTableID != e.PhyTableID {
+			err = saveAnalyzeOpts(task.colExec.V2AnalyzeOptions, e.ctx.(sqlexec.RestrictedSQLExecutor))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+var colChoiceEnum = [4]string{"UNDEFINED", "ALL", "PREDICATE", "LIST"}
+
+func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecutor) error {
+	sampleNum := uint64(0)
+	if val, ok := opts.RawOpts[ast.AnalyzeOptNumSamples]; ok {
+		sampleNum = val
+	}
+	sampleRate := uint64(0)
+	if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
+		sampleRate = val
+	}
+	buckets := uint64(0)
+	if val, ok := opts.RawOpts[ast.AnalyzeOptNumBuckets]; ok {
+		buckets = val
+	}
+	topn := uint64(0)
+	if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
+		topn = val
+	}
+	colChoice := colChoiceEnum[opts.ColChoice]
+	colIds := make([]string, len(opts.ColumnList))
+	for _, colInfo := range opts.ColumnList {
+		colIds = append(colIds, strconv.FormatInt(colInfo.ID, 10))
+	}
+	colIdStrs := strings.Join(colIds, ",")
+	stmt, err := exec.ParseWithParams(context.TODO(),
+		"REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES (%?,%?,%?,%?,%?,%?,%?)",
+		opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIdStrs)
+	if err != nil {
+		return err
+	}
+	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {

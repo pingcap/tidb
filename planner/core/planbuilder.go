@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 
@@ -1812,21 +1814,35 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
-// getAnalyzeColumnsInfo returns the columns whose stats need to be collected.
+func (b *PlanBuilder) getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+	columnIDs := make(map[int64]struct{}, len(tbl.TableInfo.Columns))
+	for _, colName := range specifiedColumns {
+		colInfo := model.FindColumnInfo(tbl.TableInfo.Columns, colName.L)
+		if colInfo == nil {
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tbl.TableInfo.Name.O)
+		}
+		columnIDs[colInfo.ID] = struct{}{}
+	}
+	colList := make([]*model.ColumnInfo, 0, len(columnIDs))
+	for _, col := range tbl.TableInfo.Columns {
+		if _, ok := columnIDs[col.ID]; ok {
+			colList = append(colList, col)
+		}
+	}
+	return colList, nil
+}
+
+// getFullAnalyzeColumnsInfo returns the columns whose stats need to be collected.
 // 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
 // 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
 // 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	if len(as.ColumnNames) == 0 {
+	if len(columns) == 0 || len(columns) == len(tblInfo.Columns) {
 		return tblInfo.Columns, nil
 	}
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	for _, colName := range as.ColumnNames {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
-		}
+	for _, colInfo := range columns {
 		columnIDs[colInfo.ID] = struct{}{}
 	}
 	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
@@ -1954,32 +1970,80 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	names []string,
 	tbl *ast.TableName,
 	version int,
-) ([]AnalyzeColumnsTask, error) {
+) ([]AnalyzeColumnsTask, *V2AnalyzeOptions, error) {
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
-	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	optsV2, err := parseAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
-	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
-	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
+	colList, err := b.getAnalyzeColumnList(as.ColumnNames, tbl)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOptions(tbl.TableInfo.ID, tbl.TableInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+	globalOptsV2 := b.mergeAnalyzeOptions(optsV2, tblSavedOpts)
+	globalFilledOptsV2 := fillAnalyzeOptionsV2(globalOptsV2)
+	globalColChoice, globalColList := b.mergeColumnList(as.ColumnChoice, colList, tblSavedColChoice, tblSavedColList)
+	execColsInfo, globalColList, err := b.getFinalAnalyzeColList(globalColChoice, globalColList, tbl)
+	if err != nil {
+		return nil, nil, err
+	}
+	globalV2AnalyzeOptions := &V2AnalyzeOptions{
+		PhyTableID: tbl.TableInfo.ID,
+		RawOpts:    globalOptsV2,
+		FilledOpts: globalFilledOptsV2,
+		ColChoice:  globalColChoice,
+		ColumnList: globalColList,
+	}
 	for i, id := range physicalIDs {
+		v2Options := globalV2AnalyzeOptions
 		if id == tbl.TableInfo.ID {
 			id = -1
+		} else {
+			savedOpts, savedColChoice, savedColList, err := b.getSavedAnalyzeOptions(id, tbl.TableInfo)
+			if err != nil {
+				return nil, nil, err
+			}
+			// merge partition level options with table level options firstly
+			savedOpts = b.mergeAnalyzeOptions(savedOpts, tblSavedOpts)
+			savedColChoice, savedColList = b.mergeColumnList(savedColChoice, savedColList, tblSavedColChoice, tblSavedColList)
+			// then merge statement level options
+			finalOpts := b.mergeAnalyzeOptions(optsV2, savedOpts)
+			filledFinalOpts := fillAnalyzeOptionsV2(finalOpts)
+			finalColChoice, finalColList := b.mergeColumnList(as.ColumnChoice, colList, savedColChoice, savedColList)
+			execColsInfo, finalColList, err = b.getFinalAnalyzeColList(finalColChoice, finalColList, tbl)
+			if err != nil {
+				return nil, nil, err
+			}
+			v2Options = &V2AnalyzeOptions{
+				PhyTableID: id,
+				RawOpts:    finalOpts,
+				FilledOpts: filledFinalOpts,
+				ColChoice:  finalColChoice,
+				ColumnList: finalColList,
+			}
 		}
+		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		info := AnalyzeInfo{
-			DBName:        tbl.Schema.O,
-			TableName:     tbl.Name.O,
-			PartitionName: names[i],
-			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   false,
-			StatsVersion:  version,
+			DBName:           tbl.Schema.O,
+			TableName:        tbl.Name.O,
+			PartitionName:    names[i],
+			TableID:          statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+			Incremental:      false,
+			StatsVersion:     version,
+			V2AnalyzeOptions: v2Options,
 		}
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
-			ColsInfo:    colsInfo,
+			ColsInfo:    execColsInfo,
 			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     indexes,
@@ -1992,7 +2056,98 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		taskSlice = append(taskSlice, newTask)
 	}
-	return taskSlice, nil
+	return taskSlice, globalV2AnalyzeOptions, nil
+}
+
+func (b *PlanBuilder) getSavedAnalyzeOptions(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
+	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select * from mysql.analyze_options where table_id = %?", physicalID)
+	if err != nil {
+		return nil, model.DefaultChoice, nil, err
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, model.DefaultChoice, nil, err
+	}
+	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
+	if len(rows) <= 0 {
+		return analyzeOptions, model.DefaultChoice, nil, nil
+	}
+	row := rows[0]
+	sampleNum := row.GetInt64(1)
+	if sampleNum > 0 {
+		analyzeOptions[ast.AnalyzeOptNumSamples] = uint64(sampleNum)
+	}
+	sampleRate := row.GetFloat64(2)
+	if sampleRate > 0 {
+		analyzeOptions[ast.AnalyzeOptSampleRate] = math.Float64bits(sampleRate)
+	}
+	buckets := row.GetInt64(3)
+	if buckets > 0 {
+		analyzeOptions[ast.AnalyzeOptNumBuckets] = uint64(buckets)
+	}
+	topn := row.GetInt64(4)
+	if topn > 0 {
+		analyzeOptions[ast.AnalyzeOptNumTopN] = uint64(topn)
+	}
+	colType := row.GetEnum(5)
+	switch colType.Value {
+	case 1: // ALL
+		return analyzeOptions, model.AllColumns, tblInfo.Columns, nil
+	case 2: // LIST
+		colIdStrs := strings.Split(row.GetString(6), ",")
+		colList := make([]*model.ColumnInfo, 0, len(colIdStrs))
+		for _, colIdStr := range colIdStrs {
+			colId, _ := strconv.ParseInt(colIdStr, 10, 64)
+			colInfo := model.FindColumnInfoByID(tblInfo.Columns, colId)
+			if colInfo != nil {
+				colList = append(colList, colInfo)
+			}
+		}
+		return analyzeOptions, model.ColumnList, colList, nil
+	case 3: // PREDICATE
+		return analyzeOptions, model.PredicateColumns, nil, nil
+	default:
+		return analyzeOptions, model.DefaultChoice, nil, nil
+	}
+}
+
+func (b *PlanBuilder) mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uint64, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	merged := map[ast.AnalyzeOptionType]uint64{}
+	for optType := range ast.AnalyzeOptionString {
+		if stmtOpt, ok := stmtOpts[optType]; ok {
+			merged[optType] = stmtOpt
+		} else if savedOpt, ok := savedOpts[optType]; ok {
+			merged[optType] = savedOpt
+		}
+	}
+	return merged
+}
+
+func (b *PlanBuilder) mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choice2 model.ColumnChoice, list2 []*model.ColumnInfo) (model.ColumnChoice, []*model.ColumnInfo) {
+	if choice1 != model.DefaultChoice {
+		return choice1, list1
+	}
+	return choice2, list2
+}
+
+func (b *PlanBuilder) getFinalAnalyzeColList(choice model.ColumnChoice, list []*model.ColumnInfo, tbl *ast.TableName) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
+	fullColumns := tbl.TableInfo.Cols()
+	emptyColumns := make([]*model.ColumnInfo, 0)
+	switch choice {
+	case model.AllColumns:
+		return fullColumns, emptyColumns, nil
+	case model.ColumnList:
+		list, err := b.getFullAnalyzeColumnsInfo(list, tbl)
+		if err != nil {
+			return nil, nil, err
+		}
+		return list, list, nil
+	case model.PredicateColumns: // TODO
+		return fullColumns, emptyColumns, nil
+	default:
+		return fullColumns, emptyColumns, nil
+	}
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
@@ -2022,7 +2177,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			p.ColTasks, p.V2AnalyzeOptions, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
 			if err != nil {
 				return nil, err
 			}
@@ -2237,6 +2392,53 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: 5,
 	ast.AnalyzeOptNumSamples:    0,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+}
+
+func parseAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	sampleNum, sampleRate := uint64(0), 0.0
+	for _, opt := range opts {
+		datumValue := opt.Value.(*driver.ValueExpr).Datum
+		switch opt.Type {
+		case ast.AnalyzeOptSampleRate:
+			// Only Int/Float/Decimal is accepted, so pass nil here is safe.
+			fVal, err := datumValue.ToFloat64(nil)
+			if err != nil {
+				return nil, err
+			}
+			limit := math.Float64frombits(analyzeOptionLimit[opt.Type])
+			if fVal <= 0 || fVal > limit {
+				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
+			}
+			sampleRate = fVal
+			optMap[opt.Type] = math.Float64bits(fVal)
+		default:
+			v := datumValue.GetUint64()
+			if opt.Type == ast.AnalyzeOptNumSamples {
+				sampleNum = v
+			}
+			if v == 0 || v > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("Value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			}
+			optMap[opt.Type] = v
+		}
+	}
+	if sampleNum > 0 && sampleRate > 0 {
+		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
+	}
+	return optMap, nil
+}
+
+func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, defaultVal := range analyzeOptionDefaultV2 {
+		if val, ok := optMap[key]; ok {
+			filledMap[key] = val
+		} else {
+			filledMap[key] = defaultVal
+		}
+	}
+	return filledMap
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
