@@ -230,8 +230,9 @@ func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, reco
 		topSQLReportRecordCounterHistogram.Observe(float64(sentCount))
 		if err != nil {
 			reportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
-		reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}()
 
 	client := tipb.NewTopSQLAgentClient(ds.conn)
@@ -261,11 +262,11 @@ func (ds *SingleTargetDataSink) sendBatchSQLMeta(ctx context.Context, sqlMetas [
 	sentCount := 0
 	defer func() {
 		topSQLReportSQLCountHistogram.Observe(float64(sentCount))
-
 		if err != nil {
 			reportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
-		reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}()
 
 	client := tipb.NewTopSQLAgentClient(ds.conn)
@@ -298,8 +299,9 @@ func (ds *SingleTargetDataSink) sendBatchPlanMeta(ctx context.Context, planMetas
 		topSQLReportPlanCountHistogram.Observe(float64(sentCount))
 		if err != nil {
 			reportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
-		reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}()
 
 	client := tipb.NewTopSQLAgentClient(ds.conn)
