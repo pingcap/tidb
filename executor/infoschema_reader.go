@@ -2628,7 +2628,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		}
 		hostAndStatusPort := strings.Split(info.StatusAddr, ":")
 		if len(hostAndStatusPort) != 2 {
-			return errors.Errorf("node status addr %s format unknown %s failed: %s", info.StatusAddr)
+			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
 		}
 		// fetch tiflash config
 		configURL := fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), info.StatusAddr)
