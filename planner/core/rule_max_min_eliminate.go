@@ -261,7 +261,7 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 		}
 		buffer.WriteString(fmt.Sprintf("add %v_%v during eliminating %v_%v %s function", limit.TP(), limit.ID(), agg.TP(), agg.ID(), agg.AggFuncs[0].Name))
 		return buffer.String()
-	}()
+	}
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has only one function[%s] without group by", agg.TP(), agg.ID(), agg.AggFuncs[0].Name))
 		if sel != nil {
@@ -271,7 +271,7 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 			buffer.WriteString(fmt.Sprintf(", the columns in %v_%v should be sorted", agg.TP(), agg.ID()))
 		}
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
@@ -293,7 +293,7 @@ func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*
 		}
 		buffer.WriteString(fmt.Sprintf("] to connect them during eliminating %v_%v multi min/max functions", originAgg.TP(), originAgg.ID()))
 		return buffer.String()
-	}()
+	}
 	reason := func() string {
 		buffer := bytes.NewBufferString("each column is sorted and can benefit from index/primary key in [")
 		for i, agg := range aggs {
@@ -304,6 +304,6 @@ func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*
 		}
 		buffer.WriteString("] and none of them has group by clause")
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
 }

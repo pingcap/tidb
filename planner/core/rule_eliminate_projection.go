@@ -309,13 +309,19 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logi
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
-	reason := fmt.Sprintf("%v_%v's child %v_%v is redundant", parent.TP(), parent.ID(), child.TP(), child.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's child %v_%v is redundant", parent.TP(), parent.ID(), child.TP(), child.ID())
+	}
 	opt.appendStepToCurrent(child.ID(), child.TP(), reason, action)
 }
 
 func appendProjEliminateTraceStep(proj *LogicalProjection, opt *logicalOptimizeOp) {
-	reason := fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
-	action := fmt.Sprintf("%v_%v is eliminated", proj.TP(), proj.ID())
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is eliminated", proj.TP(), proj.ID())
+	}
 	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

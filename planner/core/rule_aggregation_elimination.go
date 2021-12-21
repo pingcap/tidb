@@ -117,16 +117,25 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 }
 
 func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
-	opt.appendStepToCurrent(agg.ID(), agg.TP(),
-		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
-		fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID()))
+	reason := func() string {
+		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID())
+	}
+
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
 	opt *logicalOptimizeOp) {
-	opt.appendStepToCurrent(agg.ID(), agg.TP(),
-		fmt.Sprintf("%s is a unique key", uniqueKey.String()),
-		fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name))
+	reason := func() string {
+		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
+	}
+	action := func() string {
+		return fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name)
+	}
+	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 // ConvertAggToProj convert aggregation to projection.

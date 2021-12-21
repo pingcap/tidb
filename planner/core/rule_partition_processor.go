@@ -1580,8 +1580,12 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		appendNoPartitionChildTraceStep(ds, plan, opt)
 		return
 	}
-	action := ""
-	reason := ""
+	action := func() string {
+		return ""
+	}
+	reason := func() string {
+		return ""
+	}
 	var used []model.PartitionDefinition
 	for _, def := range usedMap {
 		used = append(used, def)
@@ -1590,8 +1594,12 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 		return used[i].ID < used[j].ID
 	})
 	if len(children) == 1 {
-		action = fmt.Sprintf("%v_%v becomes %s_%v", ds.TP(), ds.ID(), plan.TP(), plan.ID())
-		reason = fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", ds.TP(), ds.ID(), used[0].Name)
+		action = func() string {
+			return fmt.Sprintf("%v_%v becomes %s_%v", ds.TP(), ds.ID(), plan.TP(), plan.ID())
+		}
+		reason = func() string {
+			return fmt.Sprintf("%v_%v has one needed partition[%s] after pruning", ds.TP(), ds.ID(), used[0].Name)
+		}
 	} else {
 		action = func() string {
 			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v becomes %s_%v with children[", ds.TP(), ds.ID(), plan.TP(), plan.ID()))
@@ -1603,7 +1611,7 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 			}
 			buffer.WriteString("]")
 			return buffer.String()
-		}()
+		}
 		reason = func() string {
 			buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v has multiple needed partitions[", ds.TP(), ds.ID()))
 			for i, u := range used {
@@ -1614,13 +1622,17 @@ func appendMakeUnionAllChildrenTranceStep(ds *DataSource, usedMap map[int64]mode
 			}
 			buffer.WriteString("] after pruning")
 			return buffer.String()
-		}()
+		}
 	}
 	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
 }
 
 func appendNoPartitionChildTraceStep(ds *DataSource, dual LogicalPlan, opt *logicalOptimizeOp) {
-	action := fmt.Sprintf("%v_%v becomes %v_%v", ds.TP(), ds.ID(), dual.TP(), dual.ID())
-	reason := fmt.Sprintf("%v_%v doesn't have needed partition table after pruning", ds.TP(), ds.ID())
+	action := func() string {
+		return fmt.Sprintf("%v_%v becomes %v_%v", ds.TP(), ds.ID(), dual.TP(), dual.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v doesn't have needed partition table after pruning", ds.TP(), ds.ID())
+	}
 	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
