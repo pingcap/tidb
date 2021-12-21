@@ -1534,7 +1534,7 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkL
 		coll = append(coll, coll2)
 	} else {
 		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
-		for i := 0; i < elemCnt; i++ {
+		for i := 0; i < colLen; i++ {
 			args := make([]expression.Expression, 0, elemCnt)
 			for j := stkLen - elemCnt - 1; j < stkLen; j++ {
 				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
