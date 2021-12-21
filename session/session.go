@@ -23,6 +23,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/store/driver/txn"
 	"net"
 	"runtime/pprof"
 	"runtime/trace"
@@ -661,14 +662,15 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
 
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
 	tid := tablecodec.DecodeTableID(key)
 	if _, ok := m[tid]; ok {
-		return true
+		return true, nil
 	}
 
 	// This is the default filter for all tables.
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
