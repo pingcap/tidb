@@ -233,6 +233,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.observeStmtBeginForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -383,6 +384,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
+	a.observeStmtBeginForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -896,6 +898,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
+	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
@@ -1246,4 +1249,32 @@ func (a *ExecStmt) GetTextToLog() string {
 		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
 	}
 	return sql
+}
+
+func (a *ExecStmt) observeStmtBeginForTopSQL() {
+	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
+		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		// This is a special logic prepared for TiKV's SQLExecCount.
+		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
+	}
+}
+
+func (a *ExecStmt) observeStmtFinishedForTopSQL() {
+	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+		sqlDigest, planDigest := a.getSQLPlanDigest()
+		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+	}
+}
+
+func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
+	var sqlDigest, planDigest []byte
+	vars := a.Ctx.GetSessionVars()
+	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
+		sqlDigest = d.Bytes()
+	}
+	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
+		planDigest = d.Bytes()
+	}
+	return sqlDigest, planDigest
 }
