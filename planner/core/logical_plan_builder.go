@@ -4204,20 +4204,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
 				startTS := txn.StartTS()
 				store := b.ctx.GetStore()
-				_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
-					go func() {
-						defer func() {
-							if r := recover(); r != nil {
-							}
-						}()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+						}
+					}()
+					_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
 						err := cachedTable.UpdateLockForRead(ctx, store, startTS)
 						if err != nil {
 							log.Warn("Update Lock Info Error", zap.Error(err))
 						}
-					}()
-					return nil, nil
-				})
-				terror.Log(err)
+						return nil, nil
+					})
+					terror.Log(err)
+				}()
 			}
 		}
 	}
