@@ -1521,7 +1521,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	er.ctxStackAppend(function, types.EmptyName)
 }
 
-// deriveCollationForIn derive collation for in expression.
+// deriveCollationForIn derives collation for in expression.
 func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
 	coll := make([]*expression.ExprCollation, 0, colLen)
 	if colLen == 1 {
