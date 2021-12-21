@@ -32,7 +32,7 @@ type StatementObserver interface {
 	OnExecutionBegin(sqlDigest, planDigest []byte)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte)
+	OnExecutionFinished(sqlDigest, planDigest []byte, fn func(*StatementStatsItem))
 }
 
 // StatementStats is a counter used locally in each session.
@@ -66,7 +66,12 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, fn func(*StatementStatsItem)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+
+	fn(item)
 	// Count more data here.
 }
 
@@ -161,6 +166,9 @@ type StatementStatsItem struct {
 	// ExecCount represents the number of SQL executions of TiDB.
 	ExecCount uint64
 
+	// SumExecNanoDuration represents the nanoseconds of SQL executions of TiDB.
+	SumExecNanoDuration uint64
+
 	// KvStatsItem contains all indicators of kv layer.
 	KvStatsItem KvStatementStatsItem
 }
@@ -184,6 +192,7 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 		return
 	}
 	i.ExecCount += other.ExecCount
+	i.SumExecNanoDuration += other.SumExecNanoDuration
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -1263,7 +1264,10 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+		costTime := time.Since(vars.StartTime) + vars.DurationParse
+		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest, func(item *stmtstats.StatementStatsItem) {
+			item.SumExecNanoDuration += uint64(costTime.Nanoseconds())
+		})
 	}
 }
 

@@ -118,6 +118,7 @@ func TestExecCount(t *testing.T) {
 			if _, ok := sqlDigests[digest.SQLDigest]; ok {
 				found++
 				assert.Equal(t, uint64(ExecCountPerSQL), item.ExecCount)
+				assert.True(t, item.SumExecNanoDuration > uint64(time.Nanosecond*ExecCountPerSQL))
 				var kvSum uint64
 				for _, kvCount := range item.KvStatsItem.KvExecCount {
 					kvSum += kvCount
