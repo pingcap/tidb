@@ -48,16 +48,12 @@ var (
 	_ builtinFunc = &builtinGreatestRealSig{}
 	_ builtinFunc = &builtinGreatestDecimalSig{}
 	_ builtinFunc = &builtinGreatestStringSig{}
-	_ builtinFunc = &builtinGreatestDurationSig{}
 	_ builtinFunc = &builtinGreatestTimeSig{}
-	_ builtinFunc = &builtinGreatestCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinLeastIntSig{}
 	_ builtinFunc = &builtinLeastRealSig{}
 	_ builtinFunc = &builtinLeastDecimalSig{}
 	_ builtinFunc = &builtinLeastStringSig{}
 	_ builtinFunc = &builtinLeastTimeSig{}
-	_ builtinFunc = &builtinLeastDurationSig{}
-	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 
@@ -408,7 +404,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 }
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
+func resolveType4Extremum(args []Expression) types.EvalType {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
@@ -425,11 +421,10 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 
 		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
 			aggType.Tp = temporalItem.Tp
-			cmpStringAsDatetime = true
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), cmpStringAsDatetime
+	return aggType.EvalType()
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -451,9 +446,12 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
+		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -466,6 +464,9 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
+	}
+	if cmpAsDatetime {
+		tp = types.ETDatetime
 	}
 	switch tp {
 	case types.ETInt:
@@ -486,16 +487,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
-		} else {
-			sig = &builtinGreatestStringSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-		}
-	case types.ETDuration:
-		sig = &builtinGreatestDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
+		sig = &builtinGreatestStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
@@ -637,19 +630,19 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type builtinGreatestCmpStringAsTimeSig struct {
+type builtinGreatestTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestCmpStringAsTimeSig{}
+func (b *builtinGreatestTimeSig) Clone() builtinFunc {
+	newSig := &builtinGreatestTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinGreatestCmpStringAsTimeSig.
+// evalString evals a builtinGreatestTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -672,52 +665,6 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 	return strRes, false, nil
 }
 
-type builtinGreatestTimeSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinGreatestTimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
-		if isNull || err != nil {
-			return types.ZeroTime, true, err
-		}
-		if i == 0 || v.Compare(res) > 0 {
-			res = v
-		}
-	}
-	return res, false, nil
-}
-
-type builtinGreatestDurationSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinGreatestDurationSig) Clone() builtinFunc {
-	newSig := &builtinGreatestDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinGreatestDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
-		if isNull || err != nil {
-			return types.Duration{}, true, err
-		}
-		if i == 0 || v.Compare(res) > 0 {
-			res = v
-		}
-	}
-	return res, false, nil
-}
-
 type leastFunctionClass struct {
 	baseFunctionClass
 }
@@ -726,9 +673,12 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
-		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
+	tp := resolveType4Extremum(args)
+	cmpAsDatetime := false
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
+		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETDuration {
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -741,6 +691,9 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
+	}
+	if cmpAsDatetime {
+		tp = types.ETDatetime
 	}
 	switch tp {
 	case types.ETInt:
@@ -761,16 +714,8 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsTimeSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
-		} else {
-			sig = &builtinLeastStringSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_LeastString)
-		}
-	case types.ETDuration:
-		sig = &builtinLeastDurationSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
+		sig = &builtinLeastStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
@@ -899,19 +844,19 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	return
 }
 
-type builtinLeastCmpStringAsTimeSig struct {
+type builtinLeastTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastCmpStringAsTimeSig{}
+func (b *builtinLeastTimeSig) Clone() builtinFunc {
+	newSig := &builtinLeastTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinLeastCmpStringAsTimeSig.
+// evalString evals a builtinLeastTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinLeastTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -932,52 +877,6 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 	}
 
 	return strRes, false, nil
-}
-
-type builtinLeastTimeSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinLeastTimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastTimeSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalTime(b.ctx, row)
-		if isNull || err != nil {
-			return types.ZeroTime, true, err
-		}
-		if i == 0 || v.Compare(res) < 0 {
-			res = v
-		}
-	}
-	return res, false, nil
-}
-
-type builtinLeastDurationSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinLeastDurationSig) Clone() builtinFunc {
-	newSig := &builtinLeastDurationSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinLeastDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
-		v, isNull, err := b.args[i].EvalDuration(b.ctx, row)
-		if isNull || err != nil {
-			return types.Duration{}, true, err
-		}
-		if i == 0 || v.Compare(res) < 0 {
-			res = v
-		}
-	}
-	return res, false, nil
 }
 
 type intervalFunctionClass struct {

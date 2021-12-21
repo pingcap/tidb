@@ -322,7 +322,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 		},
 		{
 			[]interface{}{duration, duration},
-			duration, duration, false, false,
+			"12:59:59", "12:59:59", false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},
