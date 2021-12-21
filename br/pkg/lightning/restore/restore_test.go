@@ -1069,6 +1069,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		diskQuotaLock:     newDiskQuotaLock(),
+		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {
 		for scp := range chptCh {
