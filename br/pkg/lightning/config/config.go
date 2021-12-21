@@ -342,6 +342,10 @@ type MaxError struct {
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case int64:
+		// ignore val that is smaller than 0
+		if val < 0 {
+			val = 0
+		}
 		cfg.Syntax.Store(0)
 		cfg.Charset.Store(math.MaxInt64)
 		cfg.Type.Store(val)

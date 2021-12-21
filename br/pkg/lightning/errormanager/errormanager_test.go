@@ -93,27 +93,28 @@ func (e errorManagerSuite) TestHasError(c *C) {
 		Conflict: *atomic.NewInt64(100),
 	}
 	em := &ErrorManager{
+		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
 	}
 
 	// no field changes, should return false
-	c.Assert(em.HasError(cfg), IsFalse)
+	c.Assert(em.HasError(), IsFalse)
 
 	// change single field
 	em.remainingError.Syntax.Sub(1)
-	c.Assert(em.HasError(cfg), IsTrue)
+	c.Assert(em.HasError(), IsTrue)
 
 	em.remainingError =  cfg.App.MaxError
 	em.remainingError.Charset.Sub(1)
-	c.Assert(em.HasError(cfg), IsTrue)
+	c.Assert(em.HasError(), IsTrue)
 
 	em.remainingError =  cfg.App.MaxError
 	em.remainingError.Type.Sub(1)
-	c.Assert(em.HasError(cfg), IsTrue)
+	c.Assert(em.HasError(), IsTrue)
 
 	em.remainingError =  cfg.App.MaxError
 	em.remainingError.Conflict.Sub(1)
-	c.Assert(em.HasError(cfg), IsTrue)
+	c.Assert(em.HasError(), IsTrue)
 
 	// change multiple keys
 	em.remainingError =  cfg.App.MaxError
@@ -121,7 +122,7 @@ func (e errorManagerSuite) TestHasError(c *C) {
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
 	em.remainingError.Conflict.Store(0)
-	c.Assert(em.HasError(cfg), IsTrue)
+	c.Assert(em.HasError(), IsTrue)
 }
 
 func (e errorManagerSuite) TestErrorOutput(c *C) {
@@ -133,15 +134,16 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 		Conflict: *atomic.NewInt64(100),
 	}
 	em := &ErrorManager{
+		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
 		schemaEscaped: "`error_info`",
 	}
 
-	output := em.Output(cfg)
+	output := em.Output()
 	c.Assert(output, Equals, "")
 
 	em.remainingError.Syntax.Sub(1)
-	output = em.Output(cfg)
+	output = em.Output()
 	checkStr := strings.ReplaceAll(output, "\n", "")
 	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
 	c.Assert(checkStr, Equals, expected)
@@ -149,7 +151,7 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	em.remainingError =  cfg.App.MaxError
 	em.remainingError.Syntax.Sub(10)
 	em.remainingError.Type.Store(10)
-	output = em.Output(cfg)
+	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
 	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
 	c.Assert(checkStr, Equals, expected)
@@ -160,7 +162,7 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
 	em.remainingError.Conflict.Store(0)
-	output = em.Output(cfg)
+	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
 	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
 	c.Assert(checkStr, Equals, expected)

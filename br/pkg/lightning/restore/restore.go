@@ -1340,6 +1340,9 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 }
 
 func (rc *Controller) restoreTables(ctx context.Context) error {
+	// output error summary
+	defer rc.outpuErrorSummary()
+
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
@@ -1652,11 +1655,10 @@ func (tr *TableRestore) restoreTable(
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
 }
 
-func (rc *Controller) printErrorSummary(context.Context) error {
-	if rc.errorMgr.HasError(rc.cfg) {
-		fmt.Println(rc.errorMgr.Output(rc.cfg))
+func (rc *Controller) outpuErrorSummary() {
+	if rc.errorMgr.HasError() {
+		fmt.Println(rc.errorMgr.Output())
 	}
-	return nil
 }
 
 // do full compaction for the whole data.

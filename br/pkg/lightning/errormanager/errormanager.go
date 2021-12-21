@@ -111,6 +111,7 @@ type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
 	schemaEscaped  string
+	configError    *config.MaxError
 	remainingError config.MaxError
 	dupResolution  config.DuplicateResolutionAlgorithm
 }
@@ -123,6 +124,7 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
+		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
 		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
@@ -327,17 +329,47 @@ func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, p
 	return handleRows, lastRowID, errors.Trace(rows.Err())
 }
 
-func (em *ErrorManager) HasError(cfg *config.Config) bool {
-	errCfg := cfg.App.MaxError
-	return errCfg.Type.Load() - em.remainingError.Type.Load() > 0 ||
-		errCfg.Syntax.Load() - em.remainingError.Syntax.Load() > 0 ||
-		errCfg.Charset.Load() - em.remainingError.Charset.Load() > 0 ||
-		errCfg.Conflict.Load() - em.remainingError.Conflict.Load() > 0
+func (em *ErrorManager) errorCount(typeVal func (*config.MaxError) int64) int64 {
+	cfgVal := typeVal(em.configError)
+	val := typeVal(em.configError)
+	if val < 0 {
+		val = 0
+	}
+	return cfgVal - val
+}
+
+func (em *ErrorManager) typeErrors() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Type.Load()
+	})
+}
+
+func (em *ErrorManager) syntaxError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Syntax.Load()
+	})
+}
+
+func (em *ErrorManager) conflictError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Conflict.Load()
+	})
+}
+
+func (em *ErrorManager) charsetError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Charset.Load()
+	})
+}
+
+func (em *ErrorManager) HasError() bool {
+	return em.typeErrors() > 0 || em.syntaxError() > 0 ||
+		em.charsetError() > 0 || em.conflictError() > 0
 }
 
 // Output renders a table which contains error summery for each error type.
-func (em *ErrorManager) Output(cfg *config.Config) string {
-	if !em.HasError(cfg) {
+func (em *ErrorManager) Output() string {
+	if !em.HasError() {
 		return ""
 	}
 
@@ -358,24 +390,31 @@ func (em *ErrorManager) Output(cfg *config.Config) string {
 		return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
 	}
 
+	logFields := make([]zap.Field, 0)
 	count := 0
-	if errCnt := cfg.App.MaxError.Type.Load() - em.remainingError.Type.Load(); errCnt > 0 {
+	if errCnt := em.typeErrors(); errCnt > 0 {
 		count++
 		t.AppendRow(table.Row{count, "Data Type", errCnt, formatTable(typeErrorTableName)})
+		logFields = append(logFields, zap.Int64("type_error", errCnt))
 	}
-	if errCnt := cfg.App.MaxError.Syntax.Load() - em.remainingError.Syntax.Load(); errCnt > 0 {
+	if errCnt := em.syntaxError(); errCnt > 0 {
 		count++
 		t.AppendRow(table.Row{count, "Data Syntax", errCnt, formatTable(syntaxErrorTableName)})
+		logFields = append(logFields, zap.Int64("syntax_error", errCnt))
 	}
-	if errCnt := cfg.App.MaxError.Charset.Load() - em.remainingError.Charset.Load(); errCnt > 0 {
+	if errCnt := em.charsetError(); errCnt > 0 {
 		count++
 		// do not support record charset error now.
 		t.AppendRow(table.Row{count, "Charset Error", errCnt, ""})
+		logFields = append(logFields, zap.Int64("charset_error", errCnt))
 	}
-	if errCnt := cfg.App.MaxError.Conflict.Load() - em.remainingError.Conflict.Load(); errCnt > 0 {
+	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
 		t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, formatTable(conflictErrorTableName)})
+		logFields = append(logFields, zap.Int64("conflict_error", errCnt))
 	}
+
+	log.L().Error("restore tables error summary", logFields...)
 
 	res := "\nImport Data Error Summary: \n"
 	res += t.Render()
