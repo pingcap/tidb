@@ -32,8 +32,8 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	switch strings.ToLower(name) {
 	case ast.WindowFuncNthValue:
 		val, isNull, ok := expression.GetUint64FromConstant(args[1])
-		// nth_value does not allow `0`, but allows `null`.
-		if !ok || (val == 0 && !isNull) {
+		// nth_value does not allow `0` and `null`.
+		if !ok || val == 0 || isNull {
 			return nil, nil
 		}
 	case ast.WindowFuncNtile:
