@@ -74,7 +74,6 @@ type planCacheKey struct {
 	timezoneOffset       int
 	isolationReadEngines map[kv.StoreType]struct{}
 	selectLimit          uint64
-	bindSQL              string
 
 	hash []byte
 }
@@ -105,7 +104,6 @@ func (key *planCacheKey) Hash() []byte {
 			key.hash = append(key.hash, kv.TiFlash.Name()...)
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
-		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
 	}
 	return key.hash
 }
@@ -127,7 +125,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64, bindSQL string) kvcache.Key {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -141,7 +139,6 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVe
 		timezoneOffset:       timezoneOffset,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 		selectLimit:          sessionVars.SelectLimit,
-		bindSQL:              bindSQL,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -180,10 +177,11 @@ type PlanCacheValue struct {
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	UserVarTypes      FieldSlice
+	BindSQL           string
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -197,6 +195,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		UserVarTypes:      userVarTypes,
+		BindSQL:           bindSQL,
 	}
 }
 
