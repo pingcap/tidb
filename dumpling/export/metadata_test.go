@@ -24,8 +24,6 @@ const (
 )
 
 func TestMysqlMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -54,8 +52,6 @@ func TestMysqlMetaData(t *testing.T) {
 }
 
 func TestMetaDataAfterConn(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -95,8 +91,6 @@ func TestMetaDataAfterConn(t *testing.T) {
 }
 
 func TestMysqlWithFollowersMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -131,8 +125,6 @@ func TestMysqlWithFollowersMetaData(t *testing.T) {
 }
 
 func TestMysqlWithNullFollowersMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -160,8 +152,6 @@ func TestMysqlWithNullFollowersMetaData(t *testing.T) {
 }
 
 func TestMariaDBMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -187,8 +177,6 @@ func TestMariaDBMetaData(t *testing.T) {
 }
 
 func TestMariaDBWithFollowersMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -233,8 +221,6 @@ func TestMariaDBWithFollowersMetaData(t *testing.T) {
 }
 
 func TestEarlierMysqlMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -265,8 +251,6 @@ func TestEarlierMysqlMetaData(t *testing.T) {
 }
 
 func TestTiDBSnapshotMetaData(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
@@ -307,8 +291,6 @@ func TestTiDBSnapshotMetaData(t *testing.T) {
 }
 
 func TestNoPrivilege(t *testing.T) {
-	t.Parallel()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() {
