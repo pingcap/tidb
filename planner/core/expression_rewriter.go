@@ -325,6 +325,10 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
 		}()
 	}
+	outerWindowSpecs := er.b.windowSpecs
+	defer func() {
+		er.b.windowSpecs = outerWindowSpecs
+	}()
 
 	np, err := er.b.buildResultSetNode(ctx, subq.Query)
 	if err != nil {

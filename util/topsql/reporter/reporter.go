@@ -17,6 +17,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,12 @@ type TopSQLReporter interface {
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 	Close()
+}
+
+// DataSinkRegisterer is for registering DataSink
+type DataSinkRegisterer interface {
+	Register(dataSink DataSink) error
+	Deregister(dataSink DataSink)
 }
 
 type cpuData struct {
@@ -118,9 +125,11 @@ type planBinaryDecodeFunc func(string) (string, error)
 // RemoteTopSQLReporter implements a TopSQL reporter that sends data to a remote agent
 // This should be called periodically to collect TopSQL resource usage metrics
 type RemoteTopSQLReporter struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	dataSink DataSink
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	dataSinkMu sync.Mutex
+	dataSinks  map[DataSink]struct{}
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -148,12 +157,14 @@ type SQLMeta struct {
 //
 // planBinaryDecoder is a decoding function which will be called asynchronously to decode the plan binary to string
 // MaxStatementsNum is the maximum SQL and plan number, which will restrict the memory usage of the internal LFU cache
-func NewRemoteTopSQLReporter(dataSink DataSink, decodePlan planBinaryDecodeFunc) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
-		ctx:                     ctx,
-		cancel:                  cancel,
-		dataSink:                dataSink,
+		ctx:    ctx,
+		cancel: cancel,
+
+		dataSinks: make(map[DataSink]struct{}, 10),
+
 		collectCPUDataChan:      make(chan cpuData, 1),
 		reportCollectedDataChan: make(chan collectedData, 1),
 		decodePlan:              decodePlan,
@@ -222,6 +233,47 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinar
 	}
 }
 
+var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
+
+// Register implements DataSinkRegisterer interface.
+func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
+	tsr.dataSinkMu.Lock()
+	defer tsr.dataSinkMu.Unlock()
+
+	select {
+	case <-tsr.ctx.Done():
+		return errors.New("reporter is closed")
+	default:
+		if len(tsr.dataSinks) >= 10 {
+			return errors.New("too many datasinks")
+		}
+
+		tsr.dataSinks[dataSink] = struct{}{}
+
+		if len(tsr.dataSinks) > 0 {
+			variable.TopSQLVariable.Enable.Store(true)
+		}
+
+		return nil
+	}
+}
+
+// Deregister implements DataSinkRegisterer interface.
+func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
+	tsr.dataSinkMu.Lock()
+	defer tsr.dataSinkMu.Unlock()
+
+	select {
+	case <-tsr.ctx.Done():
+	default:
+		delete(tsr.dataSinks, dataSink)
+
+		if len(tsr.dataSinks) == 0 {
+			variable.TopSQLVariable.Enable.Store(false)
+		}
+	}
+}
+
 // Collect receives CPU time records for processing. WARN: It will drop the records if the processing is not in time.
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
@@ -242,7 +294,15 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	tsr.dataSink.Close()
+
+	var m map[DataSink]struct{}
+	tsr.dataSinkMu.Lock()
+	m, tsr.dataSinks = tsr.dataSinks, make(map[DataSink]struct{})
+	tsr.dataSinkMu.Unlock()
+
+	for d := range m {
+		d.OnReporterClosing()
+	}
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
@@ -585,7 +645,17 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 		}
 	})
 	deadline := time.Now().Add(timeout)
-	if err := tsr.dataSink.TrySend(data, deadline); err != nil {
-		logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+
+	tsr.dataSinkMu.Lock()
+	dataSinks := make([]DataSink, 0, len(tsr.dataSinks))
+	for ds := range tsr.dataSinks {
+		dataSinks = append(dataSinks, ds)
+	}
+	tsr.dataSinkMu.Unlock()
+
+	for _, ds := range dataSinks {
+		if err := ds.TrySend(data, deadline); err != nil {
+			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+		}
 	}
 }
