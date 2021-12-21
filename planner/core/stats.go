@@ -418,9 +418,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}
 
+	stmtCtx := ds.ctx.GetSessionVars().StmtCtx
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
-	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
-	// If there is an index path or exprs that cannot be pushed down, we current do not consider `IndexMergePath`.
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint
+	// We current do not consider `IndexMergePath`:
+	// 1. If there is an index path.
+	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
 	needConsiderIndexMerge := true
 	if len(ds.indexMergeHints) == 0 {
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -429,13 +432,16 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				break
 			}
 		}
-		_, remaining := expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+		// PushDownExprs() will append extra warnings, which annoying. So we reset warnings here.
+		warnings := stmtCtx.GetWarnings()
+		_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+		stmtCtx.SetWarnings(warnings)
 		if len(remaining) != 0 {
 			needConsiderIndexMerge = false
 		}
 	}
 
-	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
+	readFromTableCache := stmtCtx.ReadFromTableCache
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
 		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
@@ -443,7 +449,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		stmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
 	}
 	return ds.stats, nil
 }
