@@ -1071,6 +1071,7 @@ func init() {
 	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
 }
 
+// InitByLDFlagsForTest is exported only for tests.
 func InitByLDFlagsForTest(edition, checkBeforeDropLDFlag string) {
 	initByLDFlags(edition, checkBeforeDropLDFlag)
 }
