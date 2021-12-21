@@ -39,8 +39,6 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	encoding charset.Encoding
-
 	errs         []error
 	warns        []error
 	stmtStartPos int
@@ -88,10 +86,10 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	if s.encoding == nil {
-		s.encoding = charset.FindEncoding(mysql.DefaultCharset)
+	if s.r.encoding == nil {
+		s.r.encoding = charset.FindEncoding(mysql.DefaultCharset)
 	}
-	s.r = reader{s: sql, p: Pos{Line: 1}, decodeRuneInString: s.encoding.DecodeRuneInString}
+	s.r = reader{s: sql, p: Pos{Line: 1}, encoding: s.r.encoding}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -148,13 +146,13 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	if mysql.IsUTF8Charset(s.encoding.Name()) {
+	if mysql.IsUTF8Charset(s.r.encoding.Name()) {
 		// Skip utf8 encoding because `ToUTF8` validates the whole SQL.
 		// This can cause failure when the SQL contains BLOB values.
 		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
 		return sql
 	}
-	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
+	utf8Lit, err := s.r.encoding.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()
@@ -278,8 +276,7 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 // InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
-		r:                 reader{s: sql, decodeRuneInString: s.r.decodeRuneInString},
-		encoding:          s.encoding,
+		r:                 reader{s: sql, encoding: s.r.encoding},
 		sqlMode:           s.sqlMode,
 		supportWindowFunc: s.supportWindowFunc,
 	}
@@ -287,8 +284,7 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
-	enc := charset.FindEncoding(mysql.DefaultCharset)
-	return &Scanner{r: reader{s: s, decodeRuneInString: enc.DecodeRuneInString}, encoding: enc}
+	return &Scanner{r: reader{s: s, encoding: charset.FindEncoding(mysql.DefaultCharset)}}
 }
 
 func (s *Scanner) handleIdent(lval *yySymType) int {
@@ -928,10 +924,10 @@ func (s *Scanner) lastErrorAsWarn() {
 }
 
 type reader struct {
-	s                  string
-	p                  Pos
-	w                  int
-	decodeRuneInString func(src string) (r rune, size int)
+	s        string
+	p        Pos
+	w        int
+	encoding charset.Encoding
 
 	peekRune        rune
 	peekRuneUpdated bool
@@ -953,7 +949,7 @@ func (r *reader) peek() rune {
 	if r.eof() {
 		return unicode.ReplacementChar
 	}
-	v, w := r.decodeRuneInString(r.s[r.p.Offset:])
+	v, w := r.encoding.DecodeRuneInString(r.s[r.p.Offset:])
 	r.w = w
 	r.peekRune = v
 	r.peekRuneUpdated = true
