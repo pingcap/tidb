@@ -1522,9 +1522,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 }
 
 // deriveCollationForIn derive collation for in expression.
-func (er *expressionRewriter) deriveCollationForIn(l int, lLen int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
-	coll := make([]*expression.ExprCollation, 0, l)
-	if l == 1 {
+func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
+	coll := make([]*expression.ExprCollation, 0, colLen)
+	if colLen == 1 {
 		// a in (x, y, z) => coll[0]
 		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
 		er.err = err
@@ -1534,9 +1534,9 @@ func (er *expressionRewriter) deriveCollationForIn(l int, lLen int, stkLen int, 
 		coll = append(coll, coll2)
 	} else {
 		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
-		for i := 0; i < lLen; i++ {
-			args := make([]expression.Expression, 0, lLen)
-			for j := stkLen - lLen - 1; j < stkLen; j++ {
+		for i := 0; i < elemCnt; i++ {
+			args := make([]expression.Expression, 0, elemCnt)
+			for j := stkLen - elemCnt - 1; j < stkLen; j++ {
 				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
 				args = append(args, rowFunc.GetArgs()[i])
 			}
@@ -1551,16 +1551,18 @@ func (er *expressionRewriter) deriveCollationForIn(l int, lLen int, stkLen int, 
 	return coll
 }
 
-func (er *expressionRewriter) castCollationForIn(l int, lLen int, stkLen int, coll []*expression.ExprCollation) {
-	for i := stkLen - lLen; i < stkLen; i++ {
-		if l == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
+// castCollationForIn casts collation info for arguments in the `in clause` to make sure the used collation is correct after we
+// rewrite it to equal expression.
+func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll []*expression.ExprCollation) {
+	for i := stkLen - elemCnt; i < stkLen; i++ {
+		if colLen == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
 			tp := er.ctxStack[i].GetType().Clone()
 			tp.Charset, tp.Collate = coll[0].Charset, coll[0].Collation
 			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
 			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		} else {
 			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
-			for j := 0; j < lLen; j++ {
+			for j := 0; j < elemCnt; j++ {
 				if er.ctxStack[i].GetType().EvalType() != types.ETString {
 					continue
 				}
