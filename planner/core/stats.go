@@ -465,6 +465,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().
+	// So we can use index merge's row count as DataSource's row count.
 	if needPrune {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
 		minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
@@ -473,7 +474,9 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 				minRowCount = path.CountAfterAccess
 			}
 		}
-		ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
+		if ds.stats.RowCount > minRowCount {
+			ds.stats = ds.tableStats.ScaleByExpectCnt(minRowCount)
+		}
 	}
 	return nil
 }
