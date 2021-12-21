@@ -407,6 +407,9 @@ func (e *LoadDataInfo) getValidData(prevData, curData []byte) ([]byte, []byte) {
 
 func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 	inQuoter := false
+	if e.FieldsInfo.Enclosed == byte(0) {
+		return false
+	}
 	for i := 0; i < len(bs); i++ {
 		switch bs[i] {
 		case e.FieldsInfo.Enclosed:
@@ -461,7 +464,7 @@ func (e *LoadDataInfo) IndexOfTerminator(bs []byte, inQuoter bool) int {
 	atFieldStart := true
 loop:
 	for i := 0; i < len(bs); i++ {
-		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
+		if atFieldStart && e.FieldsInfo.Enclosed != byte(0) &&bs[i] == e.FieldsInfo.Enclosed {
 			inQuoter = !inQuoter
 			atFieldStart = false
 			continue
@@ -536,7 +539,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.IndexOfTerminator(curData[startingLen:], inquotor)
+			endIdx = e.IndexOfTerminator(curData[startingLen:], false)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
@@ -557,7 +560,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.IndexOfTerminator(prevData[startingLen:], inquotor)
+		endIdx = e.IndexOfTerminator(prevData[startingLen:], false)
 	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true
@@ -580,9 +583,10 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 				zap.Int("nextDataIdx", nextDataIdx),
 				zap.Bool("inquotor", inquotor),
 				zap.Bool("ignore", ignore),
-				zap.ByteString("prevData", prevData),
-				zap.ByteString("curData", curData),
+				zap.Bool("prevData-contains-00bytes", bytes.Contains(prevData, []byte{e.FieldsInfo.Enclosed})),
+				zap.Bool("curData-contains-00bytes", bytes.Contains(curData, []byte{e.FieldsInfo.Enclosed})),
 			)
+			panic(r)
 		}
 	}()
 	return prevData[startingLen : startingLen+endIdx], curData[lineLen-prevLen:], true
