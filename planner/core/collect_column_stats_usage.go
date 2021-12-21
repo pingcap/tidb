@@ -17,6 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -36,6 +37,8 @@ type columnStatsUsageCollector struct {
 	// colMap maps expression.Column.UniqueID to the table columns whose statistics are utilized to calculate statistics of the column.
 	// It is used for collecting predicate columns.
 	colMap map[int64]map[model.TableColumnID]struct{}
+	// we only collect predicate columns for the tables which column count is no less than wideTableColumnCount.
+	wideTableColumnCount int
 	// histNeededCols records histogram-needed columns
 	histNeededCols map[model.TableColumnID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
@@ -51,6 +54,7 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 	if collectMode&collectPredicateColumns != 0 {
 		collector.predicateCols = make(map[model.TableColumnID]struct{})
 		collector.colMap = make(map[int64]map[model.TableColumnID]struct{})
+		collector.wideTableColumnCount = int(variable.WideTableColumnCount.Load())
 	}
 	if collectMode&collectHistNeededColumns != 0 {
 		collector.histNeededCols = make(map[model.TableColumnID]struct{})
@@ -61,7 +65,6 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column) {
 	tblColIDs, ok := c.colMap[col.UniqueID]
 	if !ok {
-		// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
 		return
 	}
 	for tblColID := range tblColIDs {
@@ -90,7 +93,6 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 	for _, relatedCol := range relatedCols {
 		tblColIDs, ok := c.colMap[relatedCol.UniqueID]
 		if !ok {
-			// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
 			continue
 		}
 		for tblColID := range tblColIDs {
@@ -108,12 +110,16 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
-	tblID := ds.TableInfo().ID
-	for _, col := range ds.Schema().Columns {
-		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
-		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
+	if len(ds.TableInfo().Columns) >= c.wideTableColumnCount {
+		tblID := ds.TableInfo().ID
+		for _, col := range ds.Schema().Columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
+		}
 	}
 	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
+	// We still need to add predicate columns from `pushedDownConds` even if the number of columns is less than `wideTableColumnCount`
+	// because there may be some correlated columns in `pushedDownConds`.
 	c.addPredicateColumnsFromExpressions(ds.pushedDownConds)
 }
 
@@ -278,17 +284,18 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 	}
 }
 
+func set2slice(set map[model.TableColumnID]struct{}) []model.TableColumnID {
+	ret := make([]model.TableColumnID, 0, len(set))
+	for tblColID := range set {
+		ret = append(ret, tblColID)
+	}
+	return ret
+}
+
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // The first return value is predicate columns and the second return value is histogram-needed columns.
 func CollectColumnStatsUsage(lp LogicalPlan) ([]model.TableColumnID, []model.TableColumnID) {
 	collector := newColumnStatsUsageCollector(collectPredicateColumns | collectHistNeededColumns)
 	collector.collectFromPlan(lp)
-	set2slice := func(set map[model.TableColumnID]struct{}) []model.TableColumnID {
-		ret := make([]model.TableColumnID, 0, len(set))
-		for tblColID := range set {
-			ret = append(ret, tblColID)
-		}
-		return ret
-	}
 	return set2slice(collector.predicateCols), set2slice(collector.histNeededCols)
 }

@@ -1325,6 +1325,12 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBWideTableColumnCount, Value: strconv.Itoa(DefTiDBWideTableColumnCount), Type: TypeUnsigned, MinValue: 1, MaxValue: config.DefMaxOfTableColumnCountLimit + 1, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(WideTableColumnCount.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		WideTableColumnCount.Store(uint64(tidbOptPositiveInt32(val, DefTiDBWideTableColumnCount)))
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

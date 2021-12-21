@@ -240,6 +240,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBWideTableColumnCount:
+		var val uint64
+		val, err = strconv.ParseUint(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.WideTableColumnCount.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

@@ -66,9 +66,14 @@ func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID,
 func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, onlyHistNeeded bool, expected []string, comment CommentInterface) {
 	var tblColIDs []model.TableColumnID
 	if onlyHistNeeded {
-		_, tblColIDs = CollectColumnStatsUsage(lp)
+		collector := newColumnStatsUsageCollector(collectHistNeededColumns)
+		collector.collectFromPlan(lp)
+		tblColIDs = set2slice(collector.histNeededCols)
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp)
+		collector := newColumnStatsUsageCollector(collectPredicateColumns)
+		collector.wideTableColumnCount = 1
+		collector.collectFromPlan(lp)
+		tblColIDs = set2slice(collector.predicateCols)
 	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {

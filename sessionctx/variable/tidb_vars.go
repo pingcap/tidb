@@ -622,6 +622,8 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBWideTableColumnCount indicates the threshold of the number of columns in the wide table.
+	TiDBWideTableColumnCount = "tidb_wide_table_column_count"
 )
 
 // TiDB intentional limits
@@ -779,6 +781,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBWideTableColumnCount           = 100
 )
 
 // Process global variables.
@@ -814,6 +817,7 @@ var (
 	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	WideTableColumnCount    = atomic.NewUint64(DefTiDBWideTableColumnCount)
 )
 
 // TopSQL is the variable for control top sql feature.
