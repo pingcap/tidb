@@ -219,9 +219,6 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 func TestTopSQLPubSub(t *testing.T) {
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock"
-	})
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
