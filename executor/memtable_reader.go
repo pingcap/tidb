@@ -1062,7 +1062,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 
 	// intersect
 	for _, region := range regionsInfoByRegionID {
-		if _, ok := regionMap[region.ID]; !ok {
+		if _, ok := regionMap[region.ID]; ok {
 			regionsInfo = append(regionsInfo, region)
 		}
 	}
