@@ -319,7 +319,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
 }
 
-
 // Drop partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashDropPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
