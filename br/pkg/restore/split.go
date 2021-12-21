@@ -339,10 +339,10 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 		})
 }
 
-func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
 			redact.Key(startKey), redact.Key(endKey))
 	}
 
@@ -350,7 +350,7 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < endKey, endKey: %s, regionEndKey: %s",
 			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
 	}
 
@@ -398,7 +398,7 @@ func PaginateScanRegion(
 				break
 			}
 		}
-		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
+		if err := CheckRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
