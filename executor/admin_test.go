@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -1061,6 +1062,7 @@ func (l *logEntry) checkFieldNotEmpty(t *testing.T, fieldName string) {
 type logHook struct {
 	zapcore.Core
 	logs          []logEntry
+	enc           zapcore.Encoder
 	messageFilter string
 }
 
@@ -1076,10 +1078,30 @@ func (h *logHook) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.
 	return ce.AddCore(entry, h)
 }
 
+func (h *logHook) encode(entry *logEntry) (string, error) {
+	buffer, err := h.enc.EncodeEntry(entry.entry, entry.fields)
+	if err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
+}
+
+func (h *logHook) checkLogCount(t *testing.T, expected int) {
+	logsStr := make([]string, len(h.logs))
+	for i, item := range h.logs {
+		var err error
+		logsStr[i], err = h.encode(&item)
+		require.NoError(t, err)
+	}
+	// Check the length of strings, so that in case the test fails, the error message
+	require.Len(t, logsStr, expected)
+}
+
 func withLogHook(ctx context.Context, msgFilter string) (newCtx context.Context, hook *logHook) {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	hook = &logHook{r.Core, nil, msgFilter}
+	enc := log.NewTextEncoder(&config.GetGlobalConfig().Log.ToLogConfig().Config)
+	hook = &logHook{r.Core, nil, enc, msgFilter}
 	logger := zap.New(hook)
 	newCtx = context.WithValue(ctx, logutil.CtxLogKey, logger)
 	return
@@ -1106,7 +1128,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindInt64 1]\"", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
 			zap.String("table_name", "admin_test"),
@@ -1130,7 +1152,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"\" != record-values:\"handle: 1, values: [KindString 10]\"", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		hook.logs[0].checkMsg(t, "admin check found data inconsistency")
 		hook.logs[0].checkField(t,
 			zap.String("table_name", "admin_test"),
@@ -1154,7 +1176,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: k2, handle: 1, index-values:\"handle: 1, values: [KindString 100 KindInt64 1]\" != record-values:\"\"", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
 		logEntry.checkField(t,
@@ -1172,7 +1194,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
 		require.Error(t, err)
 		require.Equal(t, "[executor:8133]data inconsistency in table: admin_test, index: k2, index-count:1 != record-count:0", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry = hook.logs[0]
 		logEntry.checkMsg(t, "indexLookup found data inconsistency")
 		logEntry.checkField(t,
@@ -1199,7 +1221,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 1, index-values:\"handle: 1, values: [KindInt64 10 KindInt64 1]\" != record-values:\"\"", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
 		logEntry.checkField(t,
@@ -1216,7 +1238,7 @@ func TestCheckFailReport(t *testing.T) {
 		require.NoError(t, err)
 		_, err = session.GetRows4Test(ctx, testkit.TryRetrieveSession(ctx), rs)
 		require.Error(t, err)
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry = hook.logs[0]
 		logEntry.checkMsg(t, "indexLookup found data inconsistency")
 		logEntry.checkField(t,
@@ -1244,7 +1266,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: uk1, col: c2, handle: \"1\", index-values:\"KindInt64 20\" != record-values:\"KindInt64 10\", compare err:<nil>", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
 		logEntry.checkField(t,
@@ -1272,7 +1294,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, "[executor:8134]data inconsistency in table: admin_test, index: k2, col: c3, handle: \"1\", index-values:\"KindString 200\" != record-values:\"KindString 100\", compare err:<nil>", err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
 		logEntry.checkField(t,
@@ -1309,7 +1331,7 @@ func TestCheckFailReport(t *testing.T) {
 		_, err = tk.Exec(ctx, "admin check table admin_test")
 		require.Error(t, err)
 		require.Equal(t, `[admin:8223]data inconsistency in table: admin_test, index: uk1, handle: 282574488403969, index-values:"handle: 282574488403969, values: [KindInt64 282578800083201 KindInt64 282574488403969]" != record-values:""`, err.Error())
-		require.Len(t, hook.logs, 1)
+		hook.checkLogCount(t, 1)
 		logEntry := hook.logs[0]
 		logEntry.checkMsg(t, "admin check found data inconsistency")
 		logEntry.checkField(t,
