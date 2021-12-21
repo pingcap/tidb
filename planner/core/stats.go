@@ -410,21 +410,17 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
+	// Use allConds instread of pushedDownConds,
+	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
+	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
 	var indexMergeConds []expression.Expression
-	if len(ds.indexMergeHints) > 0 {
-		// Use allConds instread of pushedDownConds,
-		// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
-		// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
-		for _, expr := range ds.allConds {
-			indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
-		}
-	} else {
-		// Make sure index merge only handle exprs that can be pushed down to tikv.
-		indexMergeConds, _ = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, ds.pushedDownConds, ds.ctx.GetClient(), kv.TiKV)
+	for _, expr := range ds.allConds {
+		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}
+
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && len(ds.possibleAccessPaths) > 1
 	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
-	// If there is an index path, we current do not consider `IndexMergePath`.
+	// If there is an index path or exprs that cannot be pushed down, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
 	if len(ds.indexMergeHints) == 0 {
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -432,6 +428,10 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				needConsiderIndexMerge = false
 				break
 			}
+		}
+		_, remaining := expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+		if len(remaining) != 0 {
+			needConsiderIndexMerge = false
 		}
 	}
 
