@@ -468,6 +468,7 @@ outside:
 	}
 
 	task.End(zap.ErrorLevel, err)
+	rc.errorMgr.LogErrorDetails()
 	rc.errorSummaries.emitLog()
 
 	return errors.Trace(err)

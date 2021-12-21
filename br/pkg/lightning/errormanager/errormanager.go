@@ -331,7 +331,7 @@ func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, p
 
 func (em *ErrorManager) errorCount(typeVal func (*config.MaxError) int64) int64 {
 	cfgVal := typeVal(em.configError)
-	val := typeVal(em.configError)
+	val := typeVal(&em.remainingError)
 	if val < 0 {
 		val = 0
 	}
@@ -367,6 +367,31 @@ func (em *ErrorManager) HasError() bool {
 		em.charsetError() > 0 || em.conflictError() > 0
 }
 
+// GenErrorLogFields return a slice of zap.Field for each error type
+func (em *ErrorManager) LogErrorDetails() {
+	fmtErrMsg := func(cnt int64, errType, tblName string) string {
+		return fmt.Sprintf("Detect %d %s errors in total, please refer to table %s for more details",
+			cnt, errType, em.fmtTableName(tblName))
+	}
+	if errCnt := em.typeErrors(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", typeErrorTableName))
+	}
+	if errCnt := em.syntaxError(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", syntaxErrorTableName))
+	}
+	if errCnt := em.charsetError(); errCnt > 0 {
+		// TODO: add charset table name
+		log.L().Warn(fmtErrMsg(errCnt, "data type", ""))
+	}
+	if errCnt := em.conflictError(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", conflictErrorTableName))
+	}
+}
+
+func (em *ErrorManager) fmtTableName(t string) string {
+	return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
+}
+
 // Output renders a table which contains error summery for each error type.
 func (em *ErrorManager) Output() string {
 	if !em.HasError() {
@@ -379,42 +404,31 @@ func (em *ErrorManager) Output() string {
 		{Name: "#", WidthMax: 6},
 		{Name: "Error Type", WidthMax: 20},
 		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 36},
+		{Name: "Error Data Table", WidthMax: 42},
 	})
 	t.SetAllowedRowLength(80)
 	t.SetRowPainter(func(row table.Row) text.Colors {
 		return text.Colors{text.FgRed}
 	})
 
-	formatTable := func(t string) string {
-		return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
-	}
-
-	logFields := make([]zap.Field, 0)
 	count := 0
 	if errCnt := em.typeErrors(); errCnt > 0 {
 		count++
-		t.AppendRow(table.Row{count, "Data Type", errCnt, formatTable(typeErrorTableName)})
-		logFields = append(logFields, zap.Int64("type_error", errCnt))
+		t.AppendRow(table.Row{count, "Data Type", errCnt, em.fmtTableName(typeErrorTableName)})
 	}
 	if errCnt := em.syntaxError(); errCnt > 0 {
 		count++
-		t.AppendRow(table.Row{count, "Data Syntax", errCnt, formatTable(syntaxErrorTableName)})
-		logFields = append(logFields, zap.Int64("syntax_error", errCnt))
+		t.AppendRow(table.Row{count, "Data Syntax", errCnt, em.fmtTableName(syntaxErrorTableName)})
 	}
 	if errCnt := em.charsetError(); errCnt > 0 {
 		count++
 		// do not support record charset error now.
 		t.AppendRow(table.Row{count, "Charset Error", errCnt, ""})
-		logFields = append(logFields, zap.Int64("charset_error", errCnt))
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
-		t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, formatTable(conflictErrorTableName)})
-		logFields = append(logFields, zap.Int64("conflict_error", errCnt))
+		t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(conflictErrorTableName)})
 	}
-
-	log.L().Error("restore tables error summary", logFields...)
 
 	res := "\nImport Data Error Summary: \n"
 	res += t.Render()
