@@ -25,8 +25,11 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -47,11 +50,20 @@ func SetupTopSQL() {
 	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
 
 	globalTopSQLReport = remoteReporter
+	stmtstats.SetupAggregator()
 }
 
 // SetupTopSQLForTest sets up the global top-sql reporter, it's exporting for test.
 func SetupTopSQLForTest(r reporter.TopSQLReporter) {
 	globalTopSQLReport = r
+}
+
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
+func RegisterPubSubServer(s *grpc.Server) {
+	if register, ok := globalTopSQLReport.(reporter.DataSinkRegisterer); ok {
+		service := reporter.NewTopSQLPubSubService(register)
+		tipb.RegisterTopSQLPubSubServer(s, service)
+	}
 }
 
 // Close uses to close and release the top sql resource.
@@ -62,6 +74,7 @@ func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}
+	stmtstats.CloseAggregator()
 }
 
 // AttachSQLInfo attach the sql information info top sql.
