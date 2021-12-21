@@ -432,7 +432,7 @@ func (em *ErrorManager) Output() string {
 
 	res := "\nImport Data Error Summary: \n"
 	res += t.Render()
-	res += "\n\n"
+	res += "\n"
 
 	return res
 }
