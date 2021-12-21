@@ -330,6 +330,27 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 
 }
 
+// isUnsupportedError checks whether we should fallback to ScatterRegion API when meeting the error.
+func isUnsupportedError(err error) bool {
+	s, ok := status.FromError(errors.Cause(err))
+	if !ok {
+		// Not a gRPC error. Something other went wrong.
+		return false
+	}
+	// In two conditions, we fallback to ScatterRegion:
+	// (1) If the RPC endpoint returns UNIMPLEMENTED. (This is just for making test cases not be so magic.)
+	// (2) If the Message is "region 0 not found":
+	//     In fact, PD reuses the gRPC endpoint `ScatterRegion` for the batch version of scattering.
+	//     When the request contains the field `regionIDs`, it would use the batch version,
+	//     Otherwise, it uses the old version and scatter the region with `regionID` in the request.
+	//     When facing 4.x, BR(which uses v5.x PD clients and call `ScatterRegions`!) would set `regionIDs`
+	//     which would be ignored by protocol buffers, and leave the `regionID` be zero.
+	//     Then the older version of PD would try to search the region with ID 0.
+	//     (Then it consistently fails, and returns "region 0 not found".)
+	return s.Code() == codes.Unimplemented ||
+		strings.Contains(s.Message(), "region 0 not found")
+}
+
 // ScatterRegions scatter the regions.
 func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*RegionInfo) {
 	for _, region := range newRegions {
@@ -338,7 +359,7 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 	}
 
 	err := rs.client.ScatterRegions(ctx, newRegions)
-	if status.Code(err) == codes.Unimplemented {
+	if isUnsupportedError(err) {
 		log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
 		rs.ScatterRegionsWithBackoffer(
 			ctx, newRegions,
