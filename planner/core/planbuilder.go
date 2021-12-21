@@ -1826,6 +1826,9 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	case model.AllColumns:
 		return tblInfo.Columns, nil
 	case model.PredicateColumns:
+		if len(tblInfo.Columns) < int(variable.WideTableColumnCount.Load()) {
+			return nil, errors.Errorf("The number of columns in table %s is less than `tidb_wide_table_column_count` so analyzing predicate columns cannot be applied", tblInfo.Name.L)
+		}
 		do := domain.GetDomain(b.ctx)
 		h := do.StatsHandle()
 		cols, err := h.GetPredicateColumns(tblInfo.ID)
