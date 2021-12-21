@@ -988,3 +988,25 @@ func (s *testSuite3) TestDropRoleAfterRevoke(c *C) {
 	tk.MustExec("revoke r1, r3 from root;")
 	tk.MustExec("drop role r1;")
 }
+
+func (s *testSuiteWithCliBaseCharset) TestUserWithSetNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set names gbk;")
+
+	gbkString := string([]byte{0xD2, 0xBB})
+
+	tk.MustExec("drop user if exists '一'@'localhost';")
+	tk.MustExec("create user '一'@'localhost' IDENTIFIED BY '" + gbkString + "';")
+
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="一" and Host="localhost";`)
+	result.Check(testkit.Rows(auth.EncodePassword("一")))
+
+	tk.MustExec(`ALTER USER '一'@'localhost' IDENTIFIED BY '` + gbkString + gbkString + `';`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="一" and Host="localhost";`)
+	result.Check(testkit.Rows(auth.EncodePassword("一一")))
+
+	tk.MustExec(`RENAME USER '一'@'localhost' to '一'`)
+
+	tk.MustExec("drop user '一';")
+}
