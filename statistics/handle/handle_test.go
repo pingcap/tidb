@@ -290,6 +290,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 		HighVal:     []types.Datum{types.NewIntDatum(2)},
 		LowExclude:  false,
 		HighExclude: true,
+		Collators:   collate.GetBinaryCollatorSlice(1),
 	}
 	count, err := statsTbl.GetRowCountByColumnRanges(sctx, tableInfo.Columns[0].ID, []*ranger.Range{ran})
 	c.Assert(err, IsNil)

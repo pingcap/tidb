@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
@@ -89,6 +90,7 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -122,9 +124,9 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	// ExecuteStmt executes a parsed statement.
 	ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error)
-	// Parse is deprecated, use ParseWithParams() instead.
+	// Parse is deprecated, use ParseWithParams() or ParseWithParamsInternal() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
-	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
+	// ExecuteInternal is a helper around ParseWithParamsInternal() and ExecuteStmt(). It is not allowed to execute multiple statements.
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
@@ -309,7 +311,8 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+				bindSQL := planner.GetBindSQL4PlanCache(s, preparedAst.Stmt)
+				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
 			}
 		}
 	}
@@ -558,8 +561,102 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
+	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
+		c := cachedTableRenewLease{tables: tables}
+		now := time.Now()
+		err := c.start(ctx)
+		defer c.stop(ctx)
+		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
+	}
 
 	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
+}
+
+type cachedTableRenewLease struct {
+	tables map[int64]interface{}
+	lease  []uint64 // Lease for each visited cached tables.
+	exit   chan struct{}
+}
+
+func (c *cachedTableRenewLease) start(ctx context.Context) error {
+	c.exit = make(chan struct{})
+	c.lease = make([]uint64, len(c.tables))
+	wg := make(chan error)
+	ith := 0
+	for tid, raw := range c.tables {
+		go c.keepAlive(ctx, wg, raw.(tables.StateRemote), tid, &c.lease[ith])
+		ith++
+	}
+
+	// Wait for all LockForWrite() return, this function can return.
+	var err error
+	for ; ith > 0; ith-- {
+		tmp := <-wg
+		if tmp != nil {
+			err = tmp
+		}
+	}
+	return err
+}
+
+const cacheTableWriteLease = 5 * time.Second
+
+func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
+	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	atomic.StoreUint64(leasePtr, writeLockLease)
+	wg <- err
+	if err != nil {
+		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		return
+	}
+
+	t := time.NewTicker(cacheTableWriteLease)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			if err := c.renew(ctx, handle, tid, leasePtr); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
+				return
+			}
+		case <-c.exit:
+			return
+		}
+	}
+}
+
+func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRemote, tid int64, leasePtr *uint64) error {
+	oldLease := atomic.LoadUint64(leasePtr)
+	physicalTime := oracle.GetTimeFromTS(oldLease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
+
+	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if succ {
+		atomic.StoreUint64(leasePtr, newLease)
+	}
+	return nil
+}
+
+func (c *cachedTableRenewLease) stop(ctx context.Context) {
+	close(c.exit)
+}
+
+func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
+	for i := 0; i < len(c.lease); i++ {
+		lease := atomic.LoadUint64(&c.lease[i])
+		if commitTS >= lease {
+			// Txn fails to commit because the write lease is expired.
+			return false
+		}
+	}
+	return true
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
@@ -1056,7 +1153,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
-	stmt, err := s.ParseWithParams(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
+	stmt, err := s.ParseWithParamsInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
 	}
@@ -1078,7 +1175,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
-	stmt, err := s.ParseWithParams(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
+	stmt, err := s.ParseWithParamsInternal(ctx, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
 	}
@@ -1153,7 +1250,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	stmt, err := s.ParseWithParams(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	stmt, err := s.ParseWithParamsInternal(context.TODO(), `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	if err != nil {
 		return err
 	}
@@ -1421,6 +1518,16 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		}
 	}
 	return stmts[0], nil
+}
+
+// ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
+func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	origin := s.sessionVars.InRestrictedSQL
+	s.sessionVars.InRestrictedSQL = true
+	defer func() {
+		s.sessionVars.InRestrictedSQL = origin
+	}()
+	return s.ParseWithParams(ctx, sql, args...)
 }
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
@@ -2438,9 +2545,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
-		if cfg.Experimental.EnableNewCharset {
-			collate.EnableNewCharset()
-		}
+	}
+	if cfg.Experimental.EnableNewCharset {
+		collate.EnableNewCharset()
 	}
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
