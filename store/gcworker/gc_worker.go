@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -1941,6 +1943,8 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
+		// Force trigger a full TiFlash pd rule sync.
+		atomic.StoreUint32(&ddl.ReschePullTiFlash, 1)
 	}
 
 	if len(physicalTableIDs) == 0 {
