@@ -166,6 +166,7 @@ func (ds *SingleTargetDataSink) Close() {
 
 	if ds.registered.Load() {
 		ds.registerer.Deregister(ds)
+		ds.registered.Store(false)
 	}
 }
 
