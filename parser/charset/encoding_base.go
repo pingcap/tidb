@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -35,16 +36,14 @@ type encodingBase struct {
 }
 
 func (b encodingBase) DecodeRuneInString(src string) (r rune, size int) {
-	srcBytes := b.self.Peek(Slice(src))
-	_, err := b.Transform(nil, srcBytes, OpDecode)
-	if err != nil {
-		return rune(src[0]), 1
+	r, size = rune(src[0]), 1
+	if r >= 0x80 {
+		r, size = utf8.DecodeRuneInString(src[:])
+		if r == utf8.RuneError && size == 1 {
+			r = rune(src[0]) // illegal encoding
+		}
 	}
-	r = 0
-	for _, v := range srcBytes {
-		r = r<<8 + rune(v)
-	}
-	return r, len(srcBytes)
+	return r, size
 }
 
 func (b encodingBase) ToUpper(src string) string {

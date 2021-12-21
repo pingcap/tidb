@@ -88,12 +88,10 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql, p: Pos{Line: 1}}
-	if s.encoding != nil {
-		s.r.decodeRuneInString = s.encoding.DecodeRuneInString
-	} else {
-		s.r.decodeRuneInString = charset.FindEncoding(mysql.DefaultCharset).DecodeRuneInString
+	if s.encoding == nil {
+		s.encoding = charset.FindEncoding(mysql.DefaultCharset)
 	}
+	s.r = reader{s: sql, p: Pos{Line: 1}, decodeRuneInString: s.encoding.DecodeRuneInString}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -150,7 +148,7 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	if s.encoding == nil || mysql.IsUTF8Charset(s.encoding.Name()) {
+	if mysql.IsUTF8Charset(s.encoding.Name()) {
 		// Skip utf8 encoding because `ToUTF8` validates the whole SQL.
 		// This can cause failure when the SQL contains BLOB values.
 		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
@@ -289,7 +287,8 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
-	return &Scanner{r: reader{s: s}}
+	enc := charset.FindEncoding(mysql.DefaultCharset)
+	return &Scanner{r: reader{s: s, decodeRuneInString: enc.DecodeRuneInString}, encoding: enc}
 }
 
 func (s *Scanner) handleIdent(lval *yySymType) int {

@@ -85,6 +85,19 @@ func (e *encodingGBK) Peek(src []byte) []byte {
 	return src
 }
 
+func (e *encodingGBK) DecodeRuneInString(src string) (r rune, size int) {
+	srcBytes := e.self.Peek(Slice(src))
+	_, err := e.Transform(nil, srcBytes, OpDecode)
+	if err != nil {
+		return rune(src[0]), 1
+	}
+	r = 0
+	for _, v := range srcBytes {
+		r = r<<8 + rune(v)
+	}
+	return r, len(srcBytes)
+}
+
 // ToUpper implements Encoding interface.
 func (e *encodingGBK) ToUpper(d string) string {
 	return strings.ToUpperSpecial(GBKCase, d)
