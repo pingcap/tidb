@@ -16,6 +16,7 @@ package charset
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
@@ -86,16 +87,17 @@ func (e *encodingGBK) Peek(src []byte) []byte {
 }
 
 func (e *encodingGBK) DecodeRuneInString(src string) (r rune, size int) {
-	srcBytes := e.self.Peek(Slice(src))
-	_, err := e.Transform(nil, srcBytes, OpDecode)
-	if err != nil {
-		return rune(src[0]), 1
+	r, size = rune(src[0]), 1
+	if r >= 0x80 {
+		srcBytes := e.self.Peek(Slice(src))
+		dstBytes, err := e.Transform(nil, srcBytes, OpDecode)
+		if err != nil {
+			return rune(src[0]), 1
+		}
+		r, _ = utf8.DecodeRune(dstBytes)
+		size = len(srcBytes)
 	}
-	r = 0
-	for _, v := range srcBytes {
-		r = r<<8 + rune(v)
-	}
-	return r, len(srcBytes)
+	return r, size
 }
 
 // ToUpper implements Encoding interface.
