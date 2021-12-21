@@ -568,9 +568,6 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			hasNull = true
 			continue
 		}
-		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
-			dt.SetString(dt.GetString(), colCollate)
-		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:

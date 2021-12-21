@@ -90,7 +90,7 @@ func TestDumpTableMeta(t *testing.T) {
 		}
 		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-		meta, err := dumpTableMeta(conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
+		meta, err := dumpTableMeta(tctx, conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
 		require.NoError(t, err)
 		require.Equal(t, database, meta.DatabaseName())
 		require.Equal(t, table, meta.TableName())
