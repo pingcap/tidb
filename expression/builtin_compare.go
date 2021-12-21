@@ -432,7 +432,7 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 			}
 		}
 
-		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil {
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(aggType.Tp) {
 			aggType.Tp = temporalItem.Tp
 			cmpStringAsDatetime = true
 		}
