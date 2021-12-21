@@ -24,22 +24,22 @@ import (
 	"github.com/pingcap/tidb/config"
 )
 
-// SQLReplayerHandler is the handler for dumping plan replayer file.
-type SQLReplayerHandler struct {
+// SQLRecorderHandler is the handler for dumping plan replayer file.
+type SQLRecorderHandler struct {
 	address    string
 	statusPort uint
 }
 
-func (s *Server) newSQLReplayerHandler() *SQLReplayerHandler {
+func (s *Server) newSQLRecorderHandler() *SQLRecorderHandler {
 	cfg := config.GetGlobalConfig()
-	prh := &SQLReplayerHandler{
+	prh := &SQLRecorderHandler{
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
 	}
 	return prh
 }
 
-func (prh SQLReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (prh SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 	cfg := config.GetGlobalConfig()
 	params := mux.Vars(req)
