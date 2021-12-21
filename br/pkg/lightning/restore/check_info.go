@@ -1117,9 +1117,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 
 	if len(tableNames) > 0 {
 		// sort the failed names
-		sort.Slice(tableNames, func(i, j int) bool {
-			return strings.Compare(tableNames[i], tableNames[j]) < 0
-		})
+		sort.Strings(tableNames)
 		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
 		rc.checkTemplate.Collect(Critical, false, msg)
 	}
