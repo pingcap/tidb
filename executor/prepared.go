@@ -315,7 +315,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		bindSQL := planner.GetBindSQL4PlanCache(e.ctx, prepared.Stmt)
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
 			vars, id, prepared.SchemaVersion, bindSQL,
 		))
 	}
