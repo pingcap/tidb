@@ -30,13 +30,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type collectorWrapper struct {
-	reporter.TopSQLReporter
-}
-
 func TestTopSQLCPUProfile(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{collector})
+	topsql.SetupTopSQLForTest(collector)
+	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	sqlCPUCollector.Start()
+	sqlCPUCollector.Enable()
+	defer sqlCPUCollector.Close()
+
 	reqs := []struct {
 		sql  string
 		plan string
@@ -86,13 +87,13 @@ func TestTopSQLReporter(t *testing.T) {
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := reporter.NewSingleTargetDataSink(report)
+	topsql.SetupTopSQLForTest(report)
 
 	defer func() {
 		ds.Close()
 		report.Close()
 	}()
 
-	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
 		sql  string
 		plan string
@@ -151,7 +152,7 @@ func TestTopSQLReporter(t *testing.T) {
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{collector})
+	topsql.SetupTopSQLForTest(collector)
 
 	ctx := context.Background()
 
@@ -180,10 +181,6 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
 	cPlan = collector.GetPlan(planDigest.Bytes())
 	require.Empty(t, cPlan)
-}
-
-func setTopSQLEnable(enabled bool) {
-	variable.TopSQLVariable.Enable.Store(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {

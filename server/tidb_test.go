@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -133,7 +134,6 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	cpuprofile.GlobalCPUProfiler.Start()
-	tracecpu.GlobalSQLCPUCollector.Run()
 
 	return ts, cleanup
 }
@@ -1260,10 +1260,6 @@ func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 	require.Nil(t, rs) // should be no delay
 }
 
-type collectorWrapper struct {
-	reporter.TopSQLReporter
-}
-
 func TestTopSQLCPUProfile(t *testing.T) {
 	ts, cleanup := createTidbTestTopSQLSuite(t)
 	defer cleanup()
@@ -1285,7 +1281,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}()
 
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{collector})
+	topsql.SetupTopSQLForTest(collector)
+	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	sqlCPUCollector.Start()
+	sqlCPUCollector.Enable()
+	defer sqlCPUCollector.Close()
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
@@ -1540,12 +1540,11 @@ func TestTopSQLAgent(t *testing.T) {
 
 	r := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
 	s := reporter.NewSingleTargetDataSink(r)
+	topsql.SetupTopSQLForTest(r)
 	defer func() {
 		r.Close()
 		s.Close()
 	}()
-
-	tracecpu.GlobalSQLCPUCollector.SetCollector(&collectorWrapper{r})
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {

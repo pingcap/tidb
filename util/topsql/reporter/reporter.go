@@ -131,6 +131,8 @@ type RemoteTopSQLReporter struct {
 	dataSinkMu sync.Mutex
 	dataSinks  map[DataSink]struct{}
 
+	sqlCPUCollector *tracecpu.SQLCPUCollector
+
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
@@ -171,6 +173,9 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
+
+	tsr.sqlCPUCollector = tracecpu.NewSQLCPUCollector(tsr)
+	tsr.sqlCPUCollector.Start()
 
 	go tsr.collectWorker()
 	go tsr.reportWorker()
@@ -252,7 +257,7 @@ func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
 
 		if len(tsr.dataSinks) > 0 {
 			variable.TopSQLVariable.Enable.Store(true)
-			tracecpu.GlobalSQLCPUCollector.SetCollector(tsr)
+			tsr.sqlCPUCollector.Enable()
 		}
 
 		return nil
@@ -271,7 +276,7 @@ func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
 
 		if len(tsr.dataSinks) == 0 {
 			variable.TopSQLVariable.Enable.Store(false)
-			tracecpu.GlobalSQLCPUCollector.ResetCollector()
+			tsr.sqlCPUCollector.Disable()
 		}
 	}
 }
@@ -296,6 +301,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
+	tsr.sqlCPUCollector.Close()
 
 	var m map[DataSink]struct{}
 	tsr.dataSinkMu.Lock()

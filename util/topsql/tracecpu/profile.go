@@ -33,9 +33,6 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
-// GlobalSQLCPUCollector is the global SQL CPU stats collector.
-var GlobalSQLCPUCollector = newSQLCPUCollector()
-
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
@@ -54,54 +51,68 @@ type SQLCPUTimeRecord struct {
 	CPUTimeMs  uint32
 }
 
-type sqlCPUCollector struct {
-	profileConsumer cpuprofile.ProfileConsumer
+// SQLCPUCollector uses to consume cpu profile from GlobalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
+type SQLCPUCollector struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
-	mu         sync.Mutex
-	collectors Collector
+	profileConsumer cpuprofile.ProfileConsumer
+	collector       Collector
 }
 
-// newSQLCPUCollector create a sqlCPUCollector.
-func newSQLCPUCollector() *sqlCPUCollector {
-	return &sqlCPUCollector{
+// NewSQLCPUCollector create a SQLCPUCollector.
+func NewSQLCPUCollector(c Collector) *SQLCPUCollector {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &SQLCPUCollector{
+		ctx:             ctx,
+		cancel:          cancel,
 		profileConsumer: make(cpuprofile.ProfileConsumer, 1),
+		collector:       c,
 	}
 }
 
-func (sp *sqlCPUCollector) Run() {
+// Start uses to start to run SQLCPUCollector.
+func (sp *SQLCPUCollector) Start() {
 	logutil.BgLogger().Info("sql cpu collector started")
+	sp.wg.Add(1)
 	go sp.startAnalyzeProfileWorker()
 }
 
-func (sp *sqlCPUCollector) SetCollector(c Collector) {
-	if c == nil {
-		return
+// Close uses to close the SQLCPUCollector.
+func (sp *SQLCPUCollector) Close() {
+	if sp.cancel != nil {
+		sp.cancel()
 	}
-	sp.mu.Lock()
-	sp.collectors = c
-	sp.mu.Unlock()
+	sp.wg.Wait()
+}
+
+// Enable uses to enable the SQLCPUCollector to work.
+// This will register a consumer into GlobalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
+// WARN: SQLCPUCollector can't collect sql cpu data until enable it. It is ok to call this function repeatedly.
+func (sp *SQLCPUCollector) Enable() {
 	cpuprofile.Register(sp.profileConsumer)
 }
 
-func (sp *sqlCPUCollector) ResetCollector() {
-	sp.mu.Lock()
-	sp.collectors = nil
-	sp.mu.Unlock()
+// Disable uses to disable the SQLCPUCollector from working.
+// This will unregister a consumer from GlobalCPUProfiler, then SQLCPUCollector won't receive cpu profile data any more.
+// WARN: SQLCPUCollector won't collect sql cpu data after disable it. It is ok to call this function repeatedly.
+func (sp *SQLCPUCollector) Disable() {
 	cpuprofile.Unregister(sp.profileConsumer)
 }
 
-func (sp *sqlCPUCollector) GetCollector() Collector {
-	var c Collector
-	sp.mu.Lock()
-	c = sp.collectors
-	sp.mu.Unlock()
-	return c
-}
-
-func (sp *sqlCPUCollector) startAnalyzeProfileWorker() {
-	defer util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
+func (sp *SQLCPUCollector) startAnalyzeProfileWorker() {
+	defer func() {
+		util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
+		sp.wg.Done()
+	}()
 	for {
-		data := <-sp.profileConsumer
+		var data *cpuprofile.ProfileData
+		select {
+		case <-sp.ctx.Done():
+			return
+		case data = <-sp.profileConsumer:
+		}
 		ts := data.End.Unix()
 		if data.Error != nil || ts <= 0 {
 			continue
@@ -113,9 +124,7 @@ func (sp *sqlCPUCollector) startAnalyzeProfileWorker() {
 			continue
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
-		if c := sp.GetCollector(); c != nil {
-			c.Collect(uint64(ts), stats)
-		}
+		sp.collector.Collect(uint64(ts), stats)
 	}
 }
 
@@ -123,9 +132,9 @@ func (sp *sqlCPUCollector) startAnalyzeProfileWorker() {
 // output the TopSQLCPUTimeRecord slice. Want to know more information about profile labels, see https://rakyll.org/profiler-labels/
 // The sql_digest label is been set by `SetSQLLabels` function after parse the SQL.
 // The plan_digest label is been set by `SetSQLAndPlanLabels` function after build the SQL plan.
-// Since `sqlCPUCollector` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
+// Since `SQLCPUCollector` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
-func (sp *sqlCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
+func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
 	sqlMap := make(map[string]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
@@ -153,7 +162,7 @@ func (sp *sqlCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLC
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *sqlCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
+func (sp *SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
 	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()

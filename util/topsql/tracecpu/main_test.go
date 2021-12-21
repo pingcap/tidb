@@ -17,8 +17,6 @@ package tracecpu_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -29,32 +27,23 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-
-	variable.TopSQLVariable.Enable.Store(false)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock"
-	})
-	variable.TopSQLVariable.PrecisionSeconds.Store(1)
-	tracecpu.GlobalSQLCPUCollector.Run()
-	cpuprofile.GlobalCPUProfiler.Start()
-
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("time.Sleep"),
-		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUCollector).startAnalyzeProfileWorker"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
-	}
-
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(m)
 }
 
 func TestPProfCPUProfile(t *testing.T) {
+	cpuprofile.GlobalCPUProfiler.Start()
+	defer cpuprofile.GlobalCPUProfiler.Close()
+
 	collector := mock.NewTopSQLCollector()
-	tracecpu.GlobalSQLCPUCollector.SetCollector(collector)
+	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	sqlCPUCollector.Start()
+	defer sqlCPUCollector.Close()
+
+	sqlCPUCollector.Enable()
+	require.Equal(t, 1, cpuprofile.GlobalCPUProfiler.ConsumersCount())
 	collector.WaitCollectCnt(1)
 	require.True(t, collector.CollectCnt() >= 1)
 
-	tracecpu.GlobalSQLCPUCollector.ResetCollector()
-	require.True(t, tracecpu.GlobalSQLCPUCollector.GetCollector() == nil)
+	sqlCPUCollector.Disable()
+	require.Equal(t, 0, cpuprofile.GlobalCPUProfiler.ConsumersCount())
 }

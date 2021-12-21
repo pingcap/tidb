@@ -46,9 +46,9 @@ func TestParallelCPUProfiler(t *testing.T) {
 
 	// Test register/unregister nil
 	Register(nil)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 	Unregister(nil)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 	require.False(t, GlobalCPUProfiler.inProfilingStatus())
 
 	// Test profile error and duplicate register.
@@ -59,14 +59,14 @@ func TestParallelCPUProfiler(t *testing.T) {
 	// Test for duplicate register.
 	Register(dataCh)
 	Register(dataCh)
-	require.Equal(t, 1, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 1, GlobalCPUProfiler.ConsumersCount())
 	require.Equal(t, true, GlobalCPUProfiler.needProfile())
 
 	// Test profile error
 	data := <-dataCh
 	require.Equal(t, "cpu profiling already in use", data.Error.Error())
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 
 	// shouldn't receive data from a unregistered consumer.
 	data = nil
@@ -78,18 +78,18 @@ func TestParallelCPUProfiler(t *testing.T) {
 
 	// unregister not exist consumer
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 
 	// Test register a closed consumer
 	dataCh = make(ProfileConsumer, 10)
 	close(dataCh)
 	Register(dataCh)
-	require.Equal(t, 1, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 1, GlobalCPUProfiler.ConsumersCount())
 	data, ok := <-dataCh
 	require.Nil(t, data)
 	require.False(t, ok)
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 	pprof.StopCPUProfile()
 
 	// Test successfully get profile data.
@@ -101,7 +101,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, profileData)
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 
 	// Test stop profiling when no consumer.
 	Register(dataCh)
@@ -115,7 +115,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.consumersCount())
+	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
 
 	// wait for ParallelCPUProfiler stop profiling
 	start := time.Now()
@@ -214,6 +214,7 @@ func TestProfileHTTPHandler(t *testing.T) {
 	profileData, err := profile.Parse(resp.Body)
 	require.NoError(t, err)
 	require.NotNil(t, profileData)
+	require.NoError(t, resp.Body.Close())
 
 	// Test for get profile failed.
 	resp, err = http.Get("http://" + address + "/debug/pprof/profile?seconds=100000")
@@ -222,6 +223,7 @@ func TestProfileHTTPHandler(t *testing.T) {
 	body, err := ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "profile duration exceeds server's WriteTimeout\n", string(body))
+	require.NoError(t, resp.Body.Close())
 }
 
 func mockCPULoad(ctx context.Context, labels ...string) {

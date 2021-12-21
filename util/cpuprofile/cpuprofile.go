@@ -35,7 +35,7 @@ var GlobalCPUProfiler = NewParallelCPUProfiler()
 // ProfileConsumer is the profile data consumer.
 // ProfileConsumer is a channel alias, if the channel is full, then the channel won't receive the latest profile data
 // until it is not blocked.
-type ProfileConsumer chan *ProfileData
+type ProfileConsumer = chan *ProfileData
 
 // ProfileData contains the cpu profile data and some additional information.
 type ProfileData struct {
@@ -149,7 +149,7 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 }
 
 func (p *ParallelCPUProfiler) needProfile() bool {
-	return p.consumersCount() > 0
+	return p.ConsumersCount() > 0
 }
 
 func (p *ParallelCPUProfiler) inProfilingStatus() bool {
@@ -178,7 +178,8 @@ func (p *ParallelCPUProfiler) stopCPUProfile() {
 	pprof.StopCPUProfile()
 }
 
-func (p *ParallelCPUProfiler) consumersCount() int {
+// ConsumersCount returns the count of ParallelCPUProfiler's consumer.It is exporting for test.
+func (p *ParallelCPUProfiler) ConsumersCount() int {
 	p.Lock()
 	n := len(p.cs)
 	p.Unlock()

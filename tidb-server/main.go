@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -209,6 +210,7 @@ func main() {
 		cleanup(svr, storage, dom, graceful)
 		close(exited)
 	})
+	cpuprofile.GlobalCPUProfiler.Start()
 	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
