@@ -16,6 +16,7 @@ package profile
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"runtime/pprof"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/texttree"
 )
 
@@ -69,11 +71,10 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 // cpuProfileGraph returns the CPU profile flamegraph which is organized by tree form
 func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	buffer := &bytes.Buffer{}
-	if err := pprof.StartCPUProfile(buffer); err != nil {
-		panic(err)
+	err := cpuprofile.GetCPUProfile(context.Background(), uint64(CPUProfileInterval/time.Second), buffer)
+	if err != nil {
+		return nil, err
 	}
-	time.Sleep(CPUProfileInterval)
-	pprof.StopCPUProfile()
 	return c.ProfileReaderToDatums(buffer)
 }
 

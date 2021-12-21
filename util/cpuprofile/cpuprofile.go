@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
 )
 
@@ -86,6 +87,7 @@ func NewParallelCPUProfiler() *ParallelCPUProfiler {
 
 // Start uses to start to run ParallelCPUProfiler.
 func (p *ParallelCPUProfiler) Start() {
+	logutil.BgLogger().Info("parallel cpu profiler started")
 	p.wg.Add(1)
 	go util.WithRecovery(p.profilingLoop, nil)
 }
