@@ -5,6 +5,7 @@ package gluetidb
 import (
 	"bytes"
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 const (
@@ -126,6 +128,48 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 		schema.Charset = mysql.DefaultCharset
 	}
 	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore, true)
+}
+
+// CreateTable implements glue.Session.
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, batchDdlSize uint) error {
+	d := domain.GetDomain(gs.se).DDL()
+	log.Info("tidb start create tables", zap.Uint("batchDdlSize", batchDdlSize))
+	var dbName model.CIStr
+	cloneTables := make([]*model.TableInfo, 0, len(tables))
+
+	for db, tablesInDB := range tables {
+		dbName = model.NewCIStr(db)
+		queryBuilder := strings.Builder{}
+		for _, table := range tablesInDB {
+			query, err := gs.showCreateTable(table)
+			if err != nil {
+				log.Error("Tidbsession to show create tables failure.")
+				return err
+			}
+			queryBuilder.WriteString(query)
+			queryBuilder.WriteString(";")
+
+			table = table.Clone()
+			// Clone() does not clone partitions yet :(
+			if table.Partition != nil {
+				newPartition := *table.Partition
+				newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
+				table.Partition = &newPartition
+			}
+			cloneTables = append(cloneTables, table)
+		}
+		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
+		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore, true)
+		if err != nil {
+			log.Info("Bulk create table from tidb failure, it possible caused by version mismatch with BR.", zap.String("Error", err.Error()))
+			return err
+		}
+		log.Info("BatchCreateTableWithInfo  DONE",
+			zap.Stringer("DB", dbName),
+			zap.Int("table num", len(cloneTables)))
+	}
+
+	return nil
 }
 
 // CreateTable implements glue.Session.

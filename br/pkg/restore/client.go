@@ -93,6 +93,8 @@ type Client struct {
 	// and restore stats with #dump.LoadStatsFromJSON
 	statsHandler *handle.Handle
 	dom          *domain.Domain
+
+	batchDllSize uint
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -163,6 +165,14 @@ func (rc *Client) IsOnline() bool {
 // SetSwitchModeInterval set switch mode interval for client.
 func (rc *Client) SetSwitchModeInterval(interval time.Duration) {
 	rc.switchModeInterval = interval
+}
+
+func (rc *Client) SetBatchDdlSize(batchDdlsize uint) {
+	rc.batchDllSize = batchDdlsize
+}
+
+func (rc *Client) GetBatchDdlSize() uint {
+	return rc.batchDllSize
 }
 
 // Close a client.
@@ -400,6 +410,46 @@ func (rc *Client) CreateTables(
 	}
 	return rewriteRules, newTables, nil
 }
+func (rc *Client) createTables(
+	ctx context.Context,
+	db *DB,
+	dom *domain.Domain,
+	tables []*metautil.Table,
+	newTS uint64,
+) ([]CreatedTable, error) {
+	log.Info("client to create tables")
+	if rc.IsSkipCreateSQL() {
+		log.Info("skip create table and alter autoIncID")
+	} else {
+		err := db.CreateTables(ctx, tables, rc.GetBatchDdlSize())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	cts := make([]CreatedTable, 0, len(tables))
+	for _, table := range tables {
+		newTableInfo, err := rc.GetTableSchema(dom, table.DB.Name, table.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+			return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
+				"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
+				transferBoolToValue(table.Info.IsCommonHandle),
+				table.Info.IsCommonHandle,
+				newTableInfo.IsCommonHandle)
+		}
+		rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+		ct := CreatedTable{
+			RewriteRule: rules,
+			Table:       newTableInfo,
+			OldTable:    table,
+		}
+		log.Debug("new created tables", zap.Any("table", ct))
+		cts = append(cts, ct)
+	}
+	return cts, nil
+}
 
 func (rc *Client) createTable(
 	ctx context.Context,
@@ -459,44 +509,55 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
-		select {
-		case <-c.Done():
-			return c.Err()
-		default:
-		}
-		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
-		if err != nil {
-			log.Error("create table failed",
-				zap.Error(err),
-				zap.Stringer("db", t.DB.Name),
-				zap.Stringer("table", t.Info.Name))
-			return errors.Trace(err)
-		}
-		log.Debug("table created and send to next",
-			zap.Int("output chan size", len(outCh)),
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		outCh <- rt
-		rater.Inc()
-		rater.L().Info("table created",
-			zap.Stringer("table", t.Info.Name),
-			zap.Stringer("database", t.DB.Name))
-		return nil
-	}
-	go func() {
+	err := rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+	//cts, err := rc.createTables(ctx, rc.db, dom, tables, newTS)
+
+	if err == nil {
 		defer close(outCh)
-		defer log.Debug("all tables are created")
-		var err error
-		if len(dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
-		} else {
-			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
+		// fall back to old create table (sequential create table)
+	} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
+		log.Info("fall back to the old DDL way to create table.")
+		createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
+			select {
+			case <-c.Done():
+				return c.Err()
+			default:
+			}
+			rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
+			if err != nil {
+				log.Error("create table failed",
+					zap.Error(err),
+					zap.Stringer("db", t.DB.Name),
+					zap.Stringer("table", t.Info.Name))
+				return errors.Trace(err)
+			}
+			log.Debug("table created and send to next",
+				zap.Int("output chan size", len(outCh)),
+				zap.Stringer("table", t.Info.Name),
+				zap.Stringer("database", t.DB.Name))
+			outCh <- rt
+			rater.Inc()
+			rater.L().Info("table created",
+				zap.Stringer("table", t.Info.Name),
+				zap.Stringer("database", t.DB.Name))
+			return nil
 		}
-		if err != nil {
-			errCh <- err
-		}
-	}()
+		go func() {
+			defer close(outCh)
+			defer log.Debug("all tables are created")
+			var err error
+			if len(dbPool) > 0 {
+				err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
+			} else {
+				err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
+			}
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	} else {
+		errCh <- err
+	}
 	return outCh
 }
 
@@ -522,6 +583,43 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 			db := dbPool[id%uint64(len(dbPool))]
 			return createOneTable(ectx, db, table)
 		})
+	}
+	return eg.Wait()
+}
+
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+	eg, ectx := errgroup.WithContext(ctx)
+	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	numOfTables := len(tables)
+	lastSent := 0
+	for i := int(rc.batchDllSize); i <= numOfTables; i = i + int(rc.batchDllSize) {
+		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
+		if i > numOfTables {
+			i = numOfTables
+		}
+		tableSlice := tables[lastSent:i]
+		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
+			db := dbPool[id%uint64(len(dbPool))]
+			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
+			if err != nil {
+				log.Error("create tables fail")
+				return err
+			}
+			for _, ct := range cts {
+				log.Debug("table created and send to next",
+					zap.Int("output chan size", len(outCh)),
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+				outCh <- ct
+				rater.Inc()
+				rater.L().Info("table created",
+					zap.Stringer("table", ct.OldTable.Info.Name),
+					zap.Stringer("database", ct.OldTable.DB.Name))
+			}
+			return err
+		})
+		lastSent = i
 	}
 	return eg.Wait()
 }

@@ -202,9 +202,57 @@ func TestTable(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dbInfo, err := testSchemaInfo(ddl, "test_table")
-	require.NoError(t, err)
-	testCreateSchemaT(t, testNewContext(ddl), ddl, dbInfo)
+	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
+	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+}
+
+func (s *testTableSuite) TearDownSuite(c *C) {
+	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
+	err := s.d.Stop()
+	c.Assert(err, IsNil)
+	err = s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testTableSuite) TestCreateTables(c *C) {
+	d := s.d
+	ctx := testNewContext(d)
+
+	infos := []*model.TableInfo{}
+	genIDs, err := d.genGlobalIDs(3)
+	c.Assert(err, IsNil)
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[0],
+		Name: model.NewCIStr("s1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[1],
+		Name: model.NewCIStr("s2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[2],
+		Name: model.NewCIStr("s3"),
+	})
+
+	job := &model.Job{
+		SchemaID:   s.dbInfo.ID,
+		Type:       model.ActionCreateTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{infos},
+	}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	t1 := testGetTable(c, d, s.dbInfo.ID, genIDs[0])
+	c.Assert(t1, NotNil)
+	t2 := testGetTable(c, d, s.dbInfo.ID, genIDs[1])
+	c.Assert(t2, NotNil)
+	t3 := testGetTable(c, d, s.dbInfo.ID, genIDs[2])
+	c.Assert(t3, NotNil)
+}
+
+func (s *testTableSuite) TestTable(c *C) {
+	d := s.d
 
 	ctx := testNewContext(ddl)
 
