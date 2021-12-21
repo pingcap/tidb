@@ -17,8 +17,9 @@ package stmtstats
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"go.uber.org/atomic"
 )
 
 // globalAggregator is global *aggregator.
@@ -38,7 +39,7 @@ type aggregator struct {
 	cancel     context.CancelFunc
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
-	running    int32
+	running    atomic.Bool
 }
 
 // newAggregator creates an empty aggregator.
@@ -49,9 +50,9 @@ func newAggregator() *aggregator {
 // run will block the current goroutine and execute the main loop of aggregator.
 func (m *aggregator) run() {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
-	atomic.StoreInt32(&m.running, 1)
+	m.running.Store(true)
 	defer func() {
-		atomic.StoreInt32(&m.running, 0)
+		m.running.Store(false)
 	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -99,11 +100,13 @@ func (m *aggregator) unregister(stats *StatementStats) {
 }
 
 // registerCollector binds a Collector to aggregator.
+// registerCollector is thread-safe.
 func (m *aggregator) registerCollector(collector Collector) {
 	m.collectors.Store(collector, struct{}{})
 }
 
 // unregisterCollector removes Collector from aggregator.
+// unregisterCollector is thread-safe.
 func (m *aggregator) unregisterCollector(collector Collector) {
 	m.collectors.Delete(collector)
 }
@@ -115,7 +118,7 @@ func (m *aggregator) close() {
 
 // closed returns whether the aggregator has been closed.
 func (m *aggregator) closed() bool {
-	return atomic.LoadInt32(&m.running) == 0
+	return m.running.Load()
 }
 
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.
