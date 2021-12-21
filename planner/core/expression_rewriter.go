@@ -1562,7 +1562,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		} else {
 			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
-			for j := 0; j < elemCnt; j++ {
+			for j := 0; j < colLen; j++ {
 				if er.ctxStack[i].GetType().EvalType() != types.ETString {
 					continue
 				}
