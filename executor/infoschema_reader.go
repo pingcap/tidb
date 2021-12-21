@@ -2665,11 +2665,11 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 			if !foundPort {
 				return errors.Errorf("engine-store.http_port/https_port not found in server %s", info.Address)
 			}
-			switch port.(type) {
+			switch portValue := port.(type) {
 			case float64:
 				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 					id:  info.Address,
-					url: fmt.Sprintf("%s://%s:%d", portProtocol, hostAndStatusPort[0], int(port.(float64))),
+					url: fmt.Sprintf("%s://%s:%d", portProtocol, hostAndStatusPort[0], int(portValue)),
 				})
 				e.instanceCount += 1
 			default:
