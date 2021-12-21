@@ -64,7 +64,25 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
+type mockDataSink struct {
+	ch chan *ReportData
+}
+
+func newMockDataSink(ch chan *ReportData) DataSink {
+	return &mockDataSink{ch: ch}
+}
+
+var _ DataSink = &mockDataSink{}
+
+func (ds *mockDataSink) TrySend(data *ReportData, _ time.Time) error {
+	ds.ch <- data
+	return nil
+}
+
+func (ds *mockDataSink) OnReporterClosing() {
+}
+
+func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.MaxCollect.Store(10000)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
@@ -72,15 +90,15 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
-	rc := NewSingleTargetDataSink(mockPlanBinaryDecoderFunc)
-	ts := NewRemoteTopSQLReporter(rc)
-	return ts
+	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	ds := NewSingleTargetDataSink(ts)
+	return ts, ds
 }
 
-func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
-	ts := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
+func initializeCache(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
+	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval, addr)
 	populateCache(ts, 0, maxStatementsNum, 1)
-	return ts
+	return ts, ds
 }
 
 func TestCollectAndSendBatch(t *testing.T) {
@@ -88,8 +106,11 @@ func TestCollectAndSendBatch(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 	populateCache(tsr, 0, maxSQLNum, 1)
 
 	agentServer.WaitCollectCnt(1, time.Second*5)
@@ -127,8 +148,11 @@ func TestCollectAndEvicted(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -192,8 +216,11 @@ func TestCollectAndTopN(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -257,8 +284,11 @@ func TestCollectAndTopN(t *testing.T) {
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	registerSQL := func(n int) {
 		for i := 0; i < n; i++ {
@@ -398,8 +428,11 @@ func TestCollectInternal(t *testing.T) {
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
-	tsr := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
-	defer tsr.Close()
+	tsr, ds := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
+	defer func() {
+		ds.Close()
+		tsr.Close()
+	}()
 
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -428,15 +461,100 @@ func TestCollectInternal(t *testing.T) {
 	}
 }
 
+func TestMultipleDataSinks(t *testing.T) {
+	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	defer tsr.Close()
+
+	var chs []chan *ReportData
+	for i := 0; i < 7; i++ {
+		chs = append(chs, make(chan *ReportData, 1))
+	}
+	var dss []DataSink
+	for _, ch := range chs {
+		dss = append(dss, newMockDataSink(ch))
+	}
+	for _, ds := range dss {
+		require.NoError(t, tsr.Register(ds))
+	}
+
+	records := []tracecpu.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 1, 2),
+	}
+	tsr.Collect(3, records)
+
+	for _, ch := range chs {
+		d := <-ch
+		require.NotNil(t, d)
+		require.Equal(t, []tipb.CPUTimeRecord{{
+			SqlDigest:              []byte("sqlDigest1"),
+			PlanDigest:             []byte("planDigest1"),
+			RecordListTimestampSec: []uint64{3},
+			RecordListCpuTimeMs:    []uint32{2},
+		}}, d.CPUTimeRecords)
+
+		require.Equal(t, []tipb.SQLMeta{{
+			SqlDigest:     []byte("sqlDigest1"),
+			NormalizedSql: "sqlNormalized1",
+		}}, d.SQLMetas)
+
+		require.Equal(t, []tipb.PlanMeta{{
+			PlanDigest:     []byte("planDigest1"),
+			NormalizedPlan: "planNormalized1",
+		}}, d.PlanMetas)
+	}
+
+	// deregister half of dataSinks
+	for i := 0; i < 7; i += 2 {
+		tsr.Deregister(dss[i])
+	}
+
+	records = []tracecpu.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 4, 5),
+	}
+	tsr.Collect(6, records)
+
+	for i := 1; i < 7; i += 2 {
+		d := <-chs[i]
+		require.NotNil(t, d)
+		require.Equal(t, []tipb.CPUTimeRecord{{
+			SqlDigest:              []byte("sqlDigest4"),
+			PlanDigest:             []byte("planDigest4"),
+			RecordListTimestampSec: []uint64{6},
+			RecordListCpuTimeMs:    []uint32{5},
+		}}, d.CPUTimeRecords)
+
+		require.Equal(t, []tipb.SQLMeta{{
+			SqlDigest:     []byte("sqlDigest4"),
+			NormalizedSql: "sqlNormalized4",
+			IsInternalSql: true,
+		}}, d.SQLMetas)
+
+		require.Equal(t, []tipb.PlanMeta{{
+			PlanDigest:     []byte("planDigest4"),
+			NormalizedPlan: "planNormalized4",
+		}}, d.PlanMetas)
+	}
+
+	for i := 0; i < 7; i += 2 {
+		select {
+		case <-chs[i]:
+			require.Fail(t, "unexpected to receive messages")
+		default:
+		}
+	}
+}
+
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
-	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
 	for i := 0; i < b.N; i++ {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
-	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {

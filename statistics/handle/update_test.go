@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -938,6 +939,7 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 				LowExclude:  t.exclude[i],
 				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},
 				HighExclude: t.exclude[i+1],
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			})
 		}
 		ranges, _ = h.SplitRange(nil, ranges, false)
