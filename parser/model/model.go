@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -628,6 +629,7 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.Charset, colInfo.Collate = charset.CharsetBin, charset.CollationBin
 	return colInfo
 }
 
@@ -652,6 +654,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// HasClusteredIndex checks whether the table has a clustered index.
+func (t *TableInfo) HasClusteredIndex() bool {
+	return t.PKIsHandle || t.IsCommonHandle
 }
 
 // IsView checks if TableInfo is a view.

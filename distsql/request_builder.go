@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -257,6 +258,12 @@ func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
 	return builder
 }
 
+// SetPaging sets "Paging" flag for "kv.Request".
+func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
+	builder.Request.Paging = paging
+	return builder
+}
+
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
@@ -376,7 +383,7 @@ func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics
 		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the range here.
 		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}}
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, Collators: collate.GetBinaryCollatorSlice(1)}
 		feedbackRanges = append(feedbackRanges, r)
 
 		if !ran.HighExclude {
@@ -459,6 +466,7 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 			LowVal:     ranges[idx].LowVal,
 			LowExclude: ranges[idx].LowExclude,
 			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+			Collators:  ranges[idx].Collators,
 		})
 	}
 	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
@@ -466,6 +474,7 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
 			HighVal:     ranges[idx].HighVal,
 			HighExclude: ranges[idx].HighExclude,
+			Collators:   ranges[idx].Collators,
 		})
 	}
 	if idx < len(ranges) {
@@ -579,7 +588,7 @@ func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementCont
 			return nil, err
 		}
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
 	}
 	feedbackRanges, ok := fb.Hist.SplitRange(sc, feedbackRanges, true)
 	if !ok {
@@ -618,7 +627,7 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 			return nil, err
 		}
 		rans = append(rans, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
 	}
 	krs := make([]kv.KeyRange, 0, len(rans))
 	for _, ran := range rans {
@@ -715,6 +724,8 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		}
 	}
 
+	// NOTE: this is a hard-code operation to avoid wrong results when accessing unique index with NULL;
+	// Please see https://github.com/pingcap/tidb/issues/29650 for more details
 	if hasNull {
 		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
 		high = kv.Key(high).Next()

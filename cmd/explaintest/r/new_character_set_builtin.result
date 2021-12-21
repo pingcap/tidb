@@ -1,3 +1,4 @@
+set @@sql_mode = '';
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
@@ -244,8 +245,8 @@ insert into t values ('65'), ('123456'), ('123456789');
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦		�@
+[	[	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -253,8 +254,8 @@ set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦		�@
+[	[	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -502,3 +503,23 @@ select concat(a, 0xb6fe) from t;
 Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
 select concat(b, 0xe4ba8c) from t;
 Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@tidb_enable_vectorized_expression = false;

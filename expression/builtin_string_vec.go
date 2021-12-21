@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -46,11 +45,10 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+		result.SetRaw(i, []byte(enc.ToLower(result.GetString(i))))
 	}
-
 	return nil
 }
 
@@ -146,9 +144,9 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(enc.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
@@ -677,49 +675,59 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, expr); err != nil {
 		return err
 	}
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
-	}
-	decoder := encoding.NewDecoder()
-	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
-	isRetBinary := types.IsBinaryStr(b.tp)
-	enc := charset.NewEncoding(b.tp.Charset)
-	if isRetBinary {
-		enc = charset.NewEncoding(b.args[0].GetType().Charset)
-	}
-
+	argTp, resultTp := b.args[0].GetType(), b.tp
 	result.ReserveString(n)
+	done := vecEvalStringConvertBinary(result, n, expr, argTp, resultTp)
+	if done {
+		return nil
+	}
+	enc := charset.FindEncoding(resultTp.Charset)
+	var encBuf []byte
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		exprI := expr.GetString(i)
-		if isBinaryStr {
-			target, _, err := transform.String(decoder, exprI)
-			if err != nil {
-				result.AppendNull()
-				continue
-			}
-			result.AppendString(target)
+		exprI := expr.GetBytes(i)
+		if !charset.IsValid(enc, exprI) {
+			encBuf, _ = enc.Transform(encBuf, exprI, charset.OpReplace)
+			result.AppendBytes(encBuf)
 		} else {
-			if isRetBinary {
-				str, err := enc.EncodeString(exprI)
-				if err != nil {
-					return err
-				}
-				result.AppendString(str)
-				continue
-			}
-			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
+			result.AppendBytes(exprI)
 		}
 	}
 	return nil
+}
+
+func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
+	argTp, resultTp *types.FieldType) (done bool) {
+	var chs string
+	var op charset.Op
+	if types.IsBinaryStr(argTp) {
+		chs = resultTp.Charset
+		op = charset.OpDecode
+	} else if types.IsBinaryStr(resultTp) {
+		chs = argTp.Charset
+		op = charset.OpEncode
+	} else {
+		return false
+	}
+	enc := charset.FindEncoding(chs)
+	var encBuf []byte
+	for i := 0; i < n; i++ {
+		if expr.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		encBuf, err := enc.Transform(encBuf, expr.GetBytes(i), op)
+		if err != nil {
+			result.AppendNull()
+		} else {
+			result.AppendBytes(encBuf)
+		}
+		continue
+	}
+	return true
 }
 
 func (b *builtinSubstringIndexSig) vectorized() bool {
@@ -2068,15 +2076,9 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	charSet := b.args[0].GetType().Charset
-	ord, err := chooseOrdFunc(charSet)
-	if err != nil {
-		return err
-	}
-
-	enc := charset.NewEncoding(charSet)
-	var encodedBuf []byte
-
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	var x [4]byte
+	encBuf := x[:]
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2084,12 +2086,15 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetBytes(i)
-		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
+		strBytes := buf.GetBytes(i)
+		w := len(charset.EncodingUTF8Impl.Peek(strBytes))
+		encBuf, err = enc.Transform(encBuf, strBytes[:w], charset.OpEncode)
 		if err != nil {
-			return err
+			i64s[i] = calcOrd(strBytes[:1])
+			continue
 		}
-		i64s[i] = ord(encoded)
+		// Only the first character is considered.
+		i64s[i] = calcOrd(encBuf[:len(enc.Peek(encBuf))])
 	}
 	return nil
 }
@@ -2231,9 +2236,6 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
-	argTp := b.args[0].GetType()
-	enc := charset.NewEncoding(argTp.Charset)
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2242,11 +2244,7 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		str := buf.GetBytes(i)
-		dBytes, err := enc.Encode(nil, str)
-		if err != nil {
-			return err
-		}
-		i64s[i] = int64(len(dBytes) * 8)
+		i64s[i] = int64(len(str) * 8)
 	}
 	return nil
 }
@@ -2282,23 +2280,24 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		bufint[i] = buf[i].Int64s()
 	}
 	var resultBytes []byte
-	enc := charset.NewEncoding(b.tp.Charset)
+	enc := charset.FindEncoding(b.tp.Charset)
+	hasStrictMode := b.ctx.GetSessionVars().StrictSQLMode
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
-				result.AppendNull()
 				continue
 			}
 			bigints = append(bigints, bufint[j][i])
 		}
 		dBytes := b.convertToBytes(bigints)
-
-		resultBytes, err := enc.Decode(resultBytes, dBytes)
+		resultBytes, err = enc.Transform(resultBytes, dBytes, charset.OpDecode)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			result.AppendNull()
-			continue
+			if hasStrictMode {
+				result.AppendNull()
+				continue
+			}
 		}
 		result.AppendString(string(resultBytes))
 	}

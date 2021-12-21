@@ -65,6 +65,8 @@ var (
 	errFkColumnCannotDrop                     = dbterror.ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
 	errFKIncompatibleColumns                  = dbterror.ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
 
+	errAlterReplicaForUnsupportedCharsetTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER table replica for table contain %s charset"), nil))
+
 	errOnlyOnRangeListPartition = dbterror.ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = dbterror.ClassDDL.NewStd(mysql.ErrWrongKeyColumn)
@@ -308,4 +310,6 @@ var (
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
+	ErrIncompatibleTiFlashAndPlacement = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
 )

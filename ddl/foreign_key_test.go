@@ -18,35 +18,18 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testForeignKeySuite{})
-
-type testForeignKeySuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-	d      *ddl
-	ctx    sessionctx.Context
-}
-
-func (s *testForeignKeySuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_foreign")
-}
-
-func (s *testForeignKeySuite) TearDownSuite(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-func (s *testForeignKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -70,20 +53,20 @@ func (s *testForeignKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 	}
 
 	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
+		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	err = s.d.doDDLJob(s.ctx, job)
-	c.Assert(err, IsNil)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	err = d.doDDLJob(ctx, job)
+	require.NoError(t, err)
 	return job
 }
 
-func testDropForeignKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -92,9 +75,9 @@ func testDropForeignKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBIn
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVerT(t, ctx)
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -111,35 +94,45 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeignKeySuite) TestForeignKey(c *C) {
+func TestForeignKey(t *testing.T) {
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := testCreateStoreT(t, "test_foreign")
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
 	d, err := testNewDDLAndStart(
 		context.Background(),
-		WithStore(s.store),
+		WithStore(store),
 		WithLease(testLease),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
-	s.d = d
-	s.dbInfo, err = testSchemaInfo(d, "test_foreign")
-	c.Assert(err, IsNil)
+
+	dbInfo, err := testSchemaInfo(d, "test_foreign")
+	require.NoError(t, err)
 	ctx := testNewContext(d)
-	s.ctx = ctx
-	testCreateSchema(c, ctx, d, s.dbInfo)
+	testCreateSchemaT(t, ctx, d, dbInfo)
 	tblInfo, err := testTableInfo(d, "t", 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTableT(t, ctx, d, dbInfo, tblInfo)
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// fix data race
 	var mu sync.Mutex
@@ -153,7 +146,7 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(d, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -169,20 +162,20 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
 
-	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
+	testCheckJobDoneT(t, d, job, true)
 	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, hErr)
+	require.True(t, ok)
+	v := getSchemaVerT(t, ctx)
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
@@ -196,7 +189,7 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(d, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -210,23 +203,23 @@ func (s *testForeignKeySuite) TestForeignKey(c *C) {
 	}
 	d.SetHook(tc2)
 
-	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
-	testCheckJobDone(c, d, job, false)
+	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
+	testCheckJobDoneT(t, d, job, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.NoError(t, hErr)
+	require.True(t, ok)
 
 	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
+	job = testDropTableT(t, ctx, d, dbInfo, tblInfo)
+	testCheckJobDoneT(t, d, job, false)
 
 	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

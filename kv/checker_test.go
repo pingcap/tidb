@@ -22,8 +22,6 @@ import (
 )
 
 func TestIsRequestTypeSupported(t *testing.T) {
-	t.Parallel()
-
 	checker := kv.RequestTypeSupportedChecker{}.IsRequestTypeSupported
 	assert.True(t, checker(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy))
 	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
