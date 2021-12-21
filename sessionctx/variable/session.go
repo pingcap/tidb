@@ -969,6 +969,8 @@ type SessionVars struct {
 
 	// EnableMutationChecker indicates whether to check data consistency for mutations
 	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1640,7 +1642,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

@@ -538,7 +538,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}

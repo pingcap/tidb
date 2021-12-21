@@ -1011,6 +1011,9 @@ const (
 	ErrAsOf                                = 8135
 	ErrVariableNoLongerSupported           = 8136
 	ErrAnalyzeMissColumn                   = 8137
+	ErrInconsistentRowValue                = 8138
+	ErrInconsistentHandle                  = 8139
+	ErrInconsistentIndexedValue            = 8140
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

@@ -1009,6 +1009,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidIncrementAndOffset:     mysql.Message("Invalid auto_increment settings: auto_increment_increment: %d, auto_increment_offset: %d, both of them must be in range [1..65535]", nil),
 	ErrDataInconsistentMismatchCount: mysql.Message("data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d", nil),
 	ErrDataInconsistentMismatchIndex: mysql.Message("data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v", []int{3, 4, 5, 6}),
+	ErrInconsistentRowValue:          mysql.Message("writing inconsistent data in table: %s, expected-values:{%s} != record-values:{%s}", []int{1, 2}),
+	ErrInconsistentHandle:            mysql.Message("writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v", []int{2, 3, 4, 5}),
+	ErrInconsistentIndexedValue:      mysql.Message("writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}", []int{3, 4}),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

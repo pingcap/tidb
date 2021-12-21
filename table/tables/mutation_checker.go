@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -29,9 +30,19 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
+)
+
+var (
+	// ErrInconsistentRowValue is the error when values in a row insertion does not match the expected ones.
+	ErrInconsistentRowValue = dbterror.ClassTable.NewStd(errno.ErrInconsistentRowValue)
+	// ErrInconsistentHandle is the error when the handle in the row/index insertions does not match.
+	ErrInconsistentHandle = dbterror.ClassTable.NewStd(errno.ErrInconsistentHandle)
+	// ErrInconsistentIndexedValue is the error when decoded values from the index mutation cannot match row value
+	ErrInconsistentIndexedValue = dbterror.ClassTable.NewStd(errno.ErrInconsistentIndexedValue)
 )
 
 type mutation struct {
@@ -86,7 +97,7 @@ func CheckDataConsistency(
 
 	if rowToInsert != nil {
 		if err := checkRowInsertionConsistency(
-			sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType,
+			sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType, t.Meta().Name.O,
 		); err != nil {
 			return errors.Trace(err)
 		}
@@ -97,7 +108,7 @@ func CheckDataConsistency(
 	}
 
 	if rowInsertion.key != nil {
-		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo); err != nil {
+		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta().Name.O); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -114,7 +125,7 @@ func CheckDataConsistency(
 // in row insertions and index insertions are consistent.
 // A PUT_index implies a PUT_row with the same handle.
 // Deletions are not checked since the values of deletions are unknown
-func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo) error {
+func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, tableName string) error {
 	var insertionHandle kv.Handle
 	var err error
 
@@ -142,9 +153,9 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		}
 		// NOTE: handle type can be different, see issue 29520
 		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
-			return errors.Errorf("inconsistent handles in row and index insertions. index handle = %v, "+
-				"row handle = %v, index = %+v, row = %+v",
-				indexHandle, insertionHandle, m, rowInsertion)
+			err = ErrInconsistentHandle.GenWithStackByArgs(tableName, indexInfo.Name.O, indexHandle, insertionHandle, m, rowInsertion)
+			logutil.BgLogger().Error("inconsistent handle in index and record insertions", zap.Error(err))
+			return err
 		}
 	}
 
@@ -208,9 +219,9 @@ func checkIndexKeys(
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
-			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo)
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -223,7 +234,7 @@ func checkIndexKeys(
 // We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
 func checkRowInsertionConsistency(
 	sessVars *variable.SessionVars, rowToInsert []types.Datum, rowInsertion mutation,
-	columnIDToInfo map[int64]*model.ColumnInfo, columnIDToFieldType map[int64]*types.FieldType,
+	columnIDToInfo map[int64]*model.ColumnInfo, columnIDToFieldType map[int64]*types.FieldType, tableName string,
 ) error {
 	if rowToInsert == nil {
 		// it's a deletion
@@ -245,14 +256,9 @@ func checkRowInsertionConsistency(
 			return errors.Trace(err)
 		}
 		if cmp != 0 {
-			logutil.BgLogger().Error(
-				"inconsistent row mutation", zap.String("decoded datum", decodedDatum.String()),
-				zap.String("input datum", inputDatum.String()),
-			)
-			return errors.Errorf(
-				"inconsistent row mutation, row datum = {%v}, input datum = {%v}", decodedDatum.String(),
-				inputDatum.String(),
-			)
+			err = ErrInconsistentRowValue.GenWithStackByArgs(tableName, inputDatum.String(), decodedDatum.String())
+			logutil.BgLogger().Error("inconsistent row value in row insertion", zap.Error(err))
+			return err
 		}
 	}
 	return nil
@@ -299,6 +305,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
+	tableInfo *model.TableInfo,
 ) error {
 	for i := range indexData {
 		decodedMutationDatum := indexData[i]
@@ -319,12 +326,12 @@ func compareIndexData(
 		}
 
 		if comparison != 0 {
-			logutil.BgLogger().Error(
-				"inconsistent index values",
-				zap.String("truncated mutation datum", fmt.Sprintf("%v", decodedMutationDatum)),
-				zap.String("truncated expected datum", fmt.Sprintf("%v", expectedDatum)),
+			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
+				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
+				decodedMutationDatum.String(), expectedDatum.String(),
 			)
-			return errors.New("inconsistent index values")
+			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
+			return err
 		}
 	}
 	return nil
