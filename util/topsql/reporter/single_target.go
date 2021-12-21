@@ -113,20 +113,22 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 			targetRPCAddr = config.GetGlobalConfig().TopSQL.ReceiverAddress
 		}
 
-		if err := ds.tryRegister(targetRPCAddr); err != nil {
+		if err := ds.trySwitchRegistration(targetRPCAddr); err != nil {
 			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
 			return false
 		}
 	}
 }
 
-func (ds *SingleTargetDataSink) tryRegister(addr string) error {
+func (ds *SingleTargetDataSink) trySwitchRegistration(addr string) error {
+	// deregister if `addr` is empty and registered before
 	if addr == "" && ds.registered.Load() {
 		ds.registerer.Deregister(ds)
 		ds.registered.Store(false)
 		return nil
 	}
 
+	// register if `add` is not empty and not registered before
 	if addr != "" && !ds.registered.Load() {
 		if err := ds.registerer.Register(ds); err != nil {
 			return err
