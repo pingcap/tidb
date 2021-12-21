@@ -177,12 +177,14 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 
 	var err error
 	start := time.Now()
-	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
-		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-	} else {
-		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
-	}
+	defer func() {
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] single target data sink failed to send data to receiver", zap.Error(err))
+			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
+	}()
 
 	ctx, cancel := context.WithDeadline(context.Background(), task.deadline)
 	defer cancel()
