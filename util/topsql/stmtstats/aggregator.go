@@ -122,6 +122,7 @@ func (m *aggregator) closed() bool {
 }
 
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.
+// SetupAggregator is **not** thread-safe.
 func SetupAggregator() {
 	if globalAggregator.closed() {
 		go globalAggregator.run()
@@ -129,6 +130,7 @@ func SetupAggregator() {
 }
 
 // CloseAggregator is used to stop the background aggregator goroutine of the stmtstats module.
+// SetupAggregator is **not** thread-safe.
 func CloseAggregator() {
 	if !globalAggregator.closed() {
 		globalAggregator.close()
