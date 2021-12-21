@@ -1649,5 +1649,4 @@ func (s *testTikvRegionPeersTableSuite) TestTikvRegionPeers(c *C) {
 		}
 		result.Check(testkit.Rows(expected...))
 	}
-	fmt.Print("stop")
 }
