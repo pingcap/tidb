@@ -67,6 +67,14 @@ func (e *encodingUTF8) Peek(src []byte) []byte {
 	return src[:nextLen]
 }
 
+// IsValid implements Encoding interface.
+func (e *encodingUTF8) IsValid(src []byte) bool {
+	if utf8.Valid(src) {
+		return true
+	}
+	return e.encodingBase.IsValid(src)
+}
+
 // Transform implements Encoding interface.
 func (e *encodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
 	if IsValid(e, src) {
@@ -91,6 +99,11 @@ func (e *encodingUTF8) Foreach(src []byte, op Op, fn func(from, to []byte, ok bo
 // MB4 characters are considered invalid.
 type encodingUTF8MB3Strict struct {
 	encodingUTF8
+}
+
+// IsValid implements Encoding interface.
+func (e *encodingUTF8MB3Strict) IsValid(src []byte) bool {
+	return e.encodingBase.IsValid(src)
 }
 
 // Foreach implements Encoding interface.

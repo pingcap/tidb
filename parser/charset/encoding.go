@@ -57,6 +57,8 @@ type Encoding interface {
 	Tp() EncodingTp
 	// Peek returns the next char.
 	Peek(src []byte) []byte
+	// IsValid checks whether a utf-8 string is valid in the current encoding.
+	IsValid(src []byte) bool
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
