@@ -432,7 +432,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				break
 			}
 		}
-		// PushDownExprs() will append extra warnings, which annoying. So we reset warnings here.
+		// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 		warnings := stmtCtx.GetWarnings()
 		_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
 		stmtCtx.SetWarnings(warnings)

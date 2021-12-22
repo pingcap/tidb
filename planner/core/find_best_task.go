@@ -1096,8 +1096,8 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 	return
 }
 
-// buildIndexMergeTableScan will return Selection that will be pushed to TiKV.
-// Filters that cannot be pushed to TiKV is also returned,  and an extra Selection above IndexMergeReader will be constructed.
+// buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
+// Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression,
 	totalRowCount float64) (PhysicalPlan, float64, []expression.Expression, error) {
 	var partialCost float64
