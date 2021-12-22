@@ -304,7 +304,7 @@ func TestCastValue(t *testing.T) {
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
 	require.NoError(t, err)
 
-	colInfoS.Charset = charset.CharsetUTF8
+	colInfoS.Charset = charset.CharsetUTF8MB4
 	colInfoS.Collate = "utf8mb4_general_ci"
 	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD}), &colInfoS, false, false)
 	require.NoError(t, err)
