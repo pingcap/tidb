@@ -632,6 +632,7 @@ var (
 		upgradeToVer78,
 		upgradeToVer79,
 		upgradeToVer80,
+		upgradeToVer81,
 	}
 )
 
