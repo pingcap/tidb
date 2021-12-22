@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
@@ -79,8 +80,15 @@ func TestExecCount(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
+	err = failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInExec", "return(10)")
+	assert.NoError(t, err)
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepInExec")
+		assert.NoError(t, err)
+	}()
+
 	// Execute CRUD.
-	const ExecCountPerSQL = 100
+	const ExecCountPerSQL = 10
 	_, insertSQLDigest := parser.NormalizeDigest("insert into t values (0);")
 	for n := 0; n < ExecCountPerSQL; n++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d);", n))
@@ -118,7 +126,7 @@ func TestExecCount(t *testing.T) {
 			if _, ok := sqlDigests[digest.SQLDigest]; ok {
 				found++
 				assert.Equal(t, uint64(ExecCountPerSQL), item.ExecCount)
-				assert.True(t, item.SumExecNanoDuration > uint64(time.Nanosecond*ExecCountPerSQL))
+				assert.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*10*ExecCountPerSQL))
 				var kvSum uint64
 				for _, kvCount := range item.KvStatsItem.KvExecCount {
 					kvSum += kvCount
