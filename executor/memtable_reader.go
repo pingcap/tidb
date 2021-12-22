@@ -1026,8 +1026,9 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		return e.packTiKVRegionPeersRows(regionsInfo.Regions)
 	}
 
-	var regionsInfo, regionsInfoByStoreID, regionsInfoByRegionID []helper.RegionInfo
-	regionMap := make(map[int64]struct{})
+	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
+	var index int
+	regionMap := make(map[int64]int)
 
 	for _, storeID := range e.extractor.StoreIDs {
 		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
@@ -1035,38 +1036,33 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			return nil, err
 		}
 		for _, regionInfo := range storeRegionsInfo.Regions {
-			// regionMap is used to remove dup regions and intersect
+			// regionMap is used to remove dup regions and record the index of region in regionsInfoByStoreID
 			if _, ok := regionMap[regionInfo.ID]; !ok {
-				regionMap[regionInfo.ID] = struct{}{}
 				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
+				regionMap[regionInfo.ID] = index
+				index = index + 1
 			}
 		}
 	}
 
-	for _, regionID := range e.extractor.RegionIDs {
-		regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
-		if err != nil {
-			return nil, err
-		}
-		regionsInfoByRegionID = append(regionsInfoByRegionID, *regionInfo)
-	}
-
-	// len(regionsInfoByStoreID) == 0 include two cases:
-	// 1. no store_id predicate 2. no corresponding store regionsInfo
 	if len(e.extractor.RegionIDs) == 0 {
 		return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
 	}
 
-	if len(e.extractor.StoreIDs) == 0 {
-		return e.packTiKVRegionPeersRows(regionsInfoByRegionID)
-	}
-
-	// intersect
-	for _, region := range regionsInfoByRegionID {
-		if _, ok := regionMap[region.ID]; ok {
-			regionsInfo = append(regionsInfo, region)
+	for _, regionID := range e.extractor.RegionIDs {
+		idx, ok := regionMap[int64(regionID)]
+		if !ok {
+			// fetch from PD
+			regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+			if err != nil {
+				return nil, err
+			}
+			regionsInfo = append(regionsInfo, *regionInfo)
+		} else {
+			regionsInfo = append(regionsInfo, regionsInfoByStoreID[idx])
 		}
 	}
+
 	return e.packTiKVRegionPeersRows(regionsInfo)
 }
 
