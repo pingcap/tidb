@@ -751,7 +751,7 @@ func ParseDateFormat(format string) []string {
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
 
-	for i := 1; i < len(format)-1; i++ {
+	for i := 1; i < len(format); i++ {
 		if isValidSeparator(format[i], len(seps)) {
 			prevParts := len(seps)
 			seps = append(seps, format[start:i])
@@ -771,7 +771,11 @@ func ParseDateFormat(format string) []string {
 		}
 
 		if !isDigit(format[i]) {
-			return nil
+			if len(seps) < 2 {
+				return nil
+			}
+			seps = append(seps, format[start:i])
+			return seps
 		}
 	}
 
@@ -779,6 +783,7 @@ func ParseDateFormat(format string) []string {
 	return seps
 }
 
+// isValidSeparator
 // helper for date part splitting, punctuation characters are valid separators anywhere,
 // while space and 'T' are valid separators only between date and time.
 func isValidSeparator(c byte, prevParts int) bool {
@@ -888,6 +893,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	return -1, "", "", "", ""
 }
 
+// splitDateTime
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // splitDateTime splits the string literal into 3 parts, date & time, FSP(Fractional Seconds Precision) and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
@@ -922,6 +928,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	return
 }
 
+// parseDatetime
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	var (
@@ -2975,6 +2982,7 @@ func matchDateWithToken(t *CoreTime, date string, token string, ctx map[string]i
 	return date, false
 }
 
+// parseNDigits
 // Try to parse digits with number of `limit` starting from `input`
 // Return <number, n chars to step forward> if success.
 // Return <_, 0> if fail.
