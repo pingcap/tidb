@@ -71,6 +71,11 @@ func Unregister(ch ProfileConsumer) {
 	globalCPUProfiler.unregister(ch)
 }
 
+// ConsumersCount returns the count of the global ParallelCPUProfiler's consumer.It is exporting for test.
+func ConsumersCount() int {
+	return globalCPUProfiler.consumersCount()
+}
+
 // ParallelCPUProfiler is a cpu profiler.
 // With ParallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
 // WARN: Only one running ParallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
@@ -187,7 +192,7 @@ func (p *ParallelCPUProfiler) doProfiling() {
 }
 
 func (p *ParallelCPUProfiler) needProfile() bool {
-	return p.ConsumersCount() > 0
+	return p.consumersCount() > 0
 }
 
 func (p *ParallelCPUProfiler) inProfilingStatus() bool {
@@ -216,8 +221,7 @@ func (p *ParallelCPUProfiler) stopCPUProfile() {
 	pprof.StopCPUProfile()
 }
 
-// ConsumersCount returns the count of ParallelCPUProfiler's consumer.It is exporting for test.
-func (p *ParallelCPUProfiler) ConsumersCount() int {
+func (p *ParallelCPUProfiler) consumersCount() int {
 	p.Lock()
 	n := len(p.cs)
 	p.Unlock()
