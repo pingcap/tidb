@@ -47,6 +47,11 @@ func (e *encodingBin) Peek(src []byte) []byte {
 	return src[:1]
 }
 
+// IsValid implements Encoding interface.
+func (e *encodingBin) IsValid(src []byte) bool {
+	return true
+}
+
 // Foreach implements Encoding interface.
 func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
 	for i := 0; i < len(src); i++ {

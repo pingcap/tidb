@@ -315,7 +315,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
 	})
 
-	a.InfoSchema = ret.InfoSchema
+	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.IsStaleness = ret.IsStaleness
 	a.ReplicaReadScope = ret.ReadReplicaScope
