@@ -231,6 +231,7 @@ func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *TiFlashM
 	if err != nil {
 		return errors.Trace(err)
 	}
+	pollTiFlashContext.TiFlashStores = make(map[int64]helper.StoreStat)
 	for _, store := range tikvStats.Stores {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
@@ -239,6 +240,7 @@ func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *TiFlashM
 			}
 		}
 	}
+	logutil.BgLogger().Info("updateTiFlashStores finished", zap.Int("count", len(pollTiFlashContext.TiFlashStores)))
 	return nil
 }
 
