@@ -1391,7 +1391,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	stmtNode, err := s.ParseWithParams(ctx, sql, args...)
+	stmtNode, err := s.ParseWithParams(ctx, sql, false, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1469,7 +1469,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (s *session) ParseWithParams(ctx context.Context, sql string, ignoreClientCharsetAndCollation bool, args ...interface{}) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlexec.EscapeSQL(sql, args...)
@@ -1483,7 +1483,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	var stmts []ast.StmtNode
 	var warns []error
 	var parseStartTime time.Time
-	if internal {
+	if internal || ignoreClientCharsetAndCollation {
 		// Do no respect the settings from clients, if it is for internal usage.
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
@@ -1531,12 +1531,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 
 // ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
 func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	origin := s.sessionVars.InRestrictedSQL
-	s.sessionVars.InRestrictedSQL = true
-	defer func() {
-		s.sessionVars.InRestrictedSQL = origin
-	}()
-	return s.ParseWithParams(ctx, sql, args...)
+	return s.ParseWithParams(ctx, sql, true, args...)
 }
 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
