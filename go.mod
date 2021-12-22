@@ -104,4 +104,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 // TODO(mornyx): remove
-replace github.com/pingcap/tipb => /Users/mornyx/Desktop/repos/tipb
+replace github.com/pingcap/tipb => github.com/mornyx/tipb v0.0.0-20210917081614-311f2369c5f7
