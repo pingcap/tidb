@@ -8,6 +8,8 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -36,6 +38,11 @@ func (c *MetaDataClient) PutTask(ctx context.Context, task TaskInfo) error {
 	ops = append(ops, clientv3.OpPut(TaskOf(task.PBInfo.Name), string(data)))
 	for _, r := range task.Ranges {
 		ops = append(ops, clientv3.OpPut(RangeKeyOf(task.PBInfo.Name, r.StartKey), string(r.EndKey)))
+		log.Debug("range info",
+			zap.String("task-name", task.PBInfo.Name),
+			zap.String("start-key", redact.Key(r.StartKey)),
+			zap.String("end-key", redact.Key(r.EndKey)),
+		)
 	}
 	if task.Pausing {
 		ops = append(ops, clientv3.OpPut(Pause(task.PBInfo.Name), ""))
