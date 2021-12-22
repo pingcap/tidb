@@ -2098,11 +2098,11 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	case "ALL":
 		return analyzeOptions, model.AllColumns, tblInfo.Columns, nil
 	case "LIST":
-		colIdStrs := strings.Split(row.GetString(6), ",")
-		colList := make([]*model.ColumnInfo, 0, len(colIdStrs))
-		for _, colIdStr := range colIdStrs {
-			colId, _ := strconv.ParseInt(colIdStr, 10, 64)
-			colInfo := model.FindColumnInfoByID(tblInfo.Columns, colId)
+		colIDStrs := strings.Split(row.GetString(6), ",")
+		colList := make([]*model.ColumnInfo, 0, len(colIDStrs))
+		for _, colIDStr := range colIDStrs {
+			colID, _ := strconv.ParseInt(colIDStr, 10, 64)
+			colInfo := model.FindColumnInfoByID(tblInfo.Columns, colID)
 			if colInfo != nil {
 				colList = append(colList, colInfo)
 			}

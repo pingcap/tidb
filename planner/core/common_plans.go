@@ -984,6 +984,7 @@ type AnalyzeInfo struct {
 	*V2AnalyzeOptions
 }
 
+// V2AnalyzeOptions is used to hold analyze options information.
 type V2AnalyzeOptions struct {
 	PhyTableID int64
 	RawOpts    map[ast.AnalyzeOptionType]uint64

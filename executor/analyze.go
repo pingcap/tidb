@@ -257,14 +257,14 @@ func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExec
 		topn = val
 	}
 	colChoice := colChoiceEnum[opts.ColChoice]
-	colIds := make([]string, len(opts.ColumnList))
+	colIDs := make([]string, len(opts.ColumnList))
 	for i, colInfo := range opts.ColumnList {
-		colIds[i] = strconv.FormatInt(colInfo.ID, 10)
+		colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
 	}
-	colIdStrs := strings.Join(colIds, ",")
+	colIDStrs := strings.Join(colIDs, ",")
 	stmt, err := exec.ParseWithParams(context.TODO(),
 		"REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES (%?,%?,%?,%?,%?,%?,%?)",
-		opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIdStrs)
+		opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
 	if err != nil {
 		return err
 	}

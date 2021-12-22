@@ -1306,8 +1306,8 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
-	colIdStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
-	require.Equal(t, colIdStrs, rs.Rows()[0][6])
+	colIDStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 
 	// disable option persistence
 	tk.MustExec("set global tidb_persist_analyze_options = false")
@@ -1315,7 +1315,6 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	lastVersion = tbl.Version
 	col0 = tbl.Columns[tableInfo.Columns[0].ID]
 	require.NotEqual(t, 3, len(col0.Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
@@ -1391,22 +1390,22 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
-	colIdStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
-	require.Equal(t, colIdStrs, rs.Rows()[0][6])
+	colIDStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, len(rs.Rows()), 1)
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
-	require.Equal(t, colIdStrs, rs.Rows()[0][6])
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
 	require.Equal(t, len(rs.Rows()), 1)
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
-	require.Equal(t, colIdStrs, rs.Rows()[0][6])
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 
 	// analyze partition only updates this partition and table level options
 	tk.MustExec("analyze table t partition p1 with 1 buckets")
@@ -1431,7 +1430,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	lastVersion = tbl.Version
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
