@@ -37,37 +37,56 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
+func TestBasicAPI(t *testing.T) {
+	globalCPUProfiler.close()
+	globalCPUProfiler = newParallelCPUProfiler()
+
+	err := StartCPUProfiler()
+	require.NoError(t, err)
+
+	err = StartCPUProfiler()
+	require.Error(t, errProfilerAlreadyStarted)
+
+	// Test for close multiple times.
+	CloseCPUProfiler()
+	CloseCPUProfiler()
+
+	globalCPUProfiler = newParallelCPUProfiler()
+	CloseCPUProfiler()
+	err = StartCPUProfiler()
+	require.Error(t, errProfilerAlreadyClosed)
+}
+
 func TestParallelCPUProfiler(t *testing.T) {
-	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Close()
-	}
-	GlobalCPUProfiler = NewParallelCPUProfiler()
-	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Close()
+	globalCPUProfiler.close()
+	globalCPUProfiler = newParallelCPUProfiler()
+	err := globalCPUProfiler.start()
+	require.NoError(t, err)
+	defer globalCPUProfiler.close()
 
 	// Test register/unregister nil
 	Register(nil)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 	Unregister(nil)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
-	require.False(t, GlobalCPUProfiler.inProfilingStatus())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
+	require.False(t, globalCPUProfiler.inProfilingStatus())
 
 	// Test profile error and duplicate register.
 	dataCh := make(ProfileConsumer, 10)
-	err := pprof.StartCPUProfile(bytes.NewBuffer(nil))
+	err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
 
 	// Test for duplicate register.
 	Register(dataCh)
 	Register(dataCh)
-	require.Equal(t, 1, GlobalCPUProfiler.ConsumersCount())
-	require.Equal(t, true, GlobalCPUProfiler.needProfile())
+	require.Equal(t, 1, globalCPUProfiler.ConsumersCount())
+	require.Equal(t, true, globalCPUProfiler.needProfile())
 
 	// Test profile error
 	data := <-dataCh
 	require.Equal(t, "cpu profiling already in use", data.Error.Error())
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 
 	// shouldn't receive data from a unregistered consumer.
 	data = nil
@@ -79,18 +98,18 @@ func TestParallelCPUProfiler(t *testing.T) {
 
 	// unregister not exist consumer
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 
 	// Test register a closed consumer
 	dataCh = make(ProfileConsumer, 10)
 	close(dataCh)
 	Register(dataCh)
-	require.Equal(t, 1, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 1, globalCPUProfiler.ConsumersCount())
 	data, ok := <-dataCh
 	require.Nil(t, data)
 	require.False(t, ok)
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 	pprof.StopCPUProfile()
 
 	// Test successfully get profile data.
@@ -102,7 +121,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, profileData)
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 
 	// Test stop profiling when no consumer.
 	Register(dataCh)
@@ -116,7 +135,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	Unregister(dataCh)
-	require.Equal(t, 0, GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, globalCPUProfiler.ConsumersCount())
 
 	// wait for ParallelCPUProfiler stop profiling
 	start := time.Now()
@@ -142,15 +161,14 @@ func getCPUProfile(d time.Duration, w io.Writer) error {
 }
 
 func TestGetCPUProfile(t *testing.T) {
-	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Close()
-	}
-	GlobalCPUProfiler = NewParallelCPUProfiler()
-	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Close()
+	globalCPUProfiler.close()
+	globalCPUProfiler = newParallelCPUProfiler()
+	err := globalCPUProfiler.start()
+	require.NoError(t, err)
+	defer globalCPUProfiler.close()
 
 	// Test profile error
-	err := pprof.StartCPUProfile(bytes.NewBuffer(nil))
+	err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
 	err = getCPUProfile(1, bytes.NewBuffer(nil))
 	require.Error(t, err)
@@ -186,12 +204,11 @@ func TestGetCPUProfile(t *testing.T) {
 }
 
 func TestProfileHTTPHandler(t *testing.T) {
-	if GlobalCPUProfiler != nil {
-		GlobalCPUProfiler.Close()
-	}
-	GlobalCPUProfiler = NewParallelCPUProfiler()
-	GlobalCPUProfiler.Start()
-	defer GlobalCPUProfiler.Close()
+	globalCPUProfiler.close()
+	globalCPUProfiler = newParallelCPUProfiler()
+	err := globalCPUProfiler.start()
+	require.NoError(t, err)
+	defer globalCPUProfiler.close()
 
 	// setup http server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

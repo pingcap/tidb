@@ -16,6 +16,7 @@ package cpuprofile
 
 import (
 	"bytes"
+	"errors"
 	"runtime/pprof"
 	"sync"
 	"time"
@@ -28,9 +29,9 @@ import (
 
 var defProfileDuration = time.Second
 
-// GlobalCPUProfiler is the global CPU profiler.
+// globalCPUProfiler is the global CPU profiler.
 // If you want to create a new global cpu profiler, you should stop the old global cpu profiler.
-var GlobalCPUProfiler = NewParallelCPUProfiler()
+var globalCPUProfiler = newParallelCPUProfiler()
 
 // ProfileConsumer is the profile data consumer.
 // ProfileConsumer is a channel alias, if the channel is full, then the channel won't receive the latest profile data
@@ -45,19 +46,29 @@ type ProfileData struct {
 	Error error
 }
 
+// StartCPUProfiler uses to start to run the global ParallelCPUProfiler.
+func StartCPUProfiler() error {
+	return globalCPUProfiler.start()
+}
+
+// CloseCPUProfiler uses to close the global ParallelCPUProfiler.
+func CloseCPUProfiler() {
+	globalCPUProfiler.close()
+}
+
 // Register register a ProfileConsumer into the global CPU profiler.
 // Normally, the registered ProfileConsumer will receive the cpu profile data per second.
 // If the ProfileConsumer (channel) is full, the latest cpu profile data will not be sent to it.
 // This function is thread-safe.
 func Register(ch ProfileConsumer) {
-	GlobalCPUProfiler.register(ch)
+	globalCPUProfiler.register(ch)
 }
 
 // Unregister unregister a ProfileConsumer from the global CPU profiler.
 // The unregistered ProfileConsumer won't receive the cpu profile data any more.
 // This function is thread-safe.
 func Unregister(ch ProfileConsumer) {
-	GlobalCPUProfiler.unregister(ch)
+	globalCPUProfiler.unregister(ch)
 }
 
 // ParallelCPUProfiler is a cpu profiler.
@@ -73,13 +84,14 @@ type ParallelCPUProfiler struct {
 	nextData     *ProfileData
 	lastDataSize int
 
+	started  atomic.Bool
 	closed   chan struct{}
 	isClosed atomic.Bool
 	wg       sync.WaitGroup
 }
 
-// NewParallelCPUProfiler crate a new ParallelCPUProfiler.
-func NewParallelCPUProfiler() *ParallelCPUProfiler {
+// newParallelCPUProfiler crate a new ParallelCPUProfiler.
+func newParallelCPUProfiler() *ParallelCPUProfiler {
 	return &ParallelCPUProfiler{
 		cs:     make(map[ProfileConsumer]struct{}),
 		notify: make(chan struct{}),
@@ -87,15 +99,26 @@ func NewParallelCPUProfiler() *ParallelCPUProfiler {
 	}
 }
 
-// Start uses to start to run ParallelCPUProfiler.
-func (p *ParallelCPUProfiler) Start() {
+var (
+	errProfilerAlreadyStarted = errors.New("ParallelCPUProfiler already started")
+	errProfilerAlreadyClosed  = errors.New("ParallelCPUProfiler already closed")
+)
+
+func (p *ParallelCPUProfiler) start() error {
+	if !p.started.CAS(false, true) {
+		return errProfilerAlreadyStarted
+	}
+	if p.isClosed.Load() {
+		return errProfilerAlreadyClosed
+	}
+
 	logutil.BgLogger().Info("parallel cpu profiler started")
 	p.wg.Add(1)
 	go util.WithRecovery(p.profilingLoop, nil)
+	return nil
 }
 
-// Close uses to close the ParallelCPUProfiler.
-func (p *ParallelCPUProfiler) Close() {
+func (p *ParallelCPUProfiler) close() {
 	if p.isClosed.CAS(false, true) {
 		close(p.closed)
 	}

@@ -24,7 +24,7 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	cpuprofile.GlobalCPUProfiler.Start()
+	cpuprofile.globalCPUProfiler.Start()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),

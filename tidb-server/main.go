@@ -181,6 +181,9 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	err := cpuprofile.StartCPUProfiler()
+	terror.MustNil(err)
+
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
@@ -208,9 +211,9 @@ func main() {
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
+		cpuprofile.CloseCPUProfiler()
 		close(exited)
 	})
-	cpuprofile.GlobalCPUProfiler.Start()
 	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited

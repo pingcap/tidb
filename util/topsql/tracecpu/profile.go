@@ -51,7 +51,7 @@ type SQLCPUTimeRecord struct {
 	CPUTimeMs  uint32
 }
 
-// SQLCPUCollector uses to consume cpu profile from GlobalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
+// SQLCPUCollector uses to consume cpu profile from globalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
 type SQLCPUCollector struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -88,14 +88,14 @@ func (sp *SQLCPUCollector) Close() {
 }
 
 // Enable uses to enable the SQLCPUCollector to work.
-// This will register a consumer into GlobalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
+// This will register a consumer into globalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
 // WARN: SQLCPUCollector can't collect sql cpu data until enable it. It is ok to call this function repeatedly.
 func (sp *SQLCPUCollector) Enable() {
 	cpuprofile.Register(sp.profileConsumer)
 }
 
 // Disable uses to disable the SQLCPUCollector from working.
-// This will unregister a consumer from GlobalCPUProfiler, then SQLCPUCollector won't receive cpu profile data any more.
+// This will unregister a consumer from globalCPUProfiler, then SQLCPUCollector won't receive cpu profile data any more.
 // WARN: SQLCPUCollector won't collect sql cpu data after disable it. It is ok to call this function repeatedly.
 func (sp *SQLCPUCollector) Disable() {
 	cpuprofile.Unregister(sp.profileConsumer)

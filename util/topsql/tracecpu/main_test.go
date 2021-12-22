@@ -31,8 +31,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestPProfCPUProfile(t *testing.T) {
-	cpuprofile.GlobalCPUProfiler.Start()
-	defer cpuprofile.GlobalCPUProfiler.Close()
+	cpuprofile.globalCPUProfiler.Start()
+	defer cpuprofile.globalCPUProfiler.Close()
 
 	collector := mock.NewTopSQLCollector()
 	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
@@ -40,10 +40,10 @@ func TestPProfCPUProfile(t *testing.T) {
 	defer sqlCPUCollector.Close()
 
 	sqlCPUCollector.Enable()
-	require.Equal(t, 1, cpuprofile.GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 1, cpuprofile.globalCPUProfiler.ConsumersCount())
 	collector.WaitCollectCnt(1)
 	require.True(t, collector.CollectCnt() >= 1)
 
 	sqlCPUCollector.Disable()
-	require.Equal(t, 0, cpuprofile.GlobalCPUProfiler.ConsumersCount())
+	require.Equal(t, 0, cpuprofile.globalCPUProfiler.ConsumersCount())
 }
