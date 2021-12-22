@@ -871,6 +871,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	return errors.Trace(err)
 }
 
+// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (h *Handle) DumpColStatsUsageToKV() error {
 	h.sweepList()
 	h.colMap.Lock()

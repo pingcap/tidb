@@ -110,7 +110,10 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+	// We don't collect predicate columns for the tables whose column count is less than wideTableColumnCount.
 	if len(ds.TableInfo().Columns) >= c.wideTableColumnCount {
+		// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
+		// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 		tblID := ds.TableInfo().ID
 		for _, col := range ds.Schema().Columns {
 			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
