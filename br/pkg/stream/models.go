@@ -39,15 +39,14 @@ func TaskOf(name string) string {
 // Normally it would be <prefix>/ranges/<task-name(string)>/
 // the trailling slash is essential or we may scan ranges of tasks with same prefix.
 func RangesOf(name string) string {
-	return path.Join(streamKeyPrefix, taskRangesPath, name)
+	return path.Join(streamKeyPrefix, taskRangesPath, name) + "/"
 }
 
 // RangeKeyOf returns the path for ranges of some task.
 // Normally it would be <prefix>/ranges/<task-name(string)>/<start-key(binary)> -> <end-key(binary)>
 func RangeKeyOf(name string, startKey []byte) string {
 	// We cannot use path.Join if the start key contains patterns like [0x2f, 0x2f](//).
-	// Use ` + "/" ` directly rather `join()``
-	return RangesOf(name) + "/" + string(startKey)
+	return RangesOf(name) + string(startKey)
 }
 
 func writeUint64(buf *bytes.Buffer, num uint64) {
