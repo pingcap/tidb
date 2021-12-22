@@ -205,13 +205,12 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	if err != nil {
 		return errors.Trace(err)
-	} else {
-		// Try to update.
-		for _, kv := range resp.Kvs {
-			if string(kv.Key) == key {
-				origin = string(kv.Value)
-				break
-			}
+	}
+	// Try to update.
+	for _, kv := range resp.Kvs {
+		if string(kv.Key) == key {
+			origin = string(kv.Value)
+			break
 		}
 	}
 	if origin != httpAddr {
