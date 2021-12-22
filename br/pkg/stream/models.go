@@ -11,7 +11,9 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 )
 
 const (
@@ -37,7 +39,7 @@ func TaskOf(name string) string {
 // Normally it would be <prefix>/ranges/<task-name(string)>/
 // the trailling slash is essential or we may scan ranges of tasks with same prefix.
 func RangesOf(name string) string {
-	return path.Join(streamKeyPrefix, taskRangesPath, name)
+	return path.Join(streamKeyPrefix, taskRangesPath, name) + "/"
 }
 
 // RangeKeyOf returns the path for ranges of some task.
@@ -163,4 +165,12 @@ func (t *TaskInfo) Check() (*TaskInfo, error) {
 	}
 	// Maybe check whether the ranges overlapped?
 	return t, nil
+}
+
+func (t *TaskInfo) ZapTaskInfo() []zap.Field {
+	fields := make([]zap.Field, 0, 3)
+	fields = append(fields, logutil.StreamBackupTaskInfo(&t.PBInfo))
+	fields = append(fields, zap.Bool("pausing", t.Pausing))
+	fields = append(fields, zap.Int("rangeCount", len(t.Ranges)))
+	return fields
 }

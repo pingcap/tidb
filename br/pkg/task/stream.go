@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -49,6 +50,7 @@ var (
 	StreamStop   = "stream stop"
 	StreamPause  = "stream pause"
 	StreamResume = "stream resume"
+	StreamStatus = "stream status"
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -56,6 +58,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamStop:   RunStreamStop,
 	StreamPause:  RunStreamPause,
 	StreamResume: RunStreamResume,
+	StreamStatus: RunStreamStatus,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -140,17 +143,16 @@ func (cfg *StreamConfig) ParseCommonFromFlags(flags *pflag.FlagSet) error {
 	return nil
 }
 
-type streamStartMgr struct {
+type streamMgr struct {
 	Cfg *StreamConfig
 	mgr *conn.Mgr
 	bc  *backup.Client
 }
 
-// NewStreamStartMgr specifies Creating a stream Mgr
-func NewStreamStartMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue,
-) (*streamStartMgr, error) {
+func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStorage bool,
+) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
+		cfg.CheckRequirements, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -165,21 +167,24 @@ func NewStreamStartMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue,
 		return nil, errors.Trace(err)
 	}
 
-	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		return nil, errors.Trace(err)
+	// just stream start need Storage
+	if needStorage {
+		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		opts := storage.ExternalStorageOptions{
+			NoCredentials:   cfg.NoCreds,
+			SendCredentials: cfg.SendCreds,
+			SkipCheckPath:   cfg.SkipCheckPath,
+		}
+		if err = client.SetStorage(ctx, backend, &opts); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
-	}
-	if err = client.SetStorage(ctx, backend, &opts); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	s := &streamStartMgr{
+	s := &streamMgr{
 		Cfg: cfg,
 		mgr: mgr,
 		bc:  client,
@@ -187,17 +192,17 @@ func NewStreamStartMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue,
 	return s, nil
 }
 
-func (s *streamStartMgr) close() {
+func (s *streamMgr) close() {
 	s.mgr.Close()
 }
 
-func (s *streamStartMgr) setLock(ctx context.Context) error {
+func (s *streamMgr) setLock(ctx context.Context) error {
 	return s.bc.SetLockFile(ctx)
 }
 
 // checkStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
-func (s *streamStartMgr) checkStartTS(ctx context.Context) error {
+func (s *streamMgr) checkStartTS(ctx context.Context) error {
 	currentTS, err := s.getTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -219,7 +224,7 @@ func (s *streamStartMgr) checkStartTS(ctx context.Context) error {
 
 // setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
 // and set startTS as a serverSafePoint to PD
-func (s *streamStartMgr) setGCSafePoint(ctx context.Context) error {
+func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 	if err := s.checkStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -243,7 +248,7 @@ func (s *streamStartMgr) setGCSafePoint(ctx context.Context) error {
 	return nil
 }
 
-func (s *streamStartMgr) getTS(ctx context.Context) (uint64, error) {
+func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
 	p, l, err := s.mgr.PdController.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -252,7 +257,7 @@ func (s *streamStartMgr) getTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
-func (s *streamStartMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
+func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
 		s.Cfg.TableFilter,
@@ -308,7 +313,7 @@ func RunStreamStart(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -350,6 +355,8 @@ func RunStreamStart(
 	if err := cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
+
+	log.Info("put stream task", ti.ZapTaskInfo()...)
 	return nil
 }
 
@@ -372,7 +379,7 @@ func RunStreamStop(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -389,6 +396,8 @@ func RunStreamStop(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	log.Info("stop stream task", zap.String("taskName", cfg.taskName))
 	return nil
 }
 
@@ -411,7 +420,7 @@ func RunStreamPause(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -450,7 +459,7 @@ func RunStreamResume(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamStartMgr(ctx, cfg, g)
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -467,5 +476,41 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+// RunStreamStatus get status for a specific stream task
+func RunStreamStatus(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamStatusRunStreamStatusRunStreamStatus",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer streamMgr.close()
+
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	// to add backoff
+	task, err := cli.GetTask(ctx, cfg.taskName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("stream task status: ", logutil.StreamBackupTaskInfo(&task.Info))
 	return nil
 }
