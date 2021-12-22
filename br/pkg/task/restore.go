@@ -47,7 +47,7 @@ const (
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
-	defaultFlagDdlBatchSize   = 500
+	defaultFlagDdlBatchSize   = 0
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -83,7 +83,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
-	flags.Duration(FlagBatchFlushInterval, defaultFlagDdlBatchSize,
+	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"batch size for ddl to create a batch of tabes")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"concurrency pd-relative operations like split & scatter.")
