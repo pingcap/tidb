@@ -2632,11 +2632,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 		}
 		// fetch tiflash config
 		configURL := fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), info.StatusAddr)
-		req, err := http.NewRequest(http.MethodGet, configURL, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := util.InternalHTTPClient().Do(req)
+		resp, err := util.InternalHTTPClient().Get(configURL)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			continue
