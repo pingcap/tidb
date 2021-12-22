@@ -446,12 +446,16 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		a.Args[i].GetType().Tp = originTp
 
 		// refine each mysql integer type to the needed decimal precision for sum
-		if a.Name == ast.AggFuncSum && types.IsTypeInteger(tpOld) {
-			if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
-				// avg could be split into sum and count, so we should take the `.Decimal` field into account
-				// use mathutil.Min here to ensure that .Flen won't increase
-				a.Args[i].GetType().Flen = mathutil.Min(a.Args[i].GetType().Flen, flen+a.Args[i].GetType().Decimal)
-			}
+		if a.Name == ast.AggFuncSum {
+			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)
+		}
+	}
+}
+
+func adjustDecimalLenForSumInteger(ft *types.FieldType, tpOld byte) {
+	if types.IsTypeInteger(tpOld) && ft.Tp == mysql.TypeNewDecimal {
+		if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
+			ft.Flen = mathutil.Min(ft.Flen, flen+ft.Decimal)
 		}
 	}
 }
