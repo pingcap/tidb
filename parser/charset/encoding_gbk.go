@@ -61,10 +61,10 @@ func (e *encodingGBK) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(peek(src[i:]))
 		// for compatible with mysql, see https://github.com/pingcap/tidb/issues/30581 get details
-		if src[i] != 0x80 {
-			nDst, _, err = tfm.Transform(buf[:], src[i:i+w], false)
-		} else {
+		if op&opToUTF8 != 0 && src[i] == 0x80 {
 			err = errInvalidCharacterString
+		} else {
+			nDst, _, err = tfm.Transform(buf[:], src[i:i+w], false)
 		}
 		meetErr := err != nil || (op&opToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
 		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
