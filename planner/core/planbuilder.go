@@ -2403,6 +2403,12 @@ func parseAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uin
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
 		switch opt.Type {
+		case ast.AnalyzeOptNumTopN:
+			v := datumValue.GetUint64()
+			if v > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			}
+			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/Decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(nil)
