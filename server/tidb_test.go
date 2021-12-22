@@ -133,9 +133,22 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
+	if cpuprofile.GlobalCPUProfiler != nil {
+		cpuprofile.GlobalCPUProfiler.Close()
+	}
+	cpuprofile.GlobalCPUProfiler = cpuprofile.NewParallelCPUProfiler()
 	cpuprofile.GlobalCPUProfiler.Start()
 
-	return ts, cleanup
+	cleanFn := func() {
+		cleanup()
+		cpuprofile.GlobalCPUProfiler.Close()
+	}
+
+	return ts, cleanFn
+}
+
+func (s *tidbTestTopSQLSuite) close() {
+	cpuprofile.GlobalCPUProfiler.Close()
 }
 
 func TestRegression(t *testing.T) {
