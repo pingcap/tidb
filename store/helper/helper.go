@@ -316,6 +316,9 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 				if tableInfo.IsIndex {
 					t.IndexName = tableInfo.Index.Name.O
 					t.IndexID = tableInfo.Index.ID
+				} else {
+					t.IndexName = ""
+					t.IndexID = 0
 				}
 
 				hotTables = append(hotTables, t)
