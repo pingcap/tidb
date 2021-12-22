@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
@@ -72,7 +71,7 @@ func TestExecCount(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t(a int, b int);")
 
 	// Enable TopSQL
 	variable.TopSQLVariable.Enable.Store(true)
@@ -80,30 +79,36 @@ func TestExecCount(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
-	err = failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInExec", "return(10)")
-	assert.NoError(t, err)
-	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/executor/mockSleepInExec")
-		assert.NoError(t, err)
-	}()
-
 	// Execute CRUD.
 	const ExecCountPerSQL = 10
-	_, insertSQLDigest := parser.NormalizeDigest("insert into t values (0);")
+	var insertSQLDigest, updateSQLDigest, selectSQLDigest, deleteSQLDigest *parser.Digest
 	for n := 0; n < ExecCountPerSQL; n++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d);", n))
+		sql := fmt.Sprintf("insert into t values (%d, sleep(0.01));", n)
+		if n == 0 {
+			_, insertSQLDigest = parser.NormalizeDigest(sql)
+		}
+		tk.MustExec(sql)
 	}
-	_, updateSQLDigest := parser.NormalizeDigest("update t set a = 0 where a = 0;")
 	for n := 0; n < ExecCountPerSQL; n++ {
-		tk.MustExec(fmt.Sprintf("update t set a = %d where a = %d;", n, n))
+		sql := fmt.Sprintf("update t set a = %d where a = %d and sleep(0.01);", n, n)
+		if n == 0 {
+			_, updateSQLDigest = parser.NormalizeDigest(sql)
+		}
+		tk.MustExec(sql)
 	}
-	_, selectSQLDigest := parser.NormalizeDigest("select a from t where a = 0;")
 	for n := 0; n < ExecCountPerSQL; n++ {
-		tk.MustQuery(fmt.Sprintf("select a from t where a = %d;", n))
+		sql := fmt.Sprintf("select a from t where a = %d and sleep(0.01);", n)
+		if n == 0 {
+			_, selectSQLDigest = parser.NormalizeDigest(sql)
+		}
+		tk.MustQuery(sql)
 	}
-	_, deleteSQLDigest := parser.NormalizeDigest("delete from t where a = 0;")
-	for n := 1; n <= ExecCountPerSQL; n++ {
-		tk.MustExec(fmt.Sprintf("delete from t where a = %d;", n))
+	for n := 0; n < ExecCountPerSQL; n++ {
+		sql := fmt.Sprintf("delete from t where a = %d and sleep(0.01);", n)
+		if n == 0 {
+			_, deleteSQLDigest = parser.NormalizeDigest(sql)
+		}
+		tk.MustExec(sql)
 	}
 
 	// Wait for collect.

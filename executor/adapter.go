@@ -1257,10 +1257,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
-		failpoint.Inject("mockSleepInExec", func(ms failpoint.Value) {
-			time.Sleep(time.Duration(ms.(int)) * time.Millisecond)
-
-		})
 	}
 }
 
