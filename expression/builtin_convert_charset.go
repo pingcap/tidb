@@ -287,6 +287,8 @@ var convertActionMap = map[funcProp][]string{
 		ast.Like, ast.Strcmp,
 		/* regex */
 		ast.Regexp,
+		/* math */
+		ast.CRC32,
 	},
 }
 
