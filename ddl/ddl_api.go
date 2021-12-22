@@ -4759,7 +4759,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			for _, p := range pi.Definitions {
-				logutil.BgLogger().Info("set TiFlash replica", zap.Int64("partitionID", p.ID))
+				logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("partitionID", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -4767,7 +4767,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			}
 			// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
 			for _, p := range pi.AddingDefinitions {
-				logutil.BgLogger().Info("set TiFlash replica", zap.Int64("addPartitionID", p.ID))
+				logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("addPartitionID", p.ID))
 				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 					return errors.Trace(err)
@@ -4777,7 +4777,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 				}
 			}
 		} else {
-			logutil.BgLogger().Info("set TiFlash replica", zap.Int64("tableID", tblInfo.ID))
+			logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
 			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)

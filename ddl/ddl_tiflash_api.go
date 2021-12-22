@@ -332,20 +332,27 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				}
 			}
 
-			regionCount := tb.Count
-			flashRegionCount := uint64(len(regionReplica))
+			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tb.ID", tb.ID))
+
+			var stats helper.PDRegionStats
+			if err := tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
+				return allReplicaReady, errors.Trace(err)
+			}
+			regionCount := stats.Count
+			flashRegionCount := len(regionReplica)
 			avail := regionCount == flashRegionCount
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
 				avail = val.(bool)
 			})
 
 			if !avail {
+				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
 				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 				if err != nil {
 					return false, errors.Trace(err)
 				}
 			} else {
-				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Uint64("region need", regionCount))
+				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("id", tb.ID), zap.Uint64("region need", uint64(regionCount)))
 				err := infosync.DeleteTiFlashTableSyncProgress(tb.ID)
 				if err != nil {
 					return false, errors.Trace(err)
