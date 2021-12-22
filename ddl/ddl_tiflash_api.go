@@ -265,9 +265,9 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			pollTiFlashContext.UpdateTiFlashStoreCounter = 0
 			return false, errors.Trace(err)
 		}
-		pollTiFlashContext.UpdateTiFlashStoreCounter += 1
-		pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick
 	}
+	pollTiFlashContext.UpdateTiFlashStoreCounter += 1
+	pollTiFlashContext.UpdateTiFlashStoreCounter %= UpdateTiFlashStoreTick
 
 	// The following loop updates TiFlash store's status address.
 	for _, store := range pollTiFlashContext.TiFlashStores {
