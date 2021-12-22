@@ -107,6 +107,9 @@ func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.Error
 		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
+	if _, err := db.Exec("set @@tidb_txn_mode = 'optimistic'"); err != nil {
+		log.L().Warn("set transaction mode to optimistic failed", zap.Error(err))
+	}
 	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
 }
 
