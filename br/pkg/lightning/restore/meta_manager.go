@@ -923,10 +923,71 @@ func (m noopTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum 
 	return nil
 }
 
+<<<<<<< HEAD
 func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum) (bool, *verify.KVChecksum, error) {
 	return false, nil, nil
+=======
+func (m noopTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (bool, bool, *verify.KVChecksum, error) {
+	return true, true, &verify.KVChecksum{}, nil
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 }
 
 func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
 	return nil
+}
+
+type singleMgrBuilder struct{}
+
+func (b singleMgrBuilder) Init(context.Context) error {
+	return nil
+}
+
+func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
+	return &singleTaskMetaMgr{
+		pd: pd,
+	}
+}
+
+func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
+	return noopTableMetaMgr{}
+}
+
+type singleTaskMetaMgr struct {
+	pd *pdutil.PdController
+}
+
+func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	_, err := action(nil)
+	return err
+}
+
+func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
+	return m.pd.RemoveSchedulers(ctx)
+}
+
+func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
+	return true, nil
+}
+
+func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {
+	return true, true, nil
+}
+
+func (m *singleTaskMetaMgr) Cleanup(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CleanupTask(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
+	return nil
+}
+
+func (m *singleTaskMetaMgr) Close() {
 }

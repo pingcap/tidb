@@ -16,17 +16,27 @@ package restore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+=======
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"modernc.org/mathutil"
+
+	"github.com/pingcap/kvproto/pkg/metapb"
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -36,11 +46,21 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/table"
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/pkg/typeutil"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
+<<<<<<< HEAD
 	"go.uber.org/zap"
+=======
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 )
 
 const (
@@ -650,4 +670,85 @@ outloop:
 	}
 	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return nil
+}
+
+func (rc *Controller) checkTableEmpty(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
+		return nil
+	}
+	db, _ := rc.tidbGlue.GetDB()
+
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		tableCount += len(db.Tables)
+	}
+
+	var lock sync.Mutex
+	tableNames := make([]string, 0)
+	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	ch := make(chan string, concurrency)
+	eg, gCtx := errgroup.WithContext(ctx)
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for tblName := range ch {
+				// skip tables that have checkpoint
+				if rc.cfg.Checkpoint.Enable {
+					_, err := rc.checkpointsDB.Get(gCtx, tblName)
+					switch {
+					case err == nil:
+						continue
+					case errors.IsNotFound(err):
+					default:
+						return errors.Trace(err)
+					}
+				}
+
+				hasData, err1 := tableContainsData(gCtx, db, tblName)
+				if err1 != nil {
+					return err1
+				}
+				if hasData {
+					lock.Lock()
+					tableNames = append(tableNames, tblName)
+					lock.Unlock()
+				}
+			}
+			return nil
+		})
+	}
+	for _, db := range rc.dbMetas {
+		for _, tbl := range db.Tables {
+			ch <- common.UniqueTable(tbl.DB, tbl.Name)
+		}
+	}
+	close(ch)
+	if err := eg.Wait(); err != nil {
+		if common.IsContextCanceledError(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	if len(tableNames) > 0 {
+		// sort the failed names
+		sort.Strings(tableNames)
+		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
+		rc.checkTemplate.Collect(Critical, false, msg)
+	}
+	return nil
+}
+
+func tableContainsData(ctx context.Context, db utils.QueryExecutor, tableName string) (bool, error) {
+	query := "select 1 from " + tableName + " limit 1"
+	var dump int
+	err := db.QueryRowContext(ctx, query).Scan(&dump)
+
+	switch {
+	case err == sql.ErrNoRows:
+		return false, nil
+	case err != nil:
+		return false, errors.Trace(err)
+	default:
+		return true, nil
+	}
 }

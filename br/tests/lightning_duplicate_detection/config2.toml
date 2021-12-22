@@ -1,6 +1,11 @@
 [tikv-importer]
 backend = "local"
+<<<<<<< HEAD
 duplicate-detection = true
+=======
+duplicate-resolution = 'record'
+incremental-import = true
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 
 [checkpoint]
 enable = true

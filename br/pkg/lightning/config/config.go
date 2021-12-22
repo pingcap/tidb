@@ -311,6 +311,7 @@ type FileRouteRule struct {
 }
 
 type TikvImporter struct {
+<<<<<<< HEAD
 	Addr               string   `toml:"addr" json:"addr"`
 	Backend            string   `toml:"backend" json:"backend"`
 	OnDuplicate        string   `toml:"on-duplicate" json:"on-duplicate"`
@@ -321,6 +322,19 @@ type TikvImporter struct {
 	DiskQuota          ByteSize `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency   int      `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateDetection bool     `toml:"duplicate-detection" json:"duplicate-detection"`
+=======
+	Addr                string                       `toml:"addr" json:"addr"`
+	Backend             string                       `toml:"backend" json:"backend"`
+	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
+	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
+>>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
