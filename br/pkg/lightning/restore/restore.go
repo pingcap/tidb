@@ -1984,9 +1984,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
-		return err
-	}
 
 	return nil
 }
