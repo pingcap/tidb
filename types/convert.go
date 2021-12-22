@@ -173,7 +173,7 @@ func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound u
 	// so `float64(math.MaxUint64)` will make a num bigger than math.MaxUint64,
 	// which can not be represented by 64bit integer.
 	// So `uint64(float64(math.MaxUint64))` is undefined behavior.
-	if val == ubf {
+	if val == ubf && upperBound == math.MaxUint64 {
 		return math.MaxUint64, nil
 	}
 	if val > ubf {
