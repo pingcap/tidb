@@ -298,8 +298,8 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		regionsInfo := []*RegionInfo{
 			{
 				ID:       int64(regionID),
-				StartKey: bytesKeyToHex(region.StartKey),
-				EndKey:   bytesKeyToHex(region.EndKey),
+				StartKey: bytesKeyToEncodeHex(region.StartKey),
+				EndKey:   bytesKeyToEncodeHex(region.EndKey),
 			}}
 
 		regionsTableInfos := h.ParseRegionsTableInfos(regionsInfo, tables)
@@ -313,8 +313,10 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 				t.DbName = tableInfo.DB.Name.O
 				t.TableName = tableInfo.Table.Name.O
 				t.TableID = tableInfo.Table.ID
-				t.IndexName = tableInfo.Index.Name.O
-				t.IndexID = tableInfo.Index.ID
+				if tableInfo.IsIndex {
+					t.IndexName = tableInfo.Index.Name.O
+					t.IndexID = tableInfo.Index.ID
+				}
 
 				hotTables = append(hotTables, t)
 			}
@@ -758,6 +760,10 @@ OutLoop:
 	}
 
 	return tableInfos
+}
+
+func bytesKeyToEncodeHex(key []byte) string {
+	return strings.ToUpper(hex.EncodeToString(codec.EncodeBytes(nil, key)))
 }
 
 func bytesKeyToHex(key []byte) string {
