@@ -204,6 +204,8 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	origin := ""
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	if err != nil {
+		return errors.Trace(err)
+	} else {
 		// Try to update.
 		for _, kv := range resp.Kvs {
 			if string(kv.Key) == key {
@@ -213,7 +215,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 		}
 	}
 	if origin != httpAddr {
-		logutil.BgLogger().Warn(fmt.Sprintf("Update status addr to %v", httpAddr))
+		logutil.BgLogger().Warn(fmt.Sprintf("Update status addr of %v from %v to %v", key, origin, httpAddr))
 		err := ddlutil.PutKVToEtcd(d.ctx, d.etcdCli, 1, key, httpAddr)
 		if err != nil {
 			return errors.Trace(err)
