@@ -389,7 +389,7 @@ func TestRenameTables(t *testing.T) {
 
 	txn, _ := ctx.Txn(true)
 	historyJob, _ := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
-	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfo
+	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
 	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
 	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
 }
