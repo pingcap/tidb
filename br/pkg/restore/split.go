@@ -358,6 +358,7 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 		rs.waitForSplit(ctx, region.Region.Id)
 	}
 
+	// No retry needed, the internal implementation of `ScatterRegions` involves retry already.
 	err := rs.client.ScatterRegions(ctx, newRegions)
 	if isUnsupportedError(err) {
 		log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
