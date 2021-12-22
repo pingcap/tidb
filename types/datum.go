@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Kind constants.
@@ -180,6 +182,25 @@ func (d *Datum) SetFloat32(f float32) {
 // GetString gets string value.
 func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
+}
+
+// GetStringEncoded gets the string value encoded with given charset.
+func (d *Datum) GetStringEncoded() string {
+	coll, err := charset.GetCollationByName(d.Collation())
+	if err != nil {
+		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
+		return d.GetString()
+	}
+	enc := charset.FindEncoding(coll.CharsetName)
+	replace, _ := enc.Transform(nil, d.GetBytes(), charset.OpEncodeNoErr)
+	return string(hack.String(replace))
+}
+
+// GetStringDecoded gets the string value decoded with given charset.
+func (d *Datum) GetStringDecoded(chs string) (string, error) {
+	enc := charset.FindEncoding(chs)
+	trim, err := enc.Transform(nil, d.GetBytes(), charset.OpDecode)
+	return string(hack.String(trim)), err
 }
 
 // SetString sets string value.
@@ -938,8 +959,11 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
-	var ret Datum
-	var s string
+	var (
+		ret Datum
+		s string
+		err error
+	)
 	switch d.k {
 	case KindInt64:
 		s = strconv.FormatInt(d.GetInt64(), 10)
@@ -950,7 +974,17 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindFloat64:
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
-		s = d.GetString()
+		fromBinary := d.Collation() == charset.CollationBin
+		toBinary := target.Charset == charset.CollationBin
+		if fromBinary && toBinary {
+			s = d.GetString()
+		} else if fromBinary {
+			s, err = d.GetStringDecoded(target.Charset)
+		} else if toBinary {
+			s = d.GetStringEncoded()
+		} else {
+			s = d.GetString()
+		}
 	case KindMysqlTime:
 		s = d.GetMysqlTime().String()
 	case KindMysqlDuration:
@@ -962,7 +996,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
 	case KindBinaryLiteral:
-		s = d.GetBinaryLiteral().ToString()
+		s, err = d.GetStringDecoded(target.Charset)
 	case KindMysqlBit:
 		// issue #25037
 		// bit to binary/varbinary. should consider transferring to uint first.
@@ -981,7 +1015,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
+	if err == nil {
+		s, err = ProduceStrWithSpecifiedTp(s, target, sc, true)
+	}
 	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -1555,7 +1591,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
-		if j, err = json.ParseBinaryFromString(d.GetString()); err == nil {
+		if j, err = json.ParseBinaryFromString(d.GetStringEncoded()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:
@@ -1574,6 +1610,8 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 		}
 	case KindMysqlJSON:
 		ret = *d
+	case KindBinaryLiteral:
+		err = json.ErrInvalidJSONCharset.GenWithStackByArgs("binary")
 	default:
 		var s string
 		if s, err = d.ToString(); err == nil {

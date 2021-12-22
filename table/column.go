@@ -340,12 +340,6 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	if !types.IsString(col.Tp) {
 		return nil
 	}
-	fromBinary := origin.Kind() == types.KindBinaryLiteral ||
-		(origin.Kind() == types.KindString && origin.Collation() == charset.CollationBin)
-	toBinary := types.IsTypeBlob(col.Tp) || col.Charset == charset.CharsetBin
-	if fromBinary && toBinary {
-		return nil
-	}
 	enc := charset.FindEncoding(col.Charset)
 	// Skip utf8 check if possible.
 	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
@@ -358,17 +352,6 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
 		// Use a strict mode implementation. 4 bytes characters are invalid.
 		enc = charset.EncodingUTF8MB3StrictImpl
-	}
-	if fromBinary {
-		src := casted.GetBytes()
-		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
-		if err != nil {
-			casted.SetBytesAsString(encBytes, col.Collate, 0)
-			nSrc := charset.CountValidBytesDecode(enc, src)
-			return handleWrongCharsetValue(ctx, col, src, nSrc)
-		}
-		casted.SetBytesAsString(encBytes, col.Collate, 0)
-		return nil
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
