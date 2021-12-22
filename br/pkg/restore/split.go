@@ -358,19 +358,23 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 		rs.waitForSplit(ctx, region.Region.Id)
 	}
 
-	// No retry needed, the internal implementation of `ScatterRegions` involves retry already.
-	err := rs.client.ScatterRegions(ctx, newRegions)
-	if isUnsupportedError(err) {
-		log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
-		rs.ScatterRegionsWithBackoffer(
-			ctx, newRegions,
-			// backoff about 6s, or we give up scattering this region.
-			&exponentialBackoffer{
-				attempt:     7,
-				baseBackoff: 100 * time.Millisecond,
-			})
-		return
-	}
+	err := utils.WithRetry(ctx, func() error {
+		err := rs.client.ScatterRegions(ctx, newRegions)
+		if isUnsupportedError(err) {
+			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+			rs.ScatterRegionsWithBackoffer(
+				ctx, newRegions,
+				// backoff about 6s, or we give up scattering this region.
+				&exponentialBackoffer{
+					attempt:     7,
+					baseBackoff: 100 * time.Millisecond,
+				})
+			return nil
+		}
+		return err
+		// the retry is for the temporary network errors during sending request.
+	}, &exponentialBackoffer{attempt: 3, baseBackoff: 500 * time.Millisecond})
+
 	if err != nil {
 		log.Warn("failed to batch scatter region", logutil.ShortError(err))
 	}
