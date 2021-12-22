@@ -80,31 +80,31 @@ func TestExecCount(t *testing.T) {
 	})
 
 	// Execute CRUD.
-	const ExecCountPerSQL = 10
+	const ExecCountPerSQL = 3
 	var insertSQLDigest, updateSQLDigest, selectSQLDigest, deleteSQLDigest *parser.Digest
 	for n := 0; n < ExecCountPerSQL; n++ {
-		sql := fmt.Sprintf("insert into t values (%d, sleep(0.01));", n)
+		sql := fmt.Sprintf("insert into t values (%d, sleep(0.1));", n)
 		if n == 0 {
 			_, insertSQLDigest = parser.NormalizeDigest(sql)
 		}
 		tk.MustExec(sql)
 	}
 	for n := 0; n < ExecCountPerSQL; n++ {
-		sql := fmt.Sprintf("update t set a = %d where a = %d and sleep(0.01);", n, n)
+		sql := fmt.Sprintf("update t set a = %d where a = %d and sleep(0.1);", n, n)
 		if n == 0 {
 			_, updateSQLDigest = parser.NormalizeDigest(sql)
 		}
 		tk.MustExec(sql)
 	}
 	for n := 0; n < ExecCountPerSQL; n++ {
-		sql := fmt.Sprintf("select a from t where a = %d and sleep(0.01);", n)
+		sql := fmt.Sprintf("select a from t where a = %d and sleep(0.1);", n)
 		if n == 0 {
 			_, selectSQLDigest = parser.NormalizeDigest(sql)
 		}
 		tk.MustQuery(sql)
 	}
 	for n := 0; n < ExecCountPerSQL; n++ {
-		sql := fmt.Sprintf("delete from t where a = %d and sleep(0.01);", n)
+		sql := fmt.Sprintf("delete from t where a = %d and sleep(0.1);", n)
 		if n == 0 {
 			_, deleteSQLDigest = parser.NormalizeDigest(sql)
 		}
@@ -131,7 +131,8 @@ func TestExecCount(t *testing.T) {
 			if _, ok := sqlDigests[digest.SQLDigest]; ok {
 				found++
 				assert.Equal(t, uint64(ExecCountPerSQL), item.ExecCount)
-				assert.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*10*ExecCountPerSQL))
+				assert.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*100*ExecCountPerSQL))
+				assert.True(t, item.SumExecNanoDuration < uint64(time.Millisecond*150*ExecCountPerSQL))
 				var kvSum uint64
 				for _, kvCount := range item.KvStatsItem.KvExecCount {
 					kvSum += kvCount

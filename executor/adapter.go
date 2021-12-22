@@ -227,7 +227,7 @@ type ExecStmt struct {
 	// stmtExecCtx represents the current statement execution information.
 	// Note that the information here is not updated in a timely，
 	// it is only updated at the time of `StmtStats.OnExecutionBegin` and `StmtStats.OnExecutionFinished`.
-	stmtExecCtx *stmtstats.StatementExecutionContext
+	stmtExecCtx stmtstats.StatementExecutionContext
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -1260,11 +1260,11 @@ func (a *ExecStmt) GetTextToLog() string {
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		a.stmtExecCtx = &stmtstats.StatementExecutionContext{
+		a.stmtExecCtx = stmtstats.StatementExecutionContext{
 			SQLDigest:  sqlDigest,
 			PlanDigest: planDigest,
 		}
-		vars.StmtStats.OnExecutionBegin(a.stmtExecCtx)
+		vars.StmtStats.OnExecutionBegin(&a.stmtExecCtx)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
@@ -1272,15 +1272,13 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		if a.stmtExecCtx == nil {
+		if a.stmtExecCtx.SQLDigest == nil {
 			sqlDigest, planDigest := a.getSQLPlanDigest()
-			a.stmtExecCtx = &stmtstats.StatementExecutionContext{
-				SQLDigest:  sqlDigest,
-				PlanDigest: planDigest,
-			}
+			a.stmtExecCtx.SQLDigest = sqlDigest
+			a.stmtExecCtx.PlanDigest = planDigest
 		}
 		a.stmtExecCtx.ExecDuration = time.Since(vars.StartTime) + vars.DurationParse
-		vars.StmtStats.OnExecutionFinished(a.stmtExecCtx)
+		vars.StmtStats.OnExecutionFinished(&a.stmtExecCtx)
 	}
 }
 
