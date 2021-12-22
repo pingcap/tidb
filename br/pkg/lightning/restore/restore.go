@@ -379,14 +379,17 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case isSSTImport:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -1964,6 +1967,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
