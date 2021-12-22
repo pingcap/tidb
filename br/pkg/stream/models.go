@@ -46,8 +46,8 @@ func RangesOf(name string) string {
 // Normally it would be <prefix>/ranges/<task-name(string)>/<start-key(binary)> -> <end-key(binary)>
 func RangeKeyOf(name string, startKey []byte) string {
 	// We cannot use path.Join if the start key contains patterns like [0x2f, 0x2f](//).
-	//return RangesOf(name) + string(startKey)
-	return path.Join(RangesOf(name), string(startKey))
+	// Use ` + "/" ` directly rather `join()``
+	return RangesOf(name) + "/" + string(startKey)
 }
 
 func writeUint64(buf *bytes.Buffer, num uint64) {
