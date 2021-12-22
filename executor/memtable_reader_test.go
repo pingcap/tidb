@@ -1504,7 +1504,7 @@ var regionsInfo = map[uint64]*helper.RegionInfo{
 		EndKey:            "",
 		Epoch:             helper.RegionEpoch{},
 		Peers:             []helper.RegionPeer{{ID: 31, StoreID: 1, IsLearner: false}, {ID: 32, StoreID: 2, IsLearner: false}, {ID: 33, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 33, StoreID: 1, IsLearner: false},
+		Leader:            helper.RegionPeer{ID: 31, StoreID: 1, IsLearner: false},
 		DownPeers:         nil,
 		PendingPeers:      nil,
 		WrittenBytes:      100,
@@ -1573,9 +1573,9 @@ func (s *testTikvRegionPeersTableSuite) setUpMockPDHTTPServer() (*httptest.Serve
 		}, nil
 	}))
 	// mock get regionsInfo by store id
-	router.HandleFunc(pdapi.StoreRegions+"{id}", storesRegionsInfoHandler)
+	router.HandleFunc(pdapi.StoreRegions+"/"+"{id}", storesRegionsInfoHandler)
 	// mock get regionInfo by region id
-	router.HandleFunc(pdapi.RegionByID+"{id}", regionsInfoHandler)
+	router.HandleFunc(pdapi.RegionByID+"/"+"{id}", regionsInfoHandler)
 	return server, mockAddr
 }
 
@@ -1595,9 +1595,9 @@ func (s *testTikvRegionPeersTableSuite) TestTikvRegionPeers(c *C) {
 		{"2", "22", "2", "0", "0", "NORMAL", "<nil>"},
 		{"2", "23", "3", "0", "0", "NORMAL", "<nil>"},
 
-		{"3", "31", "1", "0", "0", "NORMAL", "<nil>"},
+		{"3", "31", "1", "0", "1", "NORMAL", "<nil>"},
 		{"3", "32", "2", "0", "0", "NORMAL", "<nil>"},
-		{"3", "33", "3", "0", "1", "NORMAL", "<nil>"},
+		{"3", "33", "3", "0", "0", "NORMAL", "<nil>"},
 	}
 
 	var cases = []struct {
