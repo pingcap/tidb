@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -489,42 +489,6 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 		default:
 			return errors.New(fmt.Sprintf("unknown command to corrupt mutation: %s", cmd))
 		}
-	}
-	return nil
-}
-
-// CheckTxnConsistency checks the number of row/index mutations before the txn commits,
-// to prevent some inconsistent transactions.
-func CheckTxnConsistency(txn kv.Transaction) error {
-	memBuffer := txn.GetMemBuffer()
-	if memBuffer == nil {
-		return nil
-	}
-
-	// count for each table
-	indexInsertionCount := make(map[int64]int)
-	rowInsertionCount := make(map[int64]int)
-	f := func(k kv.Key, v []byte) error {
-		if len(v) > 0 {
-			tableID := tablecodec.DecodeTableID(k)
-			if rowcodec.IsRowKey(k) {
-				rowInsertionCount[tableID] += 1
-			} else {
-				indexInsertionCount[tableID] += 1
-			}
-		}
-		return nil
-	}
-	if err := kv.WalkMemBuffer(memBuffer, f); err != nil {
-		return errors.Trace(err)
-	}
-	for tableID, count := range indexInsertionCount {
-		// FIXME: always? what if like backfilling?
-		if rowInsertionCount[tableID] > 0 && count%rowInsertionCount[tableID] != 0 {
-			return errors.Errorf("inconsistent index insertion count %d and row insertion count %d",
-				count, rowInsertionCount[tableID])
-		}
-
 	}
 	return nil
 }

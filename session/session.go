@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
@@ -564,13 +563,6 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
 	sessVars := s.sessionVars
-
-	// TODO: add an enablement check
-	if sessVars.InTxn() {
-		if err := tables.CheckTxnConsistency(txn); err != nil {
-			return errors.Trace(err)
-		}
-	}
 
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
