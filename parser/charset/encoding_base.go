@@ -42,6 +42,15 @@ func (b encodingBase) ToLower(src string) string {
 	return strings.ToLower(src)
 }
 
+func (b encodingBase) IsValid(src []byte) bool {
+	isValid := true
+	b.self.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
+		isValid = ok
+		return ok
+	})
+	return isValid
+}
+
 func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
 		dest = make([]byte, len(src))
