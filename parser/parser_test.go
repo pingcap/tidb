@@ -4989,6 +4989,7 @@ func TestSessionManage(t *testing.T) {
 		{"kill tidb '23123'", true, "KILL TIDB 23123"},
 		{"kill tidb connection '23123'", true, "KILL TIDB 23123"},
 		{"kill tidb query '23123'", true, "KILL TIDB QUERY 23123"},
+		{"kill 'asd'", true, "KILL 0"},
 	}
 	RunTest(t, table, false)
 }
