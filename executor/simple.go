@@ -1222,7 +1222,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, sysSession, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
