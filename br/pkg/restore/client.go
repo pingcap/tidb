@@ -593,7 +593,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	lastSent := 0
-	for i := int(rc.batchDllSize); i <= numOfTables; i = i + int(rc.batchDllSize) {
+	for i := int(rc.batchDllSize); i < numOfTables+int(rc.batchDllSize); i = i + int(rc.batchDllSize) {
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
 		if i > numOfTables {
 			i = numOfTables
