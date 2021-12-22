@@ -1018,7 +1018,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
-	if len(e.extractor.StoreIDs) < 1 && len(e.extractor.RegionIDs) < 1 {
+	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
 		regionsInfo, err := tikvHelper.GetRegionsInfo()
 		if err != nil {
 			return nil, err
