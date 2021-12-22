@@ -94,6 +94,20 @@ func Files(fs []*backuppb.File) zap.Field {
 	return zap.Object("files", zapFilesMarshaler(fs))
 }
 
+type zapStreamBackupTaskInfo struct{ *backuppb.StreamBackupTaskInfo }
+
+func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("taskName", t.Name)
+	enc.AddUint64("startTs", t.StartTs)
+	enc.AddUint64("endTS", t.EndTs)
+	enc.AddString("talbeFilter", strings.Join(t.TableFilter, ","))
+	return nil
+}
+
+func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
+	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
+}
+
 type zapRewriteRuleMarshaler struct{ *import_sstpb.RewriteRule }
 
 func (rewriteRule zapRewriteRuleMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
