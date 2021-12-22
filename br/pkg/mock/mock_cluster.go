@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -39,62 +40,87 @@ type Cluster struct {
 	kv.Storage
 	*server.TiDBDriver
 	*domain.Domain
-	DSN      string
-	PDClient pd.Client
+	DSN        string
+	PDClient   pd.Client
+	HttpServer *http.Server
 }
 
 // NewCluster create a new mock cluster.
 func NewCluster() (*Cluster, error) {
+	cluster := &Cluster{}
+
 	pprofOnce.Do(func() {
 		go func() {
 			// Make sure pprof is registered.
 			_ = pprof.Handler
 			addr := "0.0.0.0:12235"
 			log.Info("start pprof", zap.String("addr", addr))
-			if e := http.ListenAndServe(addr, nil); e != nil {
+			cluster.HttpServer = &http.Server{Addr: addr}
+			if e := cluster.HttpServer.ListenAndServe(); e != nil {
 				log.Warn("fail to start pprof", zap.String("addr", addr), zap.Error(e))
 			}
 		}()
 	})
 
-	var mockCluster testutils.Cluster
 	storage, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
-			mockCluster = c
+			cluster.Cluster = c
 		}),
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	cluster.Storage = storage
+
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Cluster{
-		Storage:  storage,
-		Cluster:  mockCluster,
-		Domain:   dom,
-		PDClient: storage.(tikv.Storage).GetRegionCache().PDClient(),
-	}, nil
+	cluster.Domain = dom
+
+	cluster.PDClient = storage.(tikv.Storage).GetRegionCache().PDClient()
+	return cluster, nil
 }
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	statusURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
+	var (
+		err       error
+		statusURL *url.URL
+		addrURL   *url.URL
+	)
+	for i := 0; i < 10; i++ {
+		// retry 10 times to get available port
+		statusURL, err = url.Parse(tempurl.Alloc())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", statusURL.Port()))
+		if err == nil {
+			// release port listening
+			listen.Close()
+			break
+		}
 	}
 	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	addrURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
+	for i := 0; i < 10; i++ {
+		addrURL, err = url.Parse(tempurl.Alloc())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", addrURL.Port()))
+		if err == nil {
+			// release port listening
+			listen.Close()
+			break
+		}
 	}
 	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
 	if err != nil {
@@ -130,10 +156,13 @@ func (mock *Cluster) Stop() {
 		mock.Domain.Close()
 	}
 	if mock.Storage != nil {
-		mock.Storage.Close()
+		_ = mock.Storage.Close()
 	}
 	if mock.Server != nil {
 		mock.Server.Close()
+	}
+	if mock.HttpServer != nil {
+		_ = mock.HttpServer.Close()
 	}
 }
 

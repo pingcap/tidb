@@ -274,7 +274,11 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if variable.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
-				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
+				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+				if e.ctx.GetSessionVars().StmtCtx.KvExecCounter != nil {
+					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().StmtCtx.KvExecCounter.RPCInterceptor())
+				}
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

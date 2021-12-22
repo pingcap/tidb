@@ -99,6 +99,28 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 	return nil
 }
 
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string) {
+	bindRecord, _, match := matchSQLBinding(sctx, stmtNode)
+	if match {
+		bindSQL = bindRecord.Bindings[0].BindSQL
+	}
+	return bindSQL
+}
+
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return nil, "", false
+	}
+	var err error
+	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
+	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+		return nil, "", false
+	}
+	return bindRecord, scope, true
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
@@ -149,30 +171,25 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !ok {
 		useBinding = false
 	}
-	var (
-		bindRecord *bindinfo.BindRecord
-		scope      string
-		err        error
-	)
-	if useBinding {
-		bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
-			useBinding = false
-		}
-	}
-	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
-		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
+	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
+	if !match {
 		useBinding = false
 	}
+	if ok {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
+	}
 
-	var names types.NameSlice
-	var bestPlan, bestPlanFromBind plannercore.Plan
+	var (
+		names                      types.NameSlice
+		bestPlan, bestPlanFromBind plannercore.Plan
+		chosenBinding              bindinfo.Binding
+		err                        error
+	)
 	if useBinding {
 		minCost := math.MaxFloat64
-		var (
-			bindStmtHints stmtctx.StmtHints
-			chosenBinding bindinfo.Binding
-		)
+		var bindStmtHints stmtctx.StmtHints
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindRecord.Bindings {
@@ -205,7 +222,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			for _, warn := range warns {
 				sessVars.StmtCtx.AppendWarning(warn)
 			}
-			if err := setFoundInBinding(sctx, true); err != nil {
+			if err := setFoundInBinding(sctx, true, chosenBinding.BindSQL); err != nil {
 				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
 			}
 			if sessVars.StmtCtx.InVerboseExplain {
@@ -234,7 +251,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	defer func() {
 		sessVars.StmtCtx.StmtHints = savedStmtHints
 	}()
-	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil {
+	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
+		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
 		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
@@ -692,13 +710,15 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	return
 }
 
-func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
+func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error {
 	vars := sctx.GetSessionVars()
+	vars.StmtCtx.BindSQL = bindSQL
 	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
 	return err
 }
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	plannercore.GetBindSQL4PlanCache = GetBindSQL4PlanCache
 	plannercore.IsReadOnly = IsReadOnly
 }

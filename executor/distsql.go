@@ -197,12 +197,14 @@ type IndexReaderExecutor struct {
 }
 
 // Close clears all resources hold by current object.
-func (e *IndexReaderExecutor) Close() error {
+func (e *IndexReaderExecutor) Close() (err error) {
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
-	err := e.result.Close()
+	if e.result != nil {
+		err = e.result.Close()
+	}
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
@@ -1128,6 +1130,13 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	chk := newFirstChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
+
+	// Prepare collator for compare.
+	collators := make([]collate.Collator, 0, len(w.idxColTps))
+	for _, tp := range w.idxColTps {
+		collators = append(collators, collate.GetCollator(tp.Collate))
+	}
+
 	for {
 		err := Next(ctx, tableReader, chk)
 		if err != nil {
@@ -1169,7 +1178,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := idxVal.CompareDatum(sctx, &vals[i])
+				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])
 				if err != nil {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
 						handle, idxRow.GetDatum(i, tp), vals[i], err)

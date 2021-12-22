@@ -379,14 +379,17 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case isSSTImport:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -787,6 +790,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		os.Exit(0)
 	})
 
+	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
@@ -993,7 +997,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
 func (rc *Controller) listenCheckpointUpdates() {
-	rc.checkpointsWg.Add(1)
+	defer rc.checkpointsWg.Done()
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
@@ -1082,7 +1086,6 @@ func (rc *Controller) listenCheckpointUpdates() {
 			}
 		})
 	}
-	rc.checkpointsWg.Done()
 }
 
 // buildRunPeriodicActionAndCancelFunc build the runPeriodicAction func and a cancel func
@@ -1490,7 +1493,7 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.Columns)
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1926,8 +1929,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			rc.taskMgr.CleanupTask(ctx)
 		}
-		return errors.Errorf("tidb-lightning check failed."+
-			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
+		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }
@@ -1968,11 +1970,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
-	err = rc.checkCSVHeader(ctx, rc.dbMetas)
-	if err != nil {
-		return err
-	}
-
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -1983,6 +1980,14 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2306,6 +2311,16 @@ func (cr *chunkRestore) encodeLoop(
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
+	// filteredColumns is column names that excluded ignored columns
+	// WARN: this might be not correct when different SQL statements contains different fields,
+	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
+	// so this should be ok.
+	var filteredColumns []string
+	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
+	if err1 != nil {
+		err = err1
+		return
+	}
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -2334,6 +2349,26 @@ func (cr *chunkRestore) encodeLoop(
 					if len(cr.chunk.ColumnPermutation) == 0 {
 						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
 							return
+						}
+					}
+					filteredColumns = columnNames
+					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
+						filteredColumns = make([]string, 0, len(columnNames))
+						ignoreColsMap := ignoreColumns.ColumnsMap()
+						if len(columnNames) > 0 {
+							for _, c := range columnNames {
+								if _, ok := ignoreColsMap[c]; !ok {
+									filteredColumns = append(filteredColumns, c)
+								}
+							}
+						} else {
+							// init column names by table schema
+							// after filtered out some columns, we must explicitly set the columns for TiDB backend
+							for _, col := range t.tableInfo.Core.Columns {
+								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
+									filteredColumns = append(filteredColumns, col.Name.O)
+								}
+							}
 						}
 					}
 					initializedColumns = true
@@ -2369,7 +2404,7 @@ func (cr *chunkRestore) encodeLoop(
 				continue
 			}
 
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))

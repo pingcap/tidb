@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestString(t *testing.T) {
-	t.Parallel()
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
@@ -83,7 +83,6 @@ func TestString(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
-	t.Parallel()
 	cols := []*Column{
 		newCol("a"),
 		newCol("b"),
@@ -103,7 +102,6 @@ func TestFind(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Column{col, col}
@@ -120,13 +118,12 @@ func TestCheck(t *testing.T) {
 }
 
 func TestHandleBadNull(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
 	d := types.Datum{}
 	err := col.HandleBadNull(&d, sc)
 	require.NoError(t, err)
-	cmp, err := d.CompareDatum(sc, &types.Datum{})
+	cmp, err := d.Compare(sc, &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -140,7 +137,6 @@ func TestHandleBadNull(t *testing.T) {
 }
 
 func TestDesc(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
 	NewColDesc(col)
@@ -251,11 +247,10 @@ func TestGetZeroValue(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
-			t.Parallel()
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
-			cmp, err := zv.CompareDatum(sc, &tt.value)
+			cmp, err := zv.Compare(sc, &tt.value, collate.GetCollator(tt.ft.Collate))
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		})
@@ -263,7 +258,6 @@ func TestGetZeroValue(t *testing.T) {
 }
 
 func TestCastValue(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -312,7 +306,6 @@ func TestCastValue(t *testing.T) {
 }
 
 func TestGetDefaultValue(t *testing.T) {
-	t.Parallel()
 	var nilDt types.Datum
 	nilDt.SetNull()
 	ctx := mock.NewContext()
