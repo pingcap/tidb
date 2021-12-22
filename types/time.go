@@ -771,7 +771,7 @@ func ParseDateFormat(format string) []string {
 		}
 
 		if !isDigit(format[i]) {
-			if len(seps) < 2 {
+			if len(seps) < 2 || i == start {
 				return nil
 			}
 			seps = append(seps, format[start:i])
