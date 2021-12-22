@@ -73,7 +73,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
 	})
 
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
+	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +97,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		SnapshotTS:       ret.LastSnapshotTS,
 		IsStaleness:      ret.IsStaleness,
 		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       ret.InfoSchema,
+		InfoSchema:       is,
 		Plan:             finalPlan,
 		LowerPriority:    lowerPriority,
 		Text:             stmtNode.Text(),
