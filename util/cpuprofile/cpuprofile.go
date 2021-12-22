@@ -46,12 +46,12 @@ type ProfileData struct {
 	Error error
 }
 
-// StartCPUProfiler uses to start to run the global ParallelCPUProfiler.
+// StartCPUProfiler uses to start to run the global parallelCPUProfiler.
 func StartCPUProfiler() error {
 	return globalCPUProfiler.start()
 }
 
-// CloseCPUProfiler uses to close the global ParallelCPUProfiler.
+// CloseCPUProfiler uses to close the global parallelCPUProfiler.
 func CloseCPUProfiler() {
 	globalCPUProfiler.close()
 }
@@ -71,15 +71,15 @@ func Unregister(ch ProfileConsumer) {
 	globalCPUProfiler.unregister(ch)
 }
 
-// ConsumersCount returns the count of the global ParallelCPUProfiler's consumer.It is exporting for test.
+// ConsumersCount returns the count of the global parallelCPUProfiler's consumer.It is exporting for test.
 func ConsumersCount() int {
 	return globalCPUProfiler.consumersCount()
 }
 
-// ParallelCPUProfiler is a cpu profiler.
-// With ParallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
-// WARN: Only one running ParallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
-type ParallelCPUProfiler struct {
+// parallelCPUProfiler is a cpu profiler.
+// With parallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
+// WARN: Only one running parallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
+type parallelCPUProfiler struct {
 	sync.Mutex
 	cs     map[ProfileConsumer]struct{}
 	notify chan struct{}
@@ -95,9 +95,9 @@ type ParallelCPUProfiler struct {
 	wg       sync.WaitGroup
 }
 
-// newParallelCPUProfiler crate a new ParallelCPUProfiler.
-func newParallelCPUProfiler() *ParallelCPUProfiler {
-	return &ParallelCPUProfiler{
+// newParallelCPUProfiler crate a new parallelCPUProfiler.
+func newParallelCPUProfiler() *parallelCPUProfiler {
+	return &parallelCPUProfiler{
 		cs:     make(map[ProfileConsumer]struct{}),
 		notify: make(chan struct{}),
 		closed: make(chan struct{}),
@@ -105,11 +105,11 @@ func newParallelCPUProfiler() *ParallelCPUProfiler {
 }
 
 var (
-	errProfilerAlreadyStarted = errors.New("ParallelCPUProfiler already started")
-	errProfilerAlreadyClosed  = errors.New("ParallelCPUProfiler already closed")
+	errProfilerAlreadyStarted = errors.New("parallelCPUProfiler already started")
+	errProfilerAlreadyClosed  = errors.New("parallelCPUProfiler already closed")
 )
 
-func (p *ParallelCPUProfiler) start() error {
+func (p *parallelCPUProfiler) start() error {
 	if !p.started.CAS(false, true) {
 		return errProfilerAlreadyStarted
 	}
@@ -123,14 +123,14 @@ func (p *ParallelCPUProfiler) start() error {
 	return nil
 }
 
-func (p *ParallelCPUProfiler) close() {
+func (p *parallelCPUProfiler) close() {
 	if p.isClosed.CAS(false, true) {
 		close(p.closed)
 	}
 	p.wg.Wait()
 }
 
-func (p *ParallelCPUProfiler) register(ch ProfileConsumer) {
+func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
 	if ch == nil {
 		return
 	}
@@ -144,7 +144,7 @@ func (p *ParallelCPUProfiler) register(ch ProfileConsumer) {
 	}
 }
 
-func (p *ParallelCPUProfiler) unregister(ch ProfileConsumer) {
+func (p *parallelCPUProfiler) unregister(ch ProfileConsumer) {
 	if ch == nil {
 		return
 	}
@@ -153,7 +153,7 @@ func (p *ParallelCPUProfiler) unregister(ch ProfileConsumer) {
 	p.Unlock()
 }
 
-func (p *ParallelCPUProfiler) profilingLoop() {
+func (p *parallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(defProfileDuration)
 	defer func() {
 		checkTicker.Stop()
@@ -174,7 +174,7 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 	}
 }
 
-func (p *ParallelCPUProfiler) doProfiling() {
+func (p *parallelCPUProfiler) doProfiling() {
 	if p.inProfilingStatus() {
 		p.stopCPUProfile()
 		p.sendToConsumers()
@@ -191,15 +191,15 @@ func (p *ParallelCPUProfiler) doProfiling() {
 	}
 }
 
-func (p *ParallelCPUProfiler) needProfile() bool {
+func (p *parallelCPUProfiler) needProfile() bool {
 	return p.consumersCount() > 0
 }
 
-func (p *ParallelCPUProfiler) inProfilingStatus() bool {
+func (p *parallelCPUProfiler) inProfilingStatus() bool {
 	return p.data != nil
 }
 
-func (p *ParallelCPUProfiler) startCPUProfile() error {
+func (p *parallelCPUProfiler) startCPUProfile() error {
 	if p.nextData != nil {
 		p.data, p.nextData = p.nextData, nil
 	} else {
@@ -209,7 +209,7 @@ func (p *ParallelCPUProfiler) startCPUProfile() error {
 	return pprof.StartCPUProfile(p.data.Data)
 }
 
-func (p *ParallelCPUProfiler) stopCPUProfile() {
+func (p *parallelCPUProfiler) stopCPUProfile() {
 	now := time.Now()
 	p.data.End = now
 
@@ -221,14 +221,14 @@ func (p *ParallelCPUProfiler) stopCPUProfile() {
 	pprof.StopCPUProfile()
 }
 
-func (p *ParallelCPUProfiler) consumersCount() int {
+func (p *parallelCPUProfiler) consumersCount() int {
 	p.Lock()
 	n := len(p.cs)
 	p.Unlock()
 	return n
 }
 
-func (p *ParallelCPUProfiler) sendToConsumers() {
+func (p *parallelCPUProfiler) sendToConsumers() {
 	p.Lock()
 	for c := range p.cs {
 		select {

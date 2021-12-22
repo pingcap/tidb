@@ -126,7 +126,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	// Test stop profiling when no consumer.
 	Register(dataCh)
 	for {
-		// wait for ParallelCPUProfiler do profiling successfully
+		// wait for parallelCPUProfiler do profiling successfully
 		err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
 		if err != nil {
 			break
@@ -137,7 +137,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 	Unregister(dataCh)
 	require.Equal(t, 0, globalCPUProfiler.consumersCount())
 
-	// wait for ParallelCPUProfiler stop profiling
+	// wait for parallelCPUProfiler stop profiling
 	start := time.Now()
 	for {
 		err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
@@ -170,7 +170,7 @@ func TestGetCPUProfile(t *testing.T) {
 	// Test profile error
 	err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
-	err = getCPUProfile(1, bytes.NewBuffer(nil))
+	err = getCPUProfile(time.Second, bytes.NewBuffer(nil))
 	require.Error(t, err)
 	require.Equal(t, "cpu profiling already in use", err.Error())
 	pprof.StopCPUProfile()
@@ -185,7 +185,7 @@ func TestGetCPUProfile(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			buf := bytes.NewBuffer(nil)
-			err = getCPUProfile(1, buf)
+			err = getCPUProfile(time.Second, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)

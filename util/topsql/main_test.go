@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*ParallelCPUProfiler).profilingLoop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*parallelCPUProfiler).profilingLoop"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)
