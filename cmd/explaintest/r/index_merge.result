@@ -481,7 +481,7 @@ explain select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 <
 id	estRows	task	access object	operator info
 Sort_6	1473.49	root		Column#5
 └─HashAgg_11	1473.49	root		group by:Column#10, funcs:sum(Column#9)->Column#5
-  └─Projection_18	1841.86	root		cast(test.t1.c1, decimal(32,0) BINARY)->Column#9, test.t1.c1
+  └─Projection_18	1841.86	root		cast(test.t1.c1, decimal(10,0) BINARY)->Column#9, test.t1.c1
     └─IndexMerge_16	1841.86	root		
       ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
