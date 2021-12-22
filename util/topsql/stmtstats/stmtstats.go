@@ -30,10 +30,10 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(sqlDigest, planDigest []byte)
+	OnExecutionBegin(ctx *StatementExecutionContext)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
+	OnExecutionFinished(ctx *StatementExecutionContext)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -57,22 +57,28 @@ func CreateStatementStats() *StatementStats {
 }
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionBegin(ctx *StatementExecutionContext) {
+	if ctx == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.GetOrCreateStatementStatsItem(ctx.SQLDigest, ctx.PlanDigest)
 
 	item.ExecCount++
 	// Count more data here.
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
+func (s *StatementStats) OnExecutionFinished(ctx *StatementExecutionContext) {
+	if ctx == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.GetOrCreateStatementStatsItem(ctx.SQLDigest, ctx.PlanDigest)
 
-	item.SumExecNanoDuration += uint64(execDuration.Nanoseconds())
+	item.SumExecNanoDuration += uint64(ctx.ExecDuration.Nanoseconds())
 	// Count more data here.
 }
 
@@ -226,4 +232,12 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 			i.KvExecCount[target] += count
 		}
 	}
+}
+
+// StatementExecutionContext represents a single statement execution information.
+type StatementExecutionContext struct {
+	SQLDigest    []byte
+	PlanDigest   []byte
+	ExecDuration time.Duration
+	// Add more required variables here
 }

@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -1254,7 +1255,11 @@ func (a *ExecStmt) GetTextToLog() string {
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		vars.StmtExecCtx = &stmtstats.StatementExecutionContext{
+			SQLDigest:  sqlDigest,
+			PlanDigest: planDigest,
+		}
+		vars.StmtStats.OnExecutionBegin(vars.StmtExecCtx)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
@@ -1262,9 +1267,15 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		execDuration := time.Since(vars.StartTime) + vars.DurationParse
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
+		if vars.StmtExecCtx == nil {
+			sqlDigest, planDigest := a.getSQLPlanDigest()
+			vars.StmtExecCtx = &stmtstats.StatementExecutionContext{
+				SQLDigest:  sqlDigest,
+				PlanDigest: planDigest,
+			}
+		}
+		vars.StmtExecCtx.ExecDuration = time.Since(vars.StartTime) + vars.DurationParse
+		vars.StmtStats.OnExecutionFinished(vars.StmtExecCtx)
 	}
 }
 

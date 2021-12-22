@@ -976,6 +976,10 @@ type SessionVars struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	StmtStats *stmtstats.StatementStats
+	// StmtExecCtx represents the current statement execution information.
+	// Note that the information here is not updated in a timely，
+	// it is only updated at the time of `StmtStats.OnExecutionBegin` and `StmtStats.OnExecutionFinished`.
+	StmtExecCtx *stmtstats.StatementExecutionContext
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
