@@ -1983,7 +1983,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		return nil, nil, err
 	}
 
-	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOptions(tbl.TableInfo.ID, tbl.TableInfo)
+	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2006,7 +2006,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if id == tbl.TableInfo.ID {
 			id = -1
 		} else {
-			savedOpts, savedColChoice, savedColList, err := b.getSavedAnalyzeOptions(id, tbl.TableInfo)
+			savedOpts, savedColChoice, savedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2059,7 +2059,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	return taskSlice, globalV2AnalyzeOptions, nil
 }
 
-func (b *PlanBuilder) getSavedAnalyzeOptions(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
+func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
+	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
+	if !variable.PersistAnalyzeOptions.Load() {
+		return analyzeOptions, model.DefaultChoice, nil, nil
+	}
 	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), "select * from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
@@ -2069,7 +2073,6 @@ func (b *PlanBuilder) getSavedAnalyzeOptions(physicalID int64, tblInfo *model.Ta
 	if err != nil {
 		return nil, model.DefaultChoice, nil, err
 	}
-	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	if len(rows) <= 0 {
 		return analyzeOptions, model.DefaultChoice, nil, nil
 	}
@@ -2091,10 +2094,10 @@ func (b *PlanBuilder) getSavedAnalyzeOptions(physicalID int64, tblInfo *model.Ta
 		analyzeOptions[ast.AnalyzeOptNumTopN] = uint64(topn)
 	}
 	colType := row.GetEnum(5)
-	switch colType.Value {
-	case 1: // ALL
+	switch colType.Name {
+	case "ALL":
 		return analyzeOptions, model.AllColumns, tblInfo.Columns, nil
-	case 2: // LIST
+	case "LIST":
 		colIdStrs := strings.Split(row.GetString(6), ",")
 		colList := make([]*model.ColumnInfo, 0, len(colIdStrs))
 		for _, colIdStr := range colIdStrs {
@@ -2105,7 +2108,7 @@ func (b *PlanBuilder) getSavedAnalyzeOptions(physicalID int64, tblInfo *model.Ta
 			}
 		}
 		return analyzeOptions, model.ColumnList, colList, nil
-	case 3: // PREDICATE
+	case "PREDICATE":
 		return analyzeOptions, model.PredicateColumns, nil, nil
 	default:
 		return analyzeOptions, model.DefaultChoice, nil, nil

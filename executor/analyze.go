@@ -219,7 +219,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
-	if e.V2AnalyzeOptions == nil {
+	if !variable.PersistAnalyzeOptions.Load() || e.V2AnalyzeOptions == nil {
 		return nil
 	}
 	err := saveAnalyzeOpts(e.V2AnalyzeOptions, e.ctx.(sqlexec.RestrictedSQLExecutor))
@@ -244,9 +244,9 @@ func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExec
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumSamples]; ok {
 		sampleNum = val
 	}
-	sampleRate := uint64(0)
+	sampleRate := float64(0)
 	if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-		sampleRate = val
+		sampleRate = math.Float64frombits(val)
 	}
 	buckets := uint64(0)
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumBuckets]; ok {
@@ -258,8 +258,8 @@ func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExec
 	}
 	colChoice := colChoiceEnum[opts.ColChoice]
 	colIds := make([]string, len(opts.ColumnList))
-	for _, colInfo := range opts.ColumnList {
-		colIds = append(colIds, strconv.FormatInt(colInfo.ID, 10))
+	for i, colInfo := range opts.ColumnList {
+		colIds[i] = strconv.FormatInt(colInfo.ID, 10)
 	}
 	colIdStrs := strings.Join(colIds, ",")
 	stmt, err := exec.ParseWithParams(context.TODO(),
