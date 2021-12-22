@@ -168,13 +168,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 	}
 	// Test for varchar index.
 	// range is a ~ z, and split into 26 region.
@@ -216,13 +216,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 	}
 
 	// Test for timestamp index.
@@ -274,13 +274,13 @@ func TestSplitIndex(t *testing.T) {
 		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
 		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 	}
 }
 
@@ -357,7 +357,7 @@ func TestSplitTable(t *testing.T) {
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 	}
 }
 
@@ -452,7 +452,7 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, key)
-		require.Equal(t, idx, ca.lessEqualIdx, ca)
+		require.Equal(t, idx, ca.lessEqualIdx)
 	}
 }
 
