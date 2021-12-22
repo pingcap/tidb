@@ -81,10 +81,12 @@ func (m *aggregator) aggregate() {
 		r.Data.Merge(stats.Take())
 		return true
 	})
-	m.collectors.Range(func(c, _ interface{}) bool {
-		c.(Collector).CollectStmtStatsRecords([]StatementStatsRecord{r})
-		return true
-	})
+	if len(r.Data) > 0 {
+		m.collectors.Range(func(c, _ interface{}) bool {
+			c.(Collector).CollectStmtStatsRecords([]StatementStatsRecord{r})
+			return true
+		})
+	}
 }
 
 // register binds StatementStats to aggregator.

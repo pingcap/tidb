@@ -18,14 +18,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -262,7 +265,7 @@ func TestCollectAndTopN(t *testing.T) {
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
-	getTotalCPUTime := func(record *tipb.CPUTimeRecord) int {
+	getTotalCPUTime := func(record *tipb.TopSQLRecord) int {
 		total := uint32(0)
 		for _, v := range record.RecordListCpuTimeMs {
 			total += v
@@ -335,7 +338,7 @@ func TestCollectCapacity(t *testing.T) {
 
 	variable.TopSQLVariable.MaxStatementCount.Store(5000)
 	collectedData := make(map[string]*dataPoints)
-	tsr.doCollect(collectedData, 1, genRecord(20000))
+	tsr.doCollect(collectedData, map[uint64]map[stmtstats.SQLPlanDigest]struct{}{}, 1, genRecord(20000))
 	require.Equal(t, 5001, len(collectedData))
 	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
 	require.Equal(t, int64(20000), tsr.planMapLength.Load())
@@ -355,10 +358,13 @@ func TestCollectOthers(t *testing.T) {
 	require.Equal(t, uint64(60), others.CPUTimeMsTotal)
 
 	// test for time jump backward.
-	evict := &dataPoints{}
+	evict := &dataPoints{tsIndex: map[uint64]int{}}
 	evict.TimestampList = []uint64{3, 2, 4}
 	evict.CPUTimeMsList = []uint32{30, 20, 40}
 	evict.CPUTimeMsTotal = 90
+	evict.StmtExecCountList = []uint64{0, 0, 0}
+	evict.StmtKvExecCountList = []map[string]uint64{nil, nil, nil}
+	evict.StmtDurationSumNsList = []uint64{0, 0, 0}
 	others = addEvictedIntoSortedDataPoints(others, evict)
 	require.Equal(t, uint64(150), others.CPUTimeMsTotal)
 	require.Equal(t, []uint64{1, 2, 3, 4}, others.TimestampList)
@@ -376,9 +382,16 @@ func TestDataPoints(t *testing.T) {
 	d = &dataPoints{}
 	d.TimestampList = []uint64{1, 2, 5, 6, 3, 4}
 	d.CPUTimeMsList = []uint32{10, 20, 50, 60, 30, 40}
+	d.StmtExecCountList = []uint64{11, 12, 13, 14, 15, 16}
+	d.StmtKvExecCountList = []map[string]uint64{{"": 21}, {"": 22}, {"": 23}, {"": 24}, {"": 25}, {"": 26}}
+	d.StmtDurationSumNsList = []uint64{31, 32, 33, 34, 35, 36}
+	d.rebuildTsIndex()
 	sort.Sort(d)
 	require.Equal(t, []uint64{1, 2, 3, 4, 5, 6}, d.TimestampList)
 	require.Equal(t, []uint32{10, 20, 30, 40, 50, 60}, d.CPUTimeMsList)
+	require.Equal(t, []uint64{11, 12, 15, 16, 13, 14}, d.StmtExecCountList)
+	require.Equal(t, []map[string]uint64{{"": 21}, {"": 22}, {"": 25}, {"": 26}, {"": 23}, {"": 24}}, d.StmtKvExecCountList)
+	require.Equal(t, []uint64{31, 32, 35, 36, 33, 34}, d.StmtDurationSumNsList)
 
 	// test for dataPoints merge.
 	d = &dataPoints{}
@@ -387,6 +400,10 @@ func TestDataPoints(t *testing.T) {
 	evict.TimestampList = []uint64{1, 3}
 	evict.CPUTimeMsList = []uint32{10, 30}
 	evict.CPUTimeMsTotal = 40
+	evict.StmtExecCountList = []uint64{0, 0}
+	evict.StmtKvExecCountList = []map[string]uint64{{}, {}}
+	evict.StmtDurationSumNsList = []uint64{0, 0}
+	evict.rebuildTsIndex()
 	addEvictedIntoSortedDataPoints(d, evict)
 	require.Equal(t, uint64(40), d.CPUTimeMsTotal)
 	require.Equal(t, []uint64{1, 3}, d.TimestampList)
@@ -395,6 +412,10 @@ func TestDataPoints(t *testing.T) {
 	evict.TimestampList = []uint64{1, 2, 3, 4, 5}
 	evict.CPUTimeMsList = []uint32{10, 20, 30, 40, 50}
 	evict.CPUTimeMsTotal = 150
+	evict.StmtExecCountList = []uint64{0, 0, 0, 0, 0}
+	evict.StmtKvExecCountList = []map[string]uint64{{}, {}, {}, {}, {}}
+	evict.StmtDurationSumNsList = []uint64{0, 0, 0, 0, 0}
+	evict.rebuildTsIndex()
 	addEvictedIntoSortedDataPoints(d, evict)
 	require.Equal(t, uint64(190), d.CPUTimeMsTotal)
 	require.Equal(t, []uint64{1, 2, 3, 4, 5}, d.TimestampList)
@@ -406,6 +427,10 @@ func TestDataPoints(t *testing.T) {
 	evict.TimestampList = []uint64{3, 2}
 	evict.CPUTimeMsList = []uint32{30, 20}
 	evict.CPUTimeMsTotal = 50
+	evict.StmtExecCountList = []uint64{0, 0}
+	evict.StmtKvExecCountList = []map[string]uint64{{}, {}}
+	evict.StmtDurationSumNsList = []uint64{0, 0}
+	evict.rebuildTsIndex()
 	addEvictedIntoSortedDataPoints(d, evict)
 	require.Equal(t, uint64(50), d.CPUTimeMsTotal)
 	require.Equal(t, []uint64{2, 3}, d.TimestampList)
@@ -487,12 +512,11 @@ func TestMultipleDataSinks(t *testing.T) {
 	for _, ch := range chs {
 		d := <-ch
 		require.NotNil(t, d)
-		require.Equal(t, []tipb.CPUTimeRecord{{
-			SqlDigest:              []byte("sqlDigest1"),
-			PlanDigest:             []byte("planDigest1"),
-			RecordListTimestampSec: []uint64{3},
-			RecordListCpuTimeMs:    []uint32{2},
-		}}, d.CPUTimeRecords)
+		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, []byte("sqlDigest1"), d.DataRecords[0].SqlDigest)
+		require.Equal(t, []byte("planDigest1"), d.DataRecords[0].PlanDigest)
+		require.Equal(t, []uint64{3}, d.DataRecords[0].RecordListTimestampSec)
+		require.Equal(t, []uint32{2}, d.DataRecords[0].RecordListCpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest1"),
@@ -518,12 +542,11 @@ func TestMultipleDataSinks(t *testing.T) {
 	for i := 1; i < 7; i += 2 {
 		d := <-chs[i]
 		require.NotNil(t, d)
-		require.Equal(t, []tipb.CPUTimeRecord{{
-			SqlDigest:              []byte("sqlDigest4"),
-			PlanDigest:             []byte("planDigest4"),
-			RecordListTimestampSec: []uint64{6},
-			RecordListCpuTimeMs:    []uint32{5},
-		}}, d.CPUTimeRecords)
+		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, []byte("sqlDigest4"), d.DataRecords[0].SqlDigest)
+		require.Equal(t, []byte("planDigest4"), d.DataRecords[0].PlanDigest)
+		require.Equal(t, []uint64{6}, d.DataRecords[0].RecordListTimestampSec)
+		require.Equal(t, []uint32{5}, d.DataRecords[0].RecordListCpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest4"),
@@ -562,4 +585,314 @@ func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 		end += maxSQLNum
 		populateCache(tsr, begin, end, uint64(i))
 	}
+}
+
+func TestStmtStatsReport(t *testing.T) {
+	variable.TopSQLVariable.MaxStatementCount.Store(1)
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Close() // manual control
+
+	r := tsr.getReportData(collectedData{
+		normalizedSQLMap:  &sync.Map{},
+		normalizedPlanMap: &sync.Map{},
+		records: map[string]*dataPoints{
+			"S1P1": {
+				SQLDigest:             []byte("S1"),
+				PlanDigest:            []byte("P1"),
+				TimestampList:         []uint64{1, 2, 3, 4},
+				CPUTimeMsList:         []uint32{11, 12, 13, 14},
+				CPUTimeMsTotal:        11 + 12 + 13 + 14,
+				StmtExecCountList:     []uint64{11, 12, 13, 14},
+				StmtKvExecCountList:   []map[string]uint64{{"": 11}, {"": 12}, {"": 13}, {"": 14}},
+				StmtDurationSumNsList: []uint64{11, 12, 13, 14},
+			},
+			"S2P2": {
+				SQLDigest:             []byte("S2"),
+				PlanDigest:            []byte("P2"),
+				TimestampList:         []uint64{1, 2, 3, 4},
+				CPUTimeMsList:         []uint32{21, 22, 23, 24},
+				CPUTimeMsTotal:        21 + 22 + 23 + 24,
+				StmtExecCountList:     []uint64{21, 22, 23, 24},
+				StmtKvExecCountList:   []map[string]uint64{{"": 21}, {"": 22}, {"": 23}, {"": 24}},
+				StmtDurationSumNsList: []uint64{21, 22, 23, 24},
+			},
+			keyOthers: {
+				SQLDigest:             []byte(nil),
+				PlanDigest:            []byte(nil),
+				TimestampList:         []uint64{1, 2, 3, 4},
+				CPUTimeMsList:         []uint32{91, 92, 93, 94},
+				CPUTimeMsTotal:        91 + 92 + 93 + 94,
+				StmtExecCountList:     []uint64{91, 92, 93, 94},
+				StmtKvExecCountList:   []map[string]uint64{{"": 91}, {"": 92}, {"": 93}, {"": 94}},
+				StmtDurationSumNsList: []uint64{91, 92, 93, 94},
+			},
+		},
+	})
+	assert.True(t, r.hasData())
+	assert.Len(t, r.DataRecords, 2)
+
+	s2p2 := r.DataRecords[0]
+	assert.Equal(t, []byte("S2"), s2p2.SqlDigest)
+	assert.Equal(t, []byte("P2"), s2p2.PlanDigest)
+	assert.Equal(t, []uint64{1, 2, 3, 4}, s2p2.RecordListTimestampSec)
+	assert.Equal(t, []uint32{21, 22, 23, 24}, s2p2.RecordListCpuTimeMs)
+	assert.Equal(t, []uint64{21, 22, 23, 24}, s2p2.RecordListStmtExecCount)
+	assert.Equal(t, []uint64{21, 22, 23, 24}, s2p2.RecordListStmtDurationSumNs)
+	assert.Equal(t, []*tipb.TopSQLStmtKvExecCount{
+		{ExecCount: map[string]uint64{"": 21}},
+		{ExecCount: map[string]uint64{"": 22}},
+		{ExecCount: map[string]uint64{"": 23}},
+		{ExecCount: map[string]uint64{"": 24}},
+	}, s2p2.RecordListStmtKvExecCount)
+
+	others := r.DataRecords[1]
+	assert.Equal(t, []byte(nil), others.SqlDigest)
+	assert.Equal(t, []byte(nil), others.PlanDigest)
+	assert.Equal(t, []uint64{1, 2, 3, 4}, others.RecordListTimestampSec)
+	assert.Equal(t, []uint32{91 + 11, 92 + 12, 93 + 13, 94 + 14}, others.RecordListCpuTimeMs)
+	assert.Equal(t, []uint64{91 + 11, 92 + 12, 93 + 13, 94 + 14}, others.RecordListStmtExecCount)
+	assert.Equal(t, []uint64{91 + 11, 92 + 12, 93 + 13, 94 + 14}, others.RecordListStmtDurationSumNs)
+	assert.Equal(t, []*tipb.TopSQLStmtKvExecCount{
+		{ExecCount: map[string]uint64{"": 91 + 11}},
+		{ExecCount: map[string]uint64{"": 92 + 12}},
+		{ExecCount: map[string]uint64{"": 93 + 13}},
+		{ExecCount: map[string]uint64{"": 94 + 14}},
+	}, others.RecordListStmtKvExecCount)
+}
+
+func TestStmtStatsCollect(t *testing.T) {
+	variable.TopSQLVariable.MaxStatementCount.Store(1000)
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Close() // manual control
+
+	total := map[string]*dataPoints{}
+	evicted := map[uint64]map[stmtstats.SQLPlanDigest]struct{}{}
+	//   TimestampList: []
+	//     CPUTimeList: []
+	//   ExecCountList: []
+	// KvExecCountList: []
+
+	collectCPUTime(tsr, total, evicted, "S1", "P1", 1, 1)
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+
+	collectStmtStats(tsr, total, evicted, "S1", "P1", 1, 2, map[string]uint64{"": 3})
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [2]
+	// KvExecCountList: [3]
+
+	collectCPUTime(tsr, total, evicted, "S1", "P1", 2, 1)
+	//   TimestampList: [1, 2]
+	//     CPUTimeList: [1, 1]
+	//   ExecCountList: [2, 0]
+	// KvExecCountList: [3, 0]
+
+	collectCPUTime(tsr, total, evicted, "S1", "P1", 3, 1)
+	//   TimestampList: [1, 2, 3]
+	//     CPUTimeList: [1, 1, 1]
+	//   ExecCountList: [2, 0, 0]
+	// KvExecCountList: [3, 0, 0]
+
+	collectStmtStats(tsr, total, evicted, "S1", "P1", 3, 2, map[string]uint64{"": 3})
+	//   TimestampList: [1, 2, 3]
+	//     CPUTimeList: [1, 1, 1]
+	//   ExecCountList: [2, 0, 2]
+	// KvExecCountList: [3, 0, 3]
+
+	collectStmtStats(tsr, total, evicted, "S1", "P1", 2, 2, map[string]uint64{"": 3})
+	//   TimestampList: [1, 2, 3]
+	//     CPUTimeList: [1, 1, 1]
+	//   ExecCountList: [2, 2, 2]
+	// KvExecCountList: [3, 3, 3]
+
+	assert.Empty(t, evicted)
+	data, ok := total["S1P1"]
+	assert.True(t, ok)
+	assert.Equal(t, []byte("S1"), data.SQLDigest)
+	assert.Equal(t, []byte("P1"), data.PlanDigest)
+	assert.Equal(t, uint64(3), data.CPUTimeMsTotal)
+	assert.Equal(t, []uint64{1, 2, 3}, data.TimestampList)
+	assert.Equal(t, []uint32{1, 1, 1}, data.CPUTimeMsList)
+	assert.Equal(t, []uint64{2, 2, 2}, data.StmtExecCountList)
+	assert.Equal(t, []map[string]uint64{{"": 3}, {"": 3}, {"": 3}}, data.StmtKvExecCountList)
+}
+
+func TestStmtStatsCollectEvicted(t *testing.T) {
+	variable.TopSQLVariable.MaxStatementCount.Store(2)
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Close() // manual control
+
+	total := map[string]*dataPoints{}
+	evicted := map[uint64]map[stmtstats.SQLPlanDigest]struct{}{}
+
+	tsr.doCollect(total, evicted, 1, []tracecpu.SQLCPUTimeRecord{
+		{SQLDigest: []byte("S1"), PlanDigest: []byte("P1"), CPUTimeMs: 1},
+		{SQLDigest: []byte("S2"), PlanDigest: []byte("P2"), CPUTimeMs: 2},
+		{SQLDigest: []byte("S3"), PlanDigest: []byte("P3"), CPUTimeMs: 3},
+	})
+	// S2P2:
+	//   TimestampList: [1]
+	//     CPUTimeList: [2]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// S3P3:
+	//   TimestampList: [1]
+	//     CPUTimeList: [3]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// others:
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// evicted: {1: S1P1}
+
+	collectStmtStats(tsr, total, evicted, "S1", "P1", 1, 1, map[string]uint64{"": 1})
+	// S2P2:
+	//   TimestampList: [1]
+	//     CPUTimeList: [2]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// S3P3:
+	//   TimestampList: [1]
+	//     CPUTimeList: [3]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// others:
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [1]
+	// KvExecCountList: [1]
+	//
+	// evicted: {1: S1P1}
+
+	collectStmtStats(tsr, total, evicted, "S2", "P2", 1, 2, map[string]uint64{"": 2})
+	// S2P2:
+	//   TimestampList: [1]
+	//     CPUTimeList: [2]
+	//   ExecCountList: [2]
+	// KvExecCountList: [2]
+	//
+	// S3P3:
+	//   TimestampList: [1]
+	//     CPUTimeList: [3]
+	//   ExecCountList: [0]
+	// KvExecCountList: [0]
+	//
+	// others:
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [1]
+	// KvExecCountList: [1]
+	//
+	// evicted: {1: S1P1}
+
+	collectStmtStats(tsr, total, evicted, "S3", "P3", 1, 3, map[string]uint64{"": 3})
+	// S2P2:
+	//   TimestampList: [1]
+	//     CPUTimeList: [2]
+	//   ExecCountList: [2]
+	// KvExecCountList: [2]
+	//
+	// S3P3:
+	//   TimestampList: [1]
+	//     CPUTimeList: [3]
+	//   ExecCountList: [3]
+	// KvExecCountList: [3]
+	//
+	// others:
+	//   TimestampList: [1]
+	//     CPUTimeList: [1]
+	//   ExecCountList: [1]
+	// KvExecCountList: [1]
+	//
+	// evicted: {1: S1P1}
+
+	assert.Len(t, evicted, 1)
+	m, ok := evicted[1]
+	assert.True(t, ok)
+	_, ok = m[stmtstats.SQLPlanDigest{SQLDigest: "S1", PlanDigest: "P1"}]
+	assert.True(t, ok)
+	_, ok = total["S1P1"]
+	assert.False(t, ok)
+
+	s2p2, ok := total["S2P2"]
+	assert.True(t, ok)
+	assert.Equal(t, []byte("S2"), s2p2.SQLDigest)
+	assert.Equal(t, []byte("P2"), s2p2.PlanDigest)
+	assert.Equal(t, uint64(2), s2p2.CPUTimeMsTotal)
+	assert.Equal(t, []uint64{1}, s2p2.TimestampList)
+	assert.Equal(t, []uint32{2}, s2p2.CPUTimeMsList)
+	assert.Equal(t, []uint64{2}, s2p2.StmtExecCountList)
+	assert.Equal(t, []map[string]uint64{{"": 2}}, s2p2.StmtKvExecCountList)
+
+	s3p3, ok := total["S3P3"]
+	assert.True(t, ok)
+	assert.Equal(t, []byte("S3"), s3p3.SQLDigest)
+	assert.Equal(t, []byte("P3"), s3p3.PlanDigest)
+	assert.Equal(t, uint64(3), s3p3.CPUTimeMsTotal)
+	assert.Equal(t, []uint64{1}, s3p3.TimestampList)
+	assert.Equal(t, []uint32{3}, s3p3.CPUTimeMsList)
+	assert.Equal(t, []uint64{3}, s3p3.StmtExecCountList)
+	assert.Equal(t, []map[string]uint64{{"": 3}}, s3p3.StmtKvExecCountList)
+
+	others, ok := total[keyOthers]
+	assert.True(t, ok)
+	assert.Equal(t, []byte(nil), others.SQLDigest)
+	assert.Equal(t, []byte(nil), others.PlanDigest)
+	assert.Equal(t, uint64(1), others.CPUTimeMsTotal)
+	assert.Equal(t, []uint64{1}, others.TimestampList)
+	assert.Equal(t, []uint32{1}, others.CPUTimeMsList)
+	assert.Equal(t, []uint64{1}, others.StmtExecCountList)
+	assert.Equal(t, []map[string]uint64{{"": 1}}, others.StmtKvExecCountList)
+}
+
+func collectCPUTime(
+	tsr *RemoteTopSQLReporter,
+	total map[string]*dataPoints,
+	evicted map[uint64]map[stmtstats.SQLPlanDigest]struct{},
+	sqlDigest, planDigest string,
+	ts uint64,
+	cpuTime uint32) {
+	tsr.doCollect(total, evicted, ts, []tracecpu.SQLCPUTimeRecord{{
+		SQLDigest:  []byte(sqlDigest),
+		PlanDigest: []byte(planDigest),
+		CPUTimeMs:  cpuTime,
+	}})
+}
+
+func collectStmtStats(
+	tsr *RemoteTopSQLReporter,
+	total map[string]*dataPoints,
+	evicted map[uint64]map[stmtstats.SQLPlanDigest]struct{},
+	sqlDigest, planDigest string,
+	ts int64,
+	execCount uint64,
+	kvExecCount map[string]uint64) {
+	tsr.doCollectStmtRecords(total, evicted, []stmtstats.StatementStatsRecord{{
+		Timestamp: ts,
+		Data: stmtstats.StatementStatsMap{
+			stmtstats.SQLPlanDigest{
+				SQLDigest:  stmtstats.BinaryDigest(sqlDigest),
+				PlanDigest: stmtstats.BinaryDigest(planDigest),
+			}: &stmtstats.StatementStatsItem{
+				ExecCount: execCount,
+				KvStatsItem: stmtstats.KvStatementStatsItem{
+					KvExecCount: kvExecCount,
+				},
+				// TODO(mornyx): add duration
+			},
+		},
+	}})
 }

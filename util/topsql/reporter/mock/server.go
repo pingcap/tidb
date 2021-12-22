@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type mockAgentServer struct {
@@ -34,7 +36,7 @@ type mockAgentServer struct {
 	grpcServer *grpc.Server
 	sqlMetas   map[string]tipb.SQLMeta
 	planMetas  map[string]string
-	records    [][]*tipb.CPUTimeRecord
+	records    [][]*tipb.TopSQLRecord
 	hang       struct {
 		beginTime atomic.Value // time.Time
 		endTime   atomic.Value // time.Time
@@ -86,7 +88,11 @@ func (svr *mockAgentServer) mayHang() {
 }
 
 func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	records := make([]*tipb.CPUTimeRecord, 0, 10)
+	return status.Error(codes.Unimplemented, "unimplemented")
+}
+
+func (svr *mockAgentServer) ReportTopSQLRecords(stream tipb.TopSQLAgent_ReportTopSQLRecordsServer) error {
+	records := make([]*tipb.TopSQLRecord, 0, 10)
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -180,10 +186,10 @@ func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout t
 	}
 }
 
-func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
+func (svr *mockAgentServer) GetLatestRecords() []*tipb.TopSQLRecord {
 	svr.Lock()
 	records := svr.records
-	svr.records = [][]*tipb.CPUTimeRecord{}
+	svr.records = [][]*tipb.TopSQLRecord{}
 	svr.Unlock()
 
 	if len(records) == 0 {
