@@ -3180,17 +3180,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "expr": "sum(rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-rate",
+              "legendFormat": "{{type}}-rate",
               "refId": "A"
             },
             {
-              "expr": "tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}) by (type)",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{type}}-total",
+              "legendFormat": "{{type}}-total",
               "refId": "B"
             }
           ],
