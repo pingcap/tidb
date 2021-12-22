@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 )
 
 var (
@@ -57,10 +58,20 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	ret := &plannercore.PreprocessorReturn{}
 	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
-	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
+	err := plannercore.Preprocess(c.Ctx,
+		stmtNode,
+		plannercore.WithPreprocessorReturn(ret),
+		plannercore.WithExecuteInfoSchemaUpdate(pe),
+		plannercore.InitTxnContextProvider,
+	)
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
+	})
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
 	if err != nil {
