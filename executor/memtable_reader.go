@@ -1028,36 +1028,37 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 
 	var regionsInfo, regionsInfoByStoreID, regionsInfoByRegionID []helper.RegionInfo
 	regionMap := make(map[int64]struct{})
-	if len(e.extractor.StoreIDs) > 0 {
-		for _, storeID := range e.extractor.StoreIDs {
-			regionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
-			if err != nil {
-				return nil, err
-			}
-			// remove dup region
-			for _, region := range regionsInfo.Regions {
-				if _, ok := regionMap[region.ID]; !ok {
-					regionMap[region.ID] = struct{}{}
-					regionsInfoByStoreID = append(regionsInfoByStoreID, region)
-				}
-			}
+
+	for _, storeID := range e.extractor.StoreIDs {
+		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
+		if err != nil {
+			return nil, err
 		}
-		if len(e.extractor.RegionIDs) < 1 {
-			return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
+		for _, regionInfo := range storeRegionsInfo.Regions {
+			// regionMap is used to remove dup regions and intersect
+			if _, ok := regionMap[regionInfo.ID]; !ok {
+				regionMap[regionInfo.ID] = struct{}{}
+				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
+			}
 		}
 	}
 
-	if len(e.extractor.RegionIDs) > 0 {
-		for _, regionID := range e.extractor.RegionIDs {
-			regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
-			if err != nil {
-				return nil, err
-			}
-			regionsInfoByRegionID = append(regionsInfoByRegionID, *regionInfo)
+	for _, regionID := range e.extractor.RegionIDs {
+		regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+		if err != nil {
+			return nil, err
 		}
-		if len(e.extractor.StoreIDs) < 1 {
-			return e.packTiKVRegionPeersRows(regionsInfoByRegionID)
-		}
+		regionsInfoByRegionID = append(regionsInfoByRegionID, *regionInfo)
+	}
+
+	// len(regionsInfoByStoreID) == 0 include two cases:
+	// 1. no store_id predicate 2. no corresponding store regionsInfo
+	if len(e.extractor.RegionIDs) == 0 {
+		return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
+	}
+
+	if len(e.extractor.StoreIDs) == 0 {
+		return e.packTiKVRegionPeersRows(regionsInfoByRegionID)
 	}
 
 	// intersect
