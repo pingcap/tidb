@@ -1175,7 +1175,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		defer span1.Finish()
 	}
 	defer trace.StartRegion(ctx, "ParseSQL").End()
-
+	s.GetSessionVars().SQL = sql
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
@@ -2867,17 +2867,18 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
 		go func() {
-			builder := strings.Builder{}
+			var builder strings.Builder
 			if vars.InTxn() {
 				builder.WriteString(vars.TxnCtx.ID.String())
 				builder.WriteString(" ")
 			}
 			// Logic TS
-			ts := s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS
-			builder.WriteString(string(ts))
+			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS, 10)
+			builder.WriteString(ts)
 			builder.WriteString(" ")
 			text := strings.ReplaceAll(vars.SQL, "\n", " ")
 			builder.WriteString(text)
+			fmt.Println(builder.String())
 			logutil.PutRecordOrDrop(builder.String())
 		}()
 	}
