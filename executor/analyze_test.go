@@ -1368,7 +1368,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 
-	// use different options for partitions and merge partition & table level options
+	// merge partition & table level options
 	tk.MustExec("analyze table t columns a,b")
 	tbl := h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
@@ -1430,6 +1430,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
+	lastVersion = tbl.Version
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	require.Equal(t, 1, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
@@ -1440,4 +1441,48 @@ PARTITION BY RANGE ( a ) (
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
 	require.Equal(t, len(rs.Rows()), 1)
 	require.Equal(t, "2", rs.Rows()[0][3])
+
+	// merge options of statement's, partition's and table's
+	tk.MustExec("analyze table t partition p0 with 1 buckets")
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	require.Equal(t, 1, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, "1", rs.Rows()[0][3])
+
+	// drop column
+	tk.MustExec("alter table t drop column b")
+	tk.MustExec("analyze table t")
+	colIDStrs = strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10)}, ",")
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+
+	// drop partition
+	tk.MustExec("alter table t drop partition p1")
+	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 0)
+
+	// drop table
+	tk.MustExec("drop table t")
+	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 0)
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, len(rs.Rows()), 0)
 }
