@@ -13,7 +13,7 @@ import (
 
 // interface is to bulk create table parallelly
 type BulkCreateTableSession interface {
-	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, batchDdlSize uint) error
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error
 }
 
 // Glue is an abstraction of TiDB function calls used in BR.

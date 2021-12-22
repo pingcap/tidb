@@ -131,9 +131,9 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, batchDdlSize uint) error {
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
-	log.Info("tidb start create tables", zap.Uint("batchDdlSize", batchDdlSize))
+	log.Info("tidb start create tables")
 	var dbName model.CIStr
 	cloneTables := make([]*model.TableInfo, 0, len(tables))
 

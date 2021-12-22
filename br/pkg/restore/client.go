@@ -421,7 +421,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetBatchDdlSize())
+		err := db.CreateTables(ctx, tables)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -509,55 +509,61 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	err := rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
-	//cts, err := rc.createTables(ctx, rc.db, dom, tables, newTS)
+	var err error = nil
+	if rc.batchDllSize > 0 {
+		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
-	if err == nil {
-		defer close(outCh)
-		// fall back to old create table (sequential create table)
-	} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
-		log.Info("fall back to the old DDL way to create table.")
-		createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
-			select {
-			case <-c.Done():
-				return c.Err()
-			default:
-			}
-			rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
-			if err != nil {
-				log.Error("create table failed",
-					zap.Error(err),
-					zap.Stringer("db", t.DB.Name),
-					zap.Stringer("table", t.Info.Name))
-				return errors.Trace(err)
-			}
-			log.Debug("table created and send to next",
-				zap.Int("output chan size", len(outCh)),
-				zap.Stringer("table", t.Info.Name),
-				zap.Stringer("database", t.DB.Name))
-			outCh <- rt
-			rater.Inc()
-			rater.L().Info("table created",
-				zap.Stringer("table", t.Info.Name),
-				zap.Stringer("database", t.DB.Name))
-			return nil
-		}
-		go func() {
+		if err == nil {
+			log.Info("bulk to create tables success.")
 			defer close(outCh)
-			defer log.Debug("all tables are created")
-			var err error
-			if len(dbPool) > 0 {
-				err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
-			} else {
-				err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
-			}
-			if err != nil {
-				errCh <- err
-			}
-		}()
-	} else {
-		errCh <- err
+			// fall back to old create table (sequential create table)
+		} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
+			log.Info("fall back to the old DDL way to create table.")
+		} else {
+			log.Error("bulk to create tables failure.")
+			errCh <- err
+			return outCh
+		}
 	}
+
+	createOneTable := func(c context.Context, db *DB, t *metautil.Table) error {
+		select {
+		case <-c.Done():
+			return c.Err()
+		default:
+		}
+		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
+		if err != nil {
+			log.Error("create table failed",
+				zap.Error(err),
+				zap.Stringer("db", t.DB.Name),
+				zap.Stringer("table", t.Info.Name))
+			return errors.Trace(err)
+		}
+		log.Debug("table created and send to next",
+			zap.Int("output chan size", len(outCh)),
+			zap.Stringer("table", t.Info.Name),
+			zap.Stringer("database", t.DB.Name))
+		outCh <- rt
+		rater.Inc()
+		rater.L().Info("table created",
+			zap.Stringer("table", t.Info.Name),
+			zap.Stringer("database", t.DB.Name))
+		return nil
+	}
+	go func() {
+		defer close(outCh)
+		defer log.Debug("all tables are created")
+		var err error
+		if len(dbPool) > 0 {
+			err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
+		} else {
+			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
+		}
+		if err != nil {
+			errCh <- err
+		}
+	}()
 	return outCh
 }
 
