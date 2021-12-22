@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -216,4 +217,23 @@ type CachedPrepareStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+}
+
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+	var ok bool
+	execID := stmt.ExecID
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, ErrStmtNotFound
+		}
+	}
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj, nil
+	}
+	return nil, ErrStmtNotFound
 }
