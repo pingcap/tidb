@@ -123,13 +123,29 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBui
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
 
-	accountName := options.AccountName
-	if val := os.Getenv("AZURE_STORAGE_ACCOUNT"); len(val) > 0 {
-		accountName = val
+	if len(options.AccountName) > 0 && len(options.SharedKey) > 0 {
+		serviceURL := options.Endpoint
+		if len(serviceURL) == 0 {
+			serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net", options.AccountName)
+		}
+		cred, err := azblob.NewSharedKeyCredential(options.AccountName, options.SharedKey)
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		}
+		return &sharedKeyClientBuilder{
+			cred,
+			options.AccountName,
+			serviceURL,
+		}, nil
 	}
 
+	accountName := options.AccountName
 	if len(accountName) == 0 {
-		return nil, errors.New("account name cannot be empty to access azure blob storage")
+		if val := os.Getenv("AZURE_STORAGE_ACCOUNT"); len(val) > 0 {
+			accountName = val
+		} else {
+			return nil, errors.New("account name cannot be empty to access azure blob storage")
+		}
 	}
 
 	serviceURL := options.Endpoint
@@ -140,7 +156,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBui
 	if clientId, tenantId, clientSecret := getAuthorizerFromEnvironment(); len(clientId) > 0 && len(tenantId) > 0 && len(clientSecret) > 0 {
 		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
 		if err != nil {
-			log.Warn("Failed to get azure token credential from environment but variables exist, try to use shared key.", zap.String("tenantId", tenantId), zap.String("clientId", clientId), zap.String("clientSecret", "?"))
+			log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantId), zap.String("clientId", clientId), zap.String("clientSecret", "?"))
 		} else {
 			return &tokenClientBuilder{
 				cred,
@@ -150,10 +166,12 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBui
 		}
 	}
 
-	sharedKey := options.SharedKey
-	if val, ex := os.LookupEnv("AZURE_STORAGE_KEY"); ex {
+	var sharedKey string
+	if val := os.Getenv("AZURE_STORAGE_KEY"); len(val) > 0 {
 		log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
 		sharedKey = val
+	} else {
+		return nil, errors.New("cannot find any credential info to access azure blob storage")
 	}
 
 	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)

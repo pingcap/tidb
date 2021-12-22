@@ -189,16 +189,27 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 
 	{
 		options := &backuppb.AzureBlobStorage{
-			Bucket:    "test",
-			Prefix:    "a/b",
-			SharedKey: "cGFzc3dk",
+			Bucket:      "test",
+			Prefix:      "a/b",
+			AccountName: "user",
+			SharedKey:   "cGFzc3dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "env_user")
-		c.Assert(b.serviceURL, Equals, "https://env_user.blob.core.windows.net")
+		c.Assert(b.GetAccountName(), Equals, "user")
+		c.Assert(b.serviceURL, Equals, "https://user.blob.core.windows.net")
+	}
+
+	{
+		options := &backuppb.AzureBlobStorage{
+			Bucket:    "test",
+			Prefix:    "a/b",
+			SharedKey: "cGFzc3dk",
+		}
+		_, err := getAzureServiceClientBuilder(options)
+		c.Assert(err, NotNil)
 	}
 
 	err = os.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
@@ -207,9 +218,10 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 
 	{
 		options := &backuppb.AzureBlobStorage{
-			Endpoint: "http://127.0.0.1:1000",
-			Bucket:   "test",
-			Prefix:   "a/b",
+			Endpoint:  "http://127.0.0.1:1000",
+			Bucket:    "test",
+			Prefix:    "a/b",
+			SharedKey: "cGFzc2dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options)
 		c.Assert(err, IsNil)
@@ -242,6 +254,52 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 		b, ok := builder.(*tokenClientBuilder)
 		c.Assert(ok, IsTrue)
 		c.Assert(b.GetAccountName(), Equals, "env_user")
+		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+	}
+
+	{
+		options := &backuppb.AzureBlobStorage{
+			Endpoint:  "http://127.0.0.1:1000",
+			Bucket:    "test",
+			Prefix:    "a/b",
+			SharedKey: "cGFzc2dk",
+		}
+		builder, err := getAzureServiceClientBuilder(options)
+		c.Assert(err, IsNil)
+		b, ok := builder.(*tokenClientBuilder)
+		c.Assert(ok, IsTrue)
+		c.Assert(b.GetAccountName(), Equals, "env_user")
+		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+	}
+
+	{
+		options := &backuppb.AzureBlobStorage{
+			Endpoint:    "http://127.0.0.1:1000",
+			Bucket:      "test",
+			Prefix:      "a/b",
+			AccountName: "user",
+			SharedKey:   "cGFzc3dk",
+		}
+		builder, err := getAzureServiceClientBuilder(options)
+		c.Assert(err, IsNil)
+		b, ok := builder.(*sharedKeyClientBuilder)
+		c.Assert(ok, IsTrue)
+		c.Assert(b.GetAccountName(), Equals, "user")
+		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+	}
+
+	{
+		options := &backuppb.AzureBlobStorage{
+			Endpoint:    "http://127.0.0.1:1000",
+			Bucket:      "test",
+			Prefix:      "a/b",
+			AccountName: "user",
+		}
+		builder, err := getAzureServiceClientBuilder(options)
+		c.Assert(err, IsNil)
+		b, ok := builder.(*tokenClientBuilder)
+		c.Assert(ok, IsTrue)
+		c.Assert(b.GetAccountName(), Equals, "user")
 		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
 	}
 
