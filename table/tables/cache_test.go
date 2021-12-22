@@ -221,6 +221,7 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
 			break
 		}
+		// Wait for the cache to be loaded.
 		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, i < 10)
