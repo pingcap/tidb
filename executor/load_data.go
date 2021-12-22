@@ -375,23 +375,6 @@ func (e *LoadDataInfo) getValidData(curData []byte) ([]byte, bool) {
 	return curData[idx:], true
 }
 
-func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
-	inQuoter := false
-	if e.FieldsInfo.Enclosed == byte(0) {
-		return false
-	}
-	for i := 0; i < len(bs); i++ {
-		switch bs[i] {
-		case e.FieldsInfo.Enclosed:
-			inQuoter = !inQuoter
-		case e.FieldsInfo.Escaped:
-			i++
-		default:
-		}
-	}
-	return inQuoter
-}
-
 // IndexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
 func (e *LoadDataInfo) IndexOfTerminator(bs []byte, inQuoter bool) int {
@@ -503,23 +486,6 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		return nil, curData, true
 	}
 
-	defer func() {
-		r := recover()
-		if r != nil {
-			logutil.BgLogger().Info("load data",
-				zap.String("Field Terminated", e.FieldsInfo.Terminated),
-				zap.String("Field Enclosed", string(e.FieldsInfo.Enclosed)),
-				zap.Bool("Field OptEnclosed", e.FieldsInfo.OptEnclosed),
-				zap.String("Line Starting", e.LinesInfo.Starting),
-				zap.String("Line Terminated", e.LinesInfo.Terminated),
-				zap.Int("endIdx", endIdx),
-				zap.Bool("ignore", ignore),
-				zap.Bool("prevData-contains-00bytes", bytes.Contains(prevData, []byte{e.FieldsInfo.Enclosed})),
-				zap.Bool("curData-contains-00bytes", bytes.Contains(curData, []byte{e.FieldsInfo.Enclosed})),
-			)
-			panic(r)
-		}
-	}()
 	return curData[startLen : startLen+endIdx], curData[startLen+endIdx+len(e.LinesInfo.Terminated):], true
 }
 
