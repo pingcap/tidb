@@ -184,15 +184,11 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	}
 	for n := 0; n < 2; n++ {
 		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""))
-		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), func(item *StatementStatsItem) {
-			item.SumExecNanoDuration += uint64(time.Second.Nanoseconds())
-		})
+		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second)
 	}
 	for n := 0; n < 3; n++ {
 		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
-		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), func(item *StatementStatsItem) {
-			item.SumExecNanoDuration += uint64(time.Millisecond.Nanoseconds())
-		})
+		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond)
 	}
 	m = stats.Take()
 	assert.Len(t, m, 3)

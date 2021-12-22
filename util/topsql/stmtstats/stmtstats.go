@@ -16,6 +16,7 @@ package stmtstats
 
 import (
 	"sync"
+	"time"
 
 	"go.uber.org/atomic"
 )
@@ -32,7 +33,7 @@ type StatementObserver interface {
 	OnExecutionBegin(sqlDigest, planDigest []byte)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte, fn func(*StatementStatsItem))
+	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -66,12 +67,12 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, fn func(*StatementStatsItem)) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
-	fn(item)
+	item.SumExecNanoDuration += uint64(execDuration.Nanoseconds())
 	// Count more data here.
 }
 

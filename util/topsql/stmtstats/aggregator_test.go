@@ -55,9 +55,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}
 	a.register(stats)
 	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
-	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), func(item *StatementStatsItem) {
-		item.SumExecNanoDuration += uint64(time.Millisecond.Nanoseconds())
-	})
+	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), time.Millisecond)
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
 		records = append(records, rs...)
