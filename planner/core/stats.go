@@ -432,12 +432,14 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				break
 			}
 		}
-		// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
-		warnings := stmtCtx.GetWarnings()
-		_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
-		stmtCtx.SetWarnings(warnings)
-		if len(remaining) != 0 {
-			needConsiderIndexMerge = false
+		if needConsiderIndexMerge {
+			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
+			warnings := stmtCtx.GetWarnings()
+			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.ctx.GetClient(), kv.UnSpecified)
+			stmtCtx.SetWarnings(warnings)
+			if len(remaining) != 0 {
+				needConsiderIndexMerge = false
+			}
 		}
 	}
 
@@ -449,7 +451,21 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
-		stmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		var msg string
+		if !isPossibleIdxMerge {
+			msg = "No available filter or access path."
+		} else if !sessionAndStmtPermission {
+			msg = "Got no_index_merge hint or switcher is off."
+		} else if !needConsiderIndexMerge {
+			msg = "Got index path or exprs that cannot be pushed."
+		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
+			msg = "Cannot use IndexMerge on temporary table."
+		} else if readFromTableCache {
+			msg = "Cannot use IndexMerge on TableCache."
+		}
+		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
+		stmtCtx.AppendWarning(errors.Errorf(msg))
+		logutil.BgLogger().Info(msg)
 	}
 	return ds.stats, nil
 }
