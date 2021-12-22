@@ -3058,7 +3058,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.PrepareTxnCtx(context.Background())
+	err = tk1.Se.PrepareTxnCtx(context.Background())
+	c.Assert(err, IsNil)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// AutoCommit update will retry, so it would not fail.

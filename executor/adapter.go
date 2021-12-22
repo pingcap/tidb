@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -263,6 +264,12 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		a.PsStmt.Executor = newExecutor
 	}
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
+
+	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
+	})
+
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
 		return nil, err
@@ -298,6 +305,16 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, plannercore.InTxnRetry, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return 0, err
 	}
+
+	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
+		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
+			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
+		}
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
+	})
+
 	a.InfoSchema = ret.InfoSchema
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.IsStaleness = ret.IsStaleness
@@ -755,6 +772,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
+	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
+	})
+
 	if err = e.Open(ctx); err != nil {
 		return nil, err
 	}
@@ -808,6 +829,11 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
+
+	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
+		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
+		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
+	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
