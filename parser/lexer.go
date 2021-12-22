@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -949,11 +950,22 @@ func (r *reader) peek() rune {
 	if r.eof() {
 		return unicode.ReplacementChar
 	}
-	v, w := r.encoding.DecodeRuneInString(r.s[r.p.Offset:])
-	r.w = w
-	r.peekRune = v
+	restStr := r.s[r.p.Offset:]
+	if restStr[0] <= unicode.MaxASCII {
+		r.peekRune, r.w = rune(restStr[0]), 1
+	} else {
+		rest := charset.Slice(r.s[r.p.Offset:])
+		nextCh := r.encoding.Peek(rest)
+		utf8Ch, err := r.encoding.Transform(nil, nextCh, charset.OpDecode)
+		if err != nil {
+			r.peekRune, r.w = rune(restStr[0]), 1
+		} else {
+			r.w = len(nextCh)
+			r.peekRune, _ = utf8.DecodeRune(utf8Ch)
+		}
+	}
 	r.peekRuneUpdated = true
-	return v
+	return r.peekRune
 }
 
 // inc increase the position offset of the reader.

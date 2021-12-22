@@ -14,16 +14,15 @@
 package charset
 
 import (
+	"golang.org/x/text/encoding"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 )
 
 // EncodingGBKImpl is the instance of encodingGBK
-var EncodingGBKImpl = &encodingGBK{encodingBase{enc: simplifiedchinese.GBK}}
+var EncodingGBKImpl = &encodingGBK{encodingBase{enc: customGBK{}}}
 
 func init() {
 	EncodingGBKImpl.self = EncodingGBKImpl
@@ -44,35 +43,6 @@ func (e *encodingGBK) Tp() EncodingTp {
 	return EncodingTpGBK
 }
 
-// Foreach implements Encoding interface.
-func (e *encodingGBK) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
-	var tfm transform.Transformer
-	var peek func([]byte) []byte
-	if op&opFromUTF8 != 0 {
-		tfm = e.enc.NewEncoder()
-		peek = EncodingUTF8Impl.Peek
-	} else {
-		tfm = e.enc.NewDecoder()
-		peek = e.self.Peek
-	}
-	var buf [4]byte
-	var nDst int
-	var err error
-	for i, w := 0, 0; i < len(src); i += w {
-		w = len(peek(src[i:]))
-		// for compatible with mysql, see https://github.com/pingcap/tidb/issues/30581 get details
-		if op&opToUTF8 != 0 && src[i] == 0x80 {
-			err = errInvalidCharacterString
-		} else {
-			nDst, _, err = tfm.Transform(buf[:], src[i:i+w], false)
-		}
-		meetErr := err != nil || (op&opToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
-		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
-			return
-		}
-	}
-}
-
 // Peek implements Encoding interface.
 func (e *encodingGBK) Peek(src []byte) []byte {
 	charLen := 2
@@ -84,20 +54,6 @@ func (e *encodingGBK) Peek(src []byte) []byte {
 		return src[:charLen]
 	}
 	return src
-}
-
-func (e *encodingGBK) DecodeRuneInString(src string) (r rune, size int) {
-	r, size = rune(src[0]), 1
-	if r >= 0x80 {
-		srcBytes := e.self.Peek(Slice(src))
-		dstBytes, err := e.Transform(nil, srcBytes, OpDecode)
-		if err != nil {
-			return rune(src[0]), 1
-		}
-		r, _ = utf8.DecodeRune(dstBytes)
-		size = len(srcBytes)
-	}
-	return r, size
 }
 
 // ToUpper implements Encoding interface.
@@ -135,4 +91,42 @@ var GBKCase = unicode.SpecialCase{
 	unicode.CaseRange{Lo: 0x01DA, Hi: 0x01DA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x01DC, Hi: 0x01DC, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x216A, Hi: 0x216B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
+}
+
+// customGBK is a simplifiedchinese.GBK wrapper
+type customGBK struct {}
+
+// NewDecoder returns simplifiedchinese.GBK.NewDecoder()
+func (c customGBK) NewDecoder() *encoding.Decoder {
+	return &encoding.Decoder{
+		Transformer: customGBKDecoder{
+			gbkDecoder: simplifiedchinese.GBK.NewDecoder(),
+		},
+	}
+}
+
+// NewEncoder returns simplifiedchinese.GBK.NewEncoder()
+func (c customGBK) NewEncoder() *encoding.Encoder {
+	return simplifiedchinese.GBK.NewEncoder()
+}
+
+type customGBKDecoder struct {
+	gbkDecoder *encoding.Decoder
+}
+
+// Transform special treatment for 0x80
+// see https://github.com/pingcap/tidb/issues/30581 get details
+func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	if len(src) == 0 {
+		return 0, 0, nil
+	}
+	if src[0] == 0x80 {
+		return 0, 0, errInvalidCharacterString
+	}
+	return c.gbkDecoder.Transform(dst, src, atEOF)
+}
+
+// Reset is same as simplifiedchinese.GBK.Reset()
+func (c customGBKDecoder) Reset() {
+	c.gbkDecoder.Reset()
 }

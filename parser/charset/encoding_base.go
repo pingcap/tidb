@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"unicode/utf8"
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -33,17 +32,6 @@ var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharac
 type encodingBase struct {
 	enc  encoding.Encoding
 	self Encoding
-}
-
-func (b encodingBase) DecodeRuneInString(src string) (r rune, size int) {
-	r, size = rune(src[0]), 1
-	if r >= 0x80 {
-		r, size = utf8.DecodeRuneInString(src[:])
-		if r == utf8.RuneError && size == 1 {
-			r = rune(src[0]) // illegal encoding
-		}
-	}
-	return r, size
 }
 
 func (b encodingBase) ToUpper(src string) string {

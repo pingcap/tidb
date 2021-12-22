@@ -61,9 +61,6 @@ type Encoding interface {
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
 	Transform(dest, src []byte, op Op) ([]byte, error)
-	// DecodeRuneInString try to decode the first rune in src,
-	// when decode failed return size = 1 and r = rune(src[0])
-	DecodeRuneInString(src string) (r rune, size int)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.
