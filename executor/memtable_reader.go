@@ -1040,7 +1040,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 			if _, ok := regionMap[regionInfo.ID]; !ok {
 				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
 				regionMap[regionInfo.ID] = index
-				index = index + 1
+				index += 1
 			}
 		}
 	}
