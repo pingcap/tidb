@@ -332,8 +332,6 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 				}
 			}
 
-			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica))
-
 			regionCount := tb.Count
 			flashRegionCount := uint64(len(regionReplica))
 			avail := regionCount == flashRegionCount
