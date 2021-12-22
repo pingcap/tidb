@@ -243,7 +243,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
 		}
 		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead &&
+				preparedObj.PreparedAst.UseCache {
 				is = domain.GetDomain(sctx).InfoSchema()
 			}
 		}
