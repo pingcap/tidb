@@ -29,8 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	utilMath "github.com/pingcap/tidb/util/math"
-
 	"github.com/pingcap/errors"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
@@ -48,10 +46,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
@@ -180,6 +180,9 @@ type TransactionContext struct {
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+
+	// CachedTables is not nil if the transaction write on cached table.
+	CachedTables map[int64]interface{}
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -966,6 +969,13 @@ type SessionVars struct {
 
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
+
+	// StmtStats is used to count various indicators of each SQL in this session
+	// at each point in time. These data will be periodically taken away by the
+	// background goroutine. The background goroutine will continue to aggregate
+	// all the local data in each session, and finally report them to the remote
+	// regularly.
+	StmtStats *stmtstats.StatementStats
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1200,6 +1210,7 @@ func NewSessionVars() *SessionVars {
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
+		StmtStats:                   stmtstats.CreateStatementStats(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

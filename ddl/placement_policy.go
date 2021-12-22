@@ -331,7 +331,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
-					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == part.ID {
+					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == policy.ID {
 						partIDs = append(partIDs, part.ID)
 					}
 				}
@@ -380,4 +380,20 @@ func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.
 	}
 
 	return nil
+}
+
+func tableHasPlacementSettings(tblInfo *model.TableInfo) bool {
+	if tblInfo.DirectPlacementOpts != nil || tblInfo.PlacementPolicyRef != nil {
+		return true
+	}
+
+	if tblInfo.Partition != nil {
+		for _, def := range tblInfo.Partition.Definitions {
+			if def.DirectPlacementOpts != nil || def.PlacementPolicyRef != nil {
+				return true
+			}
+		}
+	}
+
+	return false
 }
