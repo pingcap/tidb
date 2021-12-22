@@ -178,10 +178,11 @@ type PlanCacheValue struct {
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	UserVarTypes      FieldSlice
 	BindSQL           string
+	TableStatsVers    map[int64]uint64
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string) *PlanCacheValue {
+func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType, bindSQL string, tableStatsVers map[int64]uint64) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -196,6 +197,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		TblInfo2UnionScan: dstMap,
 		UserVarTypes:      userVarTypes,
 		BindSQL:           bindSQL,
+		TableStatsVers:    tableStatsVers,
 	}
 }
 

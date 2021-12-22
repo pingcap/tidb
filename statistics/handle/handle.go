@@ -917,6 +917,15 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	return h.extendedStatsFromStorage(reader, table, physicalID, loadAll)
 }
 
+// GetTableStatsVersFromCache4PC
+func (h *Handle) GetTableStatsVersFromCache4PC(physicalID int64) (uint64, bool) {
+	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
+	if !ok {
+		return 0, false
+	}
+	return table.Version, true
+}
+
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))

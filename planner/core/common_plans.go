@@ -385,13 +385,22 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
+	var tableStatsVers4PC map[int64]uint64
 	if prepared.UseCache {
+		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 		// disable the cache if cache table in prepared statement
 		for _, vInfo := range preparedStmt.VisitInfos {
 			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
 			// if table does not exist, skip it, maybe it is a `create table` statement
 			if err != nil {
 				continue
+			}
+			// Now, the plan cache do not support partition table.
+			// So we can use the tableID to fetch the tableStatsVers directly.
+			physicalID := tbl.Meta().ID
+			tblStatsVers, ok := statsHandle.GetTableStatsVersFromCache4PC(physicalID)
+			if ok {
+				tableStatsVers4PC[physicalID] = tblStatsVers
 			}
 			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
 				prepared.UseCache = false
@@ -453,6 +462,16 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					// so the original cached plan can be cleared directly
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
+				}
+				if len(cachedVal.TableStatsVers) != len(tableStatsVers4PC) {
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
+				for physicalID, tblStatsVer := range cachedVal.TableStatsVers {
+					if tblStatsVer != tableStatsVers4PC[physicalID] {
+						sctx.PreparedPlanCache().Delete(cacheKey)
+						break
+					}
 				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
@@ -520,7 +539,7 @@ REBUILD:
 			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL, tableStatsVers4PC)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
