@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -1318,6 +1319,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
 	}
 
+	s.sessionVars.SQL = sql
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
@@ -1571,13 +1573,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 	} else {
 		sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
-		if cfg.EnableReplaySQL.Load() {
-			// Logic TS
-			ts := s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS
-			fmt.Printf("tidb-0 %d %s\n", ts, stmt.Text)
-			logutil.PutRecordOrDrop(fmt.Sprintf("tidb-0 %d %s\n", ts, stmt.Text))
-
-		}
 	}
 	s.currentPlan = stmt.Plan
 
@@ -2101,6 +2096,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:          uuid.New(),
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
 		StartTS:     txn.StartTS(),
@@ -2147,6 +2143,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:          uuid.New(),
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
 		StartTS:     txn.StartTS(),
@@ -2740,6 +2737,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	is := s.GetInfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:         uuid.New(),
 		InfoSchema: is,
 		CreateTime: time.Now(),
 		ShardStep:  int(s.sessionVars.ShardAllocateStep),
@@ -2865,7 +2863,25 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 }
 
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
+	cfg := config.GetGlobalConfig()
 	vars := s.GetSessionVars()
+	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
+		go func() {
+			builder := strings.Builder{}
+			if vars.InTxn() {
+				builder.WriteString(vars.TxnCtx.ID.String())
+				builder.WriteString(" ")
+			}
+			// Logic TS
+			ts := s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS
+			builder.WriteString(string(ts))
+			builder.WriteString(" ")
+			text := strings.ReplaceAll(vars.SQL, "\n", " ")
+			builder.WriteString(text)
+			logutil.PutRecordOrDrop(builder.String())
+		}()
+	}
+
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		var query string
 		if isPrepared {

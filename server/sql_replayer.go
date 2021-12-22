@@ -39,7 +39,7 @@ func (s *Server) newSQLRecorderHandler() *SQLRecorderHandler {
 	return prh
 }
 
-func (prh SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var err error
 	cfg := config.GetGlobalConfig()
 	params := mux.Vars(req)
@@ -63,4 +63,15 @@ func (prh SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 	}
+}
+
+type SQLReplayHandler struct {}
+
+func (s *Server) newSQLReplayHandler() *SQLReplayHandler {
+	prh := &SQLReplayHandler{}
+	return prh
+}
+
+func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)  {
+
 }
