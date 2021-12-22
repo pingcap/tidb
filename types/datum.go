@@ -995,13 +995,13 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	var err, err1 error
 	var transform []byte
 	if d.Charset() == charset.CharsetBin && target.Charset != charset.CharsetBin {
-		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpDecodeReplace)
+		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpDecode)
 		s = string(transform)
 	} else if d.Charset() != charset.CharsetBin && target.Charset == charset.CharsetBin {
 		transform, err1 = charset.FindEncoding(d.Charset()).Transform(nil, hack.Slice(s), charset.OpEncode)
 		s = string(transform)
 	} else if d.Charset() != target.Charset {
-		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpReplace)
+		transform, err1 = charset.FindEncoding(target.Charset).Transform(nil, hack.Slice(s), charset.OpReplaceWithError)
 		s = string(transform)
 	}
 

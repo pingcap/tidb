@@ -68,14 +68,8 @@ func (e *encodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
 }
 
 func (e *encodingASCII) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
-	for i, w := 0, 0; i < len(src); i += w {
-		w = 1
-		ok := true
-		if src[i] > go_unicode.MaxASCII {
-			w = len(EncodingUTF8Impl.Peek(src[i:]))
-			ok = false
-		}
-		if !fn(src[i:i+w], src[i:i+w], ok) {
+	for i := 0; i < len(src); i += 1 {
+		if !fn(src[i:i+1], src[i:i+1], src[i] <= go_unicode.MaxASCII) {
 			return
 		}
 	}

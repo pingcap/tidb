@@ -325,7 +325,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrGetTemporaryErrmsg:                       Message("Got temporary error %d '%-.100s' from %s", nil),
 	ErrUnknownTimeZone:                          Message("Unknown or incorrect time zone: '%-.64s'", nil),
 	ErrWarnInvalidTimestamp:                     Message("Invalid TIMESTAMP value in column '%s' at row %d", nil),
-	ErrInvalidCharacterString:                   Message("Invalid %s character string: '%.64s'", nil),
+	ErrInvalidCharacterString:                   Message("Invalid %s character string: '%.64X'", nil),
 	ErrWarnAllowedPacketOverflowed:              Message("Result of %s() was larger than max_allowed_packet (%d) - truncated", nil),
 	ErrConflictingDeclarations:                  Message("Conflicting declarations: '%s%s' and '%s%s'", nil),
 	ErrSpNoRecursiveCreate:                      Message("Can't create a %s from within another stored routine", nil),

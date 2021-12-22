@@ -95,12 +95,13 @@ const (
 )
 
 const (
-	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
-	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
-	OpEncodeNoErr   = OpEncode | opSkipError
-	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
-	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
-	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
+	OpReplaceWithError = opFromUTF8 | opTruncateReplace | opCollectFrom
+	OpReplace          = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpEncode           = opFromUTF8 | opTruncateTrim | opCollectTo
+	OpEncodeNoErr      = OpEncode | opSkipError
+	OpEncodeReplace    = opFromUTF8 | opTruncateReplace | opCollectTo
+	OpDecode           = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeReplace    = opToUTF8 | opTruncateReplace | opCollectTo
 )
 
 // CountValidBytes counts the first valid bytes in src that

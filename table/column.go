@@ -170,19 +170,19 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str []byte, i int) error {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str []byte) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	var strval strings.Builder
 	for j := 0; j < 6; j++ {
-		if len(str) > (i + j) {
-			if str[i+j] > unicode.MaxASCII {
-				fmt.Fprintf(&strval, "\\x%X", str[i+j])
+		if len(str) > (j) {
+			if str[j] > unicode.MaxASCII {
+				fmt.Fprintf(&strval, "\\x%X", str[j])
 			} else {
-				strval.WriteRune(rune(str[i+j]))
+				strval.WriteRune(rune(str[j]))
 			}
 		}
 	}
-	if len(str) > i+6 {
+	if len(str) > 6 {
 		strval.WriteString(`...`)
 	}
 	// TODO: Add 'at row %d'
@@ -363,7 +363,7 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	validBytesLen := charset.CountValidBytes(enc, str)
 	if validBytesLen != len(str) {
 		casted.SetBytesAsString(str[:validBytesLen], casted.Collation(), uint32(validBytesLen))
-		return handleWrongCharsetValue(ctx, col, str, validBytesLen)
+		return handleWrongCharsetValue(ctx, col, str[validBytesLen:])
 	}
 	return nil
 }
