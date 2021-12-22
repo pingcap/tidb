@@ -131,11 +131,11 @@ func TestNewImportSSTBackofferWithSucess(t *testing.T) {
 	backoffer := utils.NewImportSSTBackoffer()
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
-		switch counter {
-		case 15:
+		if counter == 15 {
 			return nil
+		} else {
+			return berrors.ErrKVDownloadFailed
 		}
-		return berrors.ErrKVDownloadFailed
 	}, backoffer)
 	require.Equal(t, 16, counter)
 	require.Nil(t, err)
@@ -148,11 +148,12 @@ func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
 	backoffer := utils.NewDownloadSSTBackoffer()
 	err := utils.WithRetry(context.Background(), func() error {
 		defer func() { counter++ }()
-		switch counter {
-		case 3:
+		if counter == 3 {
 			return context.Canceled
+		} else {
+			return berrors.ErrKVIngestFailed
 		}
-		return berrors.ErrKVIngestFailed
+
 	}, backoffer)
 	require.Equal(t, 4, counter)
 	require.Equal(t, []error{
