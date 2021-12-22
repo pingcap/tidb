@@ -128,7 +128,7 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -138,7 +138,7 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
 		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
 		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
 			pruneMode := h.CurrentPruneMode()
@@ -155,7 +155,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
+		stmt, err := exec.ParseWithParams(ctx, true, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1385,7 +1385,7 @@ type statsReader struct {
 
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
-	stmt, err := sr.ctx.ParseWithParamsInternal(ctx, sql, args...)
+	stmt, err := sr.ctx.ParseWithParams(ctx, true, sql, args...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

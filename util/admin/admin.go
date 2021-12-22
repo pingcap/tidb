@@ -328,7 +328,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}()
 	// Add `` for some names like `table name`.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParamsInternal(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
+	stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -350,7 +350,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		stmt, err := exec.ParseWithParamsInternal(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
+		stmt, err := exec.ParseWithParams(context.Background(), true, "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
