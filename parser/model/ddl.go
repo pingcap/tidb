@@ -301,15 +301,6 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
-// FinishDBJob is called when a job is finished.
-// It updates the job's state information and adds dbInfos the binlog.
-func (job *Job) FinishMultipleDBJob(jobState JobState, schemaState SchemaState, ver int64, dbInfos []*DBInfo) {
-	job.State = jobState
-	job.SchemaState = schemaState
-	job.BinlogInfo.SchemaVersion = ver
-	job.BinlogInfo.MultipleDBInfo = dbInfos
-}
-
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
