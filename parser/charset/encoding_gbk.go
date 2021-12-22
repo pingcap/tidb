@@ -14,10 +14,10 @@
 package charset
 
 import (
-	"golang.org/x/text/encoding"
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
