@@ -7677,5 +7677,5 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	// duplicated name
 	infos[1].Name = model.NewCIStr("tables_1")
 	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
-	c.Check(err.Error(), Equals, "[schema:1050]Table 'test.tables_1' already exists")
+	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
 }
