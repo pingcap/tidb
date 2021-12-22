@@ -464,6 +464,31 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if prevData != nil {
 		curData = append(prevData, curData...)
 	}
+	defer func() {
+		r := recover()
+		if r != nil {
+			log := make([]byte, 0)
+			copy(log, curData)
+			for i := 0; i < len(curData); i++ {
+				if bytes.HasPrefix(curData, []byte(e.LinesInfo.Terminated)) ||
+					bytes.HasPrefix(curData, []byte{e.FieldsInfo.Enclosed}) ||
+					bytes.HasPrefix(curData, []byte(e.FieldsInfo.Terminated)) ||
+					bytes.HasPrefix(curData, []byte{e.FieldsInfo.Escaped}) {
+					continue
+				}
+				log[i] = '?'
+			}
+			logutil.BgLogger().Info("load data",
+				zap.String("Field Terminated", e.FieldsInfo.Terminated),
+				zap.String("Field Enclosed", string(e.FieldsInfo.Enclosed)),
+				zap.Bool("Field OptEnclosed", e.FieldsInfo.OptEnclosed),
+				zap.String("Line Starting", e.LinesInfo.Starting),
+				zap.String("Line Terminated", e.LinesInfo.Terminated),
+				zap.ByteString("data", log),
+			)
+			panic(r)
+		}
+	}()
 	startLen := len(e.LinesInfo.Starting)
 	if startLen != 0 {
 		if len(curData) < startLen {
