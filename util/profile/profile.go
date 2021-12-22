@@ -16,7 +16,6 @@ package profile
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"runtime/pprof"
 	"strconv"
@@ -71,7 +70,13 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 // cpuProfileGraph returns the CPU profile flamegraph which is organized by tree form
 func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	buffer := &bytes.Buffer{}
-	err := cpuprofile.GetCPUProfile(context.Background(), uint64(CPUProfileInterval/time.Second), buffer)
+	pc := cpuprofile.NewPprofAPICollector()
+	err := pc.StartCPUProfile(buffer)
+	if err != nil {
+		return nil, err
+	}
+	time.Sleep(CPUProfileInterval)
+	err = pc.StopCPUProfile()
 	if err != nil {
 		return nil, err
 	}

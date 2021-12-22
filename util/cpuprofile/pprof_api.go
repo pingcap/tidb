@@ -21,24 +21,15 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/pprof/profile"
+	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-// GetCPUProfile uses to get the cpu profile data from GlobalCPUProfiler.
-// You should use GetCPUProfile instead of `pprof.StartCPUProfile`, `pprof.StopCPUProfile`.
-// Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
-func GetCPUProfile(ctx context.Context, seconds uint64, w io.Writer) error {
-	pc := NewPprofAPIConsumer()
-	profileData, err := pc.WaitProfilingFinish(ctx, seconds)
-	if err != nil {
-		return err
-	}
-	return profileData.Write(w)
-}
 
 // ProfileHTTPHandler is same as pprof.Profile.
 // The difference is ProfileHTTPHandler uses cpuprofile.GetCPUProfile to fetch profile data.
@@ -59,6 +50,12 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="profile"`)
 
+	pc := NewPprofAPICollector()
+	err = pc.StartCPUProfile(w)
+	if err != nil {
+		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
+		return
+	}
 	// TODO: fix me.
 	// This can be fixed by always starts a 1 second profiling one by one,
 	// but to aggregate (merge) multiple profiles into one according to the precision.
@@ -67,7 +64,8 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	//                            |________________________________|
 	//       (start cpu profile)  v                                v (stop cpu profile)    // expected profile timeline
 	//                        |________________________________|                           // actual profile timeline
-	err = GetCPUProfile(r.Context(), uint64(sec), w)
+	time.Sleep(time.Second * time.Duration(sec))
+	err = pc.StopCPUProfile()
 	if err != nil {
 		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
 	}
@@ -78,64 +76,98 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
-var defProfileTimeout = time.Second * 10
+// PprofAPICollector is a cpu profile consumer for Pprof API usage.
+type PprofAPICollector struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	started   atomic.Bool
+	firstRead chan struct{}
+	wg        sync.WaitGroup
 
-// PprofAPIConsumer is a cpu profile consumer for Pprof API usage.
-type PprofAPIConsumer struct {
 	dataCh   ProfileConsumer
-	profiles []*profile.Profile
+	profiles []*ProfileData
+	writer   io.Writer
 }
 
-// NewPprofAPIConsumer returns a new NewPprofAPIConsumer.
-func NewPprofAPIConsumer() *PprofAPIConsumer {
-	return &PprofAPIConsumer{
-		dataCh: make(ProfileConsumer, 1),
+// NewPprofAPICollector returns a new NewPprofAPICollector.
+func NewPprofAPICollector() *PprofAPICollector {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &PprofAPICollector{
+		ctx:       ctx,
+		cancel:    cancel,
+		firstRead: make(chan struct{}),
+		dataCh:    make(ProfileConsumer, 1),
 	}
 }
 
+// StartCPUProfile is a substitute for the `pprof.StartCPUProfile` function.
+// You should use this function instead of `pprof.StartCPUProfile`.
+// Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
+func (pc *PprofAPICollector) StartCPUProfile(w io.Writer) error {
+	if !pc.started.CAS(false, true) {
+		return errors.New("PprofAPICollector already started")
+	}
+	pc.writer = w
+	pc.wg.Add(1)
+	go goutil.WithRecovery(pc.readProfileData, nil)
+	return nil
+}
+
+// StopCPUProfile is a substitute for the `pprof.StopCPUProfile` function.
+func (pc *PprofAPICollector) StopCPUProfile() error {
+	if !pc.started.Load() {
+		return nil
+	}
+
+	// wait for reading least 1 profile data.
+	<-pc.firstRead
+	pc.cancel()
+	pc.wg.Wait()
+
+	data, err := pc.buildProfileData()
+	if err != nil {
+		return err
+	}
+	return data.Write(pc.writer)
+}
+
 // WaitProfilingFinish waits for collecting `seconds` profile data finished.
-func (pc *PprofAPIConsumer) WaitProfilingFinish(ctx context.Context, seconds uint64) (*profile.Profile, error) {
+func (pc *PprofAPICollector) readProfileData() {
 	// register cpu profile consumer.
 	Register(pc.dataCh)
-	defer Unregister(pc.dataCh)
+	defer func() {
+		Unregister(pc.dataCh)
+		pc.wg.Done()
+	}()
 
-	cumulate := time.Duration(0)
-	pc.profiles = make([]*profile.Profile, 0, int(seconds))
-	profileDuration := time.Second * time.Duration(seconds)
-	timeoutCh := time.After(profileDuration + defProfileTimeout)
+	pc.profiles = []*ProfileData{}
 	for {
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-timeoutCh:
-			return nil, errors.New("profiling failed, should never happen")
+		case <-pc.ctx.Done():
+			return
 		case data := <-pc.dataCh:
-			err := pc.handleProfileData(data)
-			if err != nil {
-				return nil, err
-			}
-			cumulate += data.End.Sub(data.Begin)
-			if cumulate >= profileDuration {
-				return pc.getMergedProfile()
+			pc.profiles = append(pc.profiles, data)
+			if len(pc.profiles) == 1 {
+				close(pc.firstRead)
 			}
 		}
 	}
 }
 
-func (pc *PprofAPIConsumer) handleProfileData(data *ProfileData) error {
-	if data.Error != nil {
-		return data.Error
+func (pc *PprofAPICollector) buildProfileData() (*profile.Profile, error) {
+	ds := make([]*profile.Profile, 0, len(pc.profiles))
+	for _, data := range pc.profiles {
+		if data.Error != nil {
+			return nil, data.Error
+		}
+		pd, err := profile.ParseData(data.Data.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		ds = append(ds, pd)
 	}
-	pd, err := profile.ParseData(data.Data.Bytes())
-	if err != nil {
-		return err
-	}
-	pc.profiles = append(pc.profiles, pd)
-	return nil
-}
 
-func (pc *PprofAPIConsumer) getMergedProfile() (*profile.Profile, error) {
-	profileData, err := profile.Merge(pc.profiles)
+	profileData, err := profile.Merge(ds)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +177,7 @@ func (pc *PprofAPIConsumer) getMergedProfile() (*profile.Profile, error) {
 
 // removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
 // Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
-func (pc *PprofAPIConsumer) removeLabel(profileData *profile.Profile) {
+func (pc *PprofAPICollector) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
 			if k == labelSQLDigest || k == labelPlanDigest {

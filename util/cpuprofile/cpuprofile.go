@@ -65,7 +65,8 @@ func Unregister(ch ProfileConsumer) {
 // WARN: Only one running ParallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
 type ParallelCPUProfiler struct {
 	sync.Mutex
-	cs map[ProfileConsumer]struct{}
+	cs     map[ProfileConsumer]struct{}
+	notify chan struct{}
 
 	// some data cache for profiling.
 	data         *ProfileData
@@ -81,6 +82,7 @@ type ParallelCPUProfiler struct {
 func NewParallelCPUProfiler() *ParallelCPUProfiler {
 	return &ParallelCPUProfiler{
 		cs:     make(map[ProfileConsumer]struct{}),
+		notify: make(chan struct{}),
 		closed: make(chan struct{}),
 	}
 }
@@ -107,6 +109,11 @@ func (p *ParallelCPUProfiler) register(ch ProfileConsumer) {
 	p.Lock()
 	p.cs[ch] = struct{}{}
 	p.Unlock()
+	// notify
+	select {
+	case p.notify <- struct{}{}:
+	default:
+	}
 }
 
 func (p *ParallelCPUProfiler) unregister(ch ProfileConsumer) {
@@ -129,21 +136,29 @@ func (p *ParallelCPUProfiler) profilingLoop() {
 		select {
 		case <-p.closed:
 			return
+		case <-p.notify:
+			if !p.inProfilingStatus() {
+				p.doProfiling()
+			}
 		case <-checkTicker.C:
-			if p.inProfilingStatus() {
-				p.stopCPUProfile()
-				p.sendToConsumers()
-			}
+			p.doProfiling()
+		}
+	}
+}
 
-			// Only do cpu profiling when there are consumers.
-			if p.needProfile() {
-				err := p.startCPUProfile()
-				if err != nil {
-					p.data.Error = err
-					// notify error as soon as possible
-					p.sendToConsumers()
-				}
-			}
+func (p *ParallelCPUProfiler) doProfiling() {
+	if p.inProfilingStatus() {
+		p.stopCPUProfile()
+		p.sendToConsumers()
+	}
+
+	// Only do cpu profiling when there are consumers.
+	if p.needProfile() {
+		err := p.startCPUProfile()
+		if err != nil {
+			p.data.Error = err
+			// notify error as soon as possible
+			p.sendToConsumers()
 		}
 	}
 }
