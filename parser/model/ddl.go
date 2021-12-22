@@ -176,8 +176,6 @@ type HistoryInfo struct {
 	TableInfo     *TableInfo
 	FinishedTS    uint64
 
-	// MultipleDBInfo is like DBInfo but only for operations updating multiple DBs.
-	MultipleDBInfo []*DBInfo
 	// MultipleTableInfo is like TableInfo but only for operations updating multiple DBs.
 	MultipleTableInfo []*TableInfo
 }
