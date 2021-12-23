@@ -126,6 +126,10 @@ devgotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
+ut: failpoint-enable tools/bin/ut
+	tools/bin/ut $(X);
+	@$(FAILPOINT_DISABLE)
+
 gotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
@@ -219,6 +223,10 @@ failpoint-enable: tools/bin/failpoint-ctl
 failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
+
+tools/bin/ut: tools/check/ut.go
+	cd tools/check; \
+	$(GO) build -o ../bin/ut ut.go
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
