@@ -81,7 +81,7 @@ func TestExecCount(t *testing.T) {
 
 	// Execute CRUD.
 	const ExecCountPerSQL = 3
-	var insertSQLDigest, updateSQLDigest, selectSQLDigest, deleteSQLDigest, prepareExecDigest *parser.Digest
+	var insertSQLDigest, updateSQLDigest, selectSQLDigest, deleteSQLDigest *parser.Digest
 	for n := 0; n < ExecCountPerSQL; n++ {
 		sql := fmt.Sprintf("insert into t values (%d, sleep(0.1));", n)
 		if n == 0 {
@@ -111,12 +111,14 @@ func TestExecCount(t *testing.T) {
 		tk.MustExec(sql)
 	}
 
+	var prepareStmtDigest, prepareExecDigest *parser.Digest
 	_, prepareExecDigest = parser.NormalizeDigest("delete from t where sleep(0.1) and a = 1")
 	prepareSQL := "prepare stmt from 'delete from t where sleep(?) and a = ?';"
-	tk.MustExec(prepareSQL)
-	tk.MustExec("set @a=0.1;")
-	tk.MustExec("set @b=1;")
+	_, prepareStmtDigest = parser.NormalizeDigest(prepareSQL)
 	for n := 0; n < ExecCountPerSQL; n++ {
+		tk.MustExec(prepareSQL)
+		tk.MustExec("set @a=0.1;")
+		tk.MustExec("set @b=1;")
 		execSQL := "execute stmt using @a, @b;"
 		tk.MustExec(execSQL)
 	}
@@ -135,6 +137,7 @@ func TestExecCount(t *testing.T) {
 			stmtstats.BinaryDigest(updateSQLDigest.Bytes()):   {},
 			stmtstats.BinaryDigest(selectSQLDigest.Bytes()):   {},
 			stmtstats.BinaryDigest(deleteSQLDigest.Bytes()):   {},
+			stmtstats.BinaryDigest(prepareStmtDigest.Bytes()): {},
 			stmtstats.BinaryDigest(prepareExecDigest.Bytes()): {},
 		}
 		found := 0
@@ -142,6 +145,10 @@ func TestExecCount(t *testing.T) {
 			if _, ok := sqlDigests[digest.SQLDigest]; ok {
 				found++
 				assert.Equal(t, uint64(ExecCountPerSQL), item.ExecCount)
+				if digest.SQLDigest == stmtstats.BinaryDigest(prepareStmtDigest.Bytes()) {
+					// prepare stmt is very fast, and doesn't have any kv request.
+					continue
+				}
 				assert.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*100*ExecCountPerSQL))
 				assert.True(t, item.SumExecNanoDuration < uint64(time.Millisecond*150*ExecCountPerSQL))
 				var kvSum uint64
@@ -151,7 +158,7 @@ func TestExecCount(t *testing.T) {
 				assert.Equal(t, uint64(ExecCountPerSQL), kvSum)
 			}
 		}
-		assert.Equal(t, 5, found) // insert, update, select, delete
+		assert.Equal(t, len(sqlDigests), found)
 	}()
 
 	// Drop table.
