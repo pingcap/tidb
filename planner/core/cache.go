@@ -66,11 +66,7 @@ func PreparedPlanCacheEnabled() bool {
 	return isEnabled == preparedPlanCacheEnabled
 }
 
-// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue, such as bindSQL.
-// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
-// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
-type planCacheKey struct {
+type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
 	pstmtID              uint32
@@ -85,7 +81,7 @@ type planCacheKey struct {
 }
 
 // Hash implements Key interface.
-func (key *planCacheKey) Hash() []byte {
+func (key *pstmtPlanCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		var (
 			dbBytes    = hack.Slice(key.database)
@@ -118,7 +114,7 @@ func (key *planCacheKey) Hash() []byte {
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
 func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
-	psStmtKey, isPsStmtKey := key.(*planCacheKey)
+	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
 	if !isPsStmtKey {
 		return
 	}
@@ -131,13 +127,13 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 	psStmtKey.hash = psStmtKey.hash[:0]
 }
 
-// NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64, bindSQL string) kvcache.Key {
+// NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64, bindSQL string) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
-	key := &planCacheKey{
+	key := &pstmtPlanCacheKey{
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
 		pstmtID:              pstmtID,
@@ -179,16 +175,16 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	return true
 }
 
-// PlanCacheValue stores the cached Statement and StmtNode.
-type PlanCacheValue struct {
+// PSTMTPlanCacheValue stores the cached Statement and StmtNode.
+type PSTMTPlanCacheValue struct {
 	Plan              Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	UserVarTypes      FieldSlice
 }
 
-// NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PlanCacheValue {
+// NewPSTMTPlanCacheValue creates a SQLCacheValue.
+func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool, userVarTps []*types.FieldType) *PSTMTPlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -197,7 +193,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 	for i, tp := range userVarTps {
 		userVarTypes[i] = *tp
 	}
-	return &PlanCacheValue{
+	return &PSTMTPlanCacheValue{
 		Plan:              plan,
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
