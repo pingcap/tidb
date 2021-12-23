@@ -2873,12 +2873,11 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 				builder.WriteString(" ")
 			}
 			// Logic TS
-			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix() - cfg.ReplayMetaTS, 10)
+			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
 			builder.WriteString(ts)
 			builder.WriteString(" ")
 			text := strings.ReplaceAll(vars.SQL, "\n", " ")
 			builder.WriteString(text)
-			fmt.Println(builder.String())
 			logutil.PutRecordOrDrop(builder.String())
 		}()
 	}

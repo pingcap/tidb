@@ -65,13 +65,13 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	}
 }
 
-type SQLReplayHandler struct {}
+type SQLReplayHandler struct{}
 
 func (s *Server) newSQLReplayHandler() *SQLReplayHandler {
 	prh := &SQLReplayHandler{}
 	return prh
 }
 
-func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)  {
+func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 }
