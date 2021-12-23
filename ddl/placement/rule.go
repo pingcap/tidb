@@ -59,7 +59,6 @@ func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
 		Count:          int(replicas),
 		Constraints:    cnst,
 		LocationLabels: []string{"region", "zone", "rack", "host"},
-		IsolationLevel: "region",
 	}
 }
 

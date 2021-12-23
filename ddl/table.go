@@ -955,6 +955,7 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	}
 
 	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
@@ -1279,6 +1280,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
 		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
@@ -1350,6 +1352,7 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
 		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 

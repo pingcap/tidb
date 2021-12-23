@@ -314,7 +314,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				bindSQL := planner.GetBindSQL4PlanCache(s, preparedAst.Stmt)
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
+				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
 			}
 		}
 	}
@@ -2130,7 +2130,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: is,
 	}
-	if err = sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider); err != nil {
+
+	txnManager := sessiontxn.GetTxnManager(s)
+	if err = txnManager.SetContextProvider(txnCtxProvider); err != nil {
 		return nil, err
 	}
 
@@ -2143,9 +2145,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 
 	if ok {
-		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
 	}
-	return s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
