@@ -16,13 +16,13 @@ package planner
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"math"
 	"runtime/trace"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
