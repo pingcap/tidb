@@ -2866,20 +2866,21 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	cfg := config.GetGlobalConfig()
 	vars := s.GetSessionVars()
 	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
-		go func() {
+		go func(sql, id string, intxn bool) {
 			var builder strings.Builder
-			if vars.InTxn() {
-				builder.WriteString(vars.TxnCtx.ID.String())
+			if intxn {
+				builder.WriteString(id)
 				builder.WriteString(" ")
 			}
 			// Logic TS
 			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
 			builder.WriteString(ts)
 			builder.WriteString(" ")
-			text := strings.ReplaceAll(vars.SQL, "\n", " ")
+			text := strings.ReplaceAll(sql, "\n", " ")
 			builder.WriteString(text)
+			builder.WriteString("\n")
 			logutil.PutRecordOrDrop(builder.String())
-		}()
+		}(vars.SQL, vars.TxnCtx.ID.String(), vars.InTxn())
 	}
 
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
