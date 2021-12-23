@@ -26,5 +26,5 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 	}
-	goleak.VerifyTestMain(m, opts)
+	goleak.VerifyTestMain(m, opts...)
 }
