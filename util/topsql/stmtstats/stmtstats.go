@@ -16,11 +16,15 @@ package stmtstats
 
 import (
 	"sync"
+	"time"
 
 	"go.uber.org/atomic"
 )
 
 var _ StatementObserver = &StatementStats{}
+
+// nowFunc returns the current time; it's overridden in tests.
+var nowFunc = time.Now
 
 // StatementObserver is an abstract interface as a callback to the corresponding
 // position of TiDB's SQL statement execution process. StatementStats implements
@@ -29,16 +33,19 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnParseBegin should be called on statement begin to parse.
-	OnParseBegin(unixNano int64)
+	OnParseBegin()
+
+	// OnSQLDigestReady should be called on statement SQL digest ready.
+	OnSQLDigestReady(sqlDigest []byte)
+
+	// OnPlanDigestReady should be called on statement plan digest ready.
+	OnPlanDigestReady(sqlDigest []byte)
 
 	// OnExecBegin should be called on statement begin to execute.
-	OnExecBegin(unixNano int64)
-
-	// SetSQLPlanDigest sets the sql and plan digest for the current execute statement.
-	SetSQLPlanDigest(sqlDigest, planDigest []byte)
+	OnExecBegin()
 
 	// OnExecFinished should be called after the statement is executed.
-	OnExecFinished(unixNano int64)
+	OnExecFinished()
 }
 
 // StatementStats is a counter used locally in each session.
@@ -66,24 +73,30 @@ func CreateStatementStats() *StatementStats {
 }
 
 // OnParseBegin implements StatementObserver.OnParseBegin.
-func (s *StatementStats) OnParseBegin(unixNano int64) {
-	s.seCtx.parseBeginUnixNano = unixNano
+func (s *StatementStats) OnParseBegin() {
+	s.seCtx.parseBeginUnixNano = nowFunc().UnixNano()
+}
+
+// OnSQLDigestReady implements StatementObserver.OnSQLDigestReady.
+func (s *StatementStats) OnSQLDigestReady(sqlDigest []byte) {
+	s.seCtx.sqlDigest.Store(sqlDigest)
+}
+
+// OnPlanDigestReady implements StatementObserver.OnParseBegin.
+func (s *StatementStats) OnPlanDigestReady(planDigest []byte) {
+	s.seCtx.planDigest.Store(planDigest)
 }
 
 // OnExecBegin implements StatementObserver.OnExecBegin.
-func (s *StatementStats) OnExecBegin(unixNano int64) {
-	s.seCtx.execBeginUnixNano = unixNano
-}
-
-// SetSQLPlanDigest implements StatementObserver.SetSQLPlanDigest.
-func (s *StatementStats) SetSQLPlanDigest(sqlDigest, planDigest []byte) {
-	s.seCtx.setSQLPlanDigest(sqlDigest, planDigest)
+func (s *StatementStats) OnExecBegin() {
+	s.seCtx.execBeginUnixNano = nowFunc().UnixNano()
 }
 
 // OnExecFinished implements StatementObserver.OnExecFinished.
-func (s *StatementStats) OnExecFinished(unixNano int64) {
-	sqlDigest, planDigest := s.seCtx.getSQLPlanDigest()
-	if len(sqlDigest) == 0 {
+func (s *StatementStats) OnExecFinished() {
+	sqlDigest, ok1 := s.seCtx.sqlDigest.Load().([]byte)
+	planDigest, ok2 := s.seCtx.planDigest.Load().([]byte)
+	if !ok1 || !ok2 || len(sqlDigest) == 0 {
 		return
 	}
 
@@ -98,10 +111,10 @@ func (s *StatementStats) OnExecFinished(unixNano int64) {
 	}
 	var cost int64
 	if s.seCtx.parseBeginUnixNano > 0 {
-		cost = unixNano - s.seCtx.parseBeginUnixNano
+		cost = nowFunc().UnixNano() - s.seCtx.parseBeginUnixNano
 	} else if s.seCtx.execBeginUnixNano > 0 {
 		// For execute prepare statement which doesn't have parse process.
-		cost = unixNano - s.seCtx.execBeginUnixNano
+		cost = nowFunc().UnixNano() - s.seCtx.execBeginUnixNano
 	}
 	if cost > 0 {
 		item.SumExecNanoDuration += uint64(cost)
@@ -147,10 +160,12 @@ func (s *StatementStats) Take() StatementStatsMap {
 }
 
 func (s *StatementStats) collectRunningStatementStats() {
-	sqlDigest, planDigest := s.seCtx.getSQLPlanDigest()
-	if len(sqlDigest) == 0 {
+	sqlDigest, ok1 := s.seCtx.sqlDigest.Load().([]byte)
+	planDigest, ok2 := s.seCtx.planDigest.Load().([]byte)
+	if !ok1 || !ok2 || len(sqlDigest) == 0 {
 		return
 	}
+
 	if s.alreadyTaken {
 		return
 	}
@@ -281,13 +296,9 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 
 // StatementExecutionContext represents a single statement execution information.
 type StatementExecutionContext struct {
-	mu struct {
-		// Following field will be read/write by session and stmtstat.aggregator goroutine, use mutex to avoid data race.
-		sync.Mutex
-		sqlDigest  []byte
-		planDigest []byte
-	}
-
+	// Digest will be read/write by session and stmtstat.aggregator goroutine, use atomic to avoid data race.
+	sqlDigest  atomic.Value
+	planDigest atomic.Value
 	// parseBeginTime is the unix nanoseconds of the statement begin to parse.
 	parseBeginUnixNano int64
 	// execBeginTime is the unix nanoseconds of the statement begin to exec.
@@ -295,21 +306,11 @@ type StatementExecutionContext struct {
 	// Add more required variables here
 }
 
-func (sec *StatementExecutionContext) setSQLPlanDigest(sqlDigest, planDigest []byte) {
-	sec.mu.Lock()
-	sec.mu.sqlDigest, sec.mu.planDigest = sqlDigest, planDigest
-	sec.mu.Unlock()
-}
-
-func (sec *StatementExecutionContext) getSQLPlanDigest() (sqlDigest, planDigest []byte) {
-	sec.mu.Lock()
-	sqlDigest, planDigest = sec.mu.sqlDigest, sec.mu.planDigest
-	sec.mu.Unlock()
-	return
-}
+var emptyDigest = []byte(nil)
 
 func (sec *StatementExecutionContext) reset() {
-	sec.setSQLPlanDigest(nil, nil)
+	sec.sqlDigest.Store(emptyDigest)
+	sec.planDigest.Store(emptyDigest)
 	sec.parseBeginUnixNano = 0
 	sec.execBeginUnixNano = 0
 }

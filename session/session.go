@@ -1434,7 +1434,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
-	s.observeStmtParseBeginForTopSQL(parseStartTime.UnixNano())
+	s.sessionVars.StmtStats.OnParseBegin()
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1465,26 +1465,10 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	return stmts, nil
 }
 
-func (s *session) observeStmtParseBeginForTopSQL(unixNano int64) {
-	stmtStats := s.sessionVars.StmtStats
-	if stmtStats == nil {
-		return
-	}
-	stmtStats.OnParseBegin(unixNano)
-}
-
-func (s *session) observeStmtExecBeginForTopSQL(unixNano int64) {
-	stmtStats := s.sessionVars.StmtStats
-	if stmtStats == nil {
-		return
-	}
-	stmtStats.OnExecBegin(unixNano)
-}
-
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	s.observeStmtParseBeginForTopSQL(time.Now().UnixNano())
+	s.sessionVars.StmtStats.OnParseBegin()
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlexec.EscapeSQL(sql, args...)
@@ -1657,16 +1641,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	execStart := time.Now()
-	s.sessionVars.StartTime = execStart
-	s.observeStmtExecBeginForTopSQL(execStart.UnixNano())
+	s.sessionVars.StmtStats.OnExecBegin()
+	s.sessionVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
+	if variable.TopSQLEnabled() && digest != nil {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 
@@ -2088,9 +2071,8 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	s.PrepareTxnCtx(ctx)
 	var err error
-	execStart := time.Now()
-	s.sessionVars.StartTime = execStart
-	s.observeStmtExecBeginForTopSQL(execStart.UnixNano())
+	s.sessionVars.StmtStats.OnExecBegin()
+	s.sessionVars.StartTime = time.Now()
 	preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]
 	if !ok {
 		err = plannercore.ErrStmtNotFound

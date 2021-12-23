@@ -53,16 +53,23 @@ func Test_aggregator_register_collect(t *testing.T) {
 		data:     StatementStatsMap{},
 		finished: atomic.NewBool(false),
 	}
+	nowFunc = mockNow
+	defer func() {
+		nowFunc = time.Now
+	}()
+
 	a.register(stats)
-	now := time.Now().UnixNano()
-	stats.OnParseBegin(now)
-	stats.OnExecBegin(now + 1000)
-	stats.SetSQLPlanDigest([]byte("SQL-1"), []byte{})
-	stats.OnExecFinished(now + 10000)
+	stats.OnParseBegin()
+	stats.OnExecBegin()
+	stats.OnSQLDigestReady([]byte("SQL-1"))
+	stats.OnPlanDigestReady(nil)
+	stats.OnExecFinished()
+
 	// test for doesn't have parse process
-	stats.OnExecBegin(now)
-	stats.SetSQLPlanDigest([]byte("SQL-2"), []byte{})
-	stats.OnExecFinished(now + 5000)
+	stats.OnExecBegin()
+	stats.OnSQLDigestReady([]byte("SQL-2"))
+	stats.OnPlanDigestReady([]byte{})
+	stats.OnExecFinished()
 
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
@@ -71,9 +78,9 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.aggregate()
 	assert.NotEmpty(t, records)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(10000), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(5000), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
@@ -102,4 +109,10 @@ func newMockCollector(f func(records []StatementStatsRecord)) Collector {
 
 func (c *mockCollector) CollectStmtStatsRecords(records []StatementStatsRecord) {
 	c.f(records)
+}
+
+var mockUnixNanoTs = atomic.NewInt64(time.Now().UnixNano())
+
+func mockNow() time.Time {
+	return time.Unix(0, mockUnixNanoTs.Add(100))
 }
