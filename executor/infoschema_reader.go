@@ -543,6 +543,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
+				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+					createOptions = "cached=on"
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
