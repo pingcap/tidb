@@ -2680,6 +2680,20 @@ func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue28743(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set names utf8mb4")
+	tk.MustExec(`CREATE TABLE t (
+	  a char(1) COLLATE utf8mb4_general_ci DEFAULT NULL,
+	  b char(1) COLLATE utf8mb4_general_ci DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`)
+	tk.MustQuery(`select t2.b from (select t.a as b from t union all select t.a as b from t) t2 where t2.b > 'a' collate utf8mb4_unicode_ci`).Check(testkit.Rows()) // no error
+}
+
 func (s *testIntegrationSerialSuite) Test19942(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
