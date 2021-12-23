@@ -16,6 +16,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce // indirect
 	github.com/securego/gosec v0.0.0-20181211171558-12400f9a1ca7
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd
+	go.uber.org/automaxprocs v1.4.0 // indirect
 	gopkg.in/alecthomas/gometalinter.v2 v2.0.12 // indirect
 	gopkg.in/alecthomas/gometalinter.v3 v3.0.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
