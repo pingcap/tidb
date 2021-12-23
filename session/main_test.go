@@ -62,7 +62,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 	}

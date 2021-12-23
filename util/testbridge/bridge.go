@@ -47,7 +47,7 @@ func workaroundGoCheckFlags() {
 }
 
 func applyOSLogLevel() {
-	cfg := config.GetGlobalConfig().Log.ToLogConfig()
+	cfg := config.NewConfig().Log.ToLogConfig()
 	osLoglevel := os.Getenv("log_level")
 	if len(osLoglevel) > 0 {
 		cfg.Level = osLoglevel
