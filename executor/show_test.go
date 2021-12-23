@@ -1674,3 +1674,24 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
+
+func (s *testSuite5) TestShowCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("alter table t1 cache")
+	tk.MustQuery("show create table t1").Check(
+		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */"))
+	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
+		testkit.Rows("cached=on"))
+
+	tk.MustExec("alter table t1 nocache")
+	tk.MustQuery("show create table t1").Check(
+		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
+		testkit.Rows(""))
+}
