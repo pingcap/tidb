@@ -84,7 +84,6 @@ func TestGetStepValue(t *testing.T) {
 }
 
 func TestSplitIndex(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
