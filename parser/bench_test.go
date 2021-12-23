@@ -64,3 +64,16 @@ func BenchmarkParseSimple(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+
+func BenchmarkParseGBK(b *testing.B) {
+	parser := New()
+	sql := "SELECT * FROM t WHERE a='\xd2\xbb\xd2\xbb';"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := parser.Parse(sql, "gbk", "gbk_bin")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+}
