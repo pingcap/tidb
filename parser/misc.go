@@ -532,6 +532,7 @@ var tokenMap = map[string]int{
 	"PESSIMISTIC":              pessimistic,
 	"PLACEMENT":                placement,
 	"PLAN":                     plan,
+	"PLAN_CACHE":               planCache,
 	"PLUGINS":                  plugins,
 	"POLICY":                   policy,
 	"POSITION":                 position,

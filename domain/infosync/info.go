@@ -856,7 +856,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
-			info.StartTimestamp = 1282967700000
+			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
