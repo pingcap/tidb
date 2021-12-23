@@ -16,21 +16,20 @@ package placement
 
 import (
 	"errors"
+	"reflect"
+	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRuleSuite{})
-
-type testRuleSuite struct{}
-
-func (t *testRuleSuite) TestClone(c *C) {
+func TestClone(t *testing.T) {
 	rule := &Rule{ID: "434"}
 	newRule := rule.Clone()
 	newRule.ID = "121"
 
-	c.Assert(rule, DeepEquals, &Rule{ID: "434"})
-	c.Assert(newRule, DeepEquals, &Rule{ID: "121"})
+	require.Equal(t, &Rule{ID: "434"}, rule)
+	require.Equal(t, &Rule{ID: "121"}, newRule)
 }
 
 func matchRules(t1, t2 []*Rule, prefix string, c *C) {
@@ -50,7 +49,22 @@ func matchRules(t1, t2 []*Rule, prefix string, c *C) {
 	}
 }
 
-func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
+func matchRulesT(t1, t2 []*Rule, prefix string, t *testing.T) {
+	require.Equal(t, len(t2), len(t1), prefix)
+	for i := range t1 {
+		found := false
+		for j := range t2 {
+			ok := reflect.DeepEqual(t2[j], t1[i])
+			if ok {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
+	}
+}
+
+func TestNewRuleAndNewRules(t *testing.T) {
 	type TestCase struct {
 		name     string
 		input    string
@@ -58,7 +72,7 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		output   []*Rule
 		err      error
 	}
-	tests := []TestCase{}
+	var tests []TestCase
 
 	tests = append(tests, TestCase{
 		name:     "empty constraints",
@@ -175,14 +189,21 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		err:      ErrInvalidConstraintFormat,
 	})
 
-	for _, t := range tests {
-		comment := Commentf("[%s]", t.name)
-		output, err := NewRules(Voter, t.replicas, t.input)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			matchRules(t.output, output, comment.CheckCommentString(), c)
+	tests = append(tests, TestCase{
+		name:     "invalid map separator",
+		input:    `{+region=us-east-2:2}`,
+		replicas: 6,
+		err:      ErrInvalidConstraintsMappingWrongSeparator,
+	})
+
+	for _, tt := range tests {
+		comment := Commentf("[%s]", tt.name)
+		output, err := NewRules(Voter, tt.replicas, tt.input)
+		if tt.err == nil {
+			require.NoError(t, err, comment)
+			matchRulesT(tt.output, output, comment.CheckCommentString(), t)
 		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, Commentf("[%s]\n%s\n%s\n", t.name, err, t.err))
+			require.True(t, errors.Is(err, tt.err), "[%s]\n%s\n%s\n", tt.name, err, tt.err)
 		}
 	}
 }
