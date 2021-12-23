@@ -925,6 +925,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
 		p.Paging = true
 		pagingCst := calcPagingCost(ctx, t)
+		// prevent enlarging the cost because we take paging as a better plan,
+		// if the cost is enlarged, it'll be easier to go another plan.
 		idxCst = math.Min(idxCst, pagingCst)
 	}
 	newTask.cst += idxCst
@@ -1190,7 +1192,6 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 			pushedDownLimit.cost = cop.cost()
 		}
-		cop.expectCnt = p.Count
 		t = cop.convertToRootTask(p.ctx)
 		sunk = p.sinkIntoIndexLookUp(t)
 	} else if mpp, ok := t.(*mppTask); ok {
