@@ -9690,6 +9690,7 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 func (s *testSerialSuite) TestIssue30971(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (id int);")
 	tk.MustExec("create table t2 (id int, c int);")
 
