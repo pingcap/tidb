@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -164,8 +165,10 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
+			preparedAst := preparedObj.PreparedAst
+			bindSQL := planner.GetBindSQL4PlanCache(ts.ctx, preparedAst.Stmt)
 			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion, bindSQL))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
