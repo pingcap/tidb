@@ -453,11 +453,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ds.indexMergeHints = nil
 		var msg string
 		if !isPossibleIdxMerge {
-			msg = "No available filter or access path."
+			msg = "No available filter or available index."
 		} else if !sessionAndStmtPermission {
-			msg = "Got no_index_merge hint or switcher is off."
-		} else if !needConsiderIndexMerge {
-			msg = "Got index path or exprs that cannot be pushed."
+			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
 		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
 			msg = "Cannot use IndexMerge on temporary table."
 		} else if readFromTableCache {
@@ -465,7 +463,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
 		stmtCtx.AppendWarning(errors.Errorf(msg))
-		logutil.BgLogger().Info(msg)
+		logutil.BgLogger().Debug(msg)
 	}
 	return ds.stats, nil
 }
@@ -483,7 +481,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable."))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().

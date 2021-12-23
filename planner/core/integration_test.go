@@ -5118,13 +5118,13 @@ func (s *testIntegrationSuite) TestIndexMergeWarning(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1")
-	warningMsg := "Warning 1105 IndexMerge is inapplicable or disabled. No available filter or access path."
+	warningMsg := "Warning 1105 IndexMerge is inapplicable or disabled. No available filter or available index."
 	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(c1 int, c2 int, key(c1), key(c2))")
 	tk.MustExec("select /*+ use_index_merge(t1), no_index_merge() */ * from t1 where c1 < 1 or c2 < 1")
-	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Got no_index_merge hint or switcher is off."
+	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
 	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
 
 	tk.MustExec("drop table if exists t1")
