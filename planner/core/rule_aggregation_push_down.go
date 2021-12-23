@@ -517,7 +517,7 @@ func (*aggregationPushDownSolver) name() string {
 func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
 	childIdx int, opt *logicalOptimizeOp) {
 	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v]'s functions[", oldAgg.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's functions[", oldAgg.TP(), oldAgg.ID()))
 		for i, aggFunc := range aggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -526,23 +526,23 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 		}
 		buffer.WriteString("] are decomposable with join")
 		return buffer.String()
-	}()
+	}
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] pushed down across join[%v], ", oldAgg.ID(), join.ID()))
-		buffer.WriteString(fmt.Sprintf("and join %v path becomes agg[%v]", func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v pushed down across %v_%v, ", oldAgg.TP(), oldAgg.ID(), join.TP(), join.ID()))
+		buffer.WriteString(fmt.Sprintf("and %v_%v %v path becomes %v_%v", join.TP(), join.ID(), func() string {
 			if childIdx == 0 {
 				return "left"
 			}
 			return "right"
-		}(), newAgg.ID()))
+		}(), newAgg.TP(), newAgg.ID()))
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
 func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *logicalOptimizeOp) {
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("proj[%v] is eliminated, and agg[%v]'s functions changed into[", proj.ID(), agg.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -551,33 +551,35 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
-	reason := fmt.Sprintf("Proj[%v] is directly below an agg[%v] and has no side effects", proj.ID(), agg.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v is directly below an %v_%v and has no side effects", proj.TP(), proj.ID(), agg.TP(), agg.ID())
+	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) {
 	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] functions[", agg.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
 			buffer.WriteString(aggFunc.String())
 		}
-		buffer.WriteString("] are decomposable with union")
+		buffer.WriteString(fmt.Sprintf("] are decomposable with %v_%v", union.TP(), union.ID()))
 		return buffer.String()
-	}()
+	}
 	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("agg[%v] pushed down, and union[%v]'s children changed into[", agg.ID(), union.ID()))
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v pushed down, and %v_%v's children changed into[", agg.TP(), agg.ID(), union.TP(), union.ID()))
 		for i, child := range union.Children() {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(fmt.Sprintf("[id:%v,tp:%s]", child.ID(), child.TP()))
+			buffer.WriteString(fmt.Sprintf("%v_%v", child.TP(), child.ID()))
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(union.ID(), union.TP(), reason, action)
 }
