@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -2877,6 +2878,11 @@ func TestIssue25309(t *testing.T) {
 }
 
 func TestGlobalIndexScan(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -2893,6 +2899,11 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexDoubleRead(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -3288,6 +3299,11 @@ func TestIssue25528(t *testing.T) {
 }
 
 func TestIssue26251(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
