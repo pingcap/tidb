@@ -1489,7 +1489,10 @@ func (s *testTikvRegionStatusTableSuite) TearDownSuite(c *C) {
 
 func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	name2region := make(map[string][]helper.RegionInfo, 0)
+	name2id := make(map[string]int64, 0)
 	tk.MustExec("create database if not exists test")
+	// table has partition
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)" +
@@ -1512,14 +1515,22 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 		"PARTITION BY RANGE (b) (" +
 		"PARTITION p0 VALUES LESS THAN (6)," +
 		"PARTITION p1 VALUES LESS THAN (11))")
-	name2region := make(map[string][]helper.RegionInfo, 0)
-	name2id := make(map[string]int64, 0)
 	s.genRegionInfo(c, tk.Se, "test", "t1", name2region)
 	s.genRegionInfo(c, tk.Se, "test", "t2", name2region)
 	s.genRegionInfo(c, tk.Se, "test1", "t1", name2region)
 	s.getName2ID(c, tk.Se, "test", "t1", name2id)
 	s.getName2ID(c, tk.Se, "test", "t2", name2id)
 	s.getName2ID(c, tk.Se, "test1", "t1", name2id)
+	// table without partition
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3(a int,b int)")
+	tk.MustExec("use test1")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(a int,b int)")
+	s.genRegionInfo(c, tk.Se, "test", "t3", name2region)
+	s.genRegionInfo(c, tk.Se, "test1", "t4", name2region)
+
 	cases := []struct {
 		conditions []string
 		reqCount   int32
@@ -1610,6 +1621,23 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 				fmt.Sprint(name2region["test_t1_idx1t1"][1].ID),
 			},
 		},
+		// table without partition
+		{
+			conditions: []string{
+				"table_name='t3'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test_t3"][0].ID),
+			},
+		},
+		{
+			conditions: []string{
+				"table_name='t4'",
+			},
+			expected: []string{
+				fmt.Sprint(name2region["test1_t4"][0].ID),
+			},
+		},
 	}
 	for _, cas := range cases {
 		sql := "select * from information_schema.tikv_region_status"
@@ -1632,19 +1660,21 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 func (s *testTikvRegionStatusTableSuite) genRegionInfo(c *C, ctx sessionctx.Context, db,
 	table string, name2region map[string][]helper.RegionInfo) {
 	tableInfo := testGetTableByName(c, ctx, db, table)
-	var physicalIDs []int64
+	var ids []int64
 	if pi := tableInfo.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
-			physicalIDs = append(physicalIDs, def.ID)
+			ids = append(ids, def.ID)
 		}
+	} else {
+		ids = append(ids, tableInfo.Meta().ID)
 	}
 	toHex := func(key []byte) string {
 		return strings.ToUpper(hex.EncodeToString(codec.EncodeBytes(nil, key)))
 	}
-	for _, physicalID := range physicalIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalID)
+	for _, id := range ids {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 		region := helper.RegionInfo{
-			ID:       physicalID,
+			ID:       id,
 			StartKey: toHex(startKey),
 			EndKey:   toHex(endKey),
 		}
@@ -1654,7 +1684,7 @@ func (s *testTikvRegionStatusTableSuite) genRegionInfo(c *C, ctx sessionctx.Cont
 		for i, indexInfo := range tableInfo.Indices() {
 			startKey, endKey := tablecodec.GetTableIndexKeyRange(tableInfo.Meta().ID, indexInfo.Meta().ID)
 			region := helper.RegionInfo{
-				ID:       physicalID*10 + int64(i),
+				ID:       id*10 + int64(i),
 				StartKey: toHex(startKey),
 				EndKey:   toHex(endKey),
 			}
