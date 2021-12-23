@@ -34,7 +34,7 @@ dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_par
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt unconvert lint tidy testSuite check-static vet errdoc
+check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -74,6 +74,13 @@ tidy:
 testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
+
+check-parallel:
+# Make sure no tests are run in parallel to prevent possible unstable tests.
+# See https://github.com/pingcap/tidb/pull/30692.
+	@! find . -name "*_test.go" -not -path "./vendor/*" -print0 | \
+		xargs -0 grep -F -n "t.Parallel()" || \
+		! echo "Error: all the go tests should be run in serial."
 
 clean: failpoint-disable
 	$(GO) clean -i ./...
@@ -117,6 +124,10 @@ devgotest: failpoint-enable
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
+	@$(FAILPOINT_DISABLE)
+
+ut: failpoint-enable tools/bin/ut
+	tools/bin/ut $(X);
 	@$(FAILPOINT_DISABLE)
 
 gotest: failpoint-enable
@@ -201,6 +212,10 @@ failpoint-enable: tools/bin/failpoint-ctl
 failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
+
+tools/bin/ut: tools/check/ut.go
+	cd tools/check; \
+	$(GO) build -o ../bin/ut ut.go
 
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \

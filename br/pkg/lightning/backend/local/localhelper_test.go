@@ -69,6 +69,11 @@ func newTestClient(
 	}
 }
 
+// ScatterRegions scatters regions in a batch.
+func (c *testClient) ScatterRegions(ctx context.Context, regionInfo []*restore.RegionInfo) error {
+	return nil
+}
+
 func (c *testClient) GetAllRegions() map[uint64]*restore.RegionInfo {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
