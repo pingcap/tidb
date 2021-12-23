@@ -2030,12 +2030,12 @@ func (s *testPlanSuite) TestIssue30965(c *C) {
 	tk.MustExec("CREATE TABLE `t30965` ( `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL, `d` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL, KEY `ib` (`b`));")
 	tk.MustExec("insert into t30965 (a,b,c) value(3,4,5);")
 	tk.MustQuery("select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;").Check(testkit.Rows("0"))
-	tk.MustQuery("explain select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;").Check(
+	tk.MustQuery("explain format = 'brief' select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;").Check(
 		testkit.Rows(
-			"StreamAgg_10 1.00 root  funcs:count(1)->Column#6",
-			"└─Selection_28 0.00 root  eq(test.t30965.d, 2)",
-			"  └─IndexLookUp_27 0.00 root  ",
-			"    ├─IndexRangeScan_24(Build) 10.00 cop[tikv] table:t30965, index:ib(b) range:[4,4], keep order:false, stats:pseudo",
-			"    └─Selection_26(Probe) 0.00 cop[tikv]  eq(test.t30965.a, 3), eq(test.t30965.c, 5)",
-			"      └─TableRowIDScan_25 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
+			"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Selection 0.00 root  eq(test.t30965.d, 2)",
+			"  └─IndexLookUp 0.00 root  ",
+			"    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t30965, index:ib(b) range:[4,4], keep order:false, stats:pseudo",
+			"    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t30965.a, 3), eq(test.t30965.c, 5)",
+			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
 }
