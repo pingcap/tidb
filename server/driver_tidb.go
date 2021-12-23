@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"

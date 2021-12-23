@@ -109,7 +109,6 @@ func (key *planCacheKey) Hash() []byte {
 			key.hash = append(key.hash, kv.TiFlash.Name()...)
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
-		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
 	}
 	return key.hash
 }
