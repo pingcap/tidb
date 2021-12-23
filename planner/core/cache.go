@@ -66,6 +66,10 @@ func PreparedPlanCacheEnabled() bool {
 	return isEnabled == preparedPlanCacheEnabled
 }
 
+// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
+// Put the parameters that may affect the plan in planCacheValue, such as bindSQL.
+// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
+// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
 type planCacheKey struct {
 	database             string
 	connID               uint64

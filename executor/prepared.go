@@ -317,7 +317,8 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
-			vars, id, prepared.SchemaVersion))
+			vars, id, prepared.SchemaVersion,
+		))
 	}
 	vars.RemovePreparedStmt(id)
 	return nil
