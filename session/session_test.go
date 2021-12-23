@@ -5420,7 +5420,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	doModify := func() {
@@ -5459,7 +5459,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	assertSelectAsUnModified()
