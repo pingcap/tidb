@@ -4230,7 +4230,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// e.g. index(tidb_shard(a), a)
 	for _, path := range ds.possibleAccessPaths {
 		if !path.IsTablePath() {
-			col := expression.IndexColToExpressionCol(ds.Columns, ds.schema.Columns, path.Index.Columns[0])
+			col := expression.IndexCol2Col(ds.Columns, ds.schema.Columns, path.Index.Columns[0])
 			if col != nil && expression.GcColumnExprIsTidbShard(col.VirtualExpr) && len(path.Index.Columns) > 1 {
 				path.IsShardIndexPath = true
 				ds.containExprPrefixUk = true

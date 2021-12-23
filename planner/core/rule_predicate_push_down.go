@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 type ppdSolver struct{}
@@ -135,6 +137,8 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.ctx, predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
+	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
+	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.ctx, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
@@ -746,10 +750,10 @@ func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalS
 // @retval - the new condition after adding expression prefix
 func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expression.Expression) []expression.Expression {
 	if !ds.containExprPrefixUk {
-		// todo: len(conds) == 0 and  need return
 		return conds
 	}
 
+	var err error
 	newConds := make([]expression.Expression, 0, len(conds))
 	newConds = append(newConds, conds...)
 
@@ -757,7 +761,11 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 		if path.IsTablePath() || !path.IsUkShardIndex() {
 			continue
 		}
-		newConds, _ = ds.addExprPrefixCond(sc, path, newConds)
+		newConds, err = ds.addExprPrefixCond(sc, path, newConds)
+		if err != nil {
+			logutil.BgLogger().Error("Add tidb_shard expression failed", zap.Error(err))
+			return conds
+		}
 	}
 
 	return newConds
@@ -803,10 +811,10 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 // @return  -     the new condition after adding expression prefix
 func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
 
-	newCondtionds, _ := ranger.AddExpr4EqAndInCondition(adder.sctx,
+	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx,
 		conds, adder.cols)
 
-	return newCondtionds, nil
+	return newCondtionds, err
 }
 
 // AddExprPrefix4DNFCond
@@ -817,6 +825,7 @@ func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expressio
 // @return 	 -          the new condition after adding expression prefix. It's still a LogicOr expression.
 func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.ScalarFunction) ([]expression.Expression, error) {
 
+	var err error
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 
@@ -825,11 +834,17 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 			var accesses []expression.Expression
 			if sf.FuncName.L == ast.LogicAnd {
 				cnfItems := expression.FlattenCNFConditions(sf)
-				accesses, _ = adder.addExprPrefix4CNFCond(cnfItems)
+				accesses, err = adder.addExprPrefix4CNFCond(cnfItems)
+				if err != nil {
+					return []expression.Expression{condition}, err
+				}
 				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
 			} else if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
 				// only add prefix expression for EQ or IN function
-				accesses, _ = adder.addExprPrefix4CNFCond([]expression.Expression{sf})
+				accesses, err = adder.addExprPrefix4CNFCond([]expression.Expression{sf})
+				if err != nil {
+					return []expression.Expression{condition}, err
+				}
 				newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(adder.sctx, accesses...))
 			} else {
 				newAccessItems = append(newAccessItems, item)

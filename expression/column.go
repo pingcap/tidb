@@ -553,8 +553,8 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
+func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
 			if col.Length > 0 && info.FieldType.Flen > col.Length {
@@ -577,7 +577,7 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
@@ -599,7 +599,7 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
@@ -712,10 +712,4 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 	}
 
 	return true
-}
-
-// IndexColToExpressionCol return the expression.Column by model.IndexColumn
-func IndexColToExpressionCol(colInfos []*model.ColumnInfo, cols []*Column,
-	col *model.IndexColumn) *Column {
-	return indexCol2Col(colInfos, cols, col)
 }

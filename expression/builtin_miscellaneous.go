@@ -96,6 +96,10 @@ var (
 	_ builtinFunc = &builtinTidbShardSig{}
 )
 
+const (
+	TiDBShardBucketCount = 256
+)
+
 type sleepFunctionClass struct {
 	baseFunctionClass
 }
@@ -1349,6 +1353,6 @@ func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
 		return 0, true, err
 	}
-	hashed = hashed % 256
+	hashed = hashed % TiDBShardBucketCount
 	return int64(hashed), false, nil
 }

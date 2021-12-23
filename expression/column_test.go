@@ -266,29 +266,3 @@ func TestGcColumnExprIsTidbShard(t *testing.T) {
 	shardExpr := NewFunctionInternal(ctx, ast.TidbShard, ft, col)
 	require.True(t, GcColumnExprIsTidbShard(shardExpr))
 }
-
-func TestIndexColToExpressionCol(t *testing.T) {
-	t.Parallel()
-
-	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
-
-	cols := []*Column{col0, col1}
-	colInfos := []*model.ColumnInfo{colInfo0, colInfo1}
-	// normal case
-	resCol := IndexColToExpressionCol(colInfos, cols, indexCol0)
-	require.NotNil(t, resCol)
-	require.True(t, col0.Equal(nil, resCol))
-
-	resCol = IndexColToExpressionCol(colInfos, cols, indexCol1)
-	require.NotNil(t, resCol)
-	require.True(t, col1.Equal(nil, resCol))
-
-	// abnormal case
-	indexCol2 := &model.IndexColumn{Name: model.NewCIStr("2")}
-	resCol = IndexColToExpressionCol(colInfos, cols, indexCol2)
-	require.Nil(t, resCol)
-}

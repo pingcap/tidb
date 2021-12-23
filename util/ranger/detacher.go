@@ -917,6 +917,7 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression) ([]expression.Expression, error) {
 
+	var errRes error
 	var newAccessCond []expression.Expression
 	record := make([]types.Datum, 1)
 
@@ -940,24 +941,36 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 		if err != nil {
 			return accessesCond, err
 		}
-		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
 
 		// tmpArg1 is like `tidb_shard(a) = 8`, tmpArg1 is like `a = 100`
-		tmpArg1 := expression.NewFunctionInternal(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
-		tmpArg2 := expression.NewFunctionInternal(sctx, ast.EQ, c.RetType, c.Clone(), arg)
-		if tmpArg1 == nil || tmpArg2 == nil {
-			return accessesCond, nil
+		exprCon := &expression.Constant{Value: exprVal, RetType: cols[0].RetType}
+		tmpArg1, err1 := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], exprCon)
+		if err1 != nil {
+			return accessesCond, err1
 		}
+		tmpArg2, err2 := expression.NewFunction(sctx, ast.EQ, c.RetType, c.Clone(), arg)
+		if err2 != nil {
+			return accessesCond, err2
+		}
+
 		// make a LogicAnd, e.g. `tidb_shard(a) = 8 AND a = 100`
-		andExpr := expression.NewFunctionInternal(sctx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
+		andExpr, err3 := expression.NewFunction(sctx, ast.LogicAnd, andType, tmpArg1, tmpArg2)
+		if err3 != nil {
+			return accessesCond, err3
+		}
+
 		if i == 0 {
 			AndOrExpr = andExpr
 		} else {
 			// if the LogicAnd more than one, make a LogicOr,
 			// e.g. `(tidb_shard(a) = 8 AND a = 100) OR (tidb_shard(a) = 161 AND a = 200)`
-			AndOrExpr = expression.NewFunctionInternal(sctx, ast.LogicOr, andType, AndOrExpr, andExpr)
+			AndOrExpr, errRes = expression.NewFunction(sctx, ast.LogicOr, andType, AndOrExpr, andExpr)
+			if errRes != nil {
+				return accessesCond, errRes
+			}
 		}
 	}
+
 	newAccessCond = append(newAccessCond, AndOrExpr)
 
 	return newAccessCond, nil
@@ -992,9 +1005,9 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	vi := &valueInfo{false, &evaluated}
 	con := &expression.Constant{Value: evaluated, RetType: cols[0].RetType}
 	// make a tidb_shard() function, e.g. `tidb_shard(a) = 8`
-	cond := expression.NewFunctionInternal(sctx, ast.EQ, cols[0].RetType, cols[0], con)
-	if cond == nil {
-		return accessesCond, nil
+	cond, err := expression.NewFunction(sctx, ast.EQ, cols[0].RetType, cols[0], con)
+	if err != nil {
+		return accessesCond, err
 	}
 
 	accessesCond[0] = cond
@@ -1015,11 +1028,13 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	cols []*expression.Column) ([]expression.Expression, error) {
 
 	accesses := make([]expression.Expression, len(cols))
-	newConditions := make([]expression.Expression, 0, len(conditions))
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
 	addGcCond := true
 
+	// the array accesses stores conditions of every column in the index in the definition order
+	// e.g. the original condition is `WHERE b = 100 AND a = 200 AND c = 300`, the definition of
+	// index is (tidb_shard(a), a, b), then accesses is "[a = 200, b = 100]"
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(sctx, cond, cols)
 		offsets[i] = offset
@@ -1051,13 +1066,14 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	}
 
 	// remove the accesses from newConditions
+	newConditions := make([]expression.Expression, 0, len(conditions))
 	newConditions = append(newConditions, conditions...)
 	newConditions = removeAccessConditions(newConditions, accesses)
 
-	// add Gc condtion for accesses
+	// add Gc condtion for accesses and return new condition to newAccesses
 	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)
 	if err != nil {
-		return conditions, nil
+		return conditions, err
 	}
 
 	// merge newAccesses and original condition execept accesses
@@ -1164,7 +1180,7 @@ func NeedAddColumn4EqCond(cols []*expression.Column,
 //     is `b` that's not the column in `tidb_shard(a)`.
 // @param  sf	"IN" function, e.g. `a IN (1, 2, 3)`
 func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Expression, sf *expression.ScalarFunction) bool {
-	if cols == nil || accessCond == nil || sf == nil {
+	if len(cols) == 0 || len(accessCond) == 0 || sf == nil {
 		return false
 	}
 
@@ -1172,7 +1188,7 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 		return false
 	}
 
-	fields := GetFieldsFromExpr(cols[0].VirtualExpr.(*expression.ScalarFunction))
+	fields := ExtractColumnsFromExpr(cols[0].VirtualExpr.(*expression.ScalarFunction))
 
 	c, ok := sf.GetArgs()[0].(*expression.Column)
 	if !ok {
@@ -1193,8 +1209,8 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 	return true
 }
 
-// GetFieldsFromExpr get all fields from input expresion virtaulExpr
-func GetFieldsFromExpr(virtaulExpr *expression.ScalarFunction) []*expression.Column {
+// ExtractColumnsFromExpr get all fields from input expresion virtaulExpr
+func ExtractColumnsFromExpr(virtaulExpr *expression.ScalarFunction) []*expression.Column {
 	var fields []*expression.Column
 
 	if virtaulExpr == nil {
@@ -1203,7 +1219,7 @@ func GetFieldsFromExpr(virtaulExpr *expression.ScalarFunction) []*expression.Col
 
 	for _, arg := range virtaulExpr.GetArgs() {
 		if sf, ok := arg.(*expression.ScalarFunction); ok {
-			fields = append(fields, GetFieldsFromExpr(sf)...)
+			fields = append(fields, ExtractColumnsFromExpr(sf)...)
 		} else if c, ok := arg.(*expression.Column); ok {
 			if !c.InColumnArray(fields) {
 				fields = append(fields, c)
