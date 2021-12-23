@@ -179,7 +179,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		}
 		return newGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
-		return newAzureBlobStorage(ctx, backend.AzureBlobStorage)
+		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}

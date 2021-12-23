@@ -118,7 +118,7 @@ func getAuthorizerFromEnvironment() (clientId, tenantId, clientSecret string) {
 }
 
 // get azure service client from options and environment
-func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBuilder, error) {
+func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (ClientBuilder, error) {
 	if len(options.Bucket) == 0 {
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
@@ -158,6 +158,10 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBui
 		if err != nil {
 			log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantId), zap.String("clientId", clientId), zap.String("clientSecret", "?"))
 		} else {
+			// send account-name to TiKV
+			if opts != nil && opts.SendCredentials {
+				options.AccountName = accountName
+			}
 			return &tokenClientBuilder{
 				cred,
 				accountName,
@@ -178,6 +182,12 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage) (ClientBui
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
 	}
+	// if BR can only get credential info from environment variable `sharedKey`,
+	// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
+	if opts != nil && opts.SendCredentials {
+		options.AccountName = accountName
+		options.SharedKey = sharedKey
+	}
 	return &sharedKeyClientBuilder{
 		cred,
 		accountName,
@@ -191,8 +201,8 @@ type AzureBlobStorage struct {
 	containerClient azblob.ContainerClient
 }
 
-func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage) (*AzureBlobStorage, error) {
-	clientBuilder, err := getAzureServiceClientBuilder(options)
+func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
+	clientBuilder, err := getAzureServiceClientBuilder(options, opts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

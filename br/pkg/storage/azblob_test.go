@@ -160,7 +160,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			AccountName: "user",
 			SharedKey:   "cGFzc3dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -175,7 +175,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			AccountName: "user",
 			SharedKey:   "cGFzc3dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -194,7 +194,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			AccountName: "user",
 			SharedKey:   "cGFzc3dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -208,7 +208,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc3dk",
 		}
-		_, err := getAzureServiceClientBuilder(options)
+		_, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, NotNil)
 	}
 
@@ -223,7 +223,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc2dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -249,7 +249,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Bucket:   "test",
 			Prefix:   "a/b",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*tokenClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -264,7 +264,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Prefix:    "a/b",
 			SharedKey: "cGFzc2dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*tokenClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -280,7 +280,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			AccountName: "user",
 			SharedKey:   "cGFzc3dk",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*sharedKeyClientBuilder)
 		c.Assert(ok, IsTrue)
@@ -295,7 +295,7 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Prefix:      "a/b",
 			AccountName: "user",
 		}
-		builder, err := getAzureServiceClientBuilder(options)
+		builder, err := getAzureServiceClientBuilder(options, nil)
 		c.Assert(err, IsNil)
 		b, ok := builder.(*tokenClientBuilder)
 		c.Assert(ok, IsTrue)
