@@ -358,7 +358,6 @@ func TestSplitTable(t *testing.T) {
 }
 
 func TestClusterIndexSplitTable(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name:                model.NewCIStr("t"),
 		ID:                  1,
