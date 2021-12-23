@@ -27,9 +27,9 @@ Before caching the data, the table needs to hold a "read lock", so that the data
 
 The "read" lock needs to maintain a lease for a period of time, and the lease should be renewed continuously. The underlying data will be safe as long as the lock lease holds.
 
-When performing a modification, the meta-information should be checked first. If there is a "read" lock, the “read” lock needs to be upgraded to a "write" lock. This step prevents the read lock from renewing the lease. After the lease expires, the write operation can be performed. And after the write operation finishes, the "write" lock should be cleared, so that the subsequent "read" lock can be added and the data can be cached again.
+When performing a modification, the meta-information should be checked first. If there is a "read" lock, the "read" lock needs to be upgraded to a "write" lock. This step prevents the read lock from renewing the lease. After the lease expires, the write operation can be performed. And after the write operation finishes, the "write" lock should be cleared, so that the subsequent "read" lock can be added and the data can be cached again.
 
-The "write" lock also needs a TTL(time to live) to handle abnormal situations. For example, if the  TiDB server crashes after the write lock succeeds, TTL gives us a hint of how to clean the orphan write lock.
+The "write" lock also needs a TTL(time to live) to handle abnormal situations. For example, if the TiDB server crashes after the write lock succeeds, TTL gives us a hint of how to clean the orphan write lock.
 
 To put all things together, we have this interface:
 
@@ -84,7 +84,7 @@ LockForWrite() corresponds to this operation:
 update table_cache_meta set lock ='WRITE', lease = %?' where tid = %?
 ```
 
-WriteAndUnlock() has some special requirements. Write data needs to be in the same transaction as the unlock operation, and either succeed at the same time or fail at the same time. In addition, write operation also needs to confirm the write lock is hold:
+WriteAndUnlock() has some special requirements. Write data needs to be in the same transaction as the unlock operation, and either succeed or fail at the same time. In addition, write operation also needs to confirm the write lock is hold:
 
 ```
 begin
@@ -109,7 +109,7 @@ The `MemTableReaderExec` executor can be used for the scan operation. The point 
 
 Other alternatives: use unistore's memory backend as cache. The advantage is that there can be indexes. But in my opinion, when data is small enough, this benefit does not worth the complexity.
 
-The cached data needs to be stored in a place in the memory. A `CachedTable` struct will be introduced. It inherits and reloads the Table. `loadSchema` will periodically load the table information on schema change. For  a cached table, the `CachedTable` will be constructed.
+The cached data needs to be stored in a place in the memory. A `CachedTable` struct will be introduced. It inherits and overloads the Table. `loadSchema` will periodically load the table information on schema change. For a cached table, the `CachedTable` will be reconstructed.
 
 `CachedTable` implements the `Table`  interface, and overloads the `AddRecord` method. When AddRecord is called, the lock meta information needs to be checked first. This operation needs to acquire the "write" lock, that is to say, make the `lock_type` field of the meta table to ‘WRITE’. After confirming that the lease time of the previous ‘READ’ lock has expired, the operation can be executed.
 
@@ -117,9 +117,9 @@ The cached data needs to be stored in a place in the memory. A `CachedTable` str
 
 The syntax of OceanBase's replicated table is to add the DUPLICATE_SCOPE option after the CREATE TABLE statement.
 
-I propose to use “ALTER TABLE t CACHE ON” or similar syntax to cache the table. This is a switch that can be specified to be turned ON or OFF. Users can choose to use it for small tables. The write performance after caching will be very low.
+I propose to use "ALTER TABLE t CACHE ON" or similar syntax to cache the table. This is a switch that can be specified to be turned ON or OFF. Users can choose to use it for small tables. The write performance after caching will be very low.
 
-“ALTER TABLE t CACHE” is a DDL operation. Assuming that all tidb instances know that a table is not cached, there is no correctness problem; Assuming that all tidb instances make a consensus that a table is cached, the correctness is guaranteed by the locking algorithm mentioned before. However, during the DDL operation, if some tidb instances think that the cache is enabled, and some instances think that the cache is not enabled, there would be a problem. 
+"ALTER TABLE t CACHE" is a DDL operation. Assuming that all tidb instances know that a table is not cached, there is no correctness problem; Assuming that all tidb instances make a consensus that a table is cached, the correctness is guaranteed by the locking algorithm mentioned before. However, during the DDL operation, if some tidb instances think that the cache is enabled, and some instances think that the cache is not enabled, there would be a problem. 
 
 To address that problem,  an intermediate `Switching` state is introduced, the schema change process is similar to the table lock implementation:
 Disabled => Switching => Enabled
