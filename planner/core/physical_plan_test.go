@@ -1581,3 +1581,107 @@ func (s *testPlanSuite) TestIssue27233(c *C) {
 		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (s *testPlanSuite) TestPossibleProperties(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists student, sc")
+	tk.MustExec("create table student(id int primary key auto_increment, name varchar(4) not null)")
+	tk.MustExec("create table sc(id int primary key auto_increment, student_id int not null, course_id int not null, score int not null)")
+	tk.MustExec("insert into student values (1,'s1'), (2,'s2')")
+	tk.MustExec("insert into sc (student_id, course_id, score) values (1,1,59), (1,2,57), (1,3,76), (2,1,99), (2,2,100), (2,3,100)")
+	tk.MustQuery("select /*+ stream_agg() */ a.id, avg(b.score) as afs from student a join sc b on a.id = b.student_id where b.score < 60 group by a.id having count(b.course_id) >= 2").Check(testkit.Rows(
+		"1 58.0000",
+	))
+}
+
+func (s *testPlanSuite) TestSelectionPartialPushDown(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
+	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testPlanSuite) TestIssue28316(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testPlanSuite) TestIssue30965(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t30965")
+	tk.MustExec("CREATE TABLE `t30965` ( `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL, `d` int(11) GENERATED ALWAYS AS (`a` + 1) VIRTUAL, KEY `ib` (`b`));")
+	tk.MustExec("insert into t30965 (a,b,c) value(3,4,5);")
+	tk.MustQuery("select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;").Check(testkit.Rows("0"))
+	tk.MustQuery("explain format = 'brief' select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;").Check(
+		testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Selection 0.00 root  eq(test.t30965.d, 2)",
+			"  └─IndexLookUp 0.00 root  ",
+			"    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t30965, index:ib(b) range:[4,4], keep order:false, stats:pseudo",
+			"    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t30965.a, 3), eq(test.t30965.c, 5)",
+			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
+}
+>>>>>>> e24493f41... planner: fix `AccessPath.TableFilters` got modified unexpectedly (#30966)
