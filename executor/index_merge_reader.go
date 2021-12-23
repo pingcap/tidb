@@ -359,7 +359,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) (err error) {
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
@@ -387,6 +387,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
 				}
+
 				worker := &partialTableWorker{
 					stats:        e.stats,
 					sc:           e.ctx,
@@ -394,6 +395,14 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize: e.maxChunkSize,
 					tableReader:  partialTableReader,
+				}
+
+				if e.isCorColInPartialFilters[workID] {
+					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
 				for _, tbl := range tbls {
