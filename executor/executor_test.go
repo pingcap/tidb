@@ -9325,3 +9325,28 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 	tk.MustExec("insert into t29142_1 value(20);")
 	tk.MustQuery("select sum(distinct a) as x from t29142_1 having x > some ( select a from t29142_2 where x in (a));").Check(nil)
 }
+
+func (s *testSerialSuite) TestIssue30971(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("create table t2 (id int, c int);")
+
+	testCases := []struct {
+		sql    string
+		fields int
+	}{
+		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
+		{"select * from t1 union select 1 from t1", 1},
+		{"select c from t2 union select * from t1", 1},
+		{"select * from t1", 1},
+		{"select * from t2 where c in (select * from t1)", 2},
+		{"insert into t1 values (?)", 0},
+		{"update t1 set id = ?", 0},
+	}
+	for _, test := range testCases {
+		_, _, fields, err := tk.Se.PrepareStmt(test.sql)
+		c.Assert(err, IsNil)
+		c.Assert(fields, HasLen, test.fields)
+	}
+}
