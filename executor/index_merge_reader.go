@@ -139,21 +139,24 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 }
 
 func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (ranges [][]kv.KeyRange, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i, plan := range e.partialPlans {
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
-			if tbl.Meta().IsCommonHandle {
-				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(tbl)}, e.ranges[i])
-				if err != nil {
-					return nil, err
-				}
-				ranges = append(ranges, keyRanges)
-			} else {
-				ranges = append(ranges, nil)
+			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
+			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges, nil)
+			if err != nil {
+				return nil, err
 			}
+			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
+			if err != nil {
+				return nil, err
+			}
+			keyRanges := append(firstKeyRanges, secondKeyRanges...)
+			ranges = append(ranges, keyRanges)
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		keyRange, err := distsql.IndexRangesToKVRanges(sc, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
 		if err != nil {
 			return nil, err
 		}
