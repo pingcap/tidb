@@ -218,3 +218,22 @@ explain format = 'brief' select count(a) from t group by b order by (select coun
 explain format = 'brief' select (select sum(count(a))) from t;
 explain format = 'brief' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 drop table if exists t;
+
+# lower precision for cast to decimal for integer type variables in sum function
+create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
+insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");
+admin reload opt_rule_blacklist;
+explain format = 'brief' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
+explain format = 'brief' select sum(t1.b) from t t1 join t t2 on t1.b=t2.b;
+explain format = 'brief' select sum(t1.c) from t t1 join t t2 on t1.c=t2.c;
+explain format = 'brief' select sum(t1.d) from t t1 join t t2 on t1.d=t2.d;
+explain format = 'brief' select sum(t1.e) from t t1 join t t2 on t1.e=t2.e;
+# note that avg will be converted to count and sum, and .decimal field will be non-zero
+explain format = 'brief' select avg(t1.a) from t t1 join t t2 on t1.a=t2.a;
+explain format = 'brief' select avg(t1.b) from t t1 join t t2 on t1.b=t2.b;
+explain format = 'brief' select avg(t1.c) from t t1 join t t2 on t1.c=t2.c;
+explain format = 'brief' select avg(t1.d) from t t1 join t t2 on t1.d=t2.d;
+explain format = 'brief' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
+drop table if exists t;
+delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
+admin reload opt_rule_blacklist;
