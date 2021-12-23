@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -77,21 +78,23 @@ func TestCompareCol2Len(t *testing.T) {
 }
 
 func TestOnlyPointRange(t *testing.T) {
-	t.Parallel()
 	sctx := core.MockContext()
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	nullPointRange := ranger.Range{
-		LowVal:  []types.Datum{*nullDatum.Clone()},
-		HighVal: []types.Datum{*nullDatum.Clone()},
+		LowVal:    []types.Datum{*nullDatum.Clone()},
+		HighVal:   []types.Datum{*nullDatum.Clone()},
+		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	onePointRange := ranger.Range{
-		LowVal:  []types.Datum{types.NewIntDatum(1)},
-		HighVal: []types.Datum{types.NewIntDatum(1)},
+		LowVal:    []types.Datum{types.NewIntDatum(1)},
+		HighVal:   []types.Datum{types.NewIntDatum(1)},
+		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 	one2TwoRange := ranger.Range{
-		LowVal:  []types.Datum{types.NewIntDatum(1)},
-		HighVal: []types.Datum{types.NewIntDatum(2)},
+		LowVal:    []types.Datum{types.NewIntDatum(1)},
+		HighVal:   []types.Datum{types.NewIntDatum(2)},
+		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 
 	intHandlePath := &util.AccessPath{IsIntHandlePath: true}

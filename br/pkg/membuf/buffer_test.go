@@ -36,8 +36,6 @@ func (t *testAllocator) Free(_ []byte) {
 }
 
 func TestBufferPool(t *testing.T) {
-	t.Parallel()
-
 	allocator := &testAllocator{}
 	pool := NewPool(
 		WithPoolSize(2),
@@ -75,8 +73,6 @@ func TestBufferPool(t *testing.T) {
 }
 
 func TestBufferIsolation(t *testing.T) {
-	t.Parallel()
-
 	pool := NewPool(WithBlockSize(1024))
 	defer pool.Destroy()
 	bytesBuf := pool.NewBuffer()

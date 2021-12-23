@@ -52,7 +52,6 @@ func runTests(t *testing.T, tests []testCase) {
 }
 
 func TestBetween(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
@@ -64,7 +63,6 @@ func TestBetween(t *testing.T) {
 }
 
 func TestCaseWhen(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
@@ -103,7 +101,6 @@ func TestCaseWhen(t *testing.T) {
 }
 
 func TestCast(t *testing.T) {
-	t.Parallel()
 	f := types.NewFieldType(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
@@ -142,7 +139,6 @@ func TestCast(t *testing.T) {
 }
 
 func TestPatternIn(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{
 			exprStr:   "1 not in (1, 2, 3)",
@@ -189,7 +185,6 @@ func TestPatternIn(t *testing.T) {
 }
 
 func TestIsNull(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{
 			exprStr:   "1 IS NULL",
@@ -212,7 +207,6 @@ func TestIsNull(t *testing.T) {
 }
 
 func TestCompareRow(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{
 			exprStr:   "row(1,2,3)=row(1,2,3)",
@@ -255,7 +249,6 @@ func TestCompareRow(t *testing.T) {
 }
 
 func TestIsTruth(t *testing.T) {
-	t.Parallel()
 	tests := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
