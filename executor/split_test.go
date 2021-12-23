@@ -37,7 +37,6 @@ import (
 )
 
 func TestLongestCommonPrefixLen(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		s1 string
 		s2 string
