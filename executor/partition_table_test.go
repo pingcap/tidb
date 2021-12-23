@@ -2878,15 +2878,15 @@ func TestIssue25309(t *testing.T) {
 }
 
 func TestGlobalIndexScan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2899,15 +2899,15 @@ partition p2 values less than (10))`)
 }
 
 func TestGlobalIndexDoubleRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -3299,15 +3299,15 @@ func TestIssue25528(t *testing.T) {
 }
 
 func TestIssue26251(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
 	restoreConfig := config.RestoreFunc()
 	defer restoreConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
 	tk1.MustExec("create table tn (id int primary key);")
