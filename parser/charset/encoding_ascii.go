@@ -49,8 +49,19 @@ func (e *encodingASCII) Peek(src []byte) []byte {
 	return src[:1]
 }
 
+// IsValid implements Encoding interface.
+func (e *encodingASCII) IsValid(src []byte) bool {
+	srcLen := len(src)
+	for i := 0; i < srcLen; i++ {
+		if src[i] > go_unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
+
 func (e *encodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
-	if IsValid(e, src) {
+	if e.IsValid(src) {
 		return src, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)
