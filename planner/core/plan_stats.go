@@ -16,12 +16,16 @@ package core
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -67,6 +71,16 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
 	var timeout = time.Duration(waitTime) * time.Millisecond
 	neededColumns := CollectHistColumns(plan)
+	if config.GetGlobalConfig().Log.Level == "debug" && len(neededColumns) > 0 {
+		neededColInfos := make([]string, len(neededColumns))
+		is := domain.GetDomain(plan.SCtx()).InfoSchema()
+		for i, col := range neededColumns {
+			table, _ := is.TableByID(col.TableID)
+			colInfo := FindColumnInfoByID(table.Meta().Columns, col.ColumnID)
+			neededColInfos[i] = table.Meta().Name.L + "." + colInfo.Name.L
+		}
+		logutil.BgLogger().Debug("Full stats are needed:", zap.String("columns", strings.Join(neededColInfos, ",")))
+	}
 	domain.GetDomain(plan.SCtx()).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
 }
 
