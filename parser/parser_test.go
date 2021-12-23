@@ -6425,6 +6425,9 @@ func TestGBKEncoding(t *testing.T) {
 
 	stmt, _, err = p.ParseSQL("create table t1(s set('a一','b二','c三'));", gbkOpt)
 	require.NoError(t, err)
+
+	stmt, _, err = p.ParseSQL("insert into t3 values('一a');", gbkOpt)
+	require.NoError(t, err)
 }
 
 type gbkEncodingChecker struct {

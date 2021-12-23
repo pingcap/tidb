@@ -93,10 +93,10 @@ var GBKCase = unicode.SpecialCase{
 	unicode.CaseRange{Lo: 0x216A, Hi: 0x216B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 }
 
-// customGBK is a simplifiedchinese.GBK wrapper
+// customGBK is a simplifiedchinese.GBK wrapper.
 type customGBK struct{}
 
-// NewDecoder returns simplifiedchinese.GBK.NewDecoder()
+// NewDecoder returns simplifiedchinese.GBK.NewDecoder().
 func (c customGBK) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
 		Transformer: customGBKDecoder{
@@ -105,7 +105,7 @@ func (c customGBK) NewDecoder() *encoding.Decoder {
 	}
 }
 
-// NewEncoder returns simplifiedchinese.GBK.NewEncoder()
+// NewEncoder returns simplifiedchinese.GBK.NewEncoder().
 func (c customGBK) NewEncoder() *encoding.Encoder {
 	return simplifiedchinese.GBK.NewEncoder()
 }
@@ -114,8 +114,8 @@ type customGBKDecoder struct {
 	gbkDecoder *encoding.Decoder
 }
 
-// Transform special treatment for 0x80
-// see https://github.com/pingcap/tidb/issues/30581 get details
+// Transform special treatment for 0x80,
+// see https://github.com/pingcap/tidb/issues/30581 get details.
 func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
 	if len(src) == 0 {
 		return 0, 0, nil
@@ -126,7 +126,7 @@ func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int
 	return c.gbkDecoder.Transform(dst, src, atEOF)
 }
 
-// Reset is same as simplifiedchinese.GBK.Reset()
+// Reset is same as simplifiedchinese.GBK.Reset().
 func (c customGBKDecoder) Reset() {
 	c.gbkDecoder.Reset()
 }
