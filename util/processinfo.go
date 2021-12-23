@@ -38,7 +38,6 @@ type ProcessInfo struct {
 	DB               string
 	Digest           string
 	Plan             interface{}
-	PlanExplainRows  [][]string
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	Time             time.Time
 	Info             string

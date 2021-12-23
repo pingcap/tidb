@@ -4136,7 +4136,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	}
 	var explainRows [][]string
 	if explainFor.Format == types.ExplainFormatROW {
-		explainRows = processInfo.PlanExplainRows
+		explainRows = GetExplainRowsForPlan(targetPlan)
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
