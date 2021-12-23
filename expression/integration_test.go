@@ -6927,3 +6927,26 @@ func TestIssue30174(t *testing.T) {
 	tk.MustQuery("select * from t2 where c3 in (select c2 from t1);").Check(testkit.Rows())
 	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
 }
+
+func TestIssue30264(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// compare Time/Int/Int as string type, return string type
+	tk.MustQuery("select greatest(time '21:00', year(date'20220101'), 23);").Check(testkit.Rows("23"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(time '21:00', date'891001', 120000);").Check(testkit.Rows("21:00:00"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(time '20:00', date'101001', 120101);").Check(testkit.Rows("20:00:00"))
+	// compare Date/String/Int as Date type, return string type
+	tk.MustQuery("select greatest(date'101001', '19990329', 120101);").Check(testkit.Rows("2012-01-01"))
+	// compare Time/Date as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '20:00', date'691231');").Check(testkit.Rows("2069-12-31 00:00:00"))
+	//Original 30264 Issue:
+	tk.MustQuery("select greatest(time '20:00:00', 120000);").Check(testkit.Rows("20:00:00"))
+	tk.MustQuery("select greatest(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
+	tk.MustQuery("select greatest(date '1995-05-05', 19910101, 20050505, 19930303);").Check(testkit.Rows("2005-05-05"))
+
+}

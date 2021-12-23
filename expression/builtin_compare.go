@@ -417,7 +417,9 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 }
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
+// cmpStringMode: 0 for cmp string directly; 1 for cmp string as date 'yyyy-mm-dd'; 2 for cmp string
+// as datetime 'yyyy-mm-dd hh:mm:ss'
+func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringMode int) {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
@@ -432,13 +434,17 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 			}
 		}
 
-		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(aggType.Tp) {
+		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(temporalItem.Tp) {
 			aggType.Tp = temporalItem.Tp
-			cmpStringAsDatetime = true
+			if aggType.Tp == mysql.TypeDate {
+				cmpStringMode = 1
+			} else {
+				cmpStringMode = 2
+			}
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), cmpStringAsDatetime
+	return aggType.EvalType(), cmpStringMode
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -460,8 +466,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
+	tp, cmpStringMode := resolveType4Extremum(args)
+	if cmpStringMode > 0 {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
@@ -495,8 +501,11 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsTimeSig{bf}
+		if cmpStringMode == 1 {
+			sig = &builtinGreatestCmpStringAsTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsDate)
+		} else if cmpStringMode == 2 {
+			sig = &builtinGreatestCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
 			sig = &builtinGreatestStringSig{bf}
@@ -648,11 +657,13 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 
 type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinGreatestCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -665,7 +676,12 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := types.ParseDatetime(sc, v)
+		var t types.Time
+		if b.cmpAsDate {
+			t, err = types.ParseDate(sc, v)
+		} else {
+			t, err = types.ParseDatetime(sc, v)
+		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
@@ -701,6 +717,11 @@ func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 			res = v
 		}
 	}
+	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+	}
 	return res, false, nil
 }
 
@@ -735,8 +756,8 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime := resolveType4Extremum(args)
-	if cmpStringAsDatetime {
+	tp, cmpStringMode := resolveType4Extremum(args)
+	if cmpStringMode > 0 {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
@@ -770,8 +791,11 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsTimeSig{bf}
+		if cmpStringMode == 1 {
+			sig = &builtinLeastCmpStringAsTimeSig{bf, true}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsDate)
+		} else if cmpStringMode == 2 {
+			sig = &builtinLeastCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
 			sig = &builtinLeastStringSig{bf}
@@ -910,11 +934,13 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 
 type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
+	cmpAsDate bool
 }
 
 func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinLeastCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cmpAsDate = b.cmpAsDate
 	return newSig
 }
 
@@ -927,7 +953,12 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := types.ParseDatetime(sc, v)
+		var t types.Time
+		if b.cmpAsDate {
+			t, err = types.ParseDate(sc, v)
+		} else {
+			t, err = types.ParseDatetime(sc, v)
+		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
@@ -962,6 +993,11 @@ func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bo
 		if i == 0 || v.Compare(res) < 0 {
 			res = v
 		}
+	}
+	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	return res, false, nil
 }
