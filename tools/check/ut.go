@@ -351,8 +351,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 }
 
 func (n *numa) runTestCase(pkg string, fn string, old bool) error {
-	_, file := path.Split(pkg)
-	exe := path.Join(workDir, pkg, file+".test")
+	exe := "./" + testFileName(pkg)
 	var cmd *exec.Cmd
 	if n.numactl {
 		cmd = n.testCommandWithNumaCtl(exe, fn, old)
@@ -414,14 +413,14 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off")
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	cmd.Dir = path.Join(workDir, pkg)
 	err := cmd.Run()
 	return withTrace(err)
 }
 
 func testBinaryExist(pkg string) (bool, error) {
-	_, err := os.Stat(testFile(pkg))
+	_, err := os.Stat(testFileFullPath(pkg))
 	if err != nil {
 		if _, ok := err.(*os.PathError); ok {
 			return false, nil
@@ -437,14 +436,18 @@ func numactlExist() bool {
 	return false
 }
 
-func testFile(pkg string) string {
+func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
-	return path.Join(workDir, pkg, file+".test")
+	return file+".test.bin"
+}
+
+func testFileFullPath(pkg string) string {
+	return path.Join(workDir, pkg, testFileName(pkg))
 }
 
 func listNewTestCases(pkg string) ([]string, error) {
-	_, file := path.Split(pkg)
-	exe := "./" + file + ".test"
+	exe := "./" + testFileName(pkg)
+
 	// session.test -test.list Test
 	cmd := exec.Command(exe, "-test.list", "Test")
 	cmd.Dir = path.Join(workDir, pkg)
@@ -453,13 +456,12 @@ func listNewTestCases(pkg string) ([]string, error) {
 		return nil, withTrace(err)
 	}
 	return filter(res, func(s string) bool {
-		return strings.HasPrefix(s, "Test") && s != "TestT"
+		return strings.HasPrefix(s, "Test") && s != "TestT" && s != "TestBenchDaily"
 	}), nil
 }
 
 func listOldTestCases(pkg string) (res []string, err error) {
-	_, file := path.Split(pkg)
-	exe := "./" + file + ".test"
+	exe := "./" + testFileName(pkg)
 
 	// Maybe the restructure is finish on this package.
 	cmd := exec.Command(exe, "-h")
