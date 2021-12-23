@@ -23,8 +23,5 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(m)
 }
