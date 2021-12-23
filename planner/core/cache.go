@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -65,6 +66,10 @@ func PreparedPlanCacheEnabled() bool {
 	return isEnabled == preparedPlanCacheEnabled
 }
 
+// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
+// Put the parameters that may affect the plan in planCacheValue, such as bindSQL.
+// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
+// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
 type planCacheKey struct {
 	database             string
 	connID               uint64
@@ -211,4 +216,23 @@ type CachedPrepareStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+}
+
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+	var ok bool
+	execID := stmt.ExecID
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, ErrStmtNotFound
+		}
+	}
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj, nil
+	}
+	return nil, ErrStmtNotFound
 }
