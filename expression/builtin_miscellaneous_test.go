@@ -579,7 +579,6 @@ func TestBinToUUID(t *testing.T) {
 }
 
 func TestTidbShard(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.TidbShard]
