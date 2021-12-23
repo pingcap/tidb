@@ -57,6 +57,8 @@ type Encoding interface {
 	Tp() EncodingTp
 	// Peek returns the next char.
 	Peek(src []byte) []byte
+	// IsValid checks whether the utf-8 bytes can be convert to valid string in current encoding.
+	IsValid(src []byte) bool
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
@@ -100,21 +102,6 @@ const (
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
-
-// IsValid checks whether the bytes is valid in current encoding.
-func IsValid(e Encoding, src []byte) bool {
-	isValid := true
-	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
-		isValid = ok
-		return ok
-	})
-	return isValid
-}
-
-// IsValidString is a string version of IsValid.
-func IsValidString(e Encoding, str string) bool {
-	return IsValid(e, Slice(str))
-}
 
 // CountValidBytes counts the first valid bytes in src that
 // can be encode to the current encoding.
