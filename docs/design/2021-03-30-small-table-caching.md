@@ -22,7 +22,7 @@ If the update operation is not supported at all, the use case would be too limit
 
 ### Key algorithm
 
-There is  a conceptual "read-write" lock to implement the caching operation.
+There is a conceptual "read-write" lock to implement the caching operation.
 Before caching the data, the table needs to hold a "read lock", so that the data will not be modified afterwards. This read lock is actually a record providing some meta-information. All modifications must check the record first. If the record is in the read-locked state, modifications are forbidden.
 
 The "read" lock needs to maintain a lease for a period of time, and the lease should be renewed continuously. The underlying data will be safe as long as the lock lease holds.
