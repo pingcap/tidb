@@ -24,17 +24,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPlacementPolicy(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -105,8 +103,6 @@ func TestPlacementPolicy(t *testing.T) {
 }
 
 func TestBackupAndRestoreAutoIDs(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -154,8 +150,6 @@ func TestBackupAndRestoreAutoIDs(t *testing.T) {
 }
 
 func TestMeta(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -389,7 +383,6 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -427,7 +420,6 @@ func TestSnapshot(t *testing.T) {
 }
 
 func TestElement(t *testing.T) {
-	t.Parallel()
 	checkElement := func(key []byte, resErr error) {
 		e := &meta.Element{ID: 123, TypeKey: key}
 		eBytes := e.EncodeElement()
@@ -453,8 +445,6 @@ func TestElement(t *testing.T) {
 }
 
 func TestDDL(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		desc        string
 		startHandle kv.Handle
@@ -473,8 +463,9 @@ func TestDDL(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
-			t.Parallel()
 			store, err := mockstore.NewMockStore()
 			require.NoError(t, err)
 			defer func() {
@@ -617,8 +608,6 @@ func TestDDL(t *testing.T) {
 }
 
 func TestAddIndexJob(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {

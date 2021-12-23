@@ -60,6 +60,8 @@ type SplitClient interface {
 	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
 	// ScatterRegion scatters a specified region.
 	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
+	// ScatterRegions scatters regions in a batch.
+	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegion gets a list of regions, starts from the region that contains key.
@@ -112,6 +114,24 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 		}
 	})
 	return c.needScatterVal
+}
+
+// ScatterRegions scatters regions in a batch.
+func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	regionsID := make([]uint64, 0, len(regionInfo))
+	for _, v := range regionInfo {
+		regionsID = append(regionsID, v.Region.Id)
+	}
+	resp, err := c.client.ScatterRegions(ctx, regionsID)
+	if err != nil {
+		return err
+	}
+	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
+	}
+	return nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -416,6 +436,11 @@ func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	var conf config.Config
 	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
 		return 0, errors.Trace(err)
@@ -482,11 +507,15 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
-	res.Body.Close()
 	err = json.Unmarshal(b, &rule)
 	if err != nil {
 		return rule, errors.Trace(err)
@@ -571,12 +600,15 @@ func checkRegionEpoch(new, old *RegionInfo) bool {
 		new.Region.GetRegionEpoch().GetConfVer() == old.Region.GetRegionEpoch().GetConfVer()
 }
 
-type scatterBackoffer struct {
+// exponentialBackoffer trivially retry any errors it meets.
+// It's useful when the caller has handled the errors but
+// only want to a more semantic backoff implementation.
+type exponentialBackoffer struct {
 	attempt     int
 	baseBackoff time.Duration
 }
 
-func (b *scatterBackoffer) exponentialBackoff() time.Duration {
+func (b *exponentialBackoffer) exponentialBackoff() time.Duration {
 	bo := b.baseBackoff
 	b.attempt--
 	if b.attempt == 0 {
@@ -586,13 +618,7 @@ func (b *scatterBackoffer) exponentialBackoff() time.Duration {
 	return bo
 }
 
-func (b *scatterBackoffer) giveUp() time.Duration {
-	b.attempt = 0
-	return 0
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *scatterBackoffer) NextBackoff(err error) time.Duration {
+func pdErrorCanRetry(err error) bool {
 	// There are 3 type of reason that PD would reject a `scatter` request:
 	// (1) region %d has no leader
 	// (2) region %d is hot
@@ -602,20 +628,19 @@ func (b *scatterBackoffer) NextBackoff(err error) time.Duration {
 	// (1) and (3) might happen, and should be retried.
 	grpcErr := status.Convert(err)
 	if grpcErr == nil {
-		return b.giveUp()
+		return false
 	}
-	if strings.Contains(grpcErr.Message(), "is not fully replicated") {
-		log.Info("scatter region failed, retring", logutil.ShortError(err), zap.Int("attempt-remain", b.attempt))
-		return b.exponentialBackoff()
-	}
-	if strings.Contains(grpcErr.Message(), "has no leader") {
-		log.Info("scatter region failed, retring", logutil.ShortError(err), zap.Int("attempt-remain", b.attempt))
-		return b.exponentialBackoff()
-	}
-	return b.giveUp()
+	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
+		strings.Contains(grpcErr.Message(), "has no leader")
+}
+
+// NextBackoff returns a duration to wait before retrying again.
+func (b *exponentialBackoffer) NextBackoff(error) time.Duration {
+	// trivially exponential back off, because we have handled the error at upper level.
+	return b.exponentialBackoff()
 }
 
 // Attempt returns the remain attempt times
-func (b *scatterBackoffer) Attempt() int {
+func (b *exponentialBackoffer) Attempt() int {
 	return b.attempt
 }

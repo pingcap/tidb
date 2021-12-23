@@ -22,13 +22,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -116,7 +116,8 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
+		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
 		return job.SchemaState == model.StateNone
 	}
 	return true
@@ -327,7 +328,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}()
 	// Add `` for some names like `table name`.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
+	stmt, err := exec.ParseWithParamsInternal(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -349,7 +350,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
-		stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
+		stmt, err := exec.ParseWithParamsInternal(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX(%n)", dbName, tableName, idx)
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}

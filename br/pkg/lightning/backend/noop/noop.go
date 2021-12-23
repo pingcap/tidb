@@ -19,11 +19,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
@@ -142,12 +143,16 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return noopWriter{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 type noopEncoder struct{}
@@ -156,7 +161,7 @@ type noopEncoder struct{}
 func (e noopEncoder) Close() {}
 
 // Encode encodes a row of SQL values into a backend-friendly format.
-func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, int64) (kv.Row, error) {
+func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, string, int64) (kv.Row, error) {
 	return noopRow{}, nil
 }
 

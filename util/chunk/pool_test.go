@@ -17,14 +17,12 @@ package chunk
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewPool(t *testing.T) {
-	t.Parallel()
-
 	pool := NewPool(1024)
 	require.Equal(t, 1024, pool.initCap)
 	require.NotNil(t, pool.varLenColPool)
@@ -35,8 +33,6 @@ func TestNewPool(t *testing.T) {
 }
 
 func TestPoolGetChunk(t *testing.T) {
-	t.Parallel()
-
 	initCap := 1024
 	pool := NewPool(initCap)
 
@@ -72,8 +68,6 @@ func TestPoolGetChunk(t *testing.T) {
 }
 
 func TestPoolPutChunk(t *testing.T) {
-	t.Parallel()
-
 	initCap := 1024
 	pool := NewPool(initCap)
 

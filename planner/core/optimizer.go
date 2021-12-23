@@ -19,26 +19,33 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error)
+
+// GetBindSQL4PlanCache get the bindSQL for the ast.StmtNode
+var GetBindSQL4PlanCache func(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
@@ -82,9 +89,44 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
+type logicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during rule optimizing
+	tracer *tracing.LogicalOptimizeTracer
+}
+
+func defaultLogicalOptimizeOption() *logicalOptimizeOp {
+	return &logicalOptimizeOp{}
+}
+
+func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
+}
+
+func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
+}
+
+func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
+}
+
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(context.Context, LogicalPlan) (LogicalPlan, error)
+	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
 }
 
@@ -120,14 +162,89 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 	return nil
 }
 
+// VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
+// with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
+// statements do not need any privileges.
+func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
+	if node == nil {
+		return vs
+	}
+
+	switch stmt := node.(type) {
+	case *ast.CreateTableStmt:
+		privVisitInfo = make([]visitInfo, 0, len(vs))
+		for _, v := range vs {
+			if v.privilege == mysql.CreatePriv {
+				if stmt.TemporaryKeyword == ast.TemporaryLocal {
+					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
+					newVisitInfo := v
+					newVisitInfo.privilege = mysql.CreateTMPTablePriv
+					newVisitInfo.table = ""
+					privVisitInfo = append(privVisitInfo, newVisitInfo)
+				} else {
+					// If both the normal table and temporary table already exist, we need to check the privilege.
+					privVisitInfo = append(privVisitInfo, v)
+				}
+			} else {
+				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
+				if needCheckTmpTablePriv(is, v) {
+					privVisitInfo = append(privVisitInfo, v)
+				}
+			}
+		}
+	case *ast.DropTableStmt:
+		// Dropping a local temporary table doesn't need any privileges.
+		if stmt.IsView {
+			privVisitInfo = vs
+		} else {
+			privVisitInfo = make([]visitInfo, 0, len(vs))
+			if stmt.TemporaryKeyword != ast.TemporaryLocal {
+				for _, v := range vs {
+					if needCheckTmpTablePriv(is, v) {
+						privVisitInfo = append(privVisitInfo, v)
+					}
+				}
+			}
+		}
+	case *ast.GrantStmt, *ast.DropSequenceStmt, *ast.DropPlacementPolicyStmt:
+		// Some statements ignore local temporary tables, so they should check the privileges on normal tables.
+		privVisitInfo = vs
+	default:
+		privVisitInfo = make([]visitInfo, 0, len(vs))
+		for _, v := range vs {
+			if needCheckTmpTablePriv(is, v) {
+				privVisitInfo = append(privVisitInfo, v)
+			}
+		}
+	}
+	return
+}
+
+func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
+	if v.db != "" && v.table != "" {
+		// Other statements on local temporary tables except `CREATE` do not check any privileges.
+		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
+		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckTableLock checks the table lock.
 func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visitInfo) error {
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		// if table with lock-write table dropped, we can access other table, such as `rename` operation
+		if err == lock.ErrLockedTableDropped {
+			break
+		}
 		if err != nil {
 			return err
 		}
@@ -166,7 +283,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerCETrace {
+		refineCETrace(sctx)
+	}
+
 	return finalPlan, cost, nil
+}
+
+// refineCETrace will adjust the content of CETrace.
+// Currently, it will (1) deduplicate trace records and (2) fill in the table name.
+func refineCETrace(sctx sessionctx.Context) {
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
+	traceRecords := stmtCtx.OptimizerCETrace
+	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	for _, rec := range traceRecords {
+		tbl, ok := is.TableByID(rec.TableID)
+		if !ok {
+			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+				zap.Int64("table id", rec.TableID))
+		}
+		rec.TableName = tbl.Meta().Name.O
+	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -199,7 +338,38 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
+	checkPlanCacheable(sctx, plan)
 	return plan
+}
+
+// checkPlanCacheable used to check whether a plan can be cached. Plans that
+// meet the following characteristics cannot be cached:
+// 1. Use the TiFlash engine.
+// Todo: make more careful check here.
+func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
+	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
+		sctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+	}
+}
+
+// useTiFlash used to check whether the plan use the TiFlash engine.
+func useTiFlash(p PhysicalPlan) bool {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true
+		default:
+			return false
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				return useTiFlash(plan)
+			}
+		}
+	}
+	return false
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
@@ -233,6 +403,17 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	opt := defaultLogicalOptimizeOption()
+	vars := logic.SCtx().GetSessionVars()
+	if vars.StmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{
+			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
+		}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			vars.StmtCtx.LogicalOptimizeTrace = tracer
+		}()
+	}
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -241,11 +422,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		logic, err = rule.optimize(ctx, logic)
+		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 	}
+	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
 

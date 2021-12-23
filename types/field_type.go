@@ -17,9 +17,9 @@ package types
 import (
 	"strconv"
 
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
@@ -101,6 +101,16 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	}
 
 	return &currType
+}
+
+// TryToFixFlenOfDatetime try to fix flen of Datetime for specific func or other field merge cases
+func TryToFixFlenOfDatetime(resultTp *FieldType) {
+	if resultTp.Tp == mysql.TypeDatetime {
+		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if resultTp.Decimal > 0 {
+			resultTp.Flen += resultTp.Decimal + 1
+		}
+	}
 }
 
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
@@ -316,6 +326,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	}
 }
 

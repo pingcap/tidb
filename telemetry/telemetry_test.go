@@ -33,8 +33,6 @@ func TestTrackingID(t *testing.T) {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
 
-	t.Parallel()
-
 	etcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer etcdCluster.Terminate(t)
 
@@ -80,7 +78,7 @@ func TestPreview(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, trackingID, jsonParsed.Path("trackingId").Data().(string))
 	// Apple M1 doesn't contain cpuFlags
-	if !(runtime.GOARCH == "arm" && runtime.GOOS == "darwin") {
+	if !(runtime.GOARCH == "arm64" && runtime.GOOS == "darwin") {
 		require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
 	}
 	require.True(t, jsonParsed.ExistsP("hostExtra.os"))

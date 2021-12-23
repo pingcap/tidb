@@ -294,7 +294,7 @@ func StartCPUProfile(w io.Writer) error {
 // StopCPUProfile same like pprof.StopCPUProfile.
 // other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	if GlobalSQLCPUProfiler.IsEnabled() {
+	if GlobalSQLCPUProfiler.hasExportProfileTask() {
 		return GlobalSQLCPUProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()

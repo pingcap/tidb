@@ -15,6 +15,8 @@
 package variable
 
 import (
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,8 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -34,11 +37,8 @@ import (
 const secondsPerYear = 60 * 60 * 24 * 365
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
-// Max worker count is maxDDLReorgWorkerCount.
+// Sysvar validation enforces the range to already be correct.
 func SetDDLReorgWorkerCounter(cnt int32) {
-	if cnt > maxDDLReorgWorkerCount {
-		cnt = maxDDLReorgWorkerCount
-	}
 	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
 }
 
@@ -48,14 +48,8 @@ func GetDDLReorgWorkerCounter() int32 {
 }
 
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
-// Max batch size is MaxDDLReorgBatchSize.
+// Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
-	if cnt > MaxDDLReorgBatchSize {
-		cnt = MaxDDLReorgBatchSize
-	}
-	if cnt < MinDDLReorgBatchSize {
-		cnt = MinDDLReorgBatchSize
-	}
 	atomic.StoreInt32(&ddlReorgBatchSize, cnt)
 }
 
@@ -130,20 +124,28 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	feature := "READ ONLY"
+	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 	if offlineMode {
-		feature = "OFFLINE MODE"
+		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
-		if !vars.EnableNoopFuncs && scope == ScopeSession {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
+			if vars.NoopFuncsMode == OffInt {
+				return Off, errMsg
+			}
+			vars.StmtCtx.AppendWarning(errMsg)
 		}
-		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
-		if err != nil {
-			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
-		}
-		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeGlobal {
+			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+			if err != nil {
+				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+			}
+			if val == Off {
+				return Off, errMsg
+			}
+			if val == Warn {
+				vars.StmtCtx.AppendWarning(errMsg)
+			}
 		}
 	}
 	return normalizedValue, nil
@@ -237,7 +239,7 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 }
 
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
-	value = onOffToTrueFalse(value)
+	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
 }
 
@@ -252,9 +254,10 @@ func trueFalseToOnOff(str string) string {
 	return str
 }
 
+// OnOffToTrueFalse convert "ON"/"OFF" to "true"/"false".
 // In mysql.tidb the convention has been to store the string value "true"/"false",
 // but sysvars use the convention ON/OFF.
-func onOffToTrueFalse(str string) string {
+func OnOffToTrueFalse(str string) string {
 	if strings.EqualFold("ON", str) {
 		return "true"
 	} else if strings.EqualFold("OFF", str) {
@@ -281,23 +284,24 @@ func TiDBOptOn(opt string) bool {
 }
 
 const (
-	// OffInt is used by TiDBMultiStatementMode
+	// OffInt is used by TiDBOptOnOffWarn
 	OffInt = 0
-	// OnInt is used TiDBMultiStatementMode
+	// OnInt is used TiDBOptOnOffWarn
 	OnInt = 1
-	// WarnInt is used by TiDBMultiStatementMode
+	// WarnInt is used by TiDBOptOnOffWarn
 	WarnInt = 2
 )
 
-// TiDBOptMultiStmt converts multi-stmt options to int.
-func TiDBOptMultiStmt(opt string) int {
+// TiDBOptOnOffWarn converts On/Off/Warn to an int.
+// It is used for MultiStmtMode and NoopFunctionsMode
+func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
-	case Off:
-		return OffInt
+	case Warn:
+		return WarnInt
 	case On:
 		return OnInt
 	}
-	return WarnInt
+	return OffInt
 }
 
 // ClusteredIndexDefMode controls the default clustered property for primary key.
@@ -438,15 +442,18 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 }
 
 func setReadStaleness(s *SessionVars, sVal string) error {
-	if sVal == "" {
+	if sVal == "" || sVal == "0" {
 		s.ReadStaleness = 0
 		return nil
 	}
-	d, err := time.ParseDuration(sVal)
+	sValue, err := strconv.ParseInt(sVal, 10, 32)
 	if err != nil {
 		return err
 	}
-	s.ReadStaleness = d
+	if sValue > 0 {
+		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
+	}
+	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }
 
@@ -476,4 +483,22 @@ func (v *serverGlobalVariable) GetVal() string {
 		return v.serverVal
 	}
 	return v.globalVal
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	var str []string
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }

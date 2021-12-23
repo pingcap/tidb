@@ -17,7 +17,7 @@ package expression
 import (
 	"strings"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -629,11 +629,11 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinGreatestTimeSig) vectorized() bool {
+func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -714,11 +714,11 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinLeastTimeSig) vectorized() bool {
+func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -812,6 +812,134 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	}
 	if len(b.args)%2 == 0 {
 		src.CopyConstruct(result)
+	}
+	return nil
+}
+
+func (b *builtinGreatestTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) > 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) < 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] > resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] < resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
 	}
 	return nil
 }

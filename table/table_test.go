@@ -17,13 +17,12 @@ package table
 import (
 	"testing"
 
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, mysql.ErrBadNull, int(terror.ToSQLError(ErrColumnCantNull).Code))
 	require.Equal(t, mysql.ErrBadField, int(terror.ToSQLError(ErrUnknownColumn).Code))
 	require.Equal(t, mysql.ErrFieldSpecifiedTwice, int(terror.ToSQLError(errDuplicateColumn).Code))

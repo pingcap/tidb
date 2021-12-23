@@ -27,13 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
@@ -45,6 +38,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -78,6 +78,7 @@ type ShowExec struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    model.CIStr
 	Table     *ast.TableName       // Used for showing columns.
+	Partition model.CIStr          // Used for showing partition
 	Column    *ast.ColumnName      // Used for `desc table column`.
 	IndexName model.CIStr          // Used for show table regions.
 	Flag      int                  // Some flag parsed from sql, such as FULL.
@@ -146,6 +147,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
+	case ast.ShowCreatePlacementPolicy:
+		return e.fetchShowCreatePlacementPolicy()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -193,6 +196,11 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowHistogramsInFlight:
+		e.fetchShowHistogramsInFlight()
+		return nil
+	case ast.ShowColumnStatsUsage:
+		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -218,6 +226,12 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementLabels(ctx)
 	case ast.ShowPlacement:
 		return e.fetchShowPlacement(ctx)
+	case ast.ShowPlacementForDatabase:
+		return e.fetchShowPlacementForDB(ctx)
+	case ast.ShowPlacementForTable:
+		return e.fetchShowPlacementForTable(ctx)
+	case ast.ShowPlacementForPartition:
+		return e.fetchShowPlacementForPartition(ctx)
 	}
 	return nil
 }
@@ -328,7 +342,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM information_schema.engines`)
+	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -459,7 +473,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT
+	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT
 		table_name, engine, version, row_format, table_rows,
 		avg_row_length, data_length, max_data_length, index_length,
 		data_free, auto_increment, create_time, update_time, check_time,
@@ -506,7 +520,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -961,7 +975,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
+			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
 				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
@@ -997,14 +1011,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	switch tableInfo.TempTableType {
-	case model.TempTableNone:
-		buf.WriteString(") ENGINE=InnoDB")
-	default:
-		// For now the only supported engine for temporary table is memory.
-		buf.WriteString(") ENGINE=memory")
-	}
-
+	buf.WriteString(") ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1067,13 +1074,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=`%s` */", tableInfo.PlacementPolicyRef.Name.String())
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
 	}
 
 	// add direct placement info here
 	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf)
+	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1189,9 +1196,12 @@ func (e *ShowExec) fetchShowCreateView() error {
 
 func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
-
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
-	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
+	if tb.View.Definer.AuthUsername == "" || tb.View.Definer.AuthHostname == "" {
+		fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
+	} else {
+		fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.AuthUsername, sqlMode), stringutil.Escape(tb.View.Definer.AuthHostname, sqlMode))
+	}
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
 	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
 	for i, col := range tb.Columns {
@@ -1224,54 +1234,58 @@ func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf
 	fmt.Fprintf(buf, " */")
 }
 
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
 	}
+	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
+	// include the /*!50100 or /*!50500 comments for TiDB.
+	// This also solves the issue with comments within comments that would happen for
+	// PLACEMENT POLICY options.
 	if partitionInfo.Type == model.PartitionTypeHash {
-		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
-		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
-		return
+		defaultPartitionDefinitions := true
+		for i, def := range partitionInfo.Definitions {
+			if def.Name.O != fmt.Sprintf("p%d", i) {
+				defaultPartitionDefinitions = false
+				break
+			}
+			if len(def.Comment) > 0 || def.DirectPlacementOpts != nil || def.PlacementPolicyRef != nil {
+				defaultPartitionDefinitions = false
+				break
+			}
+		}
+
+		if defaultPartitionDefinitions {
+			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			return
+		}
 	}
-	// this if statement takes care of range columns case
-	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
-		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
+	// this if statement takes care of lists/range columns case
+	if partitionInfo.Columns != nil {
+		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// Notice that MySQL uses two spaces between LIST and COLUMNS...
+		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		for i, col := range partitionInfo.Columns {
-			buf.WriteString(col.L)
+			buf.WriteString(stringutil.Escape(col.O, sqlMode))
 			if i < len(partitionInfo.Columns)-1 {
 				buf.WriteString(",")
 			}
 		}
-		buf.WriteString(") (\n")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		if len(partitionInfo.Columns) == 0 {
-			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
-		} else {
-			colsName := ""
-			for _, col := range partitionInfo.Columns {
-				if len(colsName) > 0 {
-					colsName += ","
-				}
-				colsName += col.L
-			}
-			fmt.Fprintf(buf, "\nPARTITION BY LIST COLUMNS(%s) (\n", colsName)
-		}
+		buf.WriteString(")\n(")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	if partitionInfo.Type == model.PartitionTypeRange {
-		for i, def := range partitionInfo.Definitions {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+
+	for i, def := range partitionInfo.Definitions {
+		if i > 0 {
+			fmt.Fprintf(buf, ",\n ")
 		}
-		buf.WriteString(")")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		for i, def := range partitionInfo.Definitions {
+		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
+		// PartitionTypeHash does not have any VALUES definition
+		if partitionInfo.Type == model.PartitionTypeRange {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+		} else if partitionInfo.Type == model.PartitionTypeList {
 			values := bytes.NewBuffer(nil)
 			for j, inValues := range def.InValues {
 				if j > 0 {
@@ -1285,15 +1299,21 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 					values.WriteString(strings.Join(inValues, ","))
 				}
 			}
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 		}
-		buf.WriteString(")")
+		if len(def.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+		}
+		if def.DirectPlacementOpts != nil {
+			// add direct placement info here
+			appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
+		}
+		if def.PlacementPolicyRef != nil {
+			// add placement ref info here
+			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
 	}
+	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
@@ -1314,9 +1334,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
-	}
-	if dbInfo.Collate != "" {
+	} else if dbInfo.Collate != "" {
 		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
 		if err != nil {
 			return errors.Trace(err)
@@ -1326,10 +1344,17 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
 	}
 	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
 	// behavior unchanged because it is trivial enough.
+	if dbInfo.PlacementPolicyRef != nil {
+		// add placement ref info here
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+	if dbInfo.DirectPlacementOpts != nil {
+		// add direct placement info here
+		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
+	}
 	return nil
 }
 
@@ -1352,6 +1377,17 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 		return err
 	}
 	e.appendRow([]interface{}{dbInfo.Name.O, buf.String()})
+	return nil
+}
+
+// fetchShowCreatePlacementPolicy composes show create policy result.
+func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
+	policy, found := e.is.PolicyByName(e.DBName)
+	if !found {
+		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }
 
@@ -1397,7 +1433,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(ctx, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
+	stmt, err := exec.ParseWithParamsInternal(ctx, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1417,7 +1453,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authplugin = rows[0].GetString(0)
 	}
 
-	stmt, err = exec.ParseWithParams(ctx, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	stmt, err = exec.ParseWithParamsInternal(ctx, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1436,9 +1472,16 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 		require = privValue.RequireStr()
 	}
+
+	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
+	authStr := ""
+	if !(authplugin == mysql.AuthSocket && authData == "") {
+		authStr = fmt.Sprintf(" AS '%s'", authData)
+	}
+
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }

@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not found
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
@@ -44,6 +49,11 @@ undefined restore databases or tables
 ["BR:Common:ErrUnknown"]
 error = '''
 internal error
+'''
+
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
 '''
 
 ["BR:Common:ErrVersionMismatch"]
@@ -344,6 +354,11 @@ Can't open table
 ["ddl:1214"]
 error = '''
 The used table type doesn't support FULLTEXT indexes
+'''
+
+["ddl:1221"]
+error = '''
+Incorrect usage of %s and %s
 '''
 
 ["ddl:1248"]
@@ -676,11 +691,6 @@ error = '''
 CREATE/ALTER table with insert method option is not supported
 '''
 
-["ddl:8234"]
-error = '''
-Invalid placement policy '%s': %s
-'''
-
 ["ddl:8236"]
 error = '''
 Placement policy didn't meet the constraint, reason: %s
@@ -696,6 +706,16 @@ error = '''
 Placement policy '%s' can't co-exist with direct placement options
 '''
 
+["ddl:8241"]
+error = '''
+Placement policy '%-.192s' is still in use
+'''
+
+["ddl:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -704,6 +724,11 @@ Information schema is out of date: schema failed to update in 1 lease, please ma
 ["domain:8028"]
 error = '''
 Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
+'''
+
+["domain:8243"]
+error = '''
+HTTP request failed with status %s
 '''
 
 ["domain:9009"]
@@ -746,6 +771,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["executor:1235"]
+error = '''
+%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -786,9 +816,19 @@ error = '''
 You are not allowed to create a user with GRANT
 '''
 
+["executor:1524"]
+error = '''
+Plugin '%-.192s' is not loaded
+'''
+
 ["executor:1568"]
 error = '''
 Transaction characteristics can't be changed while a transaction is in progress
+'''
+
+["executor:1699"]
+error = '''
+SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
 '''
 
 ["executor:1827"]
@@ -1201,6 +1241,11 @@ error = '''
 Operand should contain %d column(s)
 '''
 
+["planner:1242"]
+error = '''
+Subquery returns more than 1 row
+'''
+
 ["planner:1247"]
 error = '''
 Reference '%-.64s' not supported (%s)
@@ -1481,6 +1526,16 @@ error = '''
 invalid as of timestamp: %s
 '''
 
+["planner:8137"]
+error = '''
+Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
+["planner:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
@@ -1488,7 +1543,7 @@ There is no such grant defined for user '%-.48s' on host '%-.255s'
 
 ["privilege:3530"]
 error = '''
-%s is is not granted to %s
+%s is not granted to %s
 '''
 
 ["schema:1007"]
@@ -1589,6 +1644,11 @@ Incorrect foreign key definition for '%-.192s': %s
 ["schema:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["schema:1382"]
+error = '''
+The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
 ["schema:1831"]
@@ -2019,5 +2079,10 @@ The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1
 ["variable:8055"]
 error = '''
 snapshot is older than GC safe point %s
+'''
+
+["variable:8136"]
+error = '''
+option '%s' is no longer supported. Reason: %s
 '''
 

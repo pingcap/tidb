@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -33,7 +33,7 @@ import (
 
 func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
-	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 	mtx := new(sync.Mutex)
 
@@ -58,8 +58,9 @@ func TestSetSystemVariable(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			mtx.Lock()
 			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
 			mtx.Unlock()
@@ -153,6 +154,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
+	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
@@ -231,7 +233,10 @@ func TestSlowLogFormat(t *testing.T) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Succ: true`
+# Result_rows: 12345
+# Succ: true
+# IsExplicitTxn: true
+# IsWriteCacheTable: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -257,14 +262,17 @@ func TestSlowLogFormat(t *testing.T) {
 		PDTotal:           11 * time.Second,
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
+		ResultRows:        12345,
 		Succ:              true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
-		ExecRetryCount: 3,
-		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		ExecRetryCount:    3,
+		ExecRetryTime:     5*time.Second + time.Millisecond*100,
+		IsExplicitTxn:     true,
+		IsWriteCacheTable: true,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)

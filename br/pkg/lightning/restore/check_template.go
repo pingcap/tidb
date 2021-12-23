@@ -16,6 +16,7 @@ package restore
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
@@ -41,12 +42,17 @@ type Template interface {
 
 	// Output print all checks results.
 	Output() string
+
+	// FailedMsg represents the error msg for the failed check.
+	FailedMsg() string
 }
 
 type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
 	criticalFailedCount int
+	normalMsgs          []string // only used in unit test now
+	criticalMsgs        []string
 	t                   table.Writer
 }
 
@@ -60,11 +66,12 @@ func NewSimpleTemplate() Template {
 		{Name: "Passed", WidthMax: 6},
 	})
 	return &SimpleTemplate{
-		0,
-		0,
-		0,
-		t,
+		t: t,
 	}
+}
+
+func (c *SimpleTemplate) FailedMsg() string {
+	return strings.Join(c.criticalMsgs, ";\n")
 }
 
 func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
@@ -77,12 +84,17 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 			c.warnFailedCount++
 		}
 	}
+	if !passed && t == Critical {
+		c.criticalMsgs = append(c.criticalMsgs, msg)
+	} else {
+		c.normalMsgs = append(c.normalMsgs, msg)
+	}
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()
 }
 
 func (c *SimpleTemplate) Success() bool {
-	return c.warnFailedCount+c.criticalFailedCount == 0
+	return c.criticalFailedCount == 0
 }
 
 func (c *SimpleTemplate) FailedCount(t CheckType) int {
@@ -97,7 +109,7 @@ func (c *SimpleTemplate) FailedCount(t CheckType) int {
 
 func (c *SimpleTemplate) Output() string {
 	c.t.SetAllowedRowLength(170)
-	c.t.SetRowPainter(table.RowPainter(func(row table.Row) text.Colors {
+	c.t.SetRowPainter(func(row table.Row) text.Colors {
 		if passed, ok := row[3].(bool); ok {
 			if !passed {
 				if typ, ok := row[2].(CheckType); ok {
@@ -111,7 +123,7 @@ func (c *SimpleTemplate) Output() string {
 			}
 		}
 		return nil
-	}))
+	})
 	res := c.t.Render()
 	summary := "\n"
 	if c.criticalFailedCount > 0 {

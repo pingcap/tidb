@@ -21,12 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -34,8 +28,16 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
@@ -56,6 +58,11 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// InitTxnContextProvider is a PreprocessOpt that indicates preprocess should init transaction's context
+func InitTxnContextProvider(p *preprocessor) {
+	p.flag |= initTxnContextProvider
 }
 
 // WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
@@ -116,6 +123,9 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
+
+	v.initTxnContextProviderIfNecessary(node)
+
 	return errors.Trace(v.err)
 }
 
@@ -135,6 +145,8 @@ const (
 	// inSequenceFunction is set when visiting a sequence function.
 	// This flag indicates the tableName in these function should be checked as sequence object.
 	inSequenceFunction
+	// initTxnContextProvider is set when we should init txn context in preprocess
+	initTxnContextProvider
 )
 
 // Make linter happy.
@@ -192,6 +204,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
+	case *ast.ExecuteStmt:
+		p.stmtTp = TypeExecute
+		p.resolveExecuteStmt(node)
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -298,6 +313,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
+	case *ast.BeginStmt:
+		// If the begin statement was like following:
+		// start transaction read only as of timestamp ....
+		// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+		if node.AsOf != nil {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		} else if p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
+			// If the begin statement was like following:
+			// set transaction read only as of timestamp ...
+			// begin
+			// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -345,6 +375,8 @@ const (
 	TypeRepair
 	// TypeShow for ShowStmt
 	TypeShow
+	// TypeExecute for ExecuteStmt
+	TypeExecute
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
@@ -437,6 +469,10 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
 			return
 		}
+		tableInfo := tbl.Meta()
+		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		tn.TableInfo = tableInfo
+		tn.DBInfo = dbInfo
 	}
 
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
@@ -733,8 +769,23 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
 		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionShardRowID {
+			switch opt.Tp {
+			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			case ast.TableOptionPlacementPrimaryRegion,
+				ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount,
+				ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount,
+				ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints,
+				ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints,
+				ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints,
+				ast.TableOptionPlacementPolicy:
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
 		}
@@ -742,11 +793,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
-		return
-	}
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
-		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
 		return
 	}
 	countPrimaryKey := 0
@@ -862,11 +908,6 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !p.ctx.GetSessionVars().EnableNoopFuncs {
-		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
-		return
-	}
-
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
@@ -985,11 +1026,16 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	noopFuncsMode := p.ctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
-		if !item.NullOrder && !enableNoopFuncs {
-			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
-			return
+		if !item.NullOrder && noopFuncsMode != variable.OnInt {
+			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			if noopFuncsMode == variable.OffInt {
+				p.err = err
+				return
+			}
+			// NoopFuncsMode is Warn, append an error
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 }
@@ -1157,6 +1203,9 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	}
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
 	return nil
@@ -1392,7 +1441,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1453,6 +1502,32 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.User.AuthUsername = currentUser.AuthUsername
 			node.User.AuthHostname = currentUser.AuthHostname
 		}
+	}
+}
+
+func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
+	prepared, err := GetPreparedStmt(node, p.ctx.GetSessionVars())
+	if err != nil {
+		p.err = err
+		return
+	}
+
+	if prepared.SnapshotTSEvaluator != nil {
+		snapshotTS, err := prepared.SnapshotTSEvaluator(p.ctx)
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		p.LastSnapshotTS = snapshotTS
+		p.initedLastSnapshotTS = true
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 }
 
@@ -1517,6 +1592,17 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 
 // handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	if p.stmtTp != TypeSelect {
+		return
+	}
+	defer func() {
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&inPrepare == 0 && p.IsStaleness {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+		}
+	}()
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
 	p.ReadReplicaScope = kv.GlobalReplicaScope
@@ -1537,6 +1623,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	scope := config.GetTxnScopeFromConfig()
+	if p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && scope != kv.GlobalReplicaScope {
+		p.ReadReplicaScope = scope
+	}
+
 	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
 	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
 	// global txnScope directly.
@@ -1555,7 +1646,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	case readTS == 0 && node != nil:
 		// If we didn't use read_ts, and node isn't nil, it means we use 'select table as of timestamp ... '
@@ -1575,9 +1666,13 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	case readTS == 0 && node == nil && readStaleness != 0:
+		// If both readTS and node is empty while the readStaleness isn't, it means we meet following situation:
+		// set @@tidb_read_staleness='-5';
+		// select * from t;
+		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
 		if p.err != nil {
 			return
@@ -1591,9 +1686,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsWithReadStaleness(p.ctx, readStaleness)
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	}
+
+	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
 	if p.LastSnapshotTS != ts {
 		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
 		return
@@ -1611,9 +1708,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
-	}
-	if p.flag&inPrepare == 0 {
-		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
 	}
 	p.initedLastSnapshotTS = true
 }
@@ -1638,8 +1732,12 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	return p.InfoSchema
 }
 
-func (p *preprocessor) setStalenessReturn() {
-	scope := config.GetTxnScopeFromConfig()
-	p.IsStaleness = true
-	p.ReadReplicaScope = scope
+func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
+	if p.err != nil || p.flag&initTxnContextProvider == 0 {
+		return
+	}
+
+	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		InfoSchema: p.ensureInfoSchema(),
+	})
 }

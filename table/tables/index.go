@@ -22,9 +22,9 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
@@ -169,8 +169,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		// should not overwrite the key with un-commit flag.
 		// So if the key exists, just do nothing and return.
 		v, err := txn.GetMemBuffer().Get(ctx, key)
-		if err == nil && len(v) != 0 {
-			return nil, nil
+		if err == nil {
+			if len(v) != 0 {
+				return nil, nil
+			}
+			// The key is marked as deleted in the memory buffer, as the existence check is done lazily
+			// for optimistic transactions by default. The "untouched" key could still exist in the store,
+			// it's needed to commit this key to do the existence check so unset the untouched flag.
+			if !txn.IsPessimistic() {
+				keyFlags, err := txn.GetMemBuffer().GetFlags(key)
+				if err != nil {
+					return nil, err
+				}
+				if keyFlags.HasPresumeKeyNotExists() {
+					opt.Untouched = false
+				}
+			}
 		}
 	}
 
@@ -202,7 +216,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	var value []byte
 	if c.tblInfo.TempTableType != model.TempTableNone {
 		// Always check key for temporary table because it does not write to TiKV
-		value, err = sctx.GetSessionVars().TemporaryTableTxnReader(txn, c.tblInfo).Get(ctx, key)
+		value, err = txn.Get(ctx, key)
 	} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 		value, err = txn.GetMemBuffer().Get(ctx, key)
 	} else {

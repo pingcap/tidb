@@ -21,36 +21,58 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
 	// MaxSQLTextSize exports for testing.
 	MaxSQLTextSize = 4 * 1024
-	// MaxPlanTextSize exports for testing.
-	MaxPlanTextSize = 32 * 1024
+	// MaxBinaryPlanSize exports for testing.
+	MaxBinaryPlanSize = 2 * 1024
 )
 
-var globalTopSQLReport reporter.TopSQLReporter
+var (
+	globalTopSQLReport   *reporter.RemoteTopSQLReporter
+	singleTargetDataSink *reporter.SingleTargetDataSink
+)
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	rc := reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan)
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+
+	globalTopSQLReport = remoteReporter
+
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+	stmtstats.SetupAggregator()
+}
+
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
+func RegisterPubSubServer(s *grpc.Server) {
+	if globalTopSQLReport != nil {
+		service := reporter.NewTopSQLPubSubService(globalTopSQLReport)
+		tipb.RegisterTopSQLPubSubServer(s, service)
+	}
 }
 
 // Close uses to close and release the top sql resource.
 func Close() {
+	if singleTargetDataSink != nil {
+		singleTargetDataSink.Close()
+	}
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
 	}
+	stmtstats.CloseAggregator()
 }
 
 // AttachSQLInfo attach the sql information info top sql.
@@ -122,7 +144,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
-	if len(normalizedBinaryPlan) > MaxPlanTextSize {
+	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -179,14 +180,9 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
-	exist, err = bc.storage.FileExists(ctx, metautil.LockFile)
+	err = CheckBackupStorageIsLocked(ctx, bc.storage)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
-	}
-	if exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file exists in %v, "+
-			"there may be some backup files in the path already, "+
-			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.LockFile)
+		return err
 	}
 	bc.backend = backend
 	return nil
@@ -195,6 +191,29 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
+}
+
+// CheckBackupStorageIsLocked checks whether backups is locked.
+// which means we found other backup progress already write
+// some data files into the same backup directory or cloud prefix.
+func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
+	exist, err := s.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
+	}
+	if exist {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			// should return error to break the walkDir when found lock file and other .sst files.
+			if strings.HasSuffix(path, ".sst") {
+				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
+					"there are some backup files in the path already, "+
+					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
+			}
+			return nil
+		})
+		return err
+	}
+	return nil
 }
 
 // BuildTableRanges returns the key ranges encompassing the entire table,
@@ -355,6 +374,24 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, nil
 }
 
+func skipUnsupportedDDLJob(job *model.Job) bool {
+	switch job.Type {
+	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
+	// Backup guarantees data integrity but region placement, which is out of scope of backup
+	case model.ActionCreatePlacementPolicy,
+		model.ActionAlterPlacementPolicy,
+		model.ActionDropPlacementPolicy,
+		model.ActionAlterTablePartitionPlacement,
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionAlterTablePlacement,
+		model.ActionAlterTableAttributes,
+		model.ActionAlterTablePartitionAttributes:
+		return true
+	default:
+		return false
+	}
+}
+
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
@@ -387,6 +424,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 	count := 0
 	for _, job := range allJobs {
+		if skipUnsupportedDDLJob(job) {
+			continue
+		}
+
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
 			jobBytes, err := json.Marshal(job)
@@ -429,7 +470,13 @@ func (bc *Client) BackupRanges(
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
 			err := bc.BackupRange(elctx, sk, ek, req, metaWriter, progressCallBack)
 			if err != nil {
-				return errors.Trace(err)
+				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
+				if errors.Cause(err) == context.Canceled {
+					return errors.SuspendStack(err)
+				} else {
+					return errors.Trace(err)
+				}
+
 			}
 			return nil
 		})
@@ -696,7 +743,7 @@ func OnBackupResponse(
 		if lockErr := v.KvError.Locked; lockErr != nil {
 			// Try to resolve lock.
 			log.Warn("backup occur kv error", zap.Reflect("error", v))
-			msBeforeExpired, _, err1 := lockResolver.ResolveLocks(
+			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
 				return nil, 0, errors.Trace(err1)
@@ -940,7 +987,26 @@ backupLoop:
 	return nil
 }
 
+// gRPC communication cancelled with connection closing
+const (
+	gRPC_Cancel = "the client connection is closing"
+)
+
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-	return status.Code(err) == codes.Unavailable
+
+	if status.Code(err) == codes.Unavailable {
+		return true
+	}
+
+	// At least, there are two possible cancel() call,
+	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
+	if status.Code(err) == codes.Canceled {
+		if s, ok := status.FromError(err); ok {
+			if strings.Contains(s.Message(), gRPC_Cancel) {
+				return true
+			}
+		}
+	}
+	return false
 }

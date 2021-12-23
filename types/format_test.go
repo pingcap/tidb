@@ -17,15 +17,13 @@ package types_test
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tblDate := []struct {
@@ -81,8 +79,6 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	t.Parallel()
-
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {

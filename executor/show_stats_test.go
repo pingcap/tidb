@@ -16,64 +16,72 @@ package executor_test
 
 import (
 	"fmt"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-type testShowStatsSuite struct {
-	*baseTestSuite
-}
+func TestShowStatsMeta(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-func (s *testShowStatsSuite) TestShowStatsMeta(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("analyze table t, t1")
 	result := tk.MustQuery("show stats_meta")
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[1][1], Equals, "t1")
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "t1", result.Rows()[1][1])
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][1], Equals, "t")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "t", result.Rows()[0][1])
 }
 
-func (s *testShowStatsSuite) TestShowStatsHistograms(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowStatsHistograms(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_histograms")
-	c.Assert(len(result.Rows()), Equals, 0)
+	require.Len(t, result.Rows(), 0)
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show stats_histograms").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][3], Equals, "a")
-	c.Assert(result.Rows()[1][3], Equals, "b")
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "a", result.Rows()[0][3])
+	require.Equal(t, "b", result.Rows()[1][3])
 	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][3], Equals, "a")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "a", result.Rows()[0][3])
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	res := tk.MustQuery("show stats_histograms where table_name = 't'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
-	c.Assert(len(res.Rows()), Equals, 1)
+	require.Len(t, res.Rows(), 1)
 }
 
-func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowStatsBuckets(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	// Simple behavior testing. Version=1 is enough.
@@ -115,8 +123,11 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 }
 
-func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowStatsHasNullValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -141,44 +152,47 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	res := tk.MustQuery("show stats_histograms where table_name = 't'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
-	c.Assert(len(res.Rows()), Equals, 1)
-	c.Assert(res.Rows()[0][7], Equals, "4")
+	require.Len(t, res.Rows(), 1)
+	require.Equal(t, "4", res.Rows()[0][7])
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'b'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index idx_c_a")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_c_a'")
-	c.Assert(len(res.Rows()), Equals, 1)
-	c.Assert(res.Rows()[0][7], Equals, "0")
+	require.Len(t, res.Rows(), 1)
+	require.Equal(t, "0", res.Rows()[0][7])
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'c'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'a'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	res = tk.MustQuery("show stats_histograms where table_name = 't'")
-	c.Assert(len(res.Rows()), Equals, 0)
+	require.Len(t, res.Rows(), 0)
 	tk.MustExec("analyze table t index")
 	res = tk.MustQuery("show stats_histograms where table_name = 't'").Sort()
-	c.Assert(len(res.Rows()), Equals, 2)
-	c.Assert(res.Rows()[0][7], Equals, "4")
-	c.Assert(res.Rows()[1][7], Equals, "0")
+	require.Len(t, res.Rows(), 2)
+	require.Equal(t, "4", res.Rows()[0][7])
+	require.Equal(t, "0", res.Rows()[1][7])
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
 	tk.MustExec("analyze table t")
 	res = tk.MustQuery("show stats_histograms where table_name = 't'").Sort()
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[0][7], Equals, "1")
-	c.Assert(res.Rows()[1][7], Equals, "4")
-	c.Assert(res.Rows()[2][7], Equals, "1")
-	c.Assert(res.Rows()[3][7], Equals, "4")
-	c.Assert(res.Rows()[4][7], Equals, "0")
+	require.Len(t, res.Rows(), 5)
+	require.Equal(t, "1", res.Rows()[0][7])
+	require.Equal(t, "4", res.Rows()[1][7])
+	require.Equal(t, "1", res.Rows()[2][7])
+	require.Equal(t, "4", res.Rows()[3][7])
+	require.Equal(t, "0", res.Rows()[4][7])
 }
 
-func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowPartitionStats(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("set @@session.tidb_enable_table_partition=1")
 		// Version2 is tested in TestGlobalStatsData1/2/3 and TestAnalyzeGlobalStatsWithOpts.
@@ -192,19 +206,19 @@ func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 		tk.MustExec("analyze table t")
 
 		result := tk.MustQuery("show stats_meta")
-		c.Assert(len(result.Rows()), Equals, 1)
-		c.Assert(result.Rows()[0][0], Equals, "test")
-		c.Assert(result.Rows()[0][1], Equals, "t")
-		c.Assert(result.Rows()[0][2], Equals, "p0")
+		require.Len(t, result.Rows(), 1)
+		require.Equal(t, "test", result.Rows()[0][0])
+		require.Equal(t, "t", result.Rows()[0][1])
+		require.Equal(t, "p0", result.Rows()[0][2])
 
 		result = tk.MustQuery("show stats_histograms").Sort()
-		c.Assert(len(result.Rows()), Equals, 3)
-		c.Assert(result.Rows()[0][2], Equals, "p0")
-		c.Assert(result.Rows()[0][3], Equals, "a")
-		c.Assert(result.Rows()[1][2], Equals, "p0")
-		c.Assert(result.Rows()[1][3], Equals, "b")
-		c.Assert(result.Rows()[2][2], Equals, "p0")
-		c.Assert(result.Rows()[2][3], Equals, "idx")
+		require.Len(t, result.Rows(), 3)
+		require.Equal(t, "p0", result.Rows()[0][2])
+		require.Equal(t, "a", result.Rows()[0][3])
+		require.Equal(t, "p0", result.Rows()[1][2])
+		require.Equal(t, "b", result.Rows()[1][3])
+		require.Equal(t, "p0", result.Rows()[2][2])
+		require.Equal(t, "idx", result.Rows()[2][3])
 
 		result = tk.MustQuery("show stats_buckets").Sort()
 		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 b 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
@@ -214,55 +228,11 @@ func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	})
 }
 
-func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	statistics.ClearHistoryJobs()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
-	tk.MustExec(`insert into t values (1, 1), (2, 2)`)
+func TestShowStatusSnapshot(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show analyze status").Sort()
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze table")
-	c.Assert(result.Rows()[0][4], Equals, "2")
-	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], NotNil)
-	c.Assert(result.Rows()[0][7], Equals, "finished")
-
-	statistics.ClearHistoryJobs()
-
-	tk.MustExec("set @@tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	result = tk.MustQuery("show analyze status").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze columns")
-	c.Assert(result.Rows()[0][4], Equals, "2")
-	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], NotNil)
-	c.Assert(result.Rows()[0][7], Equals, "finished")
-
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[1][0], Equals, "test")
-	c.Assert(result.Rows()[1][1], Equals, "t")
-	c.Assert(result.Rows()[1][2], Equals, "")
-	c.Assert(result.Rows()[1][3], Equals, "analyze index idx")
-	c.Assert(result.Rows()[1][4], Equals, "2")
-	c.Assert(result.Rows()[1][5], NotNil)
-	c.Assert(result.Rows()[1][6], NotNil)
-	c.Assert(result.Rows()[1][7], Equals, "finished")
-}
-
-func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
@@ -283,12 +253,15 @@ func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {
 	tk.MustQuery("show table status;").Check(testkit.Rows())
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	result := tk.MustQuery("show table status;")
-	c.Check(result.Rows()[0][0], Matches, "t")
+	require.Equal(t, "t", result.Rows()[0][0])
 }
 
-func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.domain.StatsHandle().Clear()
+func TestShowStatsExtended(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	dom.StatsHandle().Clear()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
@@ -302,7 +275,7 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 		"s2 0",
 	))
 	result := tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 0)
+	require.Len(t, result.Rows(), 0)
 
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select name, status from mysql.stats_extended where name like 's%'").Sort().Check(testkit.Rows(
@@ -310,20 +283,21 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 		"s2 1",
 	))
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "s1")
-	c.Assert(result.Rows()[0][3], Equals, "[a,b]")
-	c.Assert(result.Rows()[0][4], Equals, "correlation")
-	c.Assert(result.Rows()[0][5], Equals, "1.000000")
-	c.Assert(result.Rows()[1][0], Equals, "test")
-	c.Assert(result.Rows()[1][1], Equals, "t")
-	c.Assert(result.Rows()[1][2], Equals, "s2")
-	c.Assert(result.Rows()[1][3], Equals, "[a,c]")
-	c.Assert(result.Rows()[1][4], Equals, "correlation")
-	c.Assert(result.Rows()[1][5], Equals, "-1.000000")
-	c.Assert(result.Rows()[1][6], Equals, result.Rows()[0][6])
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "s1", result.Rows()[0][2])
+	require.Equal(t, "[a,b]", result.Rows()[0][3])
+	require.Equal(t, "correlation", result.Rows()[0][4])
+	require.Equal(t, "1.000000", result.Rows()[0][5])
+
+	require.Equal(t, "test", result.Rows()[1][0])
+	require.Equal(t, "t", result.Rows()[1][1])
+	require.Equal(t, "s2", result.Rows()[1][2])
+	require.Equal(t, "[a,c]", result.Rows()[1][3])
+	require.Equal(t, "correlation", result.Rows()[1][4])
+	require.Equal(t, "-1.000000", result.Rows()[1][5])
+	require.Equal(t, result.Rows()[1][6], result.Rows()[0][6])
 
 	tk.MustExec("alter table t drop stats_extended s1")
 	tk.MustExec("alter table t drop stats_extended s2")
@@ -331,7 +305,103 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 		"s1 2",
 		"s2 2",
 	))
-	s.domain.StatsHandle().Update(s.domain.InfoSchema())
+	dom.StatsHandle().Update(dom.InfoSchema())
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
-	c.Assert(len(result.Rows()), Equals, 0)
+	require.Len(t, result.Rows(), 0)
+}
+
+func TestShowColumnStatsUsage(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a_b(a, b))")
+	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
+	p0 := t2.Meta().GetPartitionInfo().Definitions[0]
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", p0.ID, t2.Meta().Columns[0].ID))
+
+	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Sort()
+	rows := result.Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, rows[0], []interface{}{"test", "t1", "", t1.Meta().Columns[0].Name.O, "<nil>", "2021-10-20 08:00:00"})
+
+	result = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Sort()
+	rows = result.Rows()
+
+	require.Len(t, rows, 2)
+	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+}
+
+func TestShowHistogramsInFlight(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("show histograms_in_flight")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 1)
+	require.Equal(t, rows[0][0], "0")
+}
+
+func TestShowAnalyzeStatus(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	statistics.ClearHistoryJobs()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
+	tk.MustExec(`insert into t values (1, 1), (2, 2)`)
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show analyze status").Sort()
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "", result.Rows()[0][2])
+	require.Equal(t, "analyze table", result.Rows()[0][3])
+	require.Equal(t, "2", result.Rows()[0][4])
+	require.NotNil(t, result.Rows()[0][5])
+	require.NotNil(t, result.Rows()[0][6])
+	require.Equal(t, "finished", result.Rows()[0][7])
+
+	statistics.ClearHistoryJobs()
+
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show analyze status").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
+	require.Equal(t, "", result.Rows()[0][2])
+	require.Equal(t, "analyze columns", result.Rows()[0][3])
+	require.Equal(t, "2", result.Rows()[0][4])
+	require.NotNil(t, result.Rows()[0][5])
+	require.NotNil(t, result.Rows()[0][6])
+	require.Equal(t, "finished", result.Rows()[0][7])
+
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "test", result.Rows()[1][0])
+	require.Equal(t, "t", result.Rows()[1][1])
+	require.Equal(t, "", result.Rows()[1][2])
+	require.Equal(t, "analyze index idx", result.Rows()[1][3])
+	require.Equal(t, "2", result.Rows()[1][4])
+	require.NotNil(t, result.Rows()[1][5])
+	require.NotNil(t, result.Rows()[1][6])
+	require.Equal(t, "finished", result.Rows()[1][7])
 }

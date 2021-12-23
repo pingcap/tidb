@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package session
 
 import (
@@ -23,22 +23,23 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	osuser "os/user"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -132,7 +133,7 @@ const (
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
@@ -142,7 +143,7 @@ const (
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
@@ -197,7 +198,7 @@ const (
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
-		last_analyze_pos 	BLOB DEFAULT NULL,
+		last_analyze_pos 	LONGBLOB DEFAULT NULL,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
@@ -209,8 +210,8 @@ const (
 		bucket_id 	BIGINT(64) NOT NULL,
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
-		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		upper_bound LONGBLOB NOT NULL,
+		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
@@ -347,6 +348,22 @@ const (
 		filter_value varchar(32) NOT NULL,
 		key idx(filter_type),
 		primary key(id)
+	);`
+	// CreateColumnStatsUsageTable stores the column stats usage information.
+	CreateColumnStatsUsageTable = `CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
+		table_id BIGINT(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		last_used_at TIMESTAMP,
+		last_analyzed_at TIMESTAMP,
+		PRIMARY KEY (table_id, column_id) CLUSTERED
+	);`
+	// CreateTableCacheMetaTable stores the cached table meta lock information.
+	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
+		tid bigint(11) NOT NULL DEFAULT 0,
+		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
+		lease bigint(20) NOT NULL DEFAULT 0,
+		oldReadLease bigint(20) NOT NULL DEFAULT 0,
+		PRIMARY KEY (tid)
 	);`
 )
 
@@ -513,11 +530,22 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
+	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
+	version76 = 76
+	// version77 adds mysql.column_stats_usage table
+	version77 = 77
+	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+	version78 = 78
+	// version79 adds the mysql.table_cache_meta table
+	version79 = 79
+	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
+	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	version80 = 80
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version75
+var currentBootstrapVersion int64 = version80
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -596,6 +624,11 @@ var (
 		upgradeToVer73,
 		upgradeToVer74,
 		upgradeToVer75,
+		upgradeToVer76,
+		upgradeToVer77,
+		upgradeToVer78,
+		upgradeToVer79,
+		upgradeToVer80,
 	}
 )
 
@@ -640,7 +673,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
@@ -824,7 +857,7 @@ func upgradeToVer12(s Session, ver int64) {
 	terror.MustNil(err)
 	sqls := make([]string, 0, 1)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1285,7 +1318,7 @@ func upgradeToVer55(s Session, ver int64) {
 	rs, err := s.ExecuteInternal(ctx, selectSQL)
 	terror.MustNil(err)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1396,7 +1429,7 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
@@ -1571,6 +1604,57 @@ func upgradeToVer75(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
+func upgradeToVer76(s Session, ver int64) {
+	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer77(s Session, ver int64) {
+	if ver >= version77 {
+		return
+	}
+	doReentrantDDL(s, CreateColumnStatsUsageTable)
+}
+
+func upgradeToVer78(s Session, ver int64) {
+	if ver >= version78 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
+}
+
+func upgradeToVer80(s Session, ver int64) {
+	if ver >= version80 {
+		return
+	}
+	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
+	ctx := context.Background()
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1651,6 +1735,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	// Create column_stats_usage table
+	mustExecute(s, CreateColumnStatsUsageTable)
+	// Create table_cache_meta table.
+	mustExecute(s, CreateTableCacheMetaTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1658,16 +1746,26 @@ func doDDLWorks(s Session) {
 // TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
-
-	// Insert a default user with empty password.
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+	if config.GetGlobalConfig().Security.SecureBootstrap {
+		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
+		// i.e. mysql -S /tmp/tidb.sock -uroot
+		// The auth_socket plugin will validate that the user matches $USER.
+		u, err := osuser.Current()
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
+		}
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+	} else {
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	}
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Session only variable should not be inserted.
-		if v.Scope != variable.ScopeSession {
+		// Only global variables should be inserted.
+		if v.HasGlobalScope() {
 			vVal := v.Value
 			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"

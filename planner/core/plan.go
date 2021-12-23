@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -258,7 +259,7 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
@@ -305,6 +306,9 @@ type LogicalPlan interface {
 
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
+
+	// buildLogicalPlanTrace clone necessary information from LogicalPlan
+	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -375,6 +379,15 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 // ExplainInfo implements Plan interface.
 func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
+}
+
+// buildLogicalPlanTrace implements LogicalPlan
+func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
+	}
+	return planTrace
 }
 
 type basePhysicalPlan struct {

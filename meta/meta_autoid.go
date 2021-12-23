@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 var _ AutoIDAccessor = &autoIDAccessor{}
@@ -91,16 +92,24 @@ type AutoIDAccessors interface {
 type AccessorPicker interface {
 	RowID() AutoIDAccessor
 	RandomID() AutoIDAccessor
-	IncrementID() AutoIDAccessor
+	IncrementID(tableVersion uint16) AutoIDAccessor
+
+	SequenceValue() AutoIDAccessor
+	SequenceCycle() AutoIDAccessor
 }
 
 type autoIDAccessors struct {
 	access autoIDAccessor
 }
 
+const sepAutoIncVer = model.TableInfoVersion4 + 1
+
 // Get implements the interface AutoIDAccessors.
 func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
 	if autoIDs.RowID, err = a.RowID().Get(); err != nil {
+		return autoIDs, err
+	}
+	if autoIDs.IncrementID, err = a.IncrementID(sepAutoIncVer).Get(); err != nil {
 		return autoIDs, err
 	}
 	if autoIDs.RandomID, err = a.RandomID().Get(); err != nil {
@@ -114,12 +123,18 @@ func (a *autoIDAccessors) Put(autoIDs AutoIDGroup) error {
 	if err := a.RowID().Put(autoIDs.RowID); err != nil {
 		return err
 	}
+	if err := a.IncrementID(sepAutoIncVer).Put(autoIDs.IncrementID); err != nil {
+		return err
+	}
 	return a.RandomID().Put(autoIDs.RandomID)
 }
 
 // Del implements the interface AutoIDAccessors.
 func (a *autoIDAccessors) Del() error {
 	if err := a.RowID().Del(); err != nil {
+		return err
+	}
+	if err := a.IncrementID(sepAutoIncVer).Del(); err != nil {
 		return err
 	}
 	return a.RandomID().Del()
@@ -132,14 +147,31 @@ func (a *autoIDAccessors) RowID() AutoIDAccessor {
 }
 
 // IncrementID is used to get the auto_increment ID meta key-value accessor.
-func (a *autoIDAccessors) IncrementID() AutoIDAccessor {
-	a.access.idEncodeFn = a.access.m.autoIncrementIDKey
+func (a *autoIDAccessors) IncrementID(tableVersion uint16) AutoIDAccessor {
+	// _tidb_rowid and auto_increment ID in old version TiDB share the same meta key-value.
+	if tableVersion < sepAutoIncVer {
+		a.access.idEncodeFn = a.access.m.autoTableIDKey
+	} else {
+		a.access.idEncodeFn = a.access.m.autoIncrementIDKey
+	}
 	return &a.access
 }
 
 // RandomID is used to get the auto_random ID meta key-value accessor.
 func (a *autoIDAccessors) RandomID() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.autoRandomTableIDKey
+	return &a.access
+}
+
+// SequenceValue is used to get the sequence value key-value accessor.
+func (a *autoIDAccessors) SequenceValue() AutoIDAccessor {
+	a.access.idEncodeFn = a.access.m.sequenceKey
+	return &a.access
+}
+
+// SequenceCircle is used to get the sequence circle key-value accessor.
+func (a *autoIDAccessors) SequenceCycle() AutoIDAccessor {
+	a.access.idEncodeFn = a.access.m.sequenceCycleKey
 	return &a.access
 }
 
@@ -156,8 +188,9 @@ func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
 
 // AutoIDGroup represents a group of auto IDs of a specific table.
 type AutoIDGroup struct {
-	RowID    int64
-	RandomID int64
+	RowID       int64
+	IncrementID int64
+	RandomID    int64
 }
 
 // BackupAndRestoreAutoIDs changes the meta key-values to fetch & delete

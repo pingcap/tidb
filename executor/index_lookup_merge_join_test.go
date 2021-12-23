@@ -42,6 +42,22 @@ func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
 
+func (s *testSerialSuite) TestIssue28052(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`col_tinyint_key_signed` tinyint(4) DEFAULT NULL," +
+		"`col_year_key_signed` year(4) DEFAULT NULL," +
+		"KEY `col_tinyint_key_signed` (`col_tinyint_key_signed`)," +
+		"KEY `col_year_key_signed` (`col_year_key_signed`)" +
+		" ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("insert into t values(-100,NULL);")
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`").Check(testkit.Rows("1"))
+}
+
 func (s *testSerialSuite) TestIssue18068(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue18068", `return(true)`), IsNil)
 	defer func() {

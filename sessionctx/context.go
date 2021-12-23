@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -70,6 +70,7 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
+	// Deprecated: Use TxnManager.GetTxnInfoSchema to get the current schema in session
 	GetInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
@@ -88,6 +89,9 @@ type Context interface {
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
+
+	// GetSnapshotWithTS returns a snapshot with start ts
+	GetSnapshotWithTS(ts uint64) kv.Snapshot
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage

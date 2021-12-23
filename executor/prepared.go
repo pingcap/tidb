@@ -21,16 +21,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -124,12 +126,16 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 		for _, warn := range warns {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
@@ -197,11 +203,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
-		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
-		}
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
 	}
 
 	// We try to build the real statement of preparedStmt.
@@ -314,8 +316,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, id, prepared.SchemaVersion,
+		bindSQL := planner.GetBindSQL4PlanCache(e.ctx, prepared.Stmt)
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
+			vars, id, prepared.SchemaVersion, bindSQL,
 		))
 	}
 	vars.RemovePreparedStmt(id)
@@ -338,6 +341,11 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, false, false, err
 	}
+
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+	})
 
 	stmt := &ExecStmt{
 		GoCtx:       ctx,

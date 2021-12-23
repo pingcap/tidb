@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -78,8 +78,9 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	snapshot   kv.Snapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -113,7 +114,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
-		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
+	}
+	if e.cacheTable != nil {
+		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
@@ -130,12 +134,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("batch point get replica option fail")
 		}
 	})
 
@@ -147,13 +149,8 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTagForTxn(stmtCtx, snapshot)
-	// Avoid network requests for the temporary table.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		snapshot = temporaryTableSnapshot{snapshot, nil}
-	} else if e.tblInfo.TempTableType == model.TempTableLocal {
-		snapshot = temporaryTableSnapshot{snapshot, e.ctx.GetSessionVars().TemporaryTableData}
-	}
+	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -170,22 +167,22 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
-// Temporary table would always use memBuffer in session as snapshot.
-// temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
-type temporaryTableSnapshot struct {
+// CacheTable always use memBuffer in session as snapshot.
+// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods and Get methods.
+type cacheTableSnapshot struct {
 	kv.Snapshot
-	sessionData variable.TemporaryTableData
+	memBuffer kv.MemBuffer
 }
 
-func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	values := make(map[string][]byte)
-	if s.sessionData == nil {
+	if s.memBuffer == nil {
 		return values, nil
 	}
 
 	for _, key := range keys {
-		val, err := s.sessionData.Get(ctx, key)
-		if err == kv.ErrNotExist {
+		val, err := s.memBuffer.Get(ctx, key)
+		if kv.ErrNotExist.Equal(err) {
 			continue
 		}
 
@@ -201,6 +198,15 @@ func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (ma
 	}
 
 	return values, nil
+}
+
+func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	return s.memBuffer.Get(ctx, key)
+}
+
+// MockNewCacheTableSnapShot only serves for test.
+func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *cacheTableSnapshot {
+	return &cacheTableSnapshot{snapshot, memBuffer}
 }
 
 // Close implements the Executor interface.

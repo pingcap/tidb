@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -233,7 +233,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		}
 
 		exec := sctx.(sqlexec.RestrictedSQLExecutor)
-		stmt, err := exec.ParseWithParams(ctx, sql)
+		stmt, err := exec.ParseWithParamsInternal(ctx, sql)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}
@@ -318,7 +318,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 				util.MetricSchemaName.L, name, cond)
 		}
 		exec := sctx.(sqlexec.RestrictedSQLExecutor)
-		stmt, err := exec.ParseWithParams(ctx, sql)
+		stmt, err := exec.ParseWithParamsInternal(ctx, sql)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}

@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 

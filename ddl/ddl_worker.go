@@ -25,14 +25,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -301,6 +301,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+			}
+		})
 		return nil
 	})
 	var jobs string
@@ -310,7 +315,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
-	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
@@ -611,9 +620,6 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
-	// It is done without modifying table info, bin log is not needed
-	case model.ActionAlterTableAlterPartition:
-		return true
 	}
 
 	return false
@@ -744,6 +750,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
+	case model.ActionModifySchemaDefaultPlacement:
+		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionRepairTable:
@@ -751,7 +759,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(t, job)
+		ver, err = onDropTableOrView(d, t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -816,8 +824,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
-	case model.ActionAlterTableAlterPartition:
-		ver, err = onAlterTableAlterPartition(t, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(t, job)
 	case model.ActionRenameTables:
@@ -829,9 +835,17 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(d, t, job)
 	case model.ActionDropPlacementPolicy:
-		ver, err = onDropPlacementPolicy(t, job)
+		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(t, job)
+		ver, err = onAlterPlacementPolicy(d, t, job)
+	case model.ActionAlterTablePartitionPlacement:
+		ver, err = onAlterTablePartitionPlacement(t, job)
+	case model.ActionAlterTablePlacement:
+		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionAlterCacheTable:
+		ver, err = onAlterCacheTable(t, job)
+	case model.ActionAlterNoCacheTable:
+		ver, err = onAlterNoCacheTable(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1050,15 +1064,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
-			}
-		}
-	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.TableID
-		if len(job.CtxVars) > 0 {
-			diff.AffectedOpts = []*model.AffectedOption{
-				{
-					TableID: job.CtxVars[0].(int64),
-				},
 			}
 		}
 	default:

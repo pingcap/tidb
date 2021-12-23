@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -67,6 +67,11 @@ func newTestClient(
 		nextRegionID: nextRegionID,
 		hook:         hook,
 	}
+}
+
+// ScatterRegions scatters regions in a batch.
+func (c *testClient) ScatterRegions(ctx context.Context, regionInfo []*restore.RegionInfo) error {
+	return nil
 }
 
 func (c *testClient) GetAllRegions() map[uint64]*restore.RegionInfo {

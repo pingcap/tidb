@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -278,8 +279,6 @@ func (dagBuilder *dagBuilder) build() *tipb.DAGRequest {
 
 // see tikv/src/coprocessor/util.rs for more detail
 func TestIsPrefixNext(t *testing.T) {
-	t.Parallel()
-
 	require.True(t, isPrefixNext([]byte{}, []byte{0}))
 	require.True(t, isPrefixNext([]byte{0}, []byte{1}))
 	require.True(t, isPrefixNext([]byte{1}, []byte{2}))
@@ -294,8 +293,6 @@ func TestIsPrefixNext(t *testing.T) {
 }
 
 func TestPointGet(t *testing.T) {
-	t.Parallel()
-
 	// here would build mvccStore and server, and prepare
 	// three rows data, just like the test data of table_scan.rs.
 	// then init the store with the generated data.
@@ -339,17 +336,15 @@ func TestPointGet(t *testing.T) {
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
+	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
-	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
+	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }
 
 func TestClosureExecutor(t *testing.T) {
-	t.Parallel()
-
 	data := prepareTestTableData(t, keyNumber, tableID)
 	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
 	defer clean()

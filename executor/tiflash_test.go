@@ -17,6 +17,7 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"sync"
@@ -27,15 +28,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/testutils"
@@ -79,6 +83,22 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 func (s *tiflashTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	c.Assert(s.store.Close(), IsNil)
+}
+
+func (s *tiflashTestSuite) TestNonsupportCharsetTable(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
+	err := tk.ExecToErr("alter table t set tiflash replica 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported ALTER table replica for table contain gbk charset")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset utf8)")
+	tk.MustExec("alter table t set tiflash replica 1")
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
@@ -147,6 +167,35 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("5"))
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and ((t1.a < 9223372036854775800 and t1.a > 2) or (t1.a <= 1 and t1.a > -1))").Check(testkit.Rows("3"))
+}
+
+// to fix https://github.com/pingcap/tidb/issues/27952
+func (s *tiflashTestSuite) TestJoinRace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("insert into t values(2,1)")
+	tk.MustExec("insert into t values(3,1)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t values(2,2)")
+	tk.MustExec("insert into t values(3,2)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t values(2,2)")
+	tk.MustExec("insert into t values(3,2)")
+	tk.MustExec("insert into t values(1,3)")
+	tk.MustExec("insert into t values(2,3)")
+	tk.MustExec("insert into t values(3,4)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set @@tidb_opt_broadcast_cartesian_join=0")
+	tk.MustQuery("select count(*) from (select count(a) x from t group by b) t1 join (select count(a) x from t group by b) t2 on t1.x > t2.x").Check(testkit.Rows("6"))
+
 }
 
 func (s *tiflashTestSuite) TestMppExecution(c *C) {
@@ -515,6 +564,57 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
 }
 
+func (s *tiflashTestSuite) TestTiFlashPlanCacheable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("alter table test.t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tikv[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiKV plan can be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// test the mpp plan
+	tk.MustExec("set @@session.tidb_allow_mpp = 1;")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1;")
+	tk.MustExec("prepare stmt from 'select count(t1.a) from t t1 join t t2 on t1.a = t2.a where t1.a > ?;';")
+	tk.MustExec("set @a = 0;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("0"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -666,6 +766,71 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
 	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
 
+}
+
+func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
+	tk.MustExec("create table t1 (a int, b int not null, c double)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tb = testGetTableByName(c, tk.Se, "test", "t1")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,2,3)")
+	tk.MustExec("insert into t1 values(1,2,3)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
+}
+
+func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// avg int
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(1,0))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(9)")
+	for i := 0; i < 16; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
+	tk.MustExec("drop table if exists t")
+
+	// avg decimal
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("alter table td set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "td")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
+	tk.MustExec("drop table if exists td;")
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {

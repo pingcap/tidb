@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"

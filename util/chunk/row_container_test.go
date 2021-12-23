@@ -17,15 +17,13 @@ package chunk
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewRowContainer(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
 	require.NotNil(t, rc)
@@ -33,8 +31,6 @@ func TestNewRowContainer(t *testing.T) {
 }
 
 func TestSel(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
@@ -85,8 +81,6 @@ func TestSel(t *testing.T) {
 }
 
 func TestSpillAction(t *testing.T) {
-	t.Parallel()
-
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
@@ -139,8 +133,6 @@ func TestSpillAction(t *testing.T) {
 }
 
 func TestNewSortedRowContainer(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewSortedRowContainer(fields, 1024, nil, nil, nil)
 	require.NotNil(t, rc)
@@ -148,8 +140,6 @@ func TestNewSortedRowContainer(t *testing.T) {
 }
 
 func TestSortedRowContainerSortSpillAction(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}
@@ -193,8 +183,6 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 }
 
 func TestRowContainerResetAndAction(t *testing.T) {
-	t.Parallel()
-
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	rc := NewRowContainer(fields, sz)

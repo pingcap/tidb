@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -44,7 +44,6 @@ func fakePlanDigestGenerator() string {
 }
 
 func TestSetUp(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	err := ssMap.SetEnabled("1", false)
 	require.NoError(t, err)
@@ -60,7 +59,6 @@ const (
 
 // Test stmtSummaryByDigest.AddStatement.
 func TestAddStatement(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	ssMap.beginTimeForCurInterval = now + 60
@@ -721,6 +719,9 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		AvgPdTimeStr,
 		AvgBackoffTotalTimeStr,
 		AvgWriteSQLRespTimeStr,
+		MaxResultRowsStr,
+		MinResultRowsStr,
+		AvgResultRowsStr,
 		PreparedStr,
 		AvgAffectedRowsStr,
 		FirstSeenStr,
@@ -748,7 +749,6 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 
 // Test stmtSummaryByDigest.ToDatum.
 func TestToDatum(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -789,7 +789,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
-		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
+		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
@@ -837,7 +837,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
-		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
+		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", ""}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
@@ -846,7 +846,6 @@ func TestToDatum(t *testing.T) {
 
 // Test AddStatement and ToDatum parallel.
 func TestAddStatementParallel(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -884,7 +883,6 @@ func TestAddStatementParallel(t *testing.T) {
 
 // Test max number of statement count.
 func TestMaxStmtCount(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -944,7 +942,6 @@ func TestMaxStmtCount(t *testing.T) {
 
 // Test max length of normalized and sample SQL.
 func TestMaxSQLLength(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -988,7 +985,6 @@ func TestMaxSQLLength(t *testing.T) {
 
 // Test AddStatement and SetMaxStmtCount parallel.
 func TestSetMaxStmtCountParallel(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -1036,7 +1032,6 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 
 // Test setting EnableStmtSummary to 0.
 func TestDisableStmtSummary(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 
@@ -1095,7 +1090,6 @@ func TestDisableStmtSummary(t *testing.T) {
 
 // Test disable and enable statement summary concurrently with adding statements.
 func TestEnableSummaryParallel(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 
 	threads := 8
@@ -1133,7 +1127,6 @@ func TestEnableSummaryParallel(t *testing.T) {
 
 // Test GetMoreThanCntBindableStmt.
 func TestGetMoreThanCntBindableStmt(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -1158,7 +1151,6 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 
 // Test `formatBackoffTypes`.
 func TestFormatBackoffTypes(t *testing.T) {
-	t.Parallel()
 	backoffMap := make(map[string]int)
 	require.Nil(t, formatBackoffTypes(backoffMap))
 	bo1 := "pdrpc"
@@ -1172,7 +1164,6 @@ func TestFormatBackoffTypes(t *testing.T) {
 
 // Test refreshing current statement summary periodically.
 func TestRefreshCurrentSummary(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 
@@ -1212,7 +1203,6 @@ func TestRefreshCurrentSummary(t *testing.T) {
 
 // Test expiring statement summary to history.
 func TestSummaryHistory(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	err := ssMap.SetRefreshInterval("10", false)
@@ -1292,7 +1282,6 @@ func TestSummaryHistory(t *testing.T) {
 
 // Test summary when PrevSQL is not empty.
 func TestPrevSQL(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	// to disable expiration
@@ -1328,7 +1317,6 @@ func TestPrevSQL(t *testing.T) {
 }
 
 func TestEndTime(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	ssMap.beginTimeForCurInterval = now - 100
@@ -1376,7 +1364,6 @@ func TestEndTime(t *testing.T) {
 }
 
 func TestPointGet(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	ssMap.beginTimeForCurInterval = now - 100
@@ -1402,7 +1389,6 @@ func TestPointGet(t *testing.T) {
 }
 
 func TestAccessPrivilege(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 
 	loops := 32

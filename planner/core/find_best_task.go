@@ -20,14 +20,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
-	"golang.org/x/tools/container/intsets"
 )
 
 const (
@@ -417,30 +416,10 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path               *util.AccessPath
-	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
-	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
-	isMatchProp        bool
-}
-
-// compareColumnSet will compares the two set. The last return value is used to indicate
-// if they are comparable, it is false when both two sets have columns that do not occur in the other.
-// When the second return value is true, the value of first:
-// (1) -1 means that `l` is a strict subset of `r`;
-// (2) 0 means that `l` equals to `r`;
-// (3) 1 means that `l` is a strict superset of `r`.
-func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
-	lLen, rLen := l.Len(), r.Len()
-	if lLen < rLen {
-		// -1 is meaningful only when l.SubsetOf(r) is true.
-		return -1, l.SubsetOf(r)
-	}
-	if lLen == rLen {
-		// 0 is meaningful only when l.SubsetOf(r) is true.
-		return 0, l.SubsetOf(r)
-	}
-	// 1 is meaningful only when r.SubsetOf(l) is true.
-	return 1, r.SubsetOf(l)
+	path              *util.AccessPath
+	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
+	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
+	isMatchProp       bool
 }
 
 func compareBool(l, r bool) int {
@@ -456,21 +435,21 @@ func compareBool(l, r bool) int {
 func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
 	if result == 0 && !lhs.path.IsSingleScan {
-		// if both lhs and rhs need to access table after IndexScan, we use the set of columns that occurred in IndexFilters
+		// if both lhs and rhs need to access table after IndexScan, we utilize the set of columns that occurred in AccessConds and IndexFilters
 		// to compare how many table rows will be accessed.
-		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
+		return util.CompareCol2Len(lhs.indexCondsColMap, rhs.indexCondsColMap)
 	}
 	return result, true
 }
 
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
-// (2): whether or not it matches the physical property
-// (3): does it require a double scan.
+// (2): does it require a double scan,
+// (3): whether or not it matches the physical property.
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	setsResult, comparable := compareColumnSet(lhs.accessCondsColSet, rhs.accessCondsColSet)
+	accessResult, comparable := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	if !comparable {
 		return 0
 	}
@@ -479,11 +458,11 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 		return 0
 	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
-	sum := setsResult + scanResult + matchResult
-	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
+	sum := accessResult + scanResult + matchResult
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
 		return 1
 	}
-	if setsResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
 		return -1
 	}
 	return 0
@@ -543,15 +522,15 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, nil, nil)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
+	candidate.accessCondsColMap = util.ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 
@@ -565,6 +544,10 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
+		// We should check whether the possible access path is valid first.
+		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
 			continue
@@ -572,9 +555,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
-		}
-		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
@@ -802,7 +782,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			continue
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		if len(path.Ranges) == 0 {
+			// We should uncache the tableDual plan.
+			if expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+				ds.ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			cntPlan += 1
@@ -812,6 +796,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}, cntPlan, nil
 		}
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
+
+		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
+		}
+
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -854,7 +843,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+				if !ran.IsPointNonNullable(ds.ctx) {
+					// unique indexes can have duplicated NULL rows so we cannot use PointGet if there is NULL
 					allRangeIsPoint = false
 					break
 				}
@@ -930,6 +920,27 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
+func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
+
+	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
+		for _, accessCond := range path.AccessConds {
+			f, ok := accessCond.(*expression.ScalarFunction)
+			if !ok {
+				return false
+			}
+			if f.FuncName.L != ast.EQ {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	if prop.TaskTp != property.RootTaskType || !prop.IsEmpty() {
 		return invalidTask, nil
@@ -971,6 +982,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
 	task = cop.convertToRootTask(ds.ctx)
+	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
 	return task, nil
 }
 
@@ -1170,6 +1182,20 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 	return handleCol, true
 }
 
+// addSelection4PlanCache adds an extra safeguard selection upon this root task for safety.
+// When reusing cached plans and rebuilding range for them, the range builder may return an loose range after parameters change.
+// When we add the extra selection, it should meet two conditions:
+// 1. The length of 'ds.pushedDownConds` should not be zero.
+// 2. The result of function `MaybeOverOptimized4PlanCache(ds.pushedDownConds)` call needs to return true.
+func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.StatsInfo, prop *property.PhysicalProperty) {
+	if !expression.MaybeOverOptimized4PlanCache(ds.ctx, ds.pushedDownConds) || len(ds.pushedDownConds) == 0 {
+		return
+	}
+	sel := PhysicalSelection{Conditions: ds.pushedDownConds}.Init(ds.ctx, stats, ds.blockOffset, prop)
+	sel.SetChildren(task.p)
+	task.p = sel
+}
+
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	if !candidate.path.IsSingleScan {
@@ -1249,6 +1275,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), finalStats, prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1342,7 +1369,6 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	var newRootConds []expression.Expression
@@ -1452,7 +1478,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, bool) {
+func getColumnRangeCounts(sctx sessionctx.Context, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, bool) {
 	var err error
 	var count float64
 	rangeCounts := make([]float64, len(ranges))
@@ -1462,13 +1488,13 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 			if idxHist == nil || idxHist.IsInvalid(false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})
+			count, err = histColl.GetRowCountByIndexRanges(sctx, idxID, []*ranger.Range{ran})
 		} else {
 			colHist, ok := histColl.Columns[colID]
-			if !ok || colHist.IsInvalid(sc, false) {
+			if !ok || colHist.IsInvalid(sctx, false) {
 				return nil, false
 			}
-			count, err = histColl.GetRowCountByColumnRanges(sc, colID, []*ranger.Range{ran})
+			count, err = histColl.GetRowCountByColumnRanges(sctx, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
 			return nil, false
@@ -1494,7 +1520,7 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		if i < 0 {
 			return nil, 0, true
 		}
-		convertedRanges = []*ranger.Range{{LowVal: ranges[i].HighVal, HighVal: []types.Datum{types.MaxValueDatum()}, LowExclude: !ranges[i].HighExclude}}
+		convertedRanges = []*ranger.Range{{LowVal: ranges[i].HighVal, HighVal: []types.Datum{types.MaxValueDatum()}, LowExclude: !ranges[i].HighExclude, Collators: ranges[i].Collators}}
 	} else {
 		for i = 0; i < len(ranges); i++ {
 			if count+rangeCounts[i] >= expectedCnt {
@@ -1505,7 +1531,7 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		if i == len(ranges) {
 			return nil, 0, true
 		}
-		convertedRanges = []*ranger.Range{{LowVal: []types.Datum{{}}, HighVal: ranges[i].LowVal, HighExclude: !ranges[i].LowExclude}}
+		convertedRanges = []*ranger.Range{{LowVal: []types.Datum{{}}, HighVal: ranges[i].LowVal, HighExclude: !ranges[i].LowExclude, Collators: ranges[i].Collators}}
 	}
 	return convertedRanges, count, false
 }
@@ -1538,8 +1564,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
-	sc := ds.ctx.GetSessionVars().StmtCtx
-	ranges, err := ranger.BuildColumnRange(accessConds, sc, col.RetType, types.UnspecifiedLength)
+	ranges, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength)
 	if len(ranges) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
@@ -1547,7 +1572,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	if !idxExists {
 		idxID = -1
 	}
-	rangeCounts, ok := getColumnRangeCounts(sc, colID, ranges, ds.tableStats.HistColl, idxID)
+	rangeCounts, ok := getColumnRangeCounts(ds.ctx, colID, ranges, ds.tableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -1557,9 +1582,9 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, idxID, convertedRanges)
+		rangeCount, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, idxID, convertedRanges)
 	} else {
-		rangeCount, err = ds.tableStats.HistColl.GetRowCountByColumnRanges(sc, colID, convertedRanges)
+		rangeCount, err = ds.tableStats.HistColl.GetRowCountByColumnRanges(ds.ctx, colID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
@@ -1747,6 +1772,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1804,7 +1830,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			for _, def := range pi.Definitions {
+			for i := range pi.Definitions {
+				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
 					partitionInfo = &def
 					break

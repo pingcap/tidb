@@ -29,9 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
@@ -40,6 +37,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -93,7 +94,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error
 	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
@@ -545,6 +546,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
+	if err != nil {
+		// The transaction of enqueuing job is failed.
+		return errors.Trace(err)
+	}
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -569,7 +574,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	i := 0
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			d.cancel()
+			_ = d.Stop()
 		})
 
 		select {
@@ -586,7 +591,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
 			continue
-		} else if historyJob == nil {
+		}
+		if historyJob == nil {
 			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
@@ -725,4 +731,40 @@ func init() {
 	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 		RunInGoTest = true
 	}
+}
+
+// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
+func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+	for _, job := range jobs {
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
+		}
+
+		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+				// then can't find the table from the snapshot info-schema. Should just ignore error here,
+				// see more in TestParallelDropSchemaAndDropTable.
+				continue
+			}
+			return false, err
+		}
+		if tbl == nil {
+			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+			// then can't find the table from the snapshot info-schema. Should just ignore error here,
+			// see more in TestParallelDropSchemaAndDropTable.
+			continue
+		}
+		finish, err := fn(job, tbl)
+		if err != nil || finish {
+			return finish, err
+		}
+	}
+	return false, nil
 }

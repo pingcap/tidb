@@ -15,20 +15,17 @@
 package handle
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/statistics"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testUpdateListSuite{})
-
-type testUpdateListSuite struct {
-}
-
-func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
+func TestInsertAndDelete(t *testing.T) {
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
-		feedback: statistics.NewQueryFeedbackMap(),
 	}
+	h.feedback.data = statistics.NewQueryFeedbackMap()
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())
@@ -38,13 +35,13 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	items[4].Delete() // delete head
 	h.sweepList()
 
-	c.Assert(h.listHead.next, Equals, items[3])
-	c.Assert(items[3].next, Equals, items[1])
-	c.Assert(items[1].next, IsNil)
+	require.Equal(t, items[3], h.listHead.next)
+	require.Equal(t, items[1], items[3].next)
+	require.Nil(t, items[1].next)
 
 	// delete rest
 	items[1].Delete()
 	items[3].Delete()
 	h.sweepList()
-	c.Assert(h.listHead.next, IsNil)
+	require.Nil(t, h.listHead.next)
 }
