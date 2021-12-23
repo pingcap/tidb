@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1083,9 +1084,28 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			tbs := schema.SchemaTables(cDBName)
-			for _, tb := range tbs {
-				writeData(w, []*model.TableInfo{tb.Meta()})
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusOK)
+			if len(tbs) == 0 {
+				return
 			}
+			w.Write(hack.Slice("[\n"))
+			init := false
+			for _, tb := range tbs {
+				if init {
+					w.Write(hack.Slice(",\n"))
+				} else {
+					init = true
+				}
+				js, err := json.MarshalIndent(tb.Meta(), "", " ")
+				if err != nil {
+					writeError(w, err)
+					return
+				}
+				_, err = w.Write(js)
+				terror.Log(errors.Trace(err))
+			}
+			w.Write(hack.Slice("\n]"))
 			return
 		}
 		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
