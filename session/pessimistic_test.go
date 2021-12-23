@@ -2623,3 +2623,31 @@ func (s *testPessimisticSuite) TestChangeLockToPut(c *C) {
 
 	tk.MustExec("admin check table t1")
 }
+
+func (s *testPessimisticSuite) TestIssue30940(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	stmts := []string{
+		"update t set v = v + 1 where id = 1",
+		"delete from t where id = 1",
+	}
+	errCh := make(chan error, 1)
+	for _, stmt := range stmts {
+		tk.MustExec(fmt.Sprintf("prepare t from '%s'", stmt))
+		tk2.MustExec("alter table t add column a int")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/optimizeExecuteStmt", "pause"), IsNil)
+		go func() {
+			errCh <- tk.ExecToErr("execute t")
+		}()
+		tk2.MustExec("alter table t drop column a")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/optimizeExecuteStmt"), IsNil)
+		c.Assert(<-errCh, IsNil)
+	}
+}
