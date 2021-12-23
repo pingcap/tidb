@@ -1082,12 +1082,18 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
+			w.Header().Set(headerContentType, contentTypeJSON)
+			w.WriteHeader(http.StatusOK)
 			tbs := schema.SchemaTables(cDBName)
-			tbsInfo := make([]*model.TableInfo, len(tbs))
-			for i := range tbsInfo {
-				tbsInfo[i] = tbs[i].Meta()
+			for _, tb := range tbs {
+				js, err := json.MarshalIndent(tb.Meta(), "", " ")
+				if err != nil {
+					writeError(w, err)
+					return
+				}
+				_, err = w.Write(js)
+				terror.Log(errors.Trace(err))
 			}
-			writeData(w, tbsInfo)
 			return
 		}
 		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
