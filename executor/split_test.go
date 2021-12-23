@@ -283,7 +283,6 @@ func TestSplitIndex(t *testing.T) {
 }
 
 func TestSplitTable(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
