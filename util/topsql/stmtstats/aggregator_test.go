@@ -54,13 +54,16 @@ func Test_aggregator_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	ctx := &StatementExecutionContext{
-		SQLDigest:    []byte("SQL-1"),
-		PlanDigest:   []byte(""),
-		ExecDuration: time.Millisecond,
-	}
-	stats.OnExecutionBegin(ctx)
-	stats.OnExecutionFinished(ctx)
+	now := time.Now().UnixNano()
+	stats.OnParseBegin(now)
+	stats.OnExecBegin(now + 1000)
+	stats.SetSQLPlanDigest([]byte("SQL-1"), []byte{})
+	stats.OnExecFinished(now + 10000)
+	// test for doesn't have parse process
+	stats.OnExecBegin(now)
+	stats.SetSQLPlanDigest([]byte("SQL-2"), []byte{})
+	stats.OnExecFinished(now + 5000)
+
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
 		records = append(records, rs...)
@@ -68,7 +71,9 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.aggregate()
 	assert.NotEmpty(t, records)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(1000000), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(10000), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(5000), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
 }
 
 func Test_aggregator_run_close(t *testing.T) {

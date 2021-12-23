@@ -264,7 +264,12 @@ const (
 )
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
-	cc.ctx.GetSessionVars().StartTime = time.Now()
+	sessVars := cc.ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	// Observe statement exec begin for TopSQL.
+	if sessVars.StmtStats != nil {
+		sessVars.StmtStats.OnExecBegin(sessVars.StartTime.UnixNano())
+	}
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {

@@ -16,7 +16,6 @@ package stmtstats
 
 import (
 	"sync"
-	"time"
 
 	"go.uber.org/atomic"
 )
@@ -29,11 +28,17 @@ var _ StatementObserver = &StatementStats{}
 // The caller only needs to be responsible for calling different methods at the
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
-	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(ctx *StatementExecutionContext)
+	// OnParseBegin should be called on statement begin to parse.
+	OnParseBegin(unixNano int64)
 
-	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(ctx *StatementExecutionContext)
+	// SetSQLPlanDigest should be called on statement begin to execute.
+	OnExecBegin(unixNano int64)
+
+	// SetSQLPlanDigest sets the sql and plan digest for the current execute statement.
+	SetSQLPlanDigest(sqlDigest, planDigest []byte)
+
+	// OnExecFinished should be called after the statement is executed.
+	OnExecFinished(unixNano int64)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -41,6 +46,10 @@ type StatementObserver interface {
 // and it is expected that these statistics will eventually be collected and merged
 // in the background.
 type StatementStats struct {
+	seCtx StatementExecutionContext
+	// alreadyTaken indicates the StatementExecutionContext has whether been counted.
+	alreadyTaken bool
+
 	mu       sync.Mutex
 	data     StatementStatsMap
 	finished *atomic.Bool
@@ -56,30 +65,51 @@ func CreateStatementStats() *StatementStats {
 	return stats
 }
 
-// OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(ctx *StatementExecutionContext) {
-	if ctx == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(ctx.SQLDigest, ctx.PlanDigest)
-
-	item.ExecCount++
-	// Count more data here.
+// OnBegin implements StatementObserver.OnBegin.
+func (s *StatementStats) OnParseBegin(unixNano int64) {
+	s.seCtx.parseBeginUnixNano = unixNano
 }
 
-// OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(ctx *StatementExecutionContext) {
-	if ctx == nil {
+// OnBegin implements StatementObserver.OnBegin.
+func (s *StatementStats) OnExecBegin(unixNano int64) {
+	s.seCtx.execBeginUnixNano = unixNano
+}
+
+// SetSQLPlanDigest implements StatementObserver.SetSQLPlanDigest.
+func (s *StatementStats) SetSQLPlanDigest(sqlDigest, planDigest []byte) {
+	s.seCtx.setSQLPlanDigest(sqlDigest, planDigest)
+}
+
+// OnExecFinished implements StatementObserver.OnExecFinished.
+func (s *StatementStats) OnExecFinished(unixNano int64) {
+	sqlDigest, planDigest := s.seCtx.getSQLPlanDigest()
+	if len(sqlDigest) == 0 {
 		return
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(ctx.SQLDigest, ctx.PlanDigest)
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
-	item.SumExecNanoDuration += uint64(ctx.ExecDuration.Nanoseconds())
+	if s.alreadyTaken {
+		s.alreadyTaken = false
+	} else {
+		item.ExecCount++
+	}
+	var cost int64
+	if s.seCtx.parseBeginUnixNano > 0 {
+		cost = unixNano - s.seCtx.parseBeginUnixNano
+	} else if s.seCtx.execBeginUnixNano > 0 {
+		// For execute prepare statement which doesn't have parse process.
+		cost = unixNano - s.seCtx.execBeginUnixNano
+	}
+	if cost > 0 {
+		item.SumExecNanoDuration += uint64(cost)
+	}
 	// Count more data here.
+
+	// Reset StatementExecutionContext for next statement.
+	s.seCtx.reset()
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -110,9 +140,24 @@ func (s *StatementStats) addKvExecCount(sqlDigest, planDigest []byte, target str
 func (s *StatementStats) Take() StatementStatsMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.collectRunningStatementStats()
 	data := s.data
 	s.data = StatementStatsMap{}
 	return data
+}
+
+func (s *StatementStats) collectRunningStatementStats() {
+	sqlDigest, planDigest := s.seCtx.getSQLPlanDigest()
+	if len(sqlDigest) == 0 {
+		return
+	}
+	if s.alreadyTaken {
+		return
+	}
+	s.alreadyTaken = true
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item.ExecCount++
+	// collect more running statement stats here.
 }
 
 // SetFinished marks this StatementStats as "finished" and no more counting or
@@ -236,8 +281,36 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 
 // StatementExecutionContext represents a single statement execution information.
 type StatementExecutionContext struct {
-	SQLDigest    []byte
-	PlanDigest   []byte
-	ExecDuration time.Duration
+	mu struct {
+		// Following field will be read/write by multiple goroutine(session, stmtstat.aggregator goroutine),
+		// use mutex to avoid data race.
+		sync.Mutex
+		sqlDigest  []byte
+		planDigest []byte
+	}
+
+	// parseBeginTime is the unix nanoseconds of the statement begin to parse.
+	parseBeginUnixNano int64
+	// execBeginTime is the unix nanoseconds of the statement begin to exec.
+	execBeginUnixNano int64
 	// Add more required variables here
+}
+
+func (sec *StatementExecutionContext) setSQLPlanDigest(sqlDigest, planDigest []byte) {
+	sec.mu.Lock()
+	sec.mu.sqlDigest, sec.mu.planDigest = sqlDigest, planDigest
+	sec.mu.Unlock()
+}
+
+func (sec *StatementExecutionContext) getSQLPlanDigest() (sqlDigest, planDigest []byte) {
+	sec.mu.Lock()
+	sqlDigest, planDigest = sec.mu.sqlDigest, sec.mu.planDigest
+	sec.mu.Unlock()
+	return
+}
+
+func (sec *StatementExecutionContext) reset() {
+	sec.setSQLPlanDigest(nil, nil)
+	sec.parseBeginUnixNano = 0
+	sec.execBeginUnixNano = 0
 }
