@@ -59,7 +59,6 @@ func TestLongestCommonPrefixLen(t *testing.T) {
 }
 
 func TestGetStepValue(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		lower []byte
 		upper []byte
