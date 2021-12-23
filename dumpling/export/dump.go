@@ -115,11 +115,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if conf.Tables == nil {
-			if err = prepareTableListToDump(tctx, conf, conn); err != nil {
-				conn.Close()
-				return err
-			}
+		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
+			conn.Close()
+			return err
 		}
 		conn.Close()
 	}
@@ -1046,6 +1044,9 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
+	if conf.Tables != nil {
+		return nil
+	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
 		return err

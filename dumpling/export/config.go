@@ -533,12 +533,12 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	)
 	tableType = TableTypeBase
 	avgRowLength = 0
-	dbTables[schema] = make([]*TableInfo, 0)
 	for _, name = range tablesList {
 		parts := strings.SplitN(name, ".", 2)
 		if len(parts) < 2 {
 			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", name)
 		}
+		schema = parts[0]
 		dbTables[schema] = append(dbTables[schema], &TableInfo{name, avgRowLength, tableType})
 	}
 	return dbTables, nil
