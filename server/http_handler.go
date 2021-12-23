@@ -1084,7 +1084,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if schema.SchemaExists(cDBName) {
 			tbs := schema.SchemaTables(cDBName)
 			for _, tb := range tbs {
-				writeData(w, tb.Meta())
+				writeData(w, []*model.TableInfo{tb.Meta()})
 			}
 			return
 		}
