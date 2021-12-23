@@ -15,6 +15,7 @@
 package error
 
 import (
+	"encoding/hex"
 	stderrs "errors"
 
 	"github.com/pingcap/errors"
@@ -170,7 +171,10 @@ func ToTiDBErr(err error) error {
 
 	var assertionFailed *tikverr.ErrAssertionFailed
 	if stderrs.As(err, &assertionFailed) {
-		return ErrAssertionFailed.GenWithStackByArgs(assertionFailed.Error())
+		e := assertionFailed.AssertionFailed
+		return ErrAssertionFailed.GenWithStackByArgs(
+			hex.EncodeToString(e.Key), e.Assertion.String(), e.StartTs, e.ExistingStartTs, e.ExistingCommitTs,
+		)
 	}
 
 	return errors.Trace(err)
