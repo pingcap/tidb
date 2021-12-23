@@ -1515,9 +1515,9 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 		"PARTITION BY RANGE (b) (" +
 		"PARTITION p0 VALUES LESS THAN (6)," +
 		"PARTITION p1 VALUES LESS THAN (11))")
-	s.genRegionInfo(c, tk.Se, "test", "t1", name2region)
-	s.genRegionInfo(c, tk.Se, "test", "t2", name2region)
-	s.genRegionInfo(c, tk.Se, "test1", "t1", name2region)
+	s.genRegionInfo(c, tk.Se, "test", "t1", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test", "t2", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test1", "t1", name2region, false)
 	s.getName2ID(c, tk.Se, "test", "t1", name2id)
 	s.getName2ID(c, tk.Se, "test", "t2", name2id)
 	s.getName2ID(c, tk.Se, "test1", "t1", name2id)
@@ -1528,8 +1528,13 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 	tk.MustExec("use test1")
 	tk.MustExec("drop table if exists t4")
 	tk.MustExec("create table t4(a int,b int)")
-	s.genRegionInfo(c, tk.Se, "test", "t3", name2region)
-	s.genRegionInfo(c, tk.Se, "test1", "t4", name2region)
+	s.genRegionInfo(c, tk.Se, "test", "t3", name2region, false)
+	s.genRegionInfo(c, tk.Se, "test1", "t4", name2region, false)
+	// table and index in same region
+	tk.MustExec("use test")
+	tk.MustExec("create table t5(a int,b int)")
+	tk.MustExec("create index idx1t5 on t5")
+	s.genRegionInfo(c, tk.Se, "test", "t5", name2region, true)
 
 	cases := []struct {
 		conditions []string
@@ -1658,7 +1663,7 @@ func (s *testTikvRegionStatusTableSuite) TestTikvRegionStatus(c *C) {
 }
 
 func (s *testTikvRegionStatusTableSuite) genRegionInfo(c *C, ctx sessionctx.Context, db,
-	table string, name2region map[string][]helper.RegionInfo) {
+	table string, name2region map[string][]helper.RegionInfo, isSameRegion bool) {
 	tableInfo := testGetTableByName(c, ctx, db, table)
 	var ids []int64
 	if pi := tableInfo.Meta().GetPartitionInfo(); pi != nil {
@@ -1682,15 +1687,20 @@ func (s *testTikvRegionStatusTableSuite) genRegionInfo(c *C, ctx sessionctx.Cont
 		name2region[name] = append(name2region[name], region)
 		regions = append(regions, region)
 		for i, indexInfo := range tableInfo.Indices() {
-			startKey, endKey := tablecodec.GetTableIndexKeyRange(tableInfo.Meta().ID, indexInfo.Meta().ID)
-			region := helper.RegionInfo{
-				ID:       id*10 + int64(i),
-				StartKey: toHex(startKey),
-				EndKey:   toHex(endKey),
+			if isSameRegion {
+				name := db + "_" + table + "_" + indexInfo.Meta().Name.L
+				name2region[name] = append(name2region[name], region)
+			} else {
+				startKey, endKey := tablecodec.GetTableIndexKeyRange(tableInfo.Meta().ID, indexInfo.Meta().ID)
+				region := helper.RegionInfo{
+					ID:       id*10 + int64(i),
+					StartKey: toHex(startKey),
+					EndKey:   toHex(endKey),
+				}
+				regions = append(regions, region)
+				name := db + "_" + table + "_" + indexInfo.Meta().Name.L
+				name2region[name] = append(name2region[name], region)
 			}
-			regions = append(regions, region)
-			name := db + "_" + table + "_" + indexInfo.Meta().Name.L
-			name2region[name] = append(name2region[name], region)
 		}
 	}
 }
