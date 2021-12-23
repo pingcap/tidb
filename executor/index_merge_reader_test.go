@@ -454,3 +454,89 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(bytes, Greater, 0.0)
 }
+
+func (test *testSerialSuite2) TestIndexMergeWithCorrelatedColumns(c *C) {
+	tk := testkit.NewTestKit(c, test.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));")
+	tk.MustExec("insert into t1 values(1, 1, 1);")
+	tk.MustExec("insert into t1 values(2, 2, 2);")
+	tk.MustExec("create table t2(c1 int, c2 int, c3 int);")
+	tk.MustExec("insert into t2 values(1, 1, 1);")
+	tk.MustExec("insert into t2 values(2, 2, 2);")
+
+	tk.MustQuery(`explain format=brief select * from t2 where c1 < all(
+			select /*+ use_index_merge(t1) */ c1 from t1 where 
+				(c1 = 10 and c1 = t2.c3 or
+				 c2 = 1 and c2 = t2.c3) 
+				and substring(c3, 10));`).Check(testkit.Rows(
+		"Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
+		"└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
+		"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+		"    └─Selection 0.01 root  substring(cast(test.t1.c3, var_string(20)), 10)",
+		"      └─IndexMerge 0.01 root  ",
+		"        ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
+		"        │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+		"        ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+		"        │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+		"        └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
+		"          └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`select * from t2 where c1 < all(
+			select /*+ use_index_merge(t1) */ c1 from t1 where 
+				(c1 = 10 and c1 = t2.c3 or
+				 c2 = 1 and c2 = t2.c3) 
+				and substring(c3, 10));`).Sort().Check(testkit.Rows("1 1 1", "2 2 2"))
+
+	tk.MustQuery(`explain format=brief select * from t2 where c1 < all(
+			select /*+ use_index_merge(t1) */ c1 from t1 where 
+				(c1 = 10 and c1 = t2.c3 or 
+				 c2 = 1 and c2 = t2.c3)
+				and reverse(c3));`).Check(testkit.Rows(
+		"Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
+		"└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
+		"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+		"    └─IndexMerge 0.01 root  ",
+		"      ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
+		"      │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+		"      ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+		"      │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+		"      └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3))), reverse(cast(test.t1.c3, var_string(20)))",
+		"        └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`select * from t2 where c1 < all(
+			select /*+ use_index_merge(t1) */ c1 from t1 where 
+				(c1 = 10 and c1 = t2.c3 or 
+				 c2 = 1 and c2 = t2.c3)
+				and reverse(c3));`).Sort().Check(testkit.Rows("2 2 2"))
+
+	tk.MustQuery(`select * from t2 where c1 < all(
+			select /*+ use_index_merge(t1) */ c1 from t1 where 
+				(c1 >= 10 and c1 = t2.c3 or 
+				 c2 = 1 and c2 = t2.c3) 
+				and substring(c3, 10));`).Sort().Check(testkit.Rows("1 1 1", "2 2 2"))
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), c_datetime datetime, c_decimal decimal(12, 6), primary key(c_int), key(c_int), key(c_str), unique key(c_decimal), key(c_datetime));")
+	tk.MustExec("create table t2  like t1 ;")
+	tk.MustExec(`insert into t1 (c_int, c_str, c_datetime, c_decimal) values (6, 'sharp payne', '2020-06-07 10:40:39', 6.117000) , 
+			    (7, 'objective kare', '2020-02-05 18:47:26', 1.053000) , 
+			    (8, 'thirsty pasteur', '2020-01-02 13:06:56', 2.506000) , 
+			    (9, 'blissful wilbur', '2020-06-04 11:34:04', 9.144000) , 
+			    (10, 'reverent mclean', '2020-02-12 07:36:26', 7.751000) ;`)
+	tk.MustExec(`insert into t2 (c_int, c_str, c_datetime, c_decimal) values (6, 'beautiful joliot', '2020-01-16 01:44:37', 5.627000) , 
+			    (7, 'hopeful blackburn', '2020-05-23 21:44:20', 7.890000) , 
+			    (8, 'ecstatic davinci', '2020-02-01 12:27:17', 5.648000) , 
+			    (9, 'hopeful lewin', '2020-05-05 05:58:25', 7.288000) , 
+			    (10, 'sharp jennings', '2020-01-28 04:35:03', 9.758000) ;`)
+	tk.MustQuery(`select * from t1 where c_decimal < all (
+		select c_decimal from t2 where t1.c_int = t2.c_int and t1.c_datetime > t2.c_datetime and t2.c_decimal = 9.060 or 
+		t2.c_str <= 'interesting shtern' and t1.c_int = t2.c_int);`).Sort().Check(testkit.Rows(
+		"10 reverent mclean 2020-02-12 07:36:26 7.751000",
+		"7 objective kare 2020-02-05 18:47:26 1.053000",
+		"8 thirsty pasteur 2020-01-02 13:06:56 2.506000"))
+}
