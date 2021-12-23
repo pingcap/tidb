@@ -31,7 +31,7 @@ type StatementObserver interface {
 	// OnParseBegin should be called on statement begin to parse.
 	OnParseBegin(unixNano int64)
 
-	// SetSQLPlanDigest should be called on statement begin to execute.
+	// OnExecBegin should be called on statement begin to execute.
 	OnExecBegin(unixNano int64)
 
 	// SetSQLPlanDigest sets the sql and plan digest for the current execute statement.
@@ -47,7 +47,7 @@ type StatementObserver interface {
 // in the background.
 type StatementStats struct {
 	seCtx StatementExecutionContext
-	// alreadyTaken indicates the StatementExecutionContext has whether been counted.
+	// alreadyTaken indicates the StatementExecutionContext whether has been counted.
 	alreadyTaken bool
 
 	mu       sync.Mutex
@@ -65,12 +65,12 @@ func CreateStatementStats() *StatementStats {
 	return stats
 }
 
-// OnBegin implements StatementObserver.OnBegin.
+// OnParseBegin implements StatementObserver.OnParseBegin.
 func (s *StatementStats) OnParseBegin(unixNano int64) {
 	s.seCtx.parseBeginUnixNano = unixNano
 }
 
-// OnBegin implements StatementObserver.OnBegin.
+// OnExecBegin implements StatementObserver.OnExecBegin.
 func (s *StatementStats) OnExecBegin(unixNano int64) {
 	s.seCtx.execBeginUnixNano = unixNano
 }
@@ -282,8 +282,7 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 // StatementExecutionContext represents a single statement execution information.
 type StatementExecutionContext struct {
 	mu struct {
-		// Following field will be read/write by multiple goroutine(session, stmtstat.aggregator goroutine),
-		// use mutex to avoid data race.
+		// Following field will be read/write by session and stmtstat.aggregator goroutine, use mutex to avoid data race.
 		sync.Mutex
 		sqlDigest  []byte
 		planDigest []byte

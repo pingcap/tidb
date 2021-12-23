@@ -898,7 +898,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	a.observeStmtFinishedForTopSQL()
+	a.observeStmtExecFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
@@ -1260,7 +1260,7 @@ func (a *ExecStmt) observeStmtSetSQLPlanDigestForTopSQL() {
 	}
 }
 
-func (a *ExecStmt) observeStmtFinishedForTopSQL() {
+func (a *ExecStmt) observeStmtExecFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		vars.StmtStats.OnExecFinished(time.Now().UnixNano())
 	}
