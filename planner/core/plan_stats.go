@@ -51,7 +51,7 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return
 	}
-	syncWait := int64(plan.SCtx().GetSessionVars().StatsLoadSyncWait)
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
 	if syncWait <= 0 {
 		return
 	}

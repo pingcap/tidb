@@ -240,6 +240,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBStatsLoadSyncWait:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.StatsLoadSyncWait.Store(val)
 	case variable.TiDBStatsLoadPseudoTimeout:
 		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	}
