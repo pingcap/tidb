@@ -90,7 +90,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
-	ExpiredTimeStamp4PC  types.Time
+	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -335,6 +335,23 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
+}
+
+// ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
+func (do *Domain) ExpiredTimeStamp4PC() types.Time {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	return do.expiredTimeStamp4PC
+}
+
+// SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
+func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	do.expiredTimeStamp4PC = time
+	return
 }
 
 // DDL gets DDL from domain.
@@ -714,7 +731,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
 		renewLeaseCh:        make(chan func(), 10),
-		ExpiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
+		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
