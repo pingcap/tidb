@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // SetupForCommonTest runs before all the tests.
@@ -47,14 +49,18 @@ func workaroundGoCheckFlags() {
 }
 
 func applyOSLogLevel() {
-	cfg := config.NewConfig().Log.ToLogConfig()
 	osLoglevel := os.Getenv("log_level")
 	if len(osLoglevel) > 0 {
-		cfg.Level = osLoglevel
-		err := logutil.ReplaceLogger(cfg)
+		cfg := log.Config{
+			Level:  osLoglevel,
+			Format: "text",
+			File:   log.FileLogConfig{MaxSize: logutil.DefaultLogMaxSize},
+		}
+		gl, props, err := log.InitLogger(&cfg, zap.AddStacktrace(zapcore.FatalLevel))
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "applyOSLogLevel failed: %v", err)
 			os.Exit(-1)
 		}
+		log.ReplaceGlobals(gl, props)
 	}
 }
