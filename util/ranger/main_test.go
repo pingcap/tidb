@@ -29,7 +29,7 @@ var testDataMap = make(testdata.BookKeeper, 1)
 var rangerSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 

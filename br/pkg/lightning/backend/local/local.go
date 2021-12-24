@@ -150,9 +150,9 @@ type local struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	errorMgr           *errormanager.ErrorManager
-}
 
-var bufferPool = membuf.NewPool(1024, manual.Allocator{})
+	bufferPool *membuf.Pool
+}
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
@@ -244,6 +244,8 @@ func NewLocalBackend(
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
+
+		bufferPool: membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 	}
 	local.conns = common.NewGRPCConns()
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
@@ -423,6 +425,7 @@ func (local *local) Close() {
 		engine.unlock()
 	}
 	local.conns.Close()
+	local.bufferPool.Destroy()
 
 	if local.duplicateDB != nil {
 		// Check whether there are duplicates.
@@ -776,7 +779,7 @@ func (local *local) WriteToTiKV(
 		requests = append(requests, req)
 	}
 
-	bytesBuf := bufferPool.NewBuffer()
+	bytesBuf := local.bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
 	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
 	count := 0
@@ -1664,14 +1667,14 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize)
+	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
-		kvBuffer:           bufferPool.NewBuffer(),
+		kvBuffer:           kvBuffer,
 		isKVSorted:         cfg.IsKVSorted,
 		isWriteBatchSorted: true,
 	}
