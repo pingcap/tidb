@@ -8,22 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package charset
+package paging
 
-import "golang.org/x/text/encoding/simplifiedchinese"
+import (
+	"testing"
 
-var GBKEncoding = &Encoding{
-	enc:  simplifiedchinese.GBK,
-	name: CharsetGBK,
-	charLength: func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-			return 1
-		}
-		return 2
-	},
-	specialCase: GBKCase,
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testbridge.SetupForCommonTest()
+	goleak.VerifyTestMain(m)
 }

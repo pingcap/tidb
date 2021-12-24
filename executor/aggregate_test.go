@@ -1483,6 +1483,7 @@ func TestAvgDecimal(t *testing.T) {
 	tk.MustExec("insert into td values (0,29815);")
 	tk.MustExec("insert into td values (10017,-32661);")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table td;")
 }
 

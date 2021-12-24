@@ -37,7 +37,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 	}
@@ -72,7 +72,7 @@ func TestTopology(t *testing.T) {
 
 	topology, err := info.getTopologyFromEtcd(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
@@ -97,7 +97,7 @@ func TestTopology(t *testing.T) {
 
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
-	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
 	require.Equal(t, info.getTopologyInfo(), *topology)
 
 	// check ttl key

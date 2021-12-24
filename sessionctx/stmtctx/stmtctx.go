@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -207,7 +208,14 @@ type StatementContext struct {
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
-	// Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
+  
+  // Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
 	Timestamp time.Time
 }
 

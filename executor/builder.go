@@ -3409,6 +3409,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
+	indexPaging := false
+	if v.Paging {
+		indexPaging = true
+		indexStreaming = false
+	}
 	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
 		return nil, err
@@ -3430,6 +3435,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
+		indexPaging:       indexPaging,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
@@ -4192,7 +4198,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.ctx, desc, false)
 		if err != nil {
 			b.err = err
 			return nil
