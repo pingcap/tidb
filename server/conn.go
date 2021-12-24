@@ -1117,6 +1117,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
+					zap.Uint64("timestamp", cc.ctx.TxnInfo().StartTS),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
