@@ -2382,14 +2382,29 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	c.Assert(rows[1][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[1][5].(string) != "<nil>", IsTrue)
 
+	// Test partition table.
 	// No matter whether it is static or dynamic pruning mode, we record predicate columns using table ID rather than partition ID.
 	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", val))
 		tk.MustExec("delete from mysql.column_stats_usage")
-		tk.MustExec("select * from t3 where a > 1")
+		tk.MustExec("select * from t3 where a < 5")
 		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
 		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
 		c.Assert(len(rows), Equals, 1)
 		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "global", "a"})
+		c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+		c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 	}
+
+	// Test non-correlated subquery.
+	// Non-correlated subquery will be executed during the plan building phase, which cannot be done by mock in (*testPlanSuite).TestCollectPredicateColumns.
+	// Hence we put the test of collecting predicate columns for non-correlated subquery here.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("select * from t2 where t2.a > (select count(*) from t1 where t1.b > 1)")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 }
