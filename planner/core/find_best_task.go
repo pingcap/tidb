@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -973,7 +974,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if prop.ExpectedCnt < ds.stats.RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
 	}
-	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, remainingFilters, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
 	}
@@ -981,6 +982,9 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
+	if remainingFilters != nil {
+		cop.rootTaskConds = remainingFilters
+	}
 	task = cop.convertToRootTask(ds.ctx)
 	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
 	return task, nil
@@ -1092,8 +1096,10 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 	return
 }
 
+// buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
+// Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression,
-	totalRowCount float64) (PhysicalPlan, float64, error) {
+	totalRowCount float64) (PhysicalPlan, float64, []expression.Expression, error) {
 	var partialCost float64
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
@@ -1108,7 +1114,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	ts.SetSchema(ds.schema.Clone())
 	err := setIndexMergeTableScanHandleCols(ds, ts)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -1124,17 +1130,44 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		ts.stats.StatsVersion = statistics.PseudoVersion
 	}
 	if len(tableFilters) > 0 {
-		partialCost += totalRowCount * sessVars.CopCPUFactor
-		selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, tableFilters, nil)
-		if err != nil {
-			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
-			selectivity = SelectionFactor
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(sessVars.StmtCtx, ds.ctx.GetClient(), tableFilters)
+		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
+		pushedFilters = pushedFilters1
+		remainingFilters = append(remainingFilters, remainingFilters1...)
+		if len(pushedFilters) != 0 {
+			partialCost += totalRowCount * sessVars.CopCPUFactor
+			selectivity, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, pushedFilters, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			sel := PhysicalSelection{Conditions: pushedFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
+			sel.SetChildren(ts)
+			return sel, partialCost, remainingFilters, nil
 		}
-		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
-		sel.SetChildren(ts)
-		return sel, partialCost, nil
+		return ts, partialCost, remainingFilters, nil
 	}
-	return ts, partialCost, nil
+	return ts, partialCost, nil, nil
+}
+
+// extractFiltersForIndexMerge returns:
+// `pushed`: exprs that can be pushed to TiKV.
+// `remaining`: exprs that can NOT be pushed to TiKV but can be pushed to other storage engines.
+// Why do we need this func?
+// IndexMerge only works on TiKV, so we need to find all exprs that cannot be pushed to TiKV, and add a new Selection above IndexMergeReader.
+// 	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
+// 	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
+func extractFiltersForIndexMerge(sc *stmtctx.StatementContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+	for _, expr := range filters {
+		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.TiKV) {
+			pushed = append(pushed, expr)
+			continue
+		}
+		if expression.CanExprsPushDown(sc, []expression.Expression{expr}, client, kv.UnSpecified) {
+			remaining = append(remaining, expr)
+		}
+	}
+	return
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
@@ -1409,15 +1442,15 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 }
 
 // SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
-func SplitSelCondsWithVirtualColumn(conds []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var filterConds []expression.Expression
-	for i := len(conds) - 1; i >= 0; i-- {
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (withoutVirt []expression.Expression, withVirt []expression.Expression) {
+	for i := range conds {
 		if expression.ContainVirtualColumn(conds[i : i+1]) {
-			filterConds = append(filterConds, conds[i])
-			conds = append(conds[:i], conds[i+1:]...)
+			withVirt = append(withVirt, conds[i])
+		} else {
+			withoutVirt = append(withoutVirt, conds[i])
 		}
 	}
-	return conds, filterConds
+	return withoutVirt, withVirt
 }
 
 func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []property.SortItem) bool {
