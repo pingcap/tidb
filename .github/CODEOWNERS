@@ -1,4 +1,15 @@
 # Require review from domain experts when the PR modified significant config files.
-/sessionctx/variable @pingcap/tidb-configuration-reviewer
+.github/CODEOWNERS @pingcap/tidb-configuration-reviewer
+
+/sessionctx/variable/error.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/noop.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/removed.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/sequence_state.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/session.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/statusvar.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/sysvar.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/tidb_vars.go @pingcap/tidb-configuration-reviewer
+/sessionctx/variable/varsutil.go @pingcap/tidb-configuration-reviewer
+
 /config/config.toml.example @pingcap/tidb-configuration-reviewer
 /session/bootstrap.go @pingcap/tidb-configuration-reviewer
