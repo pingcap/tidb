@@ -79,7 +79,6 @@ type parallelCPUProfiler struct {
 
 	// some data cache for profiling.
 	data         *ProfileData
-	nextData     *ProfileData
 	lastDataSize int
 
 	started bool
@@ -176,13 +175,16 @@ func (p *parallelCPUProfiler) profilingLoop() {
 
 func (p *parallelCPUProfiler) profileCycle() {
 	if p.inProfilingStatus() {
-		p.stopCPUProfile()
+		pprof.StopCPUProfile()
+		p.lastDataSize = p.data.Data.Len()
 		p.sendToConsumers()
 	}
 
 	// Only do cpu profiling when there are consumers.
-	if p.needProfile() {
-		err := p.startCPUProfile()
+	if p.consumersCount() > 0 {
+		metrics.CPUProfileCounter.Inc()
+		p.data = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize)), Begin: time.Now()}
+		err := pprof.StartCPUProfile(p.data.Data)
 		if err != nil {
 			p.data.Error = err
 			// notify error as soon as possible
@@ -191,34 +193,8 @@ func (p *parallelCPUProfiler) profileCycle() {
 	}
 }
 
-func (p *parallelCPUProfiler) needProfile() bool {
-	return p.consumersCount() > 0
-}
-
 func (p *parallelCPUProfiler) inProfilingStatus() bool {
 	return p.data != nil
-}
-
-func (p *parallelCPUProfiler) startCPUProfile() error {
-	if p.nextData != nil {
-		p.data, p.nextData = p.nextData, nil
-	} else {
-		p.data = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, 1024*8)), Begin: time.Now()}
-	}
-	metrics.CPUProfileCounter.Inc()
-	return pprof.StartCPUProfile(p.data.Data)
-}
-
-func (p *parallelCPUProfiler) stopCPUProfile() {
-	now := time.Now()
-	p.data.End = now
-
-	// create next profile data before stop profiling, to reduce profiling interval.
-	if p.lastDataSize != 0 {
-		p.nextData = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize)), Begin: now}
-	}
-
-	pprof.StopCPUProfile()
 }
 
 func (p *parallelCPUProfiler) consumersCount() int {
@@ -229,6 +205,7 @@ func (p *parallelCPUProfiler) consumersCount() int {
 }
 
 func (p *parallelCPUProfiler) sendToConsumers() {
+	p.data.End = time.Now()
 	p.Lock()
 	for c := range p.cs {
 		select {
@@ -238,6 +215,5 @@ func (p *parallelCPUProfiler) sendToConsumers() {
 		}
 	}
 	p.Unlock()
-	p.lastDataSize = p.data.Data.Len()
 	p.data = nil
 }

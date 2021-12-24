@@ -78,7 +78,6 @@ func TestParallelCPUProfiler(t *testing.T) {
 	Register(dataCh)
 	Register(dataCh)
 	require.Equal(t, 1, globalCPUProfiler.consumersCount())
-	require.Equal(t, true, globalCPUProfiler.needProfile())
 
 	// Test profile error
 	data := <-dataCh
