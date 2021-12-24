@@ -97,7 +97,7 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 				},
 				{
 					assertReason: "",
-					assertAction: "The conditions[lt(test.t.a, 1)] are pushed down across DataSource_1",
+					assertAction: "The conditions[lt(test.t.a, 1)] are pushed down across DataSource_2",
 				},
 				{
 					assertAction: "Selection_4 is removed",
