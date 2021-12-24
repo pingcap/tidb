@@ -82,7 +82,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		if !r.durationReported {
 			// TODO: Add a label to distinguish between success or failure.
 			// https://github.com/pingcap/tidb/issues/11397
-			metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+			metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "streaming").Observe(r.fetchDuration.Seconds())
 			r.durationReported = true
 		}
 		return true, nil

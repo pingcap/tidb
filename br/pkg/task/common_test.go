@@ -29,7 +29,6 @@ func (f fakeValue) Type() string {
 }
 
 func TestUrlNoQuery(t *testing.T) {
-	t.Parallel()
 	flag := &pflag.Flag{
 		Name:  flagStorage,
 		Value: fakeValue("s3://some/what?secret=a123456789&key=987654321"),
@@ -40,7 +39,6 @@ func TestUrlNoQuery(t *testing.T) {
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
-	t.Parallel()
 	cfg := config.GetGlobalConfig()
 	restoreConfig := enableTiDBConfig()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
@@ -49,7 +47,6 @@ func TestTiDBConfigUnchanged(t *testing.T) {
 }
 
 func TestStripingPDURL(t *testing.T) {
-	t.Parallel()
 	nor1, err := normalizePDURL("https://pd:5432", true)
 	require.NoError(t, err)
 	require.Equal(t, "pd:5432", nor1)
@@ -68,7 +65,6 @@ func TestStripingPDURL(t *testing.T) {
 }
 
 func TestCheckCipherKeyMatch(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		CipherType encryptionpb.EncryptionMethod
 		CipherKey  string
@@ -125,7 +121,6 @@ func TestCheckCipherKeyMatch(t *testing.T) {
 }
 
 func TestCheckCipherKey(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		cipherKey string
 		keyFile   string

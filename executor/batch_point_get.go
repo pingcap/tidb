@@ -150,6 +150,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		})
 	}
 	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
