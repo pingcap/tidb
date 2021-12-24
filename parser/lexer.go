@@ -639,12 +639,16 @@ func (mb *lazyBuf) setUseBuf(str string) {
 	}
 }
 
-func (mb *lazyBuf) writeRune(r rune, w int) {
+func (mb *lazyBuf) writeRune(r reader, ch0 rune) {
 	if mb.useBuf {
-		if w > 1 {
-			mb.b.WriteRune(r)
+		if r.w == 1 {
+			mb.b.WriteByte(byte(ch0))
 		} else {
-			mb.b.WriteByte(byte(r))
+			if r.encoding == charset.FindEncoding("utf8") {
+				mb.b.WriteRune(ch0)
+			} else {
+				mb.b.WriteString(r.s[r.p.Offset : r.p.Offset+r.w])
+			}
 		}
 	}
 }
@@ -678,7 +682,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			mb.setUseBuf(mb.r.data(&pos)[1:])
 			ch0 = handleEscape(s)
 		}
-		mb.writeRune(ch0, s.r.w)
+		mb.writeRune(s.r, ch0)
 		if !s.r.eof() {
 			s.r.inc()
 			ch0 = s.r.peek()
