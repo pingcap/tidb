@@ -644,11 +644,7 @@ func (mb *lazyBuf) writeRune(r reader, ch0 rune) {
 		if r.w == 1 {
 			mb.b.WriteByte(byte(ch0))
 		} else {
-			if r.encoding == charset.FindEncoding("utf8") {
-				mb.b.WriteRune(ch0)
-			} else {
-				mb.b.WriteString(r.s[r.p.Offset : r.p.Offset+r.w])
-			}
+			mb.b.WriteString(r.s[r.p.Offset : r.p.Offset+r.w])
 		}
 	}
 }
