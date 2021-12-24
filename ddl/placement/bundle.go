@@ -85,33 +85,23 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	if len(LeaderConstraints) > 0 {
-		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
-	} else if followerCount == 0 {
-		return nil, fmt.Errorf("%w: you must at least provide common/leader constraints, or set some followers", ErrInvalidPlacementOptions)
+	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+
+	if followerCount == 0 {
+		followerCount = 2
 	}
-
-	if followerCount > 0 {
-		// if user did not specify leader, add one
-		if len(LeaderConstraints) == 0 {
-			Rules = append(Rules, NewRule(Leader, 1, NewConstraintsDirect()))
-		}
-
-		FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
-		}
-		for _, rule := range FollowerRules {
-			for _, cnst := range CommonConstraints {
-				if err := rule.Constraints.Add(cnst); err != nil {
-					return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
-				}
+	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+	}
+	for _, rule := range FollowerRules {
+		for _, cnst := range CommonConstraints {
+			if err := rule.Constraints.Add(cnst); err != nil {
+				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
 			}
 		}
-		Rules = append(Rules, FollowerRules...)
-	} else if followerConstraints != "" {
-		return nil, fmt.Errorf("%w: specify follower constraints without specify how many followers to be placed", ErrInvalidPlacementOptions)
 	}
+	Rules = append(Rules, FollowerRules...)
 
 	if learnerCount > 0 {
 		LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)

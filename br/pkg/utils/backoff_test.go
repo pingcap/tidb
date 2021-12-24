@@ -125,8 +125,6 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 }
 
 func TestNewImportSSTBackofferWithSucess(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewImportSSTBackoffer()
 	err := utils.WithRetry(context.Background(), func() error {
@@ -142,8 +140,6 @@ func TestNewImportSSTBackofferWithSucess(t *testing.T) {
 }
 
 func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
-	t.Parallel()
-
 	var counter int
 	backoffer := utils.NewDownloadSSTBackoffer()
 	err := utils.WithRetry(context.Background(), func() error {
