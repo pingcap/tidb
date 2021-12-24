@@ -33,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -963,6 +964,22 @@ func (e *Engine) unfinishedRanges(ranges []Range) []Range {
 	e.finishedRanges.ranges = sortAndMergeRanges(e.finishedRanges.ranges)
 
 	return filterOverlapRange(ranges, e.finishedRanges.ranges)
+}
+
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) pkgkv.Iter {
+	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
+		newOpts := *opts
+		newOpts.LowerBound = normalIterStartKey
+		opts = &newOpts
+	}
+	if !e.duplicateDetection {
+		return pebbleIter{Iterator: e.db.NewIter(opts)}
+	}
+	logger := log.With(
+		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
+		zap.Int64("tableID", e.tableInfo.ID),
+		zap.Stringer("engineUUID", e.UUID))
+	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
 }
 
 type sstMeta struct {

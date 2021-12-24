@@ -18,15 +18,15 @@ import (
 	"bytes"
 	"context"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,7 +84,7 @@ func TestDupDetectIterator(t *testing.T) {
 	}
 
 	// Find duplicates from the generated pairs.
-	var duplicatePairs []common.KvPair
+	var dupPairs []common.KvPair
 	sort.Slice(pairs, func(i, j int) bool {
 		return bytes.Compare(pairs[i].Key, pairs[j].Key) < 0
 	})
@@ -100,7 +100,7 @@ func TestDupDetectIterator(t *testing.T) {
 			continue
 		}
 		for k := i; k < j; k++ {
-			duplicatePairs = append(duplicatePairs, pairs[k])
+			dupPairs = append(dupPairs, pairs[k])
 		}
 		i = j
 	}
@@ -112,9 +112,7 @@ func TestDupDetectIterator(t *testing.T) {
 	rnd.Shuffle(len(pairs), func(i, j int) {
 		pairs[i], pairs[j] = pairs[j], pairs[i]
 	})
-	storeDir, err := os.MkdirTemp("", "lightning-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(storeDir)
+	storeDir := t.TempDir()
 	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
 	require.NoError(t, err)
 	wb := db.NewBatch()
@@ -124,19 +122,10 @@ func TestDupDetectIterator(t *testing.T) {
 	}
 	require.NoError(t, wb.Commit(pebble.Sync))
 
-	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
+	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	require.NoError(t, err)
-	engine := &Engine{
-		ctx:         context.Background(),
-		db:          db,
-		keyAdapter:  keyAdapter,
-		duplicateDB: duplicateDB,
-		tableInfo: &checkpoints.TidbTableInfo{
-			DB:   "db",
-			Name: "name",
-		},
-	}
-	iter := newDupDetectIter(context.Background(), engine, &pebble.IterOptions{})
+	var iter kv.Iter
+	iter = newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L())
 	sort.Slice(pairs, func(i, j int) bool {
 		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID)
 		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID)
@@ -163,35 +152,33 @@ func TestDupDetectIterator(t *testing.T) {
 	require.NoError(t, iter.Error())
 	require.Equal(t, 0, len(uniqueKeys))
 	require.NoError(t, iter.Close())
-	require.NoError(t, engine.Close())
+	require.NoError(t, db.Close())
 
-	// Check duplicates detected by duplicate iterator.
-	iter = pebbleIter{Iterator: duplicateDB.NewIter(&pebble.IterOptions{})}
+	// Check duplicates detected by dupDetectIter.
+	iter = newDupDBIter(dupDB, keyAdapter, &pebble.IterOptions{})
 	var detectedPairs []common.KvPair
 	for iter.First(); iter.Valid(); iter.Next() {
-		key, err := keyAdapter.Decode(nil, iter.Key())
-		require.NoError(t, err)
 		detectedPairs = append(detectedPairs, common.KvPair{
-			Key: key,
+			Key: append([]byte{}, iter.Key()...),
 			Val: append([]byte{}, iter.Value()...),
 		})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
-	require.NoError(t, duplicateDB.Close())
-	require.Equal(t, len(duplicatePairs), len(detectedPairs))
+	require.NoError(t, dupDB.Close())
+	require.Equal(t, len(dupPairs), len(detectedPairs))
 
-	sort.Slice(duplicatePairs, func(i, j int) bool {
-		keyCmp := bytes.Compare(duplicatePairs[i].Key, duplicatePairs[j].Key)
-		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(duplicatePairs[i].Val, duplicatePairs[j].Val) < 0
+	sort.Slice(dupPairs, func(i, j int) bool {
+		keyCmp := bytes.Compare(dupPairs[i].Key, dupPairs[j].Key)
+		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(dupPairs[i].Val, dupPairs[j].Val) < 0
 	})
 	sort.Slice(detectedPairs, func(i, j int) bool {
 		keyCmp := bytes.Compare(detectedPairs[i].Key, detectedPairs[j].Key)
 		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(detectedPairs[i].Val, detectedPairs[j].Val) < 0
 	})
 	for i := 0; i < len(detectedPairs); i++ {
-		require.Equal(t, duplicatePairs[i].Key, detectedPairs[i].Key)
-		require.Equal(t, duplicatePairs[i].Val, detectedPairs[i].Val)
+		require.Equal(t, dupPairs[i].Key, detectedPairs[i].Key)
+		require.Equal(t, dupPairs[i].Val, detectedPairs[i].Val)
 	}
 }
 
@@ -233,25 +220,15 @@ func TestDupDetectIterSeek(t *testing.T) {
 	}
 	require.NoError(t, wb.Commit(pebble.Sync))
 
-	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
+	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	require.NoError(t, err)
-	engine := &Engine{
-		ctx:         context.Background(),
-		db:          db,
-		keyAdapter:  keyAdapter,
-		duplicateDB: duplicateDB,
-		tableInfo: &checkpoints.TidbTableInfo{
-			DB:   "db",
-			Name: "name",
-		},
-	}
-	iter := newDupDetectIter(context.Background(), engine, &pebble.IterOptions{})
+	iter := newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L())
 
 	require.True(t, iter.Seek([]byte{1, 2, 3, 1}))
 	require.Equal(t, pairs[1].Val, iter.Value())
 	require.True(t, iter.Next())
 	require.Equal(t, pairs[3].Val, iter.Value())
 	require.NoError(t, iter.Close())
-	require.NoError(t, engine.Close())
-	require.NoError(t, duplicateDB.Close())
+	require.NoError(t, db.Close())
+	require.NoError(t, dupDB.Close())
 }
