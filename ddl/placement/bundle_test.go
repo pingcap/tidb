@@ -572,7 +572,10 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			LeaderConstraints:   "[+region=as]",
 			FollowerConstraints: "[-region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", NotIn, "us"))),
+		},
 	})
 
 	tests = append(tests, TestCase{
