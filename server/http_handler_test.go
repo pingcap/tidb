@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
 	"testing"
@@ -35,10 +36,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -1058,4 +1061,35 @@ func TestDDLHookHandler(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "\"success!\"", string(body))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestWriteDBTablesData(t *testing.T) {
+	// One table in a scheme.
+	info := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	rc := httptest.NewRecorder()
+	tbs := info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 1, len(tbs))
+	writeDBTablesData(rc, tbs)
+	var ti []*model.TableInfo
+	decoder := json.NewDecoder(rc.Body)
+	err := decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+
+	// Two tables in a scheme.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 2, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
 }

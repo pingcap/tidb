@@ -1057,6 +1057,50 @@ func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 }
 
+// writeDBTablesData writes all the table data in a database. The format is the marshal result of []*model.TableInfo, you can
+// unmarshal it to []*model.TableInfo. In this function, we manually construct the marshal result so that the memory
+// can be deallocated quickly.
+// For every table in the input, we marshal them. The result such as {tb1} {tb2} {tb3}.
+// Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
+// Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
+func writeDBTablesData(w http.ResponseWriter, tbs []table.Table) {
+	w.Header().Set(headerContentType, contentTypeJSON)
+	// We assume that marshal is always OK.
+	w.WriteHeader(http.StatusOK)
+	if len(tbs) == 0 {
+		return
+	}
+	_, err := w.Write(hack.Slice("[\n"))
+	if err != nil {
+		terror.Log(errors.Trace(err))
+		return
+	}
+	init := false
+	for _, tb := range tbs {
+		if init {
+			_, err = w.Write(hack.Slice(",\n"))
+			if err != nil {
+				terror.Log(errors.Trace(err))
+				return
+			}
+		} else {
+			init = true
+		}
+		js, err := json.MarshalIndent(tb.Meta(), "", " ")
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return
+		}
+		_, err = w.Write(js)
+		if err != nil {
+			terror.Log(errors.Trace(err))
+			return
+		}
+	}
+	_, err = w.Write(hack.Slice("\n]"))
+	terror.Log(errors.Trace(err))
+}
+
 // ServeHTTP handles request of list a database or table's schemas.
 func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	schema, err := h.schema()
@@ -1084,28 +1128,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// all table schemas in a specified database
 		if schema.SchemaExists(cDBName) {
 			tbs := schema.SchemaTables(cDBName)
-			w.Header().Set(headerContentType, contentTypeJSON)
-			w.WriteHeader(http.StatusOK)
-			if len(tbs) == 0 {
-				return
-			}
-			w.Write(hack.Slice("[\n"))
-			init := false
-			for _, tb := range tbs {
-				if init {
-					w.Write(hack.Slice(",\n"))
-				} else {
-					init = true
-				}
-				js, err := json.MarshalIndent(tb.Meta(), "", " ")
-				if err != nil {
-					writeError(w, err)
-					return
-				}
-				_, err = w.Write(js)
-				terror.Log(errors.Trace(err))
-			}
-			w.Write(hack.Slice("\n]"))
+			writeDBTablesData(w, tbs)
 			return
 		}
 		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
