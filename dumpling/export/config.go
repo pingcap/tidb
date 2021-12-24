@@ -133,6 +133,7 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
+	Flag               bool
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
