@@ -182,6 +182,11 @@ func (em *ErrorManager) RecordTypeError(
 ) error {
 	// elide the encode error if needed.
 	if em.remainingError.Type.Dec() < 0 {
+		threshold := em.configError.Type.Load()
+		if threshold > 0 {
+			encodeErr = errors.Annotatef(encodeErr, "meet errors exceed the max-error threshold %d",
+				em.configError.Type.Load())
+		}
 		return encodeErr
 	}
 
