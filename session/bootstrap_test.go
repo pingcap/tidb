@@ -930,19 +930,24 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {
-	ctx := context.Background()
-	store, dom := createStoreAndBootstrap(t)
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	// Indicates we are in a new cluster.
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 
-	// In new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
+	// In a new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
 	mustExec(t, se, "use test;")
 	r := mustExec(t, se, "select @@tidb_enable_index_merge;")
 	require.NotNil(t, r)
 
+	ctx := context.Background()
 	chk := r.NewChunk(nil)
-	err := r.Next(ctx, chk)
+	err = r.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 1, chk.NumRows())
 	row := chk.GetRow(0)
