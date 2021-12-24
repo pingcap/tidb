@@ -178,7 +178,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	return nil
 }
 
-// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Sum should return a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
@@ -421,6 +421,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if a.Args[i].GetType().Tp == mysql.TypeNull {
 			continue
 		}
+		tpOld := a.Args[i].GetType().Tp
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -443,5 +444,37 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)
 		a.Args[i].GetType().Tp = originTp
+
+		// refine each mysql integer type to the needed decimal precision for sum
+		if a.Name == ast.AggFuncSum {
+			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)
+		}
+	}
+}
+
+func adjustDecimalLenForSumInteger(ft *types.FieldType, tpOld byte) {
+	if types.IsTypeInteger(tpOld) && ft.Tp == mysql.TypeNewDecimal {
+		if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
+			ft.Flen = mathutil.Min(ft.Flen, flen+ft.Decimal)
+		}
+	}
+}
+
+func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3, nil
+	case mysql.TypeShort:
+		return 5, nil
+	case mysql.TypeInt24:
+		return 8, nil
+	case mysql.TypeLong:
+		return 10, nil
+	case mysql.TypeLonglong:
+		return 20, nil
+	case mysql.TypeYear:
+		return 4, nil
+	default:
+		return -1, errors.Errorf("Invalid type: %v", tp)
 	}
 }
