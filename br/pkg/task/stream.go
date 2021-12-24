@@ -39,11 +39,11 @@ import (
 )
 
 const (
-	flagStreamTaskName        = "taskName"
+	flagStreamTaskName        = "task-name"
 	flagStreamTaskNameDefault = "ALL"
-	flagStreamStartTS         = "startTS"
-	flagStreamEndTS           = "endTS"
-	flagGCSafePointTTS        = "gcTTL"
+	flagStreamStartTS         = "start-ts"
+	flagStreamEndTS           = "end-ts"
+	flagGCSafePointTTS        = "gc-ttl"
 )
 
 var (
@@ -77,8 +77,9 @@ type StreamConfig struct {
 
 // DefineStreamStartFlags defines flags used for `stream start`
 func DefineStreamStartFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamStartTS, "", "start ts, usually equals last full backupTS, used for backup log.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	flags.String(flagStreamStartTS, "",
+		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
+			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
 	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
@@ -101,9 +102,6 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	tsString, err := flags.GetString(flagStreamStartTS)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if len(tsString) <= 0 {
-		return errors.Annotate(berrors.ErrInvalidArgument, "Miss parameters startTS")
 	}
 
 	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
@@ -205,15 +203,19 @@ func (s *streamMgr) setLock(ctx context.Context) error {
 	return s.bc.SetLockFile(ctx)
 }
 
-// checkStartTS checks that startTS should be smaller than currentTS,
+// adjustAndCheckStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
-func (s *streamMgr) checkStartTS(ctx context.Context) error {
+func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	currentTS, err := s.getTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// set currentTS to startTS as a default value
+	if s.Cfg.StartTS == 0 {
+		s.Cfg.StartTS = currentTS
+	}
 
-	if currentTS <= s.Cfg.StartTS || s.Cfg.EndTS <= currentTS {
+	if currentTS < s.Cfg.StartTS || s.Cfg.EndTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, startTS %d should be smaller than currentTS %d",
 			s.Cfg.StartTS, currentTS)
@@ -230,7 +232,7 @@ func (s *streamMgr) checkStartTS(ctx context.Context) error {
 // setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
 // and set startTS as a serverSafePoint to PD
 func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
-	if err := s.checkStartTS(ctx); err != nil {
+	if err := s.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -324,10 +326,10 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	if err := streamMgr.setLock(ctx); err != nil {
+	if err := streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err := streamMgr.setGCSafePoint(ctx); err != nil {
+	if err := streamMgr.setLock(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -353,7 +355,6 @@ func RunStreamStart(
 		Ranges:  ranges,
 		Pausing: false,
 	}
-
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// It supports single stream log task current
 	count, err := cli.GetTaskCount(ctx)
