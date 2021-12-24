@@ -31,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -367,7 +369,7 @@ func RunStreamStart(
 	if err := cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("put stream task", ti.ZapTaskInfo()...)
+	summary.Log(cmdName, ti.ZapTaskInfo()...)
 	return nil
 }
 
@@ -398,7 +400,7 @@ func RunStreamStop(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.TaskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -408,7 +410,7 @@ func RunStreamStop(
 		return errors.Trace(err)
 	}
 
-	log.Info("stop stream task", zap.String("taskName", cfg.TaskName))
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -439,7 +441,7 @@ func RunStreamPause(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.TaskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -448,6 +450,7 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -478,7 +481,7 @@ func RunStreamResume(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	_, err = cli.GetTask(ctx, cfg.TaskName)
+	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -487,6 +490,7 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
 
@@ -524,17 +528,19 @@ func RunStreamStatus(
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		fields := make([]zapcore.Field, 0, len(tasks))
 		for _, task := range tasks {
-			log.Info("stream task status: ", logutil.StreamBackupTaskInfo(&task.Info))
+			fields = append(fields, logutil.StreamBackupTaskInfo(&task.Info))
 		}
+		summary.Log(cmdName, fields...)
 	} else {
 		// get status about TaskName
 		task, err := cli.GetTask(ctx, cfg.TaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		log.Info("stream task status: ", logutil.StreamBackupTaskInfo(&task.Info))
+		summary.Log(cmdName, logutil.StreamBackupTaskInfo(&task.Info))
 	}
 	return nil
 }
