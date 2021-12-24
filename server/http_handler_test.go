@@ -1064,15 +1064,26 @@ func TestDDLHookHandler(t *testing.T) {
 }
 
 func TestWriteDBTablesData(t *testing.T) {
-	// One table in a schema.
-	info := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	// No table in a schema.
+	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
 	tbs := info.SchemaTables(model.NewCIStr("test"))
-	require.Equal(t, 1, len(tbs))
+	require.Equal(t, 0, len(tbs))
 	writeDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
 	err := decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(ti))
+
+	// One table in a schema.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 1, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(ti))
 	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)

@@ -1064,12 +1064,13 @@ func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 // Then we add some bytes to make it become [{tb1}, {tb2}, {tb3}], so we can unmarshal it to []*model.TableInfo.
 // Note: It would return StatusOK even if errors occur. But if errors occur, there must be some bugs.
 func writeDBTablesData(w http.ResponseWriter, tbs []table.Table) {
+	if len(tbs) == 0 {
+		writeData(w, []*model.TableInfo{})
+		return
+	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	// We assume that marshal is always OK.
 	w.WriteHeader(http.StatusOK)
-	if len(tbs) == 0 {
-		return
-	}
 	_, err := w.Write(hack.Slice("[\n"))
 	if err != nil {
 		terror.Log(errors.Trace(err))
