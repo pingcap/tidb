@@ -44,8 +44,20 @@ drop table if exists t;
 create table t (a varchar(255) charset utf8mb4);
 set @@character_set_client = 'gbk';
 insert into t values ('中文');
+select '一a\t\a';
+涓?	a
+涓?	a
+select "''一a";
+''涓?
+''涓?
 set @@character_set_client = 'utf8mb4';
 insert into t values ('中文');
+select '一a\t\a';
+一a	a
+一a	a
+select "''一a";
+''一a
+''一a
 set @@character_set_client = 'gbk';
 prepare p1 from "insert into t values ('中文');";
 execute p1;
