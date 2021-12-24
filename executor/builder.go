@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -2282,7 +2284,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
@@ -2320,19 +2322,20 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate
 	}
 	var statsTbl *statistics.Table
-	if tid == tblInfo.ID {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+	tid := task.TableID.GetStatisticsID()
+	if tid == task.TblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(task.TblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+		statsTbl = statsHandle.GetPartitionStats(task.TblInfo, tid)
 	}
-	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
+	approxiCount, hasPD := b.getApproximateTableCountFromStorage(sctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
 		return defaultRate
@@ -2345,7 +2348,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.Count*100) < approxiCount {
+	if float64(statsTbl.Count*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
@@ -2359,7 +2362,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
-func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context, tid int64) (float64, bool) {
+func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return 0, false
@@ -2370,7 +2373,32 @@ func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context
 	if err != nil {
 		return 0, false
 	}
-	return float64(regionStats.StorageKeys), true
+	// If this table is not small, we directly use the count from PD.
+	if regionStats.Count > 2 {
+		return float64(regionStats.StorageKeys), true
+	}
+	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in only one region.
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", task.DBName, task.TableName)
+	if task.PartitionName != "" {
+		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
+	}
+	var rs sqlexec.RecordSet
+	rs, err = b.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
+	if err != nil {
+		return 0, false
+	}
+	// If the record set is nil, there's something wrong with the execution. The COUNT(*) would always return one row.
+	if rs == nil {
+		return 0, false
+	}
+	defer terror.Call(rs.Close)
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return 0, false
+	}
+	return float64(chk.GetRow(0).GetInt64(0)), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
