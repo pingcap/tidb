@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -89,6 +90,10 @@ type copTask struct {
 
 	// For table partition.
 	partitionInfo PartitionInfo
+
+	// expectCnt is the expected row count of upper task, 0 for unlimited.
+	// It's used for deciding whether using paging distsql.
+	expectCnt uint64
 }
 
 func (t *copTask) invalid() bool {
@@ -914,7 +919,17 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	// (indexRows / batchSize) * batchSize * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
 	indexRows := t.indexPlan.statsInfo().RowCount
-	newTask.cst += indexRows * sessVars.CPUFactor
+	idxCst := indexRows * sessVars.CPUFactor
+	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
+	// paging API reduces the count of index and table rows, however introduces more seek cost.
+	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
+		p.Paging = true
+		pagingCst := calcPagingCost(ctx, t)
+		// prevent enlarging the cost because we take paging as a better plan,
+		// if the cost is enlarged, it'll be easier to go another plan.
+		idxCst = math.Min(idxCst, pagingCst)
+	}
+	newTask.cst += idxCst
 	// Add cost of worker goroutines in index lookup.
 	numTblWorkers := float64(sessVars.IndexLookupConcurrency())
 	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
@@ -949,6 +964,41 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.p = p
 	}
 	return newTask
+}
+
+func extractRows(p PhysicalPlan) float64 {
+	f := float64(0)
+	for _, c := range p.Children() {
+		if len(c.Children()) != 0 {
+			f += extractRows(c)
+		} else {
+			f += c.statsInfo().RowCount
+		}
+	}
+	return f
+}
+
+// calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
+func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
+	sessVars := ctx.GetSessionVars()
+	indexRows := t.indexPlan.statsInfo().RowCount
+	expectCnt := t.expectCnt
+	sourceRows := extractRows(t.indexPlan)
+	// with paging, the scanned rows is always less than or equal to source rows.
+	if uint64(sourceRows) < expectCnt {
+		expectCnt = uint64(sourceRows)
+	}
+	seekCnt := paging.CalculateSeekCnt(expectCnt)
+	indexSelectivity := float64(1)
+	if sourceRows > indexRows {
+		indexSelectivity = indexRows / sourceRows
+	}
+	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
+	pagingCst *= indexSelectivity
+
+	// we want the diff between idxCst and pagingCst here,
+	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
+	return pagingCst - sessVars.GetSeekFactor(nil)
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
@@ -1005,6 +1055,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		p.cost = newTask.cost()
+		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
@@ -1066,6 +1117,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 	}
 
+	t.handleRootTaskConds(ctx, newTask)
+	return newTask
+}
+
+func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask) {
 	if len(t.rootTaskConds) > 0 {
 		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
 		if err != nil {
@@ -1077,8 +1133,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		newTask.p = sel
 		sel.cost = newTask.cost()
 	}
-
-	return newTask
 }
 
 // setTableScanToTableRowIDScan is to update the isChildOfIndexLookUp attribute of PhysicalTableScan child
