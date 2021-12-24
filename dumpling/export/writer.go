@@ -99,6 +99,8 @@ func (w *Writer) handleTask(task Task) error {
 		return w.WriteTableMeta(t.DatabaseName, t.TableName, t.CreateTableSQL)
 	case *TaskViewMeta:
 		return w.WriteViewMeta(t.DatabaseName, t.ViewName, t.CreateTableSQL, t.CreateViewSQL)
+	case *TaskPolicyMeta:
+		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
 		err := w.WriteTableData(t.Meta, t.Data, t.ChunkIndex)
 		if err != nil {

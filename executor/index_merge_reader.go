@@ -133,25 +133,30 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	}
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	return nil
 }
 
 func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (ranges [][]kv.KeyRange, err error) {
+	sc := e.ctx.GetSessionVars().StmtCtx
 	for i, plan := range e.partialPlans {
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
-			if tbl.Meta().IsCommonHandle {
-				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(tbl)}, e.ranges[i])
-				if err != nil {
-					return nil, err
-				}
-				ranges = append(ranges, keyRanges)
-			} else {
-				ranges = append(ranges, nil)
+			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
+			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges, nil)
+			if err != nil {
+				return nil, err
 			}
+			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(sc, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges, nil)
+			if err != nil {
+				return nil, err
+			}
+			keyRanges := append(firstKeyRanges, secondKeyRanges...)
+			ranges = append(ranges, keyRanges)
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		keyRange, err := distsql.IndexRangesToKVRanges(sc, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
 		if err != nil {
 			return nil, err
 		}
@@ -520,7 +525,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			indexMergeExec: e,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
+			memTracker:     e.memTracker,
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {

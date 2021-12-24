@@ -401,8 +401,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	stmtCtx.UseCache = prepared.UseCache
 
+	var bindSQL string
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
+		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -443,8 +445,15 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
+			cachedVals := cacheValue.([]*PlanCacheValue)
 			for _, cachedVal := range cachedVals {
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
 				}
@@ -468,6 +477,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					if err != nil {
 						return err
 					}
+					if len(bindSQL) > 0 {
+						// When the `len(bindSQL) > 0`, it means we use the binding.
+						// So we need to record this.
+						err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
+						if err != nil {
+							return err
+						}
+					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 					} else {
@@ -484,7 +501,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
+	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
@@ -500,27 +517,27 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
+			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
 				if cacheVal.UserVarTypes.Equal(tps) {
 					hitVal = true
-					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
+					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
 				}
 			}
 			if !hitVal {
-				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
+				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
 			}
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
+			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
@@ -1501,7 +1518,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
 		if !isPointRange {
 			return false, nil
 		}

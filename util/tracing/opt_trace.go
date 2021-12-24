@@ -26,7 +26,8 @@ type LogicalPlanTrace struct {
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	Steps []*LogicalRuleOptimizeTracer `json:"steps"`
+	FinalLogicalPlan *LogicalPlanTrace            `json:"final"`
+	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
 }
@@ -40,17 +41,19 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index in
 
 // AppendRuleTracerStepToCurrent add rule optimize step to current
 func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+	index := len(tracer.curRuleTracer.Steps)
 	tracer.curRuleTracer.Steps = append(tracer.curRuleTracer.Steps, LogicalRuleOptimizeTraceStep{
 		ID:     id,
 		TP:     tp,
 		Reason: reason,
 		Action: action,
+		Index:  index,
 	})
 }
 
-// TrackLogicalPlanAfterRuleOptimize add plan trace after optimize
-func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *LogicalPlanTrace) {
-	tracer.curRuleTracer.After = after
+// RecordFinalLogicalPlan add plan trace after logical optimize
+func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *LogicalPlanTrace) {
+	tracer.FinalLogicalPlan = final
 }
 
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
@@ -58,7 +61,6 @@ func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *Lo
 type LogicalRuleOptimizeTracer struct {
 	Index    int                            `json:"index"`
 	Before   *LogicalPlanTrace              `json:"before"`
-	After    *LogicalPlanTrace              `json:"after"`
 	RuleName string                         `json:"name"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
@@ -80,4 +82,27 @@ type LogicalRuleOptimizeTraceStep struct {
 	Reason string `json:"reason"`
 	ID     int    `json:"id"`
 	TP     string `json:"type"`
+	Index  int    `json:"index"`
+}
+
+// CETraceRecord records an expression and related cardinality estimation result.
+type CETraceRecord struct {
+	TableID   int64  `json:"-"`
+	TableName string `json:"table_name"`
+	Type      string `json:"type"`
+	Expr      string `json:"expr"`
+	RowCount  uint64 `json:"row_count"`
+}
+
+// DedupCETrace deduplicate a slice of *CETraceRecord and return the deduplicated slice
+func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
+	ret := make([]*CETraceRecord, 0, len(records))
+	exists := make(map[CETraceRecord]struct{}, len(records))
+	for _, rec := range records {
+		if _, ok := exists[*rec]; !ok {
+			ret = append(ret, rec)
+			exists[*rec] = struct{}{}
+		}
+	}
+	return ret
 }

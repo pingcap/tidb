@@ -1652,6 +1652,7 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	// Implicit primary key cannot be invisible index
 	// Create a implicit primary key
 	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t2(a int auto_increment, unique key (a) invisible);", errno.ErrPKIndexCantBeInvisible)
 	// Column `a` become implicit primary key after DDL statement on itself
 	tk.MustExec("create table t2(a int not null)")
 	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)

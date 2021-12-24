@@ -119,7 +119,7 @@ func (b *builtinDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if times[i].IsZero() {
+		if times[i].IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
 				return err
 			}
@@ -2390,7 +2390,7 @@ func (b *builtinUnixTimestampIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 				continue
 			}
 
-			t, err := buf.GetTime(i).GoTime(getTimeZone(b.ctx))
+			t, err := buf.GetTime(i).AdjustedGoTime(getTimeZone(b.ctx))
 			if err != nil {
 				i64s[i] = 0
 				continue

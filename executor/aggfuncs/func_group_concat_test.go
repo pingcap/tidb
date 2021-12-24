@@ -34,15 +34,11 @@ import (
 )
 
 func TestMergePartialResult4GroupConcat(t *testing.T) {
-	t.Parallel()
-
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
 	testMergePartialResult(t, test)
 }
 
 func TestGroupConcat(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
@@ -67,8 +63,6 @@ func TestGroupConcat(t *testing.T) {
 }
 
 func TestMemGroupConcat(t *testing.T) {
-	t.Parallel()
-
 	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize+aggfuncs.DefBytesBufferSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
 	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,

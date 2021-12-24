@@ -666,6 +666,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -685,6 +686,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	target                "TARGET"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -735,6 +737,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
 	tidb                       "TIDB"
@@ -1018,6 +1021,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -1399,8 +1403,6 @@ import (
 %precedence sqlBigResult
 %precedence sqlSmallResult
 %precedence sqlCache sqlNoCache
-%precedence lowerThanIntervalKeyword
-%precedence interval
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
@@ -1453,6 +1455,7 @@ import (
 %precedence lowerThanNot
 %right not not2
 %right collate
+%left interval
 %right encryption
 %left labels
 %precedence quick
@@ -1523,7 +1526,12 @@ DirectPlacementOption:
 	}
 |	"FOLLOWERS" EqOpt LengthNum
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("FOLLOWERS must be positive"))
+			return 1
+		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: cnt}
 	}
 |	"VOTERS" EqOpt LengthNum
 	{
@@ -4547,6 +4555,16 @@ TraceStmt:
 		startOffset := parser.startOffset(&yyS[yypt])
 		$3.SetText(string(parser.src[startOffset:]))
 	}
+|	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:            $6,
+			TracePlan:       true,
+			TracePlanTarget: $5,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(string(parser.src[startOffset:]))
+	}
 
 ExplainSym:
 	"EXPLAIN"
@@ -6069,6 +6087,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
 |	"TIDB"
@@ -6111,6 +6130,7 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
+|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -6126,6 +6146,7 @@ NotKeywordToken:
 |	"VARIANCE"
 |	"VAR_POP"
 |	"VAR_SAMP"
+|	"TARGET"
 |	"TIMESTAMPADD"
 |	"TIMESTAMPDIFF"
 |	"TOKUDB_DEFAULT"
@@ -6440,7 +6461,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6464,7 +6485,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6480,7 +6501,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6735,7 +6756,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not2, V: $2}
 	}
-|	SubSelect
+|	SubSelect %prec neg
 |	'(' Expression ')'
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
@@ -6920,7 +6941,7 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL" %prec lowerThanIntervalKeyword
+|	"INTERVAL"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"
@@ -9151,6 +9172,29 @@ SubSelect:
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
+|	'(' SubSelect ')'
+	{
+		subQuery := $2.(*ast.SubqueryExpr).Query
+		isRecursive := true
+		// remove redundant brackets like '((select 1))'
+		for isRecursive {
+			if _, isRecursive = subQuery.(*ast.SubqueryExpr); isRecursive {
+				subQuery = subQuery.(*ast.SubqueryExpr).Query
+			}
+		}
+		switch rs := subQuery.(type) {
+		case *ast.SelectStmt:
+			endOffset := parser.endOffset(&yyS[yypt])
+			parser.setLastSelectFieldText(rs, endOffset)
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		case *ast.SetOprStmt:
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		}
+	}
 
 // See https://dev.mysql.com/doc/refman/8.0/en/innodb-locking-reads.html
 SelectLockOpt:
@@ -10112,6 +10156,13 @@ AdminStmt:
 			Tp: ast.AdminResetTelemetryID,
 		}
 	}
+|	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:             ast.AdminFlushPlanCache,
+			StatementScope: $3.(ast.StatementScope),
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -10631,6 +10682,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"HISTOGRAMS_IN_FLIGHT"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
+	}
 |	"COLUMN_STATS_USAGE"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
@@ -10687,6 +10742,23 @@ GlobalScope:
 |	"SESSION"
 	{
 		$$ = false
+	}
+
+StatementScope:
+	{
+		$$ = ast.StatementScopeSession
+	}
+|	"GLOBAL"
+	{
+		$$ = ast.StatementScopeGlobal
+	}
+|	"INSTANCE"
+	{
+		$$ = ast.StatementScopeInstance
+	}
+|	"SESSION"
+	{
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:

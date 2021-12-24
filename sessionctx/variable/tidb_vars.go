@@ -214,6 +214,9 @@ const (
 
 	// TiDBReadStaleness indicates the staleness duration for following statement
 	TiDBReadStaleness = "tidb_read_staleness"
+
+	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
+	TiDBEnablePaging = "tidb_enable_paging"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -595,6 +598,9 @@ const (
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
+	// TiDBRegardNULLAsPoint indicates whether regard NULL as point when optimizing
+	TiDBRegardNULLAsPoint = "tidb_regard_null_as_point"
+
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 )
@@ -614,6 +620,8 @@ const (
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
+	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 )
 
 // TiDB intentional limits
@@ -760,7 +768,7 @@ const (
 	DefTiDBTopSQLEnable                   = false
 	DefTiDBTopSQLPrecisionSeconds         = 1
 	DefTiDBTopSQLMaxStatementCount        = 200
-	DefTiDBTopSQLMaxCollect               = 10000
+	DefTiDBTopSQLMaxCollect               = 5000
 	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
@@ -768,6 +776,7 @@ const (
 	DefTiDBEnableTSOFollowerProxy         = false
 	DefTiDBEnableOrderedResultMode        = false
 	DefTiDBEnablePseudoForOutdatedStats   = true
+	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 )
@@ -823,5 +832,5 @@ type TopSQL struct {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
+	return TopSQLVariable.Enable.Load()
 }
