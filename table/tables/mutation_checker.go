@@ -15,9 +15,7 @@
 package tables
 
 import (
-	"crypto/rand"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -408,11 +406,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				if len(indexMutations) == 0 {
 					continue
 				}
-				r, err := rand.Int(rand.Reader, big.NewInt(int64(len(indexMutations))))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				indexMutation := indexMutations[r.Int64()]
+				indexMutation := indexMutations[0]
 				key := make([]byte, len(indexMutation.key))
 				copy(key, indexMutation.key)
 				key[len(key)-1] += 1
@@ -431,11 +425,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				if len(indexMutations) == 0 {
 					continue
 				}
-				r, err := rand.Int(rand.Reader, big.NewInt(int64(len(indexMutations))))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				indexMutation := indexMutations[r.Int64()]
+				indexMutation := indexMutations[0]
 				memBuffer.RemoveFromBuffer(indexMutation.key)
 			}
 		case "corruptIndexKey":
@@ -445,11 +435,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				if len(indexMutations) == 0 {
 					continue
 				}
-				r, err := rand.Int(rand.Reader, big.NewInt(int64(len(indexMutations))))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				indexMutation := indexMutations[r.Int64()]
+				indexMutation := indexMutations[0]
 				key := indexMutation.key
 				memBuffer.RemoveFromBuffer(key)
 				key[len(key)-1] += 1
@@ -467,11 +453,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				if len(indexMutations) == 0 {
 					continue
 				}
-				r, err := rand.Int(rand.Reader, big.NewInt(int64(len(indexMutations))))
-				if err != nil {
-					return errors.Trace(err)
-				}
-				indexMutation := indexMutations[r.Int64()]
+				indexMutation := indexMutations[0]
 				value := indexMutation.value
 				if len(value) > 0 {
 					value[len(value)-1] += 1
