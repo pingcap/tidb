@@ -929,7 +929,28 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, "1", row.GetString(0))
 }
 
-func TestIndexMergeUpgradeFrom300To500(t *testing.T) {
+func TestIndexMergeInNewCluster(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	// In new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
+	mustExec(t, se, "use test;")
+	r := mustExec(t, se, "select @@tidb_enable_index_merge;")
+	require.NotNil(t, r)
+
+	chk := r.NewChunk(nil)
+	err := r.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(1), row.GetInt64(0))
+}
+
+func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	ctx := context.Background()
 	store, _ := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -978,7 +999,7 @@ func TestIndexMergeUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, int64(0), row.GetInt64(0))
 }
 
-func TestIndexMergeUpgradeFrom400To500(t *testing.T) {
+func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		ctx := context.Background()
 		store, _ := createStoreAndBootstrap(t)
