@@ -38,12 +38,11 @@ type hexStringer struct {
 func (h hexStringer) String() string {
 	val := reflect.ValueOf(h.Message)
 	var w bytes.Buffer
-	PrettyPrint(&w, val)
+	prettyPrint(&w, val)
 	return w.String()
 }
 
-// PrettyPrint prints a hex value according to its reflect type.
-func PrettyPrint(w io.Writer, val reflect.Value) {
+func prettyPrint(w io.Writer, val reflect.Value) {
 	tp := val.Type()
 	switch val.Kind() {
 	case reflect.Slice:
@@ -65,14 +64,14 @@ func PrettyPrint(w io.Writer, val reflect.Value) {
 				fmt.Fprintf(w, " ")
 			}
 			fmt.Fprintf(w, "%s:", ft.Name)
-			PrettyPrint(w, fv)
+			prettyPrint(w, fv)
 		}
 		fmt.Fprintf(w, "}")
 	case reflect.Ptr:
 		if val.IsNil() {
 			fmt.Fprintf(w, "%v", val.Interface())
 		} else {
-			PrettyPrint(w, reflect.Indirect(val))
+			prettyPrint(w, reflect.Indirect(val))
 		}
 	default:
 		fmt.Fprintf(w, "%v", val.Interface())

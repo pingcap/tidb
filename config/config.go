@@ -79,7 +79,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = EncodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
+	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
@@ -197,9 +197,9 @@ type Config struct {
 // and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
 	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = EncodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	} else {
-		c.TempStoragePath = EncodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
@@ -220,8 +220,7 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	}
 }
 
-// EncodeDefTempStorageDir encodes the storage temporary directory.
-func EncodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
+func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	var osUID string
 	currentUser, err := user.Current()
@@ -245,9 +244,6 @@ var (
 	nbFalse = nullableBool{true, false}
 	nbTrue  = nullableBool{true, true}
 )
-
-// NullableBoolForTest is exported for tests.
-type NullableBoolForTest = nullableBool
 
 func (b *nullableBool) toBool() bool {
 	return b.IsValid && b.IsTrue
@@ -812,8 +808,7 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.mem-profile-interval": {},
 }
 
-// IsAllDeprecatedConfigItems checks whether the items are all deprecated.
-func IsAllDeprecatedConfigItems(items []string) bool {
+func isAllDeprecatedConfigItems(items []string) bool {
 	for _, item := range items {
 		if _, ok := deprecatedConfig[item]; !ok {
 			return false
@@ -845,7 +840,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 				// is not the default behavior of TiDB. The warning message must be deferred until
 				// logging has been set up. After strict config checking is the default behavior,
 				// This should all be removed.
-				if (!configCheck && !configStrict) || IsAllDeprecatedConfigItems(tmp.UndecodedItems) {
+				if (!configCheck && !configStrict) || isAllDeprecatedConfigItems(tmp.UndecodedItems) {
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
@@ -1069,11 +1064,6 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	initByLDFlags(versioninfo.TiDBEdition, checkBeforeDropLDFlag)
-}
-
-// InitByLDFlagsForTest is exported only for tests.
-func InitByLDFlagsForTest(edition, checkBeforeDropLDFlag string) {
-	initByLDFlags(edition, checkBeforeDropLDFlag)
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {

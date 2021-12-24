@@ -23,7 +23,6 @@ import (
 	"os"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -54,7 +53,7 @@ func applyOSLogLevel() {
 		cfg := log.Config{
 			Level:  osLoglevel,
 			Format: "text",
-			File:   log.FileLogConfig{MaxSize: logutil.DefaultLogMaxSize},
+			File:   log.FileLogConfig{},
 		}
 		gl, props, err := log.InitLogger(&cfg, zap.AddStacktrace(zapcore.FatalLevel))
 		if err != nil {

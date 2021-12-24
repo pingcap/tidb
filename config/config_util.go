@@ -62,12 +62,6 @@ var (
 	}
 )
 
-// IsDynamicConfigItems checks whether an item is a dynamic config item.
-func IsDynamicConfigItems(item string) bool {
-	_, ok := dynamicConfigItems[item]
-	return ok
-}
-
 // MergeConfigItems overwrites the dynamic config items and leaves the other items unchanged.
 func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []string) {
 	return mergeConfigItems(reflect.ValueOf(dstConf), reflect.ValueOf(newConf), "")
