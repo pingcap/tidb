@@ -33,18 +33,25 @@ var nowFunc = time.Now
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnParseBegin should be called on statement begin to parse.
+	// You do not always have to call this function for each statement,
+	// since some statements doesn't have parse process, such as execute prepared statement.
 	OnParseBegin()
 
 	// OnSQLDigestReady should be called on statement SQL digest ready.
+	// This function only use to record the sql digest, it doesn't matter if you delay calling this function.
+	// It is ok to call this function multiple times, the final sql digest is the final call.
 	OnSQLDigestReady(sqlDigest []byte)
 
 	// OnPlanDigestReady should be called on statement plan digest ready.
-	OnPlanDigestReady(sqlDigest []byte)
+	// This function only use to record the plan digest, it doesn't matter if you delay calling this function.
+	// It is ok to call this function multiple times, the final sql digest is the final call.
+	OnPlanDigestReady(planDigest []byte)
 
 	// OnExecBegin should be called on statement begin to execute.
+	// For each statement, this function must be called before OnExecFinished.
 	OnExecBegin()
 
-	// OnExecFinished should be called after the statement is executed.
+	// OnExecFinished should be called after the statement execution finish.
 	OnExecFinished()
 }
 
