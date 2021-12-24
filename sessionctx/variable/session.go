@@ -936,6 +936,9 @@ type SessionVars struct {
 	// The temporary table size threshold, which is different from MySQL. See https://github.com/pingcap/tidb/issues/28691.
 	TMPTableSize int64
 
+	// The cached table read lock lease in seconds
+	TiDBTableCacheLease int64
+
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
 
@@ -1214,6 +1217,7 @@ func NewSessionVars() *SessionVars {
 		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StmtStats:                   stmtstats.CreateStatementStats(),
+		TiDBTableCacheLease:         DefTiDBTableCacheLease,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

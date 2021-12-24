@@ -611,7 +611,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 const cacheTableWriteLease = 5 * time.Second
 
 func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {

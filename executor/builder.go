@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -4741,25 +4740,15 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	sessVars := b.ctx.GetSessionVars()
+	leaseDuration := time.Duration(sessVars.TiDBTableCacheLease) * time.Second
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
-		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
 	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logutil.BgLogger().Error("panic in the recoverable goroutine",
-						zap.Reflect("r", r),
-						zap.Stack("stack trace"))
-				}
-			}()
-			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
-			if err != nil {
-				log.Warn("Update Lock Info Error")
-			}
-		}()
+		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
 }

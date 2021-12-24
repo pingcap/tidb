@@ -603,6 +603,9 @@ const (
 
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
+	// TiDBTableCacheLease indicates the read lock lease of a cached table.
+	TiDBTableCacheLease = "tidb_table_cache_lease"
 )
 
 // TiDB vars that have only global scope
@@ -779,6 +782,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBTableCacheLease                = 3 // 3s
 )
 
 // Process global variables.
