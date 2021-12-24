@@ -1424,11 +1424,11 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 
 func TestIndexRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
+	require.NoError(t, err)
 	defer func() {
 		dom.Close()
 		require.NoError(t, store.Close())
 	}()
-	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
