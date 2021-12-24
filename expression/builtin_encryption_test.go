@@ -16,6 +16,7 @@ package expression
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -91,9 +92,10 @@ func TestSQLEncode(t *testing.T) {
 		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		if test.origin != nil {
-			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
+			enc := charset.FindEncoding(test.chs)
+			result, err := enc.Transform(nil, []byte(test.origin.(string)), charset.OpEncode)
 			require.NoError(t, err)
-			require.Equal(t, types.NewCollationStringDatum(result, test.chs), d)
+			require.Equal(t, types.NewCollationStringDatum(string(result), test.chs), d)
 		} else {
 			result := types.NewDatum(test.origin)
 			require.Equal(t, result.GetBytes(), d.GetBytes())
@@ -163,7 +165,8 @@ func TestAESEncrypt(t *testing.T) {
 	testAmbiguousInput(t, ctx, ast.AesEncrypt)
 
 	// Test GBK String
-	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	enc := charset.FindEncoding("gbk")
+	gbkStr, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
 	gbkTests := []struct {
 		mode   string
 		chs    string
@@ -188,19 +191,20 @@ func TestAESEncrypt(t *testing.T) {
 	}
 
 	for _, tt := range gbkTests {
+		msg := fmt.Sprintf("%v", tt)
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 
-		args := datumsToConstants([]types.Datum{types.NewDatum(tt.origin)})
+		args := primitiveValsToConstants(ctx, []interface{}{tt.origin})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
 
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
+		require.NoError(t, err, msg)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt), msg)
 	}
 }
 
@@ -209,21 +213,22 @@ func TestAESDecrypt(t *testing.T) {
 
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
+		msg := fmt.Sprintf("%v", tt)
 		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		if tt.origin == nil {
 			require.True(t, str.IsNull())
 			continue
 		}
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
 	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
@@ -231,7 +236,9 @@ func TestAESDecrypt(t *testing.T) {
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
 
 	// Test GBK String
-	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	enc := charset.FindEncoding("gbk")
+	r, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
+	gbkStr := string(r)
 	gbkTests := []struct {
 		mode   string
 		chs    string
@@ -256,18 +263,19 @@ func TestAESDecrypt(t *testing.T) {
 	}
 
 	for _, tt := range gbkTests {
+		msg := fmt.Sprintf("%v", tt)
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		// Set charset and collate except first argument
 		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
+		require.NoError(t, err, msg)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
 }
 
