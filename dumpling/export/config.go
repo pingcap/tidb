@@ -176,6 +176,7 @@ func DefaultConfig() *Config {
 		SessionParams:      make(map[string]interface{}),
 		OutputFileTemplate: DefaultOutputFileTemplate,
 		PosAfterConnect:    false,
+		Flag:               false,
 	}
 }
 
