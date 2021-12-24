@@ -1659,6 +1659,8 @@ func upgradeToVer80(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
 }
 
+// For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
+// This helps minimize query plan regressions.
 func upgradeToVer81(s Session, ver int64) {
 	if ver >= version81 {
 		return
