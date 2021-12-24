@@ -533,10 +533,12 @@ func (test *testSerialSuite2) TestIndexMergeWithCorrelatedColumns(c *C) {
 			    (8, 'ecstatic davinci', '2020-02-01 12:27:17', 5.648000) , 
 			    (9, 'hopeful lewin', '2020-05-05 05:58:25', 7.288000) , 
 			    (10, 'sharp jennings', '2020-01-28 04:35:03', 9.758000) ;`)
-	tk.MustQuery(`select * from t1 where c_decimal < all (
-		select c_decimal from t2 where t1.c_int = t2.c_int and t1.c_datetime > t2.c_datetime and t2.c_decimal = 9.060 or 
-		t2.c_str <= 'interesting shtern' and t1.c_int = t2.c_int);`).Sort().Check(testkit.Rows(
-		"10 reverent mclean 2020-02-12 07:36:26 7.751000",
-		"7 objective kare 2020-02-05 18:47:26 1.053000",
-		"8 thirsty pasteur 2020-01-02 13:06:56 2.506000"))
+	// Test correlated column in IndexPath.TableFilters.
+	tk.MustQuery(`select c_int from t1 where c_decimal < all (
+			select c_decimal from t2 where t1.c_int = t2.c_int and t1.c_datetime > t2.c_datetime and t2.c_decimal = 9.060 or
+				t2.c_str <= 'interesting shtern' and t1.c_int = t2.c_int);`).Sort().Check(testkit.Rows("10", "7", "8"))
+	// Test correlated column in TablePath.TableFilters.
+	tk.MustQuery(`select c_int from t1 where c_decimal > all (
+			select c_decimal from t2 where t2.c_int = 7 and t2.c_int < t1.c_decimal or
+				t2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and t1.c_int = t2.c_int);`).Sort().Check(testkit.Rows("6", "7", "8", "9"))
 }
