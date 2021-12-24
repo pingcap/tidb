@@ -56,14 +56,6 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: "+err.Error())
 		return
 	}
-	// TODO: fix me.
-	// This can be fixed by always starts a 1 second profiling one by one,
-	// but to aggregate (merge) multiple profiles into one according to the precision.
-	//  |<-- 1s -->|
-	// -|----------|----------|----------|----------|----------|-----------|-----> Background profile task timeline.
-	//                            |________________________________|
-	//       (start cpu profile)  v                                v (stop cpu profile)    // expected profile timeline
-	//                        |________________________________|                           // actual profile timeline
 	time.Sleep(time.Second * time.Duration(sec))
 	err = pc.StopCPUProfile()
 	if err != nil {
@@ -76,8 +68,8 @@ const (
 	labelPlanDigest = "plan_digest"
 )
 
-// PprofAPICollector is a cpu profile consumer for Pprof API usage.
-type PprofAPICollector struct {
+// CPUProfileCollector is a cpu profile collector, it collect cpu profile data from globalCPUProfiler.
+type CPUProfileCollector struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	started   atomic.Bool
@@ -90,9 +82,9 @@ type PprofAPICollector struct {
 }
 
 // NewPprofAPICollector returns a new NewPprofAPICollector.
-func NewPprofAPICollector() *PprofAPICollector {
+func NewPprofAPICollector() *CPUProfileCollector {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &PprofAPICollector{
+	return &CPUProfileCollector{
 		ctx:       ctx,
 		cancel:    cancel,
 		firstRead: make(chan struct{}),
@@ -103,9 +95,9 @@ func NewPprofAPICollector() *PprofAPICollector {
 // StartCPUProfile is a substitute for the `pprof.StartCPUProfile` function.
 // You should use this function instead of `pprof.StartCPUProfile`.
 // Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
-func (pc *PprofAPICollector) StartCPUProfile(w io.Writer) error {
+func (pc *CPUProfileCollector) StartCPUProfile(w io.Writer) error {
 	if !pc.started.CAS(false, true) {
-		return errors.New("PprofAPICollector already started")
+		return errors.New("CPUProfileCollector already started")
 	}
 	pc.writer = w
 	pc.wg.Add(1)
@@ -114,7 +106,7 @@ func (pc *PprofAPICollector) StartCPUProfile(w io.Writer) error {
 }
 
 // StopCPUProfile is a substitute for the `pprof.StopCPUProfile` function.
-func (pc *PprofAPICollector) StopCPUProfile() error {
+func (pc *CPUProfileCollector) StopCPUProfile() error {
 	if !pc.started.Load() {
 		return nil
 	}
@@ -132,7 +124,7 @@ func (pc *PprofAPICollector) StopCPUProfile() error {
 }
 
 // WaitProfilingFinish waits for collecting `seconds` profile data finished.
-func (pc *PprofAPICollector) readProfileData() {
+func (pc *CPUProfileCollector) readProfileData() {
 	// register cpu profile consumer.
 	Register(pc.dataCh)
 	defer func() {
@@ -154,7 +146,7 @@ func (pc *PprofAPICollector) readProfileData() {
 	}
 }
 
-func (pc *PprofAPICollector) buildProfileData() (*profile.Profile, error) {
+func (pc *CPUProfileCollector) buildProfileData() (*profile.Profile, error) {
 	ds := make([]*profile.Profile, 0, len(pc.profiles))
 	for _, data := range pc.profiles {
 		if data.Error != nil {
@@ -177,7 +169,7 @@ func (pc *PprofAPICollector) buildProfileData() (*profile.Profile, error) {
 
 // removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
 // Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
-func (pc *PprofAPICollector) removeLabel(profileData *profile.Profile) {
+func (pc *CPUProfileCollector) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
 			if k == labelSQLDigest || k == labelPlanDigest {

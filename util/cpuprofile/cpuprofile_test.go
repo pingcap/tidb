@@ -38,31 +38,29 @@ func TestMain(m *testing.M) {
 }
 
 func TestBasicAPI(t *testing.T) {
-	globalCPUProfiler.close()
-	globalCPUProfiler = newParallelCPUProfiler()
-
 	err := StartCPUProfiler()
 	require.NoError(t, err)
+	defer StopCPUProfiler()
 
 	err = StartCPUProfiler()
 	require.Error(t, errProfilerAlreadyStarted)
 
 	// Test for close multiple times.
-	CloseCPUProfiler()
-	CloseCPUProfiler()
+	StopCPUProfiler()
+	StopCPUProfiler()
 
 	globalCPUProfiler = newParallelCPUProfiler()
-	CloseCPUProfiler()
+	StopCPUProfiler()
 	err = StartCPUProfiler()
-	require.Error(t, errProfilerAlreadyClosed)
+	require.NoError(t, err)
+	err = StartCPUProfiler()
+	require.Error(t, errProfilerAlreadyStarted)
 }
 
 func TestParallelCPUProfiler(t *testing.T) {
-	globalCPUProfiler.close()
-	globalCPUProfiler = newParallelCPUProfiler()
-	err := globalCPUProfiler.start()
+	err := StartCPUProfiler()
 	require.NoError(t, err)
-	defer globalCPUProfiler.close()
+	defer StopCPUProfiler()
 
 	// Test register/unregister nil
 	Register(nil)
@@ -161,11 +159,9 @@ func getCPUProfile(d time.Duration, w io.Writer) error {
 }
 
 func TestGetCPUProfile(t *testing.T) {
-	globalCPUProfiler.close()
-	globalCPUProfiler = newParallelCPUProfiler()
-	err := globalCPUProfiler.start()
+	err := StartCPUProfiler()
 	require.NoError(t, err)
-	defer globalCPUProfiler.close()
+	defer StopCPUProfiler()
 
 	// Test profile error
 	err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
@@ -204,11 +200,9 @@ func TestGetCPUProfile(t *testing.T) {
 }
 
 func TestProfileHTTPHandler(t *testing.T) {
-	globalCPUProfiler.close()
-	globalCPUProfiler = newParallelCPUProfiler()
-	err := globalCPUProfiler.start()
+	err := StartCPUProfiler()
 	require.NoError(t, err)
-	defer globalCPUProfiler.close()
+	defer StopCPUProfiler()
 
 	// setup http server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

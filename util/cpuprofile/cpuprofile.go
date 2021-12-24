@@ -16,6 +16,7 @@ package cpuprofile
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"runtime/pprof"
 	"sync"
@@ -24,21 +25,18 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/atomic"
 )
 
 var defProfileDuration = time.Second
 
 // globalCPUProfiler is the global CPU profiler.
-// If you want to create a new global cpu profiler, you should stop the old global cpu profiler.
 var globalCPUProfiler = newParallelCPUProfiler()
 
-// ProfileConsumer is the profile data consumer.
-// ProfileConsumer is a channel alias, if the channel is full, then the channel won't receive the latest profile data
-// until it is not blocked.
+// ProfileConsumer is a channel that will receive profiling data from the CPU profiler periodically.
+// If the channel is full, then the channel won't receive the latest profile data until it is not blocked.
 type ProfileConsumer = chan *ProfileData
 
-// ProfileData contains the cpu profile data and some additional information.
+// ProfileData contains the cpu profile data between the start and end time, usually the interval between start and end is about 1 second.
 type ProfileData struct {
 	Data  *bytes.Buffer
 	Begin time.Time
@@ -51,9 +49,9 @@ func StartCPUProfiler() error {
 	return globalCPUProfiler.start()
 }
 
-// CloseCPUProfiler uses to close the global parallelCPUProfiler.
-func CloseCPUProfiler() {
-	globalCPUProfiler.close()
+// StopCPUProfiler uses to stop the global parallelCPUProfiler.
+func StopCPUProfiler() {
+	globalCPUProfiler.stop()
 }
 
 // Register register a ProfileConsumer into the global CPU profiler.
@@ -71,63 +69,65 @@ func Unregister(ch ProfileConsumer) {
 	globalCPUProfiler.unregister(ch)
 }
 
-// ConsumersCount returns the count of the global parallelCPUProfiler's consumer.It is exporting for test.
-func ConsumersCount() int {
-	return globalCPUProfiler.consumersCount()
-}
-
 // parallelCPUProfiler is a cpu profiler.
 // With parallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
 // WARN: Only one running parallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
 type parallelCPUProfiler struct {
 	sync.Mutex
-	cs     map[ProfileConsumer]struct{}
-	notify chan struct{}
+	cs             map[ProfileConsumer]struct{}
+	notifyRegister chan struct{}
 
 	// some data cache for profiling.
 	data         *ProfileData
 	nextData     *ProfileData
 	lastDataSize int
 
-	started  atomic.Bool
-	closed   chan struct{}
-	isClosed atomic.Bool
-	wg       sync.WaitGroup
+	started bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
 // newParallelCPUProfiler crate a new parallelCPUProfiler.
 func newParallelCPUProfiler() *parallelCPUProfiler {
 	return &parallelCPUProfiler{
-		cs:     make(map[ProfileConsumer]struct{}),
-		notify: make(chan struct{}),
-		closed: make(chan struct{}),
+		cs:             make(map[ProfileConsumer]struct{}),
+		notifyRegister: make(chan struct{}),
 	}
 }
 
 var (
-	errProfilerAlreadyStarted = errors.New("parallelCPUProfiler already started")
-	errProfilerAlreadyClosed  = errors.New("parallelCPUProfiler already closed")
+	errProfilerAlreadyStarted = errors.New("parallelCPUProfiler is already started")
 )
 
 func (p *parallelCPUProfiler) start() error {
-	if !p.started.CAS(false, true) {
+	p.Lock()
+	defer p.Unlock()
+	if p.started {
 		return errProfilerAlreadyStarted
 	}
-	if p.isClosed.Load() {
-		return errProfilerAlreadyClosed
-	}
 
-	logutil.BgLogger().Info("parallel cpu profiler started")
+	p.started = true
+	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.wg.Add(1)
 	go util.WithRecovery(p.profilingLoop, nil)
+
+	logutil.BgLogger().Info("parallel cpu profiler started")
 	return nil
 }
 
-func (p *parallelCPUProfiler) close() {
-	if p.isClosed.CAS(false, true) {
-		close(p.closed)
+func (p *parallelCPUProfiler) stop() {
+	p.Lock()
+	defer p.Unlock()
+	if !p.started {
+		return
+	}
+	p.started = false
+	if p.cancel != nil {
+		p.cancel()
 	}
 	p.wg.Wait()
+	logutil.BgLogger().Info("parallel cpu profiler stopped")
 }
 
 func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
@@ -137,9 +137,9 @@ func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
 	p.Lock()
 	p.cs[ch] = struct{}{}
 	p.Unlock()
-	// notify
+
 	select {
-	case p.notify <- struct{}{}:
+	case p.notifyRegister <- struct{}{}:
 	default:
 	}
 }
@@ -162,19 +162,19 @@ func (p *parallelCPUProfiler) profilingLoop() {
 	}()
 	for {
 		select {
-		case <-p.closed:
+		case <-p.ctx.Done():
 			return
-		case <-p.notify:
+		case <-p.notifyRegister:
 			if !p.inProfilingStatus() {
-				p.doProfiling()
+				p.profileCycle()
 			}
 		case <-checkTicker.C:
-			p.doProfiling()
+			p.profileCycle()
 		}
 	}
 }
 
-func (p *parallelCPUProfiler) doProfiling() {
+func (p *parallelCPUProfiler) profileCycle() {
 	if p.inProfilingStatus() {
 		p.stopCPUProfile()
 		p.sendToConsumers()

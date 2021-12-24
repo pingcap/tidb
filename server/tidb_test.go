@@ -136,7 +136,7 @@ func createTidbTestTopSQLSuite(t *testing.T) (*tidbTestTopSQLSuite, func()) {
 
 	cleanFn := func() {
 		cleanup()
-		cpuprofile.CloseCPUProfiler()
+		cpuprofile.StopCPUProfiler()
 	}
 
 	return ts, cleanFn

@@ -211,7 +211,7 @@ func main() {
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
-		cpuprofile.CloseCPUProfiler()
+		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
