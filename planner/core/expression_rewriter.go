@@ -325,6 +325,10 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 			er.b.outerNames = er.b.outerNames[0 : len(er.b.outerNames)-1]
 		}()
 	}
+	outerWindowSpecs := er.b.windowSpecs
+	defer func() {
+		er.b.windowSpecs = outerWindowSpecs
+	}()
 
 	np, err := er.b.buildResultSetNode(ctx, subq.Query)
 	if err != nil {
@@ -1488,6 +1492,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
+		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
+		coll := er.deriveCollationForIn(l, lLen, stkLen, args)
+		if er.err != nil {
+			return
+		}
+		er.castCollationForIn(l, lLen, stkLen, coll)
 		eqFunctions := make([]expression.Expression, 0, lLen)
 		for i := stkLen - lLen; i < stkLen; i++ {
 			expr, err := er.constructBinaryOpFunction(args[0], er.ctxStack[i], ast.EQ)
@@ -1509,6 +1519,60 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+// deriveCollationForIn derives collation for in expression.
+func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
+	coll := make([]*expression.ExprCollation, 0, colLen)
+	if colLen == 1 {
+		// a in (x, y, z) => coll[0]
+		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
+		er.err = err
+		if er.err != nil {
+			return nil
+		}
+		coll = append(coll, coll2)
+	} else {
+		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
+		for i := 0; i < colLen; i++ {
+			args := make([]expression.Expression, 0, elemCnt)
+			for j := stkLen - elemCnt - 1; j < stkLen; j++ {
+				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
+				args = append(args, rowFunc.GetArgs()[i])
+			}
+			coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
+			er.err = err
+			if er.err != nil {
+				return nil
+			}
+			coll = append(coll, coll2)
+		}
+	}
+	return coll
+}
+
+// castCollationForIn casts collation info for arguments in the `in clause` to make sure the used collation is correct after we
+// rewrite it to equal expression.
+func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll []*expression.ExprCollation) {
+	for i := stkLen - elemCnt; i < stkLen; i++ {
+		if colLen == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
+			tp := er.ctxStack[i].GetType().Clone()
+			tp.Charset, tp.Collate = coll[0].Charset, coll[0].Collation
+			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
+			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
+		} else {
+			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
+			for j := 0; j < colLen; j++ {
+				if er.ctxStack[i].GetType().EvalType() != types.ETString {
+					continue
+				}
+				tp := rowFunc.GetArgs()[j].GetType().Clone()
+				tp.Charset, tp.Collate = coll[j].Charset, coll[j].Collation
+				rowFunc.GetArgs()[j] = expression.BuildCastFunction(er.sctx, rowFunc.GetArgs()[j], tp)
+				rowFunc.GetArgs()[j].SetCoercibility(expression.CoercibilityExplicit)
+			}
+		}
+	}
 }
 
 func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
@@ -1686,19 +1750,19 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
+	expr = expression.BuildCastCollationFunction(er.sctx, expr, coll)
+	lexp = expression.BuildCastCollationFunction(er.sctx, lexp, coll)
+	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll)
+
 	var l, r expression.Expression
-	l, er.err = expression.NewFunctionBase(er.sctx, ast.GE, &v.Type, expr, lexp)
+	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
 	if er.err != nil {
 		return
 	}
-	r, er.err = expression.NewFunctionBase(er.sctx, ast.LE, &v.Type, expr, rexp)
+	r, er.err = expression.NewFunction(er.sctx, ast.LE, &v.Type, expr, rexp)
 	if er.err != nil {
 		return
 	}
-	l.SetCharsetAndCollation(coll.Charset, coll.Collation)
-	r.SetCharsetAndCollation(coll.Charset, coll.Collation)
-	l = expression.FoldConstant(l)
-	r = expression.FoldConstant(r)
 	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err

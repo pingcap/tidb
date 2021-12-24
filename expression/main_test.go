@@ -32,7 +32,7 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {

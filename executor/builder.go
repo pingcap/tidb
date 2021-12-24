@@ -4121,6 +4121,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
@@ -4172,6 +4173,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				ran.HighVal[lastPos] = nextColRan.HighVal[0]
 				ran.LowExclude = nextColRan.LowExclude
 				ran.HighExclude = nextColRan.HighExclude
+				ran.Collators = nextColRan.Collators
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
@@ -4218,7 +4220,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.ctx, desc, false)
 		if err != nil {
 			b.err = err
 			return nil
