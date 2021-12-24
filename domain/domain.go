@@ -351,7 +351,6 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 	defer do.m.Unlock()
 
 	do.expiredTimeStamp4PC = time
-	return
 }
 
 // DDL gets DDL from domain.
