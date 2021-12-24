@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // canPullUpAgg checks if an apply can pull an aggregation up.
@@ -130,6 +131,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
 			join.self = join
+			join.tp = plancodec.TypeJoin
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
@@ -148,7 +150,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			if m.children[0].MaxOneRow() {
 				innerPlan = m.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
-				appendRemoveMacOneRowTraceStep(m, opt)
+				appendRemoveMaxOneRowTraceStep(m, opt)
 				return s.optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
@@ -331,7 +333,7 @@ func (*decorrelateSolver) name() string {
 
 func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *logicalOptimizeOp) {
 	action := func() string {
-		return fmt.Sprintf("%v_%v simplified into %v_%v", p.TP(), p.ID(), j.TP(), j.ID())
+		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v hasn't any corelated column, thus the inner plan is non-correlated", p.TP(), p.ID())
@@ -349,7 +351,7 @@ func appendRemoveSelectionTraceStep(p LogicalPlan, s *LogicalSelection, opt *log
 	opt.appendStepToCurrent(s.ID(), s.TP(), reason, action)
 }
 
-func appendRemoveMacOneRowTraceStep(m *LogicalMaxOneRow, opt *logicalOptimizeOp) {
+func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *logicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", m.TP(), m.ID())
 	}
@@ -395,7 +397,7 @@ func appendPullUpAggTraceStep(p *LogicalApply, np LogicalPlan, agg *LogicalAggre
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
 	}
 	reason := func() string {
-		return fmt.Sprintf("%v_%v's functions haven't any group by items and %v_%v's join type isn't %v or %v, and hasn't any condistion",
+		return fmt.Sprintf("%v_%v's functions haven't any group by items and %v_%v's join type isn't %v or %v, and hasn't any conditions",
 			agg.TP(), agg.ID(), p.TP(), p.ID(), InnerJoin.String(), LeftOuterJoin.String())
 	}
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
