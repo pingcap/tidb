@@ -28,7 +28,7 @@ var testDataMap = make(testdata.BookKeeper, 2)
 var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 
