@@ -23,12 +23,38 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/util/codec"
 )
+
+// Iter abstract iterator method for Ingester.
+type Iter interface {
+	// Seek seek to specify position.
+	// if key not found, seeks next key position in iter.
+	Seek(key []byte) bool
+	// Error return current error on this iter.
+	Error() error
+	// First moves this iter to the first key.
+	First() bool
+	// Last moves this iter to the last key.
+	Last() bool
+	// Valid check this iter reach the end.
+	Valid() bool
+	// Next moves this iter forward.
+	Next() bool
+	// Key represents current position pair's key.
+	Key() []byte
+	// Value represents current position pair's Value.
+	Value() []byte
+	// Close close this iter.
+	Close() error
+	// OpType represents operations of pair. currently we have two types.
+	// 1. Put
+	// 2. Delete
+	OpType() sst.Pair_OP
+}
 
 type pebbleIter struct {
 	*pebble.Iterator
@@ -42,7 +68,7 @@ func (p pebbleIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
-var _ kv.Iter = pebbleIter{}
+var _ Iter = pebbleIter{}
 
 const maxDuplicateBatchSize = 4 << 20
 
@@ -168,9 +194,9 @@ func (d *duplicateIter) OpType() sst.Pair_OP {
 	return sst.Pair_Put
 }
 
-var _ kv.Iter = &duplicateIter{}
+var _ Iter = &duplicateIter{}
 
-func newDuplicateIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) kv.Iter {
+func newDuplicateIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) Iter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
 		newOpts.LowerBound = codec.EncodeBytes(nil, opts.LowerBound)
@@ -192,7 +218,7 @@ func newDuplicateIter(ctx context.Context, engine *Engine, opts *pebble.IterOpti
 	}
 }
 
-func newKVIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) kv.Iter {
+func newKVIter(ctx context.Context, engine *Engine, opts *pebble.IterOptions) Iter {
 	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
 		newOpts := *opts
 		newOpts.LowerBound = normalIterStartKey
