@@ -33,8 +33,11 @@ type columnStatsUsageCollector struct {
 	collectMode uint64
 	// predicateCols records predicate columns.
 	predicateCols map[model.TableColumnID]struct{}
-	// colMap maps expression.Column.UniqueID to the table columns whose statistics are utilized to calculate statistics of the column.
+	// colMap maps expression.Column.UniqueID to the table columns whose statistics may be utilized to calculate statistics of the column.
 	// It is used for collecting predicate columns.
+	// For example, in `select count(distinct a, b) as e from t`, the count of column `e` is calculated as `max(ndv(t.a), ndv(t.b))` if
+	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
+	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableColumnID]struct{}
 	// histNeededCols records histogram-needed columns
 	histNeededCols map[model.TableColumnID]struct{}
@@ -69,13 +72,6 @@ func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column) {
 	}
 }
 
-func (c *columnStatsUsageCollector) addPredicateColumnsFromExpression(expr expression.Expression) {
-	cols := expression.ExtractColumnsAndCorColumns(c.cols[:0], expr)
-	for _, col := range cols {
-		c.addPredicateColumn(col)
-	}
-}
-
 func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []expression.Expression) {
 	cols := expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
 	for _, col := range cols {
@@ -97,10 +93,6 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 			c.colMap[col.UniqueID][tblColID] = struct{}{}
 		}
 	}
-}
-
-func (c *columnStatsUsageCollector) updateColMapFromExpression(col *expression.Column, expr expression.Expression) {
-	c.updateColMap(col, expression.ExtractColumnsAndCorColumns(c.cols[:0], expr))
 }
 
 func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.Column, list []expression.Expression) {
@@ -178,7 +170,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			// Schema change from children to self.
 			schema := x.Schema()
 			for i, expr := range x.Exprs {
-				c.updateColMapFromExpression(schema.Columns[i], expr)
+				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
 			}
 		case *LogicalSelection:
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
@@ -216,12 +208,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 		case *LogicalSort:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpression(item.Expr)
+				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
 		case *LogicalTopN:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpression(item.Expr)
+				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
 		case *LogicalUnionAll:
 			c.collectPredicateColumnsForUnionAll(x)

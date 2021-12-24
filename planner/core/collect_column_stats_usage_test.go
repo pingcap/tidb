@@ -158,19 +158,44 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 			res: []string{"t.a", "t.c", "t2.a", "t2.b"},
 		},
 		{
-			// LogicalApply
+			// LogicalApply, LogicalJoin
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
 			res: []string{"t.b", "t.c", "t2.b"},
 		},
 		{
-			// LogicalApply
-			sql: "select * from t2 where t2.b > (select count(b) from t where t.c > t2.a)",
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
+			res: []string{"t.b", "t.c", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.b > (select sum(b) from t where t.c > t2.a)",
 			res: []string{"t.b", "t.c", "t2.a", "t2.b"},
 		},
 		{
 			// LogicalApply
-			sql: "select * from t where t.b > (select count(*) from t2 where t2.a > t.a)",
-			res: []string{"t.a", "t.b", "t2.a"},
+			sql: "select * from t2 where t2.b > (select count(*) from t where t.a > t2.a)",
+			res: []string{"t.a", "t2.a", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where exists (select * from t where t.a > t2.b)",
+			res: []string{"t.a", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where not exists (select * from t where t.a > t2.b)",
+			res: []string{"t.a", "t2.b"},
+		},
+		{
+			// LogicalJoin
+			sql: "select * from t2 where t2.a in (select b from t)",
+			res: []string{"t.b", "t2.a"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.a not in (select b from t)",
+			res: []string{"t.b", "t2.a"},
 		},
 		{
 			// LogicalSort
@@ -274,6 +299,18 @@ func (s *testPlanSuite) TestCollectHistNeededColumns(c *C) {
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
 			res: []string{"t.c", "t2.a"},
+		},
+		{
+			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
+			res: []string{"t.c"},
+		},
+		{
+			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
+			res: []string{"t.c"},
+		},
+		{
+			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
+			res: []string{"t.c"},
 		},
 		{
 			pruneMode: "static",
