@@ -1064,7 +1064,7 @@ func TestDDLHookHandler(t *testing.T) {
 }
 
 func TestWriteDBTablesData(t *testing.T) {
-	// One table in a scheme.
+	// One table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc := httptest.NewRecorder()
 	tbs := info.SchemaTables(model.NewCIStr("test"))
@@ -1078,7 +1078,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 
-	// Two tables in a scheme.
+	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs = info.SchemaTables(model.NewCIStr("test"))
