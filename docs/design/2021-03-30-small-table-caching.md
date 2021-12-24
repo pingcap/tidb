@@ -104,12 +104,12 @@ A `CachedTable` struct will be introduced. It inherits and overloads the `Table`
 
 The read operation flow diagram:
 
-![](./imgs/cached-table-read.md)
+![](./imgs/cached-table-read.png)
 
 
 The write operation flow diagram:
 
-![](./imgs/cached-table-write.md)
+![](./imgs/cached-table-write.png)
 
 
 ### How to enable this feature
