@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -248,9 +247,6 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		if tt.sql == "select x.c, y.b from t as x join t2 as y on x.a = y.a group by x.c, y.b order by x.c" {
-			fmt.Println("hi")
-		}
 		comment := Commentf("for %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
