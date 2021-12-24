@@ -211,7 +211,7 @@ func (s *testPrepareSerialSuite) TestFlushPlanCacheWithoutPCEnable(c *C) {
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("admin flush session plan_cache;")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1105 The plan cache is disable. So there no need to flush the plan cache."))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1105 The plan cache is disable. So there no need to flush the plan cache"))
 	tk.MustExec("execute stmt1;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt2;")
@@ -234,7 +234,7 @@ func (s *testPrepareSerialSuite) TestFlushPlanCacheWithoutPCEnable(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk2.MustExec("admin flush instance plan_cache;")
-	tk2.MustQuery("show warnings;").Check(testkit.Rows("Warning 1105 The plan cache is disable. So there no need to flush the plan cache."))
+	tk2.MustQuery("show warnings;").Check(testkit.Rows("Warning 1105 The plan cache is disable. So there no need to flush the plan cache"))
 	tk2.MustExec("execute stmt1;")
 	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk2.MustExec("execute stmt2;")
