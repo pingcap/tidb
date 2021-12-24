@@ -362,12 +362,10 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 				if len(handleRows) == 0 {
 					break
 				}
-				if err := fn(gCtx, handleRows); err != nil {
-					return errors.Trace(err)
-				}
-				start = lastRowID + 1
+
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
+				start = lastRowID + 1
 				if end-start > rowLimit {
 					mid := start + (end-start)/2
 					taskWg.Add(1)
@@ -377,6 +375,10 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 					default:
 						taskWg.Done()
 					}
+				}
+
+				if err := fn(gCtx, handleRows); err != nil {
+					return errors.Trace(err)
 				}
 				handleRows = handleRows[:0]
 			}
