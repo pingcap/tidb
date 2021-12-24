@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -64,6 +65,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
@@ -1427,21 +1429,29 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
-	preRowID := int64(0)
-	for {
-		handleRows, lastRowID, err := local.errorMgr.GetConflictKeys(ctx, tableName, preRowID, 1000)
-		if err != nil {
-			return errors.Annotate(err, "cannot query conflict keys")
-		}
-		if len(handleRows) == 0 {
-			break
-		}
-		if err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder); err != nil {
-			return errors.Annotate(err, "cannot delete duplicated entries")
-		}
-		preRowID = lastRowID
-	}
-	return nil
+	errLimiter := rate.NewLimiter(1, 1)
+	pool := utils.NewWorkerPool(uint(local.tcpConcurrency), "resolve duplicate rows")
+	err = local.errorMgr.ResolveAllConflictKeys(
+		ctx, tableName, pool,
+		func(ctx context.Context, handleRows [][2][]byte) error {
+			for {
+				err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder)
+				if err == nil {
+					return nil
+				}
+				if log.IsContextCanceledError(err) {
+					return err
+				}
+				if !tikverror.IsErrWriteConflict(errors.Cause(err)) {
+					logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
+				}
+				if err = errLimiter.Wait(ctx); err != nil {
+					return err
+				}
+			}
+		},
+	)
+	return errors.Trace(err)
 }
 
 func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
@@ -1489,7 +1499,7 @@ func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, h
 		}
 	}
 
-	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+	logger.Debug("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
 	return nil
 }
 
