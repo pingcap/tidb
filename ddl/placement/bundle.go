@@ -88,9 +88,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
 
 	if followerCount == 0 {
-		return nil, fmt.Errorf("%w: you must set some followers", ErrInvalidPlacementOptions)
+		followerCount = 2
 	}
-
 	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
@@ -145,6 +144,9 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 
 	followers := options.Followers
+	if followers == 0 {
+		followers = 2
+	}
 	schedule := options.Schedule
 
 	primaryIndex := 0
@@ -203,10 +205,6 @@ func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 	isSyntaxSugar := true
 	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
 		isSyntaxSugar = false
-	}
-
-	if options.Followers == 0 {
-		options.Followers = 2
 	}
 
 	if isSyntaxSugar {
