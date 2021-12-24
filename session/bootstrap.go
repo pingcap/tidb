@@ -541,7 +541,7 @@ const (
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
 	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
 	version80 = 80
-	// version80 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
+	// version81 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
 	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
 	version81 = 81
 )
