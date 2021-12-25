@@ -2,35 +2,36 @@ package logutil
 
 import (
 	"bufio"
-	"github.com/pingcap/tidb/metrics"
-	"go.uber.org/atomic"
 	"os"
 	"sync"
+
+	"github.com/pingcap/tidb/metrics"
+	"go.uber.org/atomic"
 )
 
-// ReplayLogger is used to log replay record
-var ReplayLogger *replayLogger
+// RecordLogger is used to log replay record
+var RecordLogger *recordLogger
 
-// InitReplay initialize logger
-func InitReplay(filename string) {
-	ReplayLogger = newReplayLogger(filename)
+// InitRecord initialize logger
+func InitRecord(filename string) {
+	RecordLogger = newRecordLogger(filename)
 }
 
-// StopReplay stops goroutine
-func StopReplay() {
-	ReplayLogger.stopLogWorker()
+// StopRecord stops goroutine
+func StopRecord() {
+	RecordLogger.stopLogWorker()
 }
 
 func PutRecordOrDrop(record string) {
 	select {
-	case ReplayLogger.recordChan <- record:
+	case RecordLogger.recordChan <- record:
 	default:
 		metrics.ReplayDropCounter.Inc()
 	}
 }
 
-// replayLogger receives record from channel, and log or drop them as needed
-type replayLogger struct {
+// recordLogger receives record from channel, and log or drop them as needed
+type recordLogger struct {
 	a          atomic.String
 	writer     *bufio.Writer
 	recordChan chan string
@@ -38,12 +39,12 @@ type replayLogger struct {
 	wg         sync.WaitGroup
 }
 
-func newReplayLogger(filename string) *replayLogger {
+func newRecordLogger(filename string) *recordLogger {
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		return nil
 	}
-	l := &replayLogger{
+	l := &recordLogger{
 		writer:     bufio.NewWriter(f),
 		recordChan: make(chan string, 10000),
 		close:      make(chan struct{}),
@@ -54,7 +55,7 @@ func newReplayLogger(filename string) *replayLogger {
 }
 
 // startLogWorker starts a log flushing worker that flushes log periodically or when batch is full
-func (re *replayLogger) startLogWorker() {
+func (re *recordLogger) startLogWorker() {
 	for {
 		select {
 		case str := <-re.recordChan:
@@ -72,7 +73,7 @@ func (re *replayLogger) startLogWorker() {
 	}
 }
 
-func (re *replayLogger) stopLogWorker() {
+func (re *recordLogger) stopLogWorker() {
 	close(re.close)
 	re.wg.Wait()
 }

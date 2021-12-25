@@ -16,9 +16,10 @@ package server
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"net/http"
 	"strconv"
+
+	"github.com/pingcap/tidb/util/logutil"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
@@ -43,7 +44,7 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	var err error
 	cfg := config.GetGlobalConfig()
 	params := mux.Vars(req)
-	if status, ok := params[pStatus]; ok {
+	if status, ok := params[pRecordStatus]; ok {
 		if status == "on" {
 			// set replay meta TS first.
 			cfg.ReplayMetaTS, err = strconv.ParseInt(params[pStartTS], 10, 64)
@@ -53,10 +54,10 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 				return
 			}
 			cfg.EnableReplaySQL.Store(true)
-			logutil.InitReplay(params[pFileName])
+			logutil.InitRecord(params[pFileName])
 		} else {
 			cfg.EnableReplaySQL.Store(false)
-			logutil.StopReplay()
+			logutil.StopRecord()
 		}
 		w.WriteHeader(http.StatusOK)
 		return
@@ -73,5 +74,16 @@ func (s *Server) newSQLReplayHandler() *SQLReplayHandler {
 }
 
 func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
+	params := mux.Vars(req)
+	if status, ok := params[pReplayStatus]; ok {
+		if status == "on" {
+			logutil.StartReplay(params[pFileName])
+		} else {
+			logutil.StopReplay()
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+	}
 }
