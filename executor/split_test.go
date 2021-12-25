@@ -37,7 +37,6 @@ import (
 )
 
 func TestLongestCommonPrefixLen(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		s1 string
 		s2 string
@@ -60,7 +59,6 @@ func TestLongestCommonPrefixLen(t *testing.T) {
 }
 
 func TestGetStepValue(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		lower []byte
 		upper []byte
@@ -85,7 +83,6 @@ func TestGetStepValue(t *testing.T) {
 }
 
 func TestSplitIndex(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
@@ -285,7 +282,6 @@ func TestSplitIndex(t *testing.T) {
 }
 
 func TestSplitTable(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name: model.NewCIStr("t1"),
 		ID:   rand.Int63(),
@@ -362,7 +358,6 @@ func TestSplitTable(t *testing.T) {
 }
 
 func TestClusterIndexSplitTable(t *testing.T) {
-	t.Parallel()
 	tbInfo := &model.TableInfo{
 		Name:                model.NewCIStr("t"),
 		ID:                  1,

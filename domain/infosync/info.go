@@ -80,6 +80,10 @@ const (
 	TopologyPrometheus = "/topology/prometheus"
 	// TablePrometheusCacheExpiry is the expiry time for prometheus address cache.
 	TablePrometheusCacheExpiry = 10 * time.Second
+	// RequestRetryInterval is the sleep time before next retry for http request
+	RequestRetryInterval = 200 * time.Millisecond
+	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
+	SyncBundlesMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -353,7 +357,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
-				err = errors.Errorf("%s", bodyBytes)
+				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
 					bodyBytes = nil
@@ -427,12 +431,47 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
+		var err error
+		if isServiceError.(bool) {
+			err = ErrHTTPServiceError.FastGen("mock service error")
+		} else {
+			err = errors.New("mock other error")
+		}
+		failpoint.Return(err)
+	})
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
 
 	return is.placementManager.PutRuleBundles(ctx, bundles)
+}
+
+// PutRuleBundlesWithRetry will retry for specified times when PutRuleBundles failed
+func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, maxRetry int, interval time.Duration) (err error) {
+	if maxRetry < 0 {
+		maxRetry = 0
+	}
+
+	for i := 0; i <= maxRetry; i++ {
+		if err = PutRuleBundles(ctx, bundles); err == nil || ErrHTTPServiceError.Equal(err) {
+			return err
+		}
+
+		if i != maxRetry {
+			logutil.BgLogger().Warn("Error occurs when PutRuleBundles, retry", zap.Error(err))
+			time.Sleep(interval)
+		}
+	}
+
+	return
+}
+
+// PutRuleBundlesWithDefaultRetry will retry for default times
+func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
+	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
@@ -817,7 +856,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
-			info.StartTimestamp = 1282967700000
+			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}

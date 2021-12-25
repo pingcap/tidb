@@ -32,7 +32,7 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -49,11 +49,11 @@ func TestMain(m *testing.M) {
 	timeutil.SetSystemTZ("system")
 
 	testDataMap.LoadTestSuiteData("testdata", "flag_simplify")
+	testDataMap.LoadTestSuiteData("testdata", "expression_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/table/tables.mockRemoteService"),
 	}
 
 	callback := func(i int) int {
@@ -75,4 +75,8 @@ func createContext(t *testing.T) *mock.Context {
 
 func GetFlagSimplifyData() testdata.TestData {
 	return testDataMap["flag_simplify"]
+}
+
+func GetExpressionSuiteData() testdata.TestData {
+	return testDataMap["expression_suite"]
 }
