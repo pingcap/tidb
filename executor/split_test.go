@@ -138,7 +138,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err := e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	require.NoError(t, err)
-	require.Len(t, len(valueList), e.num+1)
+	require.Len(t, valueList, e.num+1)
 
 	cases := []struct {
 		value        int
@@ -194,7 +194,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	require.NoError(t, err)
-	require.Len(t, len(valueList), e.num+1)
+	require.Len(t, valueList, e.num+1)
 
 	cases2 := []struct {
 		value        string
@@ -246,7 +246,7 @@ func TestSplitIndex(t *testing.T) {
 	valueList, err = e.getSplitIdxKeys()
 	sort.Slice(valueList, func(i, j int) bool { return bytes.Compare(valueList[i], valueList[j]) < 0 })
 	require.NoError(t, err)
-	require.Len(t, len(valueList), e.num+1)
+	require.Len(t, valueList, e.num+1)
 
 	cases3 := []struct {
 		value        types.CoreTime
@@ -327,7 +327,7 @@ func TestSplitTable(t *testing.T) {
 	}
 	valueList, err := e.getSplitTableKeys()
 	require.NoError(t, err)
-	require.Len(t, len(valueList), e.num-1)
+	require.Len(t, valueList, e.num-1)
 
 	cases := []struct {
 		value        int
@@ -419,7 +419,7 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 	valueList, err := e.getSplitTableKeys()
 	require.NoError(t, err)
-	require.Len(t, len(valueList), e.num-1)
+	require.Len(t, valueList, e.num-1)
 
 	cases := []struct {
 		value        []types.Datum
