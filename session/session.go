@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -1174,7 +1175,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		defer span1.Finish()
 	}
 	defer trace.StartRegion(ctx, "ParseSQL").End()
-
+	s.GetSessionVars().SQL = sql
 	p := parserPool.Get().(*parser.Parser)
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
@@ -1318,6 +1319,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
 	}
 
+	s.sessionVars.SQL = sql
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
@@ -1520,14 +1522,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
 	s.PrepareTxnCtx(ctx)
 	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
 		return nil, err
 	}
 
 	s.sessionVars.StartTime = time.Now()
-
+	cfg := config.GetGlobalConfig()
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
@@ -1587,7 +1588,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return nil, err
 	}
-	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+	if !s.isInternal() && cfg.EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
 		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
 		if tiFlashPushDown {
@@ -2095,6 +2096,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:          uuid.New(),
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
 		StartTS:     txn.StartTS(),
@@ -2141,6 +2143,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:          uuid.New(),
 		InfoSchema:  is,
 		CreateTime:  time.Now(),
 		StartTS:     txn.StartTS(),
@@ -2734,6 +2737,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 	is := s.GetInfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		ID:         uuid.New(),
 		InfoSchema: is,
 		CreateTime: time.Now(),
 		ShardStep:  int(s.sessionVars.ShardAllocateStep),
@@ -2859,7 +2863,26 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 }
 
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
+	cfg := config.GetGlobalConfig()
 	vars := s.GetSessionVars()
+	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
+		go func(sql, id string, intxn bool) {
+			var builder strings.Builder
+			if intxn {
+				builder.WriteString(id)
+				builder.WriteString(" ")
+			}
+			// Logic TS
+			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
+			builder.WriteString(ts)
+			builder.WriteString(" ")
+			text := strings.ReplaceAll(sql, "\n", " ")
+			builder.WriteString(text)
+			builder.WriteString("\n")
+			logutil.PutRecordOrDrop(builder.String())
+		}(vars.SQL, vars.TxnCtx.ID.String(), vars.InTxn())
+	}
+
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		var query string
 		if isPrepared {

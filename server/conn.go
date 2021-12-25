@@ -1764,6 +1764,7 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
+	cc.ctx.GetSessionVars().SQL = sql
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {

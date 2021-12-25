@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"github.com/google/uuid"
 	"math"
 	"math/rand"
 	"net"
@@ -132,6 +133,7 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
+	ID          uuid.UUID
 	forUpdateTS uint64
 	stmtFuture  oracle.Future
 	Binlog      interface{}
@@ -474,6 +476,7 @@ type SessionVars struct {
 	// KVVars is the variables for KV storage.
 	KVVars *tikvstore.Variables
 
+	SQL string
 	// txnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	txnIsolationLevelOneShot struct {
 		state txnIsolationLevelOneShotState

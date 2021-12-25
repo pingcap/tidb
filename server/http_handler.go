@@ -71,21 +71,23 @@ import (
 )
 
 const (
-	pDBName     = "db"
-	pHexKey     = "hexKey"
-	pIndexName  = "index"
-	pHandle     = "handle"
-	pRegionID   = "regionID"
-	pStartTS    = "startTS"
-	pTableName  = "table"
-	pTableID    = "tableID"
-	pColumnID   = "colID"
-	pColumnTp   = "colTp"
-	pColumnFlag = "colFlag"
-	pColumnLen  = "colLen"
-	pRowBin     = "rowBin"
-	pSnapshot   = "snapshot"
-	pFileName   = "filename"
+	pDBName       = "db"
+	pHexKey       = "hexKey"
+	pIndexName    = "index"
+	pHandle       = "handle"
+	pRegionID     = "regionID"
+	pStartTS      = "startTS"
+	pTableName    = "table"
+	pTableID      = "tableID"
+	pColumnID     = "colID"
+	pColumnTp     = "colTp"
+	pColumnFlag   = "colFlag"
+	pColumnLen    = "colLen"
+	pRowBin       = "rowBin"
+	pSnapshot     = "snapshot"
+	pFileName     = "filename"
+	pRecordStatus = "recordStatus"
+	pReplayStatus = "replayStatus"
 )
 
 // For query string
