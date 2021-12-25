@@ -54,7 +54,6 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestCopClientSend(t *testing.T) {
-	t.Parallel()
 	t.Skip("not stable")
 	var cluster testutils.Cluster
 	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -152,7 +151,6 @@ func TestGetLackHandles(t *testing.T) {
 }
 
 func TestBigIntPK(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -164,7 +162,6 @@ func TestBigIntPK(t *testing.T) {
 }
 
 func TestCorColToRanges(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -184,7 +181,6 @@ func TestCorColToRanges(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueSelect(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -214,7 +210,6 @@ func TestUniqueKeyNullValueSelect(t *testing.T) {
 
 // TestIssue10178 contains tests for https://github.com/pingcap/tidb/issues/10178 .
 func TestIssue10178(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -229,7 +224,6 @@ func TestIssue10178(t *testing.T) {
 }
 
 func TestInconsistentIndex(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -282,7 +276,6 @@ func TestInconsistentIndex(t *testing.T) {
 }
 
 func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -301,7 +294,6 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 }
 
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -332,7 +324,6 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -403,7 +394,6 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
