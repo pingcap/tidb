@@ -237,7 +237,7 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column) error
@@ -259,7 +259,7 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
@@ -308,7 +308,7 @@ type LogicalPlan interface {
 	canPushToCop(store kv.StoreType) bool
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
+	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -382,10 +382,10 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 }
 
 // buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
+func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
 	}
 	return planTrace
 }
