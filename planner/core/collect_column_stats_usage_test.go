@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -66,14 +65,9 @@ func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID,
 func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, onlyHistNeeded bool, expected []string, comment CommentInterface) {
 	var tblColIDs []model.TableColumnID
 	if onlyHistNeeded {
-		collector := newColumnStatsUsageCollector(collectHistNeededColumns)
-		collector.collectFromPlan(lp)
-		tblColIDs = set2slice(collector.histNeededCols)
+		_, tblColIDs = CollectColumnStatsUsage(lp)
 	} else {
-		collector := newColumnStatsUsageCollector(collectPredicateColumns)
-		collector.wideTableColumnCount = 1
-		collector.collectFromPlan(lp)
-		tblColIDs = set2slice(collector.predicateCols)
+		tblColIDs, _ = CollectColumnStatsUsage(lp)
 	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
@@ -163,19 +157,44 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 			res: []string{"t.a", "t.c", "t2.a", "t2.b"},
 		},
 		{
-			// LogicalApply
+			// LogicalApply, LogicalJoin
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
 			res: []string{"t.b", "t.c", "t2.b"},
 		},
 		{
-			// LogicalApply
-			sql: "select * from t2 where t2.b > (select count(b) from t where t.c > t2.a)",
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
+			res: []string{"t.b", "t.c", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.b > (select sum(b) from t where t.c > t2.a)",
 			res: []string{"t.b", "t.c", "t2.a", "t2.b"},
 		},
 		{
 			// LogicalApply
-			sql: "select * from t where t.b > (select count(*) from t2 where t2.a > t.a)",
-			res: []string{"t.a", "t.b", "t2.a"},
+			sql: "select * from t2 where t2.b > (select count(*) from t where t.a > t2.a)",
+			res: []string{"t.a", "t2.a", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where exists (select * from t where t.a > t2.b)",
+			res: []string{"t.a", "t2.b"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where not exists (select * from t where t.a > t2.b)",
+			res: []string{"t.a", "t2.b"},
+		},
+		{
+			// LogicalJoin
+			sql: "select * from t2 where t2.a in (select b from t)",
+			res: []string{"t.b", "t2.a"},
+		},
+		{
+			// LogicalApply, LogicalJoin
+			sql: "select * from t2 where t2.a not in (select b from t)",
+			res: []string{"t.b", "t2.a"},
 		},
 		{
 			// LogicalSort
@@ -228,9 +247,6 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		if tt.sql == "select x.c, y.b from t as x join t2 as y on x.a = y.a group by x.c, y.b order by x.c" {
-			fmt.Println("hi")
-		}
 		comment := Commentf("for %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
@@ -279,6 +295,18 @@ func (s *testPlanSuite) TestCollectHistNeededColumns(c *C) {
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
 			res: []string{"t.c", "t2.a"},
+		},
+		{
+			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
+			res: []string{"t.c"},
+		},
+		{
+			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
+			res: []string{"t.c"},
+		},
+		{
+			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
+			res: []string{"t.c"},
 		},
 		{
 			pruneMode: "static",

@@ -70,6 +70,7 @@ type Context interface {
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
 
+	// Deprecated: Use TxnManager.GetTxnInfoSchema to get the current schema in session
 	GetInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars

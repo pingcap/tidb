@@ -798,21 +798,22 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo := &model.TableInfo{}
+	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
-		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }
 
@@ -952,6 +953,11 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	// Ban setting replica count for tables in system database.
@@ -1274,6 +1280,11 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 		return 0, err
 	}
 
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+	}
+
 	ptInfo := tblInfo.GetPartitionInfo()
 	var partitionDef *model.PartitionDefinition
 	definitions := ptInfo.Definitions
@@ -1339,6 +1350,11 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
+	}
+
+	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {

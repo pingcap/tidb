@@ -17,7 +17,6 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -34,11 +33,12 @@ type columnStatsUsageCollector struct {
 	collectMode uint64
 	// predicateCols records predicate columns.
 	predicateCols map[model.TableColumnID]struct{}
-	// colMap maps expression.Column.UniqueID to the table columns whose statistics are utilized to calculate statistics of the column.
+	// colMap maps expression.Column.UniqueID to the table columns whose statistics may be utilized to calculate statistics of the column.
 	// It is used for collecting predicate columns.
+	// For example, in `select count(distinct a, b) as e from t`, the count of column `e` is calculated as `max(ndv(t.a), ndv(t.b))` if
+	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
+	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableColumnID]struct{}
-	// we only collect predicate columns for the tables which column count is no less than wideTableColumnCount.
-	wideTableColumnCount int
 	// histNeededCols records histogram-needed columns
 	histNeededCols map[model.TableColumnID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
@@ -54,7 +54,6 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 	if collectMode&collectPredicateColumns != 0 {
 		collector.predicateCols = make(map[model.TableColumnID]struct{})
 		collector.colMap = make(map[int64]map[model.TableColumnID]struct{})
-		collector.wideTableColumnCount = int(variable.WideTableColumnCount.Load())
 	}
 	if collectMode&collectHistNeededColumns != 0 {
 		collector.histNeededCols = make(map[model.TableColumnID]struct{})
@@ -69,13 +68,6 @@ func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column) {
 	}
 	for tblColID := range tblColIDs {
 		c.predicateCols[tblColID] = struct{}{}
-	}
-}
-
-func (c *columnStatsUsageCollector) addPredicateColumnsFromExpression(expr expression.Expression) {
-	cols := expression.ExtractColumnsAndCorColumns(c.cols[:0], expr)
-	for _, col := range cols {
-		c.addPredicateColumn(col)
 	}
 }
 
@@ -101,24 +93,17 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 	}
 }
 
-func (c *columnStatsUsageCollector) updateColMapFromExpression(col *expression.Column, expr expression.Expression) {
-	c.updateColMap(col, expression.ExtractColumnsAndCorColumns(c.cols[:0], expr))
-}
-
 func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.Column, list []expression.Expression) {
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
-	// We don't collect predicate columns for the tables whose column count is less than wideTableColumnCount.
-	if len(ds.TableInfo().Columns) >= c.wideTableColumnCount {
-		// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
-		// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
-		tblID := ds.TableInfo().ID
-		for _, col := range ds.Schema().Columns {
-			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
-			c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
-		}
+	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
+	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
+	tblID := ds.TableInfo().ID
+	for _, col := range ds.Schema().Columns {
+		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
 	}
 	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
 	// We still need to add predicate columns from `pushedDownConds` even if the number of columns is less than `wideTableColumnCount`
@@ -187,7 +172,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			// Schema change from children to self.
 			schema := x.Schema()
 			for i, expr := range x.Exprs {
-				c.updateColMapFromExpression(schema.Columns[i], expr)
+				c.updateColMapFromExpressions(schema.Columns[i], []expression.Expression{expr})
 			}
 		case *LogicalSelection:
 			// Though the conditions in LogicalSelection are complex conditions which cannot be pushed down to DataSource, we still
@@ -225,12 +210,12 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 		case *LogicalSort:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpression(item.Expr)
+				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
 		case *LogicalTopN:
 			// Assume statistics of all the columns in ByItems are needed.
 			for _, item := range x.ByItems {
-				c.addPredicateColumnsFromExpression(item.Expr)
+				c.addPredicateColumnsFromExpressions([]expression.Expression{item.Expr})
 			}
 		case *LogicalUnionAll:
 			c.collectPredicateColumnsForUnionAll(x)
