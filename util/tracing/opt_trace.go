@@ -16,17 +16,17 @@ package tracing
 
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
-	ID       int                 `json:"id"`
-	TP       string              `json:"type"`
-	Children []*LogicalPlanTrace `json:"children"`
+	ID       int
+	TP       string
+	Children []*LogicalPlanTrace
 
 	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string `json:"info"`
+	ExplainInfo string
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	FinalLogicalPlan *LogicalPlanTrace            `json:"final"`
+	FinalLogicalPlan []FlattenLogicalPlanTrace    `json:"final"`
 	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
@@ -53,14 +53,14 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, r
 
 // RecordFinalLogicalPlan add plan trace after logical optimize
 func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *LogicalPlanTrace) {
-	tracer.FinalLogicalPlan = final
+	tracer.FinalLogicalPlan = toFlattenLogicalPlanTrace(final)
 }
 
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
 	Index    int                            `json:"index"`
-	Before   *LogicalPlanTrace              `json:"before"`
+	Before   []FlattenLogicalPlanTrace      `json:"before"`
 	RuleName string                         `json:"name"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
@@ -69,7 +69,7 @@ type LogicalRuleOptimizeTracer struct {
 func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
-		Before:   before,
+		Before:   toFlattenLogicalPlanTrace(before),
 		RuleName: name,
 		Steps:    make([]LogicalRuleOptimizeTraceStep, 0),
 	}
@@ -83,6 +83,47 @@ type LogicalRuleOptimizeTraceStep struct {
 	ID     int    `json:"id"`
 	TP     string `json:"type"`
 	Index  int    `json:"index"`
+}
+
+// FlattenLogicalPlanTrace indicates the flatten LogicalPlanTrace
+type FlattenLogicalPlanTrace struct {
+	ID       int    `json:"id"`
+	TP       string `json:"type"`
+	Children []int  `json:"children"`
+
+	// ExplainInfo should be implemented by each implemented LogicalPlan
+	ExplainInfo string `json:"info"`
+}
+
+// toFlattenLogicalPlanTrace transform LogicalPlanTrace into FlattenLogicalPlanTrace
+func toFlattenLogicalPlanTrace(root *LogicalPlanTrace) []FlattenLogicalPlanTrace {
+	wrapper := &flattenWrapper{flatten: make([]FlattenLogicalPlanTrace, 0)}
+	flattenLogicalPlanTrace(root, wrapper)
+	return wrapper.flatten
+}
+
+type flattenWrapper struct {
+	flatten []FlattenLogicalPlanTrace
+}
+
+func flattenLogicalPlanTrace(node *LogicalPlanTrace, wrapper *flattenWrapper) {
+	flattenNode := FlattenLogicalPlanTrace{
+		ID:          node.ID,
+		TP:          node.TP,
+		ExplainInfo: node.ExplainInfo,
+		Children:    make([]int, 0),
+	}
+	if len(node.Children) < 1 {
+		wrapper.flatten = append(wrapper.flatten, flattenNode)
+		return
+	}
+	for _, child := range node.Children {
+		flattenNode.Children = append(flattenNode.Children, child.ID)
+	}
+	for _, child := range node.Children {
+		flattenLogicalPlanTrace(child, wrapper)
+	}
+	wrapper.flatten = append(wrapper.flatten, flattenNode)
 }
 
 // CETraceRecord records an expression and related cardinality estimation result.

@@ -42,7 +42,7 @@ var testDataMap = make(testdata.BookKeeper, 1)
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
