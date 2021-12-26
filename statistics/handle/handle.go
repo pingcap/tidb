@@ -1845,3 +1845,55 @@ func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
 	}
 	return columnIDs, nil
 }
+
+// SaveHistoryStatsToStorage saves the given table's stats data to mysql.stats_history
+func (h *Handle) SaveHistoryStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
+	h.mu.Lock()
+	ctx := context.Background()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	ts := txn.StartTS()
+	err = finishTransaction(ctx, exec, err)
+	h.mu.Unlock()
+
+	rows, _, err := h.execRestrictedSQL(ctx, "select version from mysql.stats_meta WHERE table_id = %?", tableInfo.ID)
+	if err != nil {
+		return ts, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return ts, nil
+	}
+
+	version := rows[0].GetUint64(0)
+
+	blockSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLongBlob)
+	blocks, err := h.DumpStatsToJSONBlocks(dbName, tableInfo, blockSize)
+	if err != nil {
+		return ts, err
+	}
+
+	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	for i := 0; i < len(blocks); i++ {
+		if _, _, err = h.execRestrictedSQL(ctx, sql, tableInfo.ID, blocks[i], i, version, oracle.GetTimeFromTS(ts)); err != nil {
+			return ts, err
+		}
+	}
+	return ts, nil
+}
+
+// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
+func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
+	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return variable.TiDBOptOn(val), nil
+}
