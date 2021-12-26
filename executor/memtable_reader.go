@@ -1032,15 +1032,15 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	}
 
 	for _, storeID := range e.extractor.StoreIDs {
-		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id
-		// storeMap is used to filter peers on unexpected stores
+		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id,
+		// storeMap is used to filter peers on unexpected stores.
 		storeMap[int64(storeID)] = struct{}{}
 		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
 		if err != nil {
 			return nil, err
 		}
 		for _, regionInfo := range storeRegionsInfo.Regions {
-			// regionMap is used to remove dup regions and record the index of region in regionsInfoByStoreID
+			// regionMap is used to remove dup regions and record the index of region in regionsInfoByStoreID.
 			if _, ok := regionMap[regionInfo.ID]; !ok {
 				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
 				regionMap[regionInfo.ID] = index
@@ -1097,7 +1097,7 @@ func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 			downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
 		}
 		for _, peer := range region.Peers {
-			// isUnexpectedStoreID return true if we should filter this peer
+			// isUnexpectedStoreID return true if we should filter this peer.
 			if e.isUnexpectedStoreID(peer.StoreID, storeMap) {
 				continue
 			}
