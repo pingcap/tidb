@@ -456,10 +456,9 @@ func (test *testSerialSuite2) TestIndexMergeReaderMemTracker(c *C) {
 	c.Assert(bytes, Greater, 0.0)
 }
 
-func (s *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) {
+func (test *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) {
 	// Same purpose with TestPessimisticLockOnPartition, but test IndexMergeReader.
-
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(c, test.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t1, t2;")
@@ -473,7 +472,7 @@ func (s *testSerialSuite2) TestPessimisticLockOnPartitionForIndexMerge(c *C) {
 	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3);")
 	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18');")
 
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, test.store)
 	tk1.MustExec("use test")
 
 	tk.MustExec("begin pessimistic")
