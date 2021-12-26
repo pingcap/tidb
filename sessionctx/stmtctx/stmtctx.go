@@ -90,6 +90,9 @@ type StatementContext struct {
 	IgnoreNoPartition      bool
 	SkipPlanCache          bool
 	IgnoreExplainIDSuffix  bool
+	SkipUTF8Check          bool
+	SkipASCIICheck         bool
+	SkipUTF8MB4Check       bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx

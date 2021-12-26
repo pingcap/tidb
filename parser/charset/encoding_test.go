@@ -135,7 +135,7 @@ func TestEncodingValidate(t *testing.T) {
 		}
 		strBytes := []byte(tc.str)
 		require.Equal(t, tc.ok, enc.IsValid(strBytes), msg)
-		replace, _ := enc.Transform(nil, strBytes, charset.OpReplace)
+		replace, _ := enc.Transform(nil, strBytes, charset.OnReplaceNoErr)
 		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }
