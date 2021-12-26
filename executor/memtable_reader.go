@@ -1018,19 +1018,23 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
+	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
+	var index int
+	regionMap := make(map[int64]int)
+	storeMap := make(map[int64]struct{})
+
 	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
 		regionsInfo, err := tikvHelper.GetRegionsInfo()
 		if err != nil {
 			return nil, err
 		}
-		return e.packTiKVRegionPeersRows(regionsInfo.Regions)
+		return e.packTiKVRegionPeersRows(regionsInfo.Regions, storeMap)
 	}
 
-	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
-	var index int
-	regionMap := make(map[int64]int)
-
 	for _, storeID := range e.extractor.StoreIDs {
+		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id
+		// storeMap is used to filter peers on unexpected stores
+		storeMap[int64(storeID)] = struct{}{}
 		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
 		if err != nil {
 			return nil, err
@@ -1046,27 +1050,41 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	}
 
 	if len(e.extractor.RegionIDs) == 0 {
-		return e.packTiKVRegionPeersRows(regionsInfoByStoreID)
+		return e.packTiKVRegionPeersRows(regionsInfoByStoreID, storeMap)
 	}
 
 	for _, regionID := range e.extractor.RegionIDs {
 		idx, ok := regionMap[int64(regionID)]
 		if !ok {
-			// fetch from PD
-			regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
-			if err != nil {
-				return nil, err
+			// if there is storeIDs, target region_id is fetched by storeIDs,
+			// otherwise we need to fetch it from PD.
+			if len(e.extractor.StoreIDs) == 0 {
+				regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+				if err != nil {
+					return nil, err
+				}
+				regionsInfo = append(regionsInfo, *regionInfo)
 			}
-			regionsInfo = append(regionsInfo, *regionInfo)
 		} else {
 			regionsInfo = append(regionsInfo, regionsInfoByStoreID[idx])
 		}
 	}
 
-	return e.packTiKVRegionPeersRows(regionsInfo)
+	return e.packTiKVRegionPeersRows(regionsInfo, storeMap)
 }
 
-func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(regionsInfo []helper.RegionInfo) ([][]types.Datum, error) {
+func (e *tikvRegionPeersRetriever) isUnexpectedStoreID(storeID int64, storeMap map[int64]struct{}) bool {
+	if len(e.extractor.StoreIDs) == 0 {
+		return false
+	}
+	if _, ok := storeMap[storeID]; ok {
+		return false
+	}
+	return true
+}
+
+func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
+	regionsInfo []helper.RegionInfo, storeMap map[int64]struct{}) ([][]types.Datum, error) {
 	var rows [][]types.Datum
 	for _, region := range regionsInfo {
 		records := make([][]types.Datum, 0, len(region.Peers))
@@ -1079,6 +1097,11 @@ func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(regionsInfo []helper.
 			downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
 		}
 		for _, peer := range region.Peers {
+			// isUnexpectedStoreID return true if we should filter this peer
+			if e.isUnexpectedStoreID(peer.StoreID, storeMap) {
+				continue
+			}
+
 			row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
 			row[0].SetInt64(region.ID)
 			row[1].SetInt64(peer.ID)
