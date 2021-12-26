@@ -527,6 +527,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`

@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -63,6 +64,24 @@ func testRenameTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID, 
 	tblInfo.State = model.StatePublic
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
+	return job
+}
+
+func testRenameTables(
+	t *testing.T, ctx sessionctx.Context, d *ddl,
+	oldSchemaIDs, newSchemaIDs []int64, newTableNames []*model.CIStr,
+	oldTableIDs []int64, oldSchemaNames []*model.CIStr,
+) *model.Job {
+	job := &model.Job{
+		Type:       model.ActionRenameTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames},
+	}
+	err := d.doDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVerT(t, ctx)
+	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
 	return job
 }
 
@@ -327,7 +346,8 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 	return job
 }
 
-func TestCreateTables(t *testing.T) {
+func TestRenameTables(t *testing.T) {
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	ddl, err := testNewDDLAndStart(
@@ -343,33 +363,36 @@ func TestCreateTables(t *testing.T) {
 
 	ctx := testNewContext(ddl)
 
-	infos := []*model.TableInfo{}
-	genIDs, err := ddl.genGlobalIDs(3)
-	require.NoError(t, err)
+	var tblInfos = make([]*model.TableInfo, 0, 2)
+	var newTblInfos = make([]*model.TableInfo, 0, 2)
+	for i := 1; i < 3; i++ {
+		tableName := fmt.Sprintf("t%d", i)
+		tblInfo, err := testTableInfo(ddl, tableName, 3)
+		require.NoError(t, err)
+		job := testCreateTableT(t, ctx, ddl, dbInfo, tblInfo)
+		testCheckTableStateT(t, ddl, dbInfo, tblInfo, model.StatePublic)
+		testCheckJobDoneT(t, ddl, job, true)
+		tblInfos = append(tblInfos, tblInfo)
 
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[0],
-		Name: model.NewCIStr("s1"),
-	})
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[1],
-		Name: model.NewCIStr("s2"),
-	})
-	infos = append(infos, &model.TableInfo{
-		ID:   genIDs[2],
-		Name: model.NewCIStr("s3"),
-	})
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateTables,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{infos},
+		newTableName := fmt.Sprintf("tt%d", i)
+		tblInfo, err = testTableInfo(ddl, newTableName, 3)
+		require.NoError(t, err)
+		newTblInfos = append(newTblInfos, tblInfo)
 	}
-	err = ddl.doDDLJob(ctx, job)
-	require.NoError(t, err)
 
-	testGetTableT(t, ddl, dbInfo.ID, genIDs[0])
-	testGetTableT(t, ddl, dbInfo.ID, genIDs[1])
-	testGetTableT(t, ddl, dbInfo.ID, genIDs[2])
+	job := testRenameTables(
+		t, ctx, ddl,
+		[]int64{dbInfo.ID, dbInfo.ID},
+		[]int64{dbInfo.ID, dbInfo.ID},
+		[]*model.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name},
+		[]int64{tblInfos[0].ID, tblInfos[1].ID},
+		[]*model.CIStr{&dbInfo.Name, &dbInfo.Name},
+	)
+
+	txn, _ := ctx.Txn(true)
+	historyJob, _ := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
+	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
+	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
+	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
+
 }

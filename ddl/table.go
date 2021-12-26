@@ -857,21 +857,22 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo := &model.TableInfo{}
+	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
-		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }
 
@@ -1014,6 +1015,7 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	}
 
 	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
@@ -1338,6 +1340,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
 		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
@@ -1409,6 +1412,7 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
+		job.State = model.JobStateCancelled
 		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 

@@ -3,11 +3,13 @@
 package summary
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/go-units"
+	berror "github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -188,9 +190,16 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	if len(tc.failureReasons) != 0 || !tc.successStatus {
+		var canceledUnits int
 		for unitName, reason := range tc.failureReasons {
-			logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
+			if berror.Cause(reason) != context.Canceled {
+				logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
+			} else {
+				canceledUnits++
+			}
 		}
+		// only print total number of cancel unit
+		log.Info("units canceled", zap.Int("cancel-unit", canceledUnits))
 		tc.log(name+" failed summary", logFields...)
 		return
 	}

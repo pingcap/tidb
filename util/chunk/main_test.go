@@ -24,7 +24,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	path, _ := os.MkdirTemp("", "oom-use-tmp-storage")
 	config.UpdateGlobal(func(conf *config.Config) {
