@@ -74,6 +74,7 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 	}
 }
 
+// CollectStmtStatsRecords implements stmtstats.Collector.
 func (c *TopSQLCollector) CollectStmtStatsRecords(rs []stmtstats.StatementStatsRecord) {}
 
 // GetSQLStatsBySQLWithRetry uses for testing.
