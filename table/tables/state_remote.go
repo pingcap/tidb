@@ -67,7 +67,9 @@ type StateRemote interface {
 	LockForRead(ctx context.Context, tid int64, lease uint64) (bool, error)
 
 	// LockForWrite try to add a write lock to the table with the specified tableID
-	LockForWrite(ctx context.Context, tid int64) (uint64, error)
+
+	LockForWrite(ctx context.Context, tid int64, lease uint64) error
+
 
 	// RenewLease attempt to renew the read / write lock on the table with the specified tableID
 	RenewLease(ctx context.Context, tid int64, newTs uint64, op RenewLeaseType) (bool, error)
@@ -132,32 +134,33 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 	return succ, err
 }
 
-// LockForWrite try to add a write lock to the table with the specified tableID, return the write lock lease.
-func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64) (uint64, error) {
+
+func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, ts uint64) error {
 	h.Lock()
 	defer h.Unlock()
-	var ret uint64
 	for {
-		waitAndRetry, lease, err := h.lockForWriteOnce(ctx, tid)
+		waitAndRetry, err := h.lockForWriteOnce(ctx, tid, ts)
 		if err != nil {
-			return 0, err
+			return err
 		}
 		if waitAndRetry == 0 {
-			ret = lease
+
 			break
 		}
 		time.Sleep(waitAndRetry)
 	}
-	return ret, nil
+
+	return nil
 }
 
-func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64) (waitAndRetry time.Duration, ts uint64, err error) {
+func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, ts uint64) (waitAndRetry time.Duration, err error) {
+
 	err = h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, lease, oldReadLease, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ts = leaseFromTS(now)
+
 		// The lease is outdated, so lock is invalid, clear orphan lock of any kind.
 		if now > lease {
 			if err := h.updateRow(ctx, tid, "WRITE", ts); err != nil {
@@ -218,69 +221,38 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, newLease 
 	h.Lock()
 	defer h.Unlock()
 
-	switch op {
-	case RenewReadLease:
-		return h.renewReadLease(ctx, tid, newLease)
-	case RenewWriteLease:
-		return h.renewWriteLease(ctx, tid, newLease)
+
+	var succ bool
+	if op == RenewReadLease {
+		err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
+			lockType, oldLease, _, err := h.loadRow(ctx, tid)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if now >= oldLease {
+				// read lock had already expired, fail to renew
+				return nil
+			}
+			if lockType != CachedTableLockRead {
+				// Not read lock, fail to renew
+				return nil
+			}
+
+			if newLease > oldLease { // lease should never decrease!
+				err = h.updateRow(ctx, tid, "READ", newLease)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+			succ = true
+			return nil
+		})
+		return succ, err
 	}
-	return false, errors.New("wrong renew lease type")
-}
 
-func (h *stateRemoteHandle) renewReadLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
-	var succ bool
-	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
-		lockType, oldLease, _, err := h.loadRow(ctx, tid)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if now >= oldLease {
-			// read lock had already expired, fail to renew
-			return nil
-		}
-		if lockType != CachedTableLockRead {
-			// Not read lock, fail to renew
-			return nil
-		}
+	// TODO: renew for write lease
+	return false, errors.New("not implement yet")
 
-		if newLease > oldLease { // lease should never decrease!
-			err = h.updateRow(ctx, tid, "READ", newLease)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		succ = true
-		return nil
-	})
-	return succ, err
-}
-
-func (h *stateRemoteHandle) renewWriteLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
-	var succ bool
-	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
-		lockType, oldLease, _, err := h.loadRow(ctx, tid)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if now >= oldLease {
-			// write lock had already expired, fail to renew
-			return nil
-		}
-		if lockType != CachedTableLockWrite {
-			// Not write lock, fail to renew
-			return nil
-		}
-
-		if newLease > oldLease { // lease should never decrease!
-			err = h.updateRow(ctx, tid, "WRITE", newLease)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		succ = true
-		return nil
-	})
-	return succ, err
 }
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {

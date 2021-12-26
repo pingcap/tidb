@@ -740,6 +740,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	} else {
 		rFullSchema = rightPlan.Schema()
 		rFullNames = rightPlan.OutputNames()
+
 	}
 	if joinNode.Tp == ast.RightJoin {
 		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
@@ -760,6 +761,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
+
 	for _, rName := range rFullNames {
 		name := *rName
 		name.Redundant = true
