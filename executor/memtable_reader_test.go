@@ -1413,106 +1413,37 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistoryError(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-var storeRegionsInfo = &helper.RegionsInfo{Count: 3, Regions: []helper.RegionInfo{
-	{
-		ID:                1,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 11, StoreID: 1, IsLearner: false}, {ID: 12, StoreID: 2, IsLearner: false}, {ID: 13, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 11, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
+var regionsInfo = map[uint64]helper.RegionInfo{
+	1: {
+		ID:     1,
+		Peers:  []helper.RegionPeer{{ID: 11, StoreID: 1, IsLearner: false}, {ID: 12, StoreID: 2, IsLearner: false}, {ID: 13, StoreID: 3, IsLearner: false}},
+		Leader: helper.RegionPeer{ID: 11, StoreID: 1, IsLearner: false},
 	},
-	{
-		ID:                2,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 21, StoreID: 1, IsLearner: false}, {ID: 22, StoreID: 2, IsLearner: false}, {ID: 23, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 22, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
+	2: {
+		ID:     2,
+		Peers:  []helper.RegionPeer{{ID: 21, StoreID: 1, IsLearner: false}, {ID: 22, StoreID: 2, IsLearner: false}, {ID: 23, StoreID: 3, IsLearner: false}},
+		Leader: helper.RegionPeer{ID: 22, StoreID: 2, IsLearner: false},
 	},
-	{
-		ID:                3,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 31, StoreID: 1, IsLearner: false}, {ID: 32, StoreID: 2, IsLearner: false}, {ID: 33, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 33, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
+	3: {
+		ID:     3,
+		Peers:  []helper.RegionPeer{{ID: 31, StoreID: 1, IsLearner: false}, {ID: 32, StoreID: 2, IsLearner: false}, {ID: 33, StoreID: 3, IsLearner: false}},
+		Leader: helper.RegionPeer{ID: 33, StoreID: 3, IsLearner: false},
 	},
-}}
+}
+
+var storeRegionsInfo = &helper.RegionsInfo{
+	Count: 3,
+	Regions: []helper.RegionInfo{
+		regionsInfo[1],
+		regionsInfo[2],
+		regionsInfo[3],
+	},
+}
 
 var storesRegionsInfo = map[uint64]*helper.RegionsInfo{
 	1: storeRegionsInfo,
 	2: storeRegionsInfo,
 	3: storeRegionsInfo,
-}
-
-var regionsInfo = map[uint64]*helper.RegionInfo{
-	1: {
-		ID:                1,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 11, StoreID: 1, IsLearner: false}, {ID: 12, StoreID: 2, IsLearner: false}, {ID: 13, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 11, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
-	},
-	2: {
-		ID:                2,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 21, StoreID: 1, IsLearner: false}, {ID: 22, StoreID: 2, IsLearner: false}, {ID: 23, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 21, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
-	},
-	3: {
-		ID:                3,
-		StartKey:          "",
-		EndKey:            "",
-		Epoch:             helper.RegionEpoch{},
-		Peers:             []helper.RegionPeer{{ID: 31, StoreID: 1, IsLearner: false}, {ID: 32, StoreID: 2, IsLearner: false}, {ID: 33, StoreID: 3, IsLearner: false}},
-		Leader:            helper.RegionPeer{ID: 31, StoreID: 1, IsLearner: false},
-		DownPeers:         nil,
-		PendingPeers:      nil,
-		WrittenBytes:      100,
-		ReadBytes:         200,
-		ApproximateKeys:   300,
-		ApproximateSize:   400,
-		ReplicationStatus: nil,
-	},
 }
 
 var _ = SerialSuites(&testTikvRegionPeersTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
@@ -1615,21 +1546,39 @@ func (s *testTikvRegionPeersTableSuite) TestTikvRegionPeers(c *C) {
 		{
 			conditions: []string{
 				"store_id in (1,2)",
-				"region_id =1",
+				"region_id=1",
 			},
 			expected: [][]string{
-				fullRegionPeers[0], fullRegionPeers[1], fullRegionPeers[2],
+				fullRegionPeers[0], fullRegionPeers[1],
 			},
 		},
 		{
 			conditions: []string{
 				"store_id in (1,2)",
-				"region_id =1",
+				"region_id=1",
 				"is_leader=1",
 			},
 			expected: [][]string{
 				fullRegionPeers[0],
 			},
+		},
+		{
+			conditions: []string{
+				"store_id in (1,2)",
+				"region_id=1",
+				"is_leader=0",
+			},
+			expected: [][]string{
+				fullRegionPeers[1],
+			},
+		},
+		{
+			conditions: []string{
+				"store_id =1",
+				"region_id =1",
+				"is_leader =0",
+			},
+			expected: [][]string{},
 		},
 	}
 
