@@ -15,11 +15,10 @@
 package variable
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/atomic"
+	"math"
 )
 
 /*
@@ -622,8 +621,12 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
-	// TiDBWideTableColumnCount indicates the threshold of the number of columns in the wide table.
-	TiDBWideTableColumnCount = "tidb_wide_table_column_count"
+	// TiDBEnableColumnTracking enables collecting predicate columns.
+	TiDBEnableColumnTracking = "tidb_enable_column_tracking"
+	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
+	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
+	// It doesn't have cache in memory and we directly get/set the variable value from/to mysql.tidb.
+	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 )
 
 // TiDB intentional limits
@@ -781,7 +784,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
-	DefTiDBWideTableColumnCount           = 100
+	DefTiDBEnableColumnTracking           = true
 )
 
 // Process global variables.
@@ -817,7 +820,7 @@ var (
 	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	WideTableColumnCount    = atomic.NewUint64(DefTiDBWideTableColumnCount)
+	EnableColumnTracking    = atomic.NewBool(DefTiDBEnableColumnTracking)
 )
 
 // TopSQL is the variable for control top sql feature.

@@ -1826,9 +1826,6 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	case model.AllColumns:
 		return tblInfo.Columns, nil
 	case model.PredicateColumns:
-		if len(tblInfo.Columns) < int(variable.WideTableColumnCount.Load()) {
-			return nil, errors.Errorf("The number of columns in table %s is less than `tidb_wide_table_column_count` so analyzing predicate columns cannot be applied", tblInfo.Name.L)
-		}
 		do := domain.GetDomain(b.ctx)
 		h := do.StatsHandle()
 		cols, err := h.GetPredicateColumns(tblInfo.ID)
@@ -1836,7 +1833,8 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 			return nil, err
 		}
 		if len(cols) == 0 {
-			return nil, errors.Errorf("No predicate column has been collected yet for table %s", tblInfo.Name.L)
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
+			return tblInfo.Columns, nil
 		}
 		for _, id := range cols {
 			columnIDs[id] = struct{}{}

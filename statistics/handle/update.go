@@ -871,8 +871,30 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	return errors.Trace(err)
 }
 
+func (h *Handle) dumpColStatsUsage(tblColID model.TableColumnID, lastUsedAt time.Time) error {
+	se, err := h.pool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	loc := sctx.GetSessionVars().Location()
+	// We need to use the time under the session's time zone because in the following sql, TiDB will convert the time from
+	// the session's time zone to UTC.
+	t := lastUsedAt.In(loc).Format(types.TimeFormat)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN %? ELSE GREATEST(last_used_at, %?) END"
+	if _, _, err := execRestrictedSQL(context.Background(), exec, sql, tblColID.TableID, tblColID.ColumnID, t, t, t); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
 	h.sweepList()
 	h.colMap.Lock()
 	colMap := h.colMap.data
@@ -883,13 +905,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.data.merge(colMap)
 		h.colMap.Unlock()
 	}()
-	for col, lastUsedAt := range colMap {
-		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN %? ELSE GREATEST(last_used_at, %?) END"
-		_, _, err := h.execRestrictedSQL(context.Background(), sql, col.TableID, col.ColumnID, lastUsedAt, lastUsedAt, lastUsedAt)
-		if err != nil {
+	for tblColID, lastUsedAt := range colMap {
+		if err := h.dumpColStatsUsage(tblColID, lastUsedAt); err != nil {
 			return err
 		}
-		delete(colMap, col)
+		delete(colMap, tblColID)
 	}
 	return nil
 }

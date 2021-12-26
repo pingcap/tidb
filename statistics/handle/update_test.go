@@ -2341,11 +2341,11 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 
-	wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_wide_table_column_count = 2")
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 	}()
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
 
 	h := s.do.StatsHandle()
 	tk.MustExec("use test")
@@ -2356,7 +2356,6 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	tk.MustExec("insert into t2 values (1), (2), (3)")
 	tk.MustExec("insert into t3 values (1, 2), (3, 4), (11, 12), (13, 14)")
 	tk.MustExec("select * from t1 where a > 1")
-	tk.MustExec("select * from t2 where a > 1")
 	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
 	// t1.a is collected as predicate column
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
@@ -2364,9 +2363,6 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
 	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
-	// the number of column in t2 is less than wideTableColumnCount, so no predicate column is collected.
-	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
-	c.Assert(len(rows), Equals, 0)
 
 	tk.MustExec("analyze table t1")
 	tk.MustExec("select * from t1 where b > 1")
@@ -2391,7 +2387,7 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
 		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
 		c.Assert(len(rows), Equals, 1)
-		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "global", "a"})
+		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t3", "global", "a"})
 		c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 		c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 	}
@@ -2405,6 +2401,11 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
 	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 }

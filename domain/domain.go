@@ -1372,7 +1372,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	//dumpColStatsUsageTicker := time.NewTicker(20 * lease)
-	dumpColStatsUsageTicker := time.NewTicker(lease)
+	dumpColStatsUsageTicker := time.NewTicker(lease) // TODO: Set to 1 * lease for easily debugging. Remember to restore the default value.
 	statsHandle := do.StatsHandle()
 	defer func() {
 		loadFeedbackTicker.Stop()

@@ -281,9 +281,24 @@ func set2slice(set map[model.TableColumnID]struct{}) []model.TableColumnID {
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
-// The first return value is predicate columns and the second return value is histogram-needed columns.
-func CollectColumnStatsUsage(lp LogicalPlan) ([]model.TableColumnID, []model.TableColumnID) {
-	collector := newColumnStatsUsageCollector(collectPredicateColumns | collectHistNeededColumns)
+// predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
+// The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableColumnID, []model.TableColumnID) {
+	var mode uint64
+	if predicate {
+		mode |= collectPredicateColumns
+	}
+	if histNeeded {
+		mode |= collectHistNeededColumns
+	}
+	collector := newColumnStatsUsageCollector(mode)
 	collector.collectFromPlan(lp)
-	return set2slice(collector.predicateCols), set2slice(collector.histNeededCols)
+	var predicateCols, histNeededCols []model.TableColumnID
+	if predicate {
+		predicateCols = set2slice(collector.predicateCols)
+	}
+	if histNeeded {
+		histNeededCols = set2slice(collector.histNeededCols)
+	}
+	return predicateCols, histNeededCols
 }

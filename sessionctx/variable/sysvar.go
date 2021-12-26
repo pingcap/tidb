@@ -1325,10 +1325,18 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBWideTableColumnCount, Value: strconv.Itoa(DefTiDBWideTableColumnCount), Type: TypeUnsigned, MinValue: 1, MaxValue: config.DefMaxOfTableColumnCountLimit + 1, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(WideTableColumnCount.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), skipInit: true, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableColumnTracking.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		WideTableColumnCount.Store(uint64(tidbOptPositiveInt32(val, DefTiDBWideTableColumnCount)))
+		v := TiDBOptOn(val)
+		if !v {
+			// Set the location to UTC to avoid time zone interference.
+			disableTime := time.Now().UTC().Format(types.TimeFormat)
+			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
+				return err
+			}
+		}
+		EnableColumnTracking.Store(v)
 		return nil
 	}},
 }

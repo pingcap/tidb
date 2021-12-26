@@ -1239,7 +1239,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 
 func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
-		func(choice model.ColumnChoice){
+		func(choice model.ColumnChoice) {
 			store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 			defer clean()
 
@@ -1265,11 +1265,11 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
 				))
 			case model.PredicateColumns:
-				wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
-				tk.MustExec("set global tidb_wide_table_column_count = 1")
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1334,11 +1334,11 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 					"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
 				))
 			case model.PredicateColumns:
-				wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
-				tk.MustExec("set global tidb_wide_table_column_count = 1")
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1412,11 +1412,11 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
 				))
 			case model.PredicateColumns:
-				wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
-				tk.MustExec("set global tidb_wide_table_column_count = 1")
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where c > 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
@@ -1463,11 +1463,10 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 }
 
 func TestAnalyzeColumnsError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
@@ -1484,21 +1483,17 @@ func TestAnalyzeColumnsError(t *testing.T) {
 	err = tk.ExecToErr("analyze table t columns c")
 	terr := errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.ErrAnalyzeMissColumn), terr.Code())
-	tk.MustExec("analyze table t columns a")
 
-	wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 	}()
-	tk.MustExec("set global tidb_wide_table_column_count = 3")
-	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "The number of columns in table t is less than `tidb_wide_table_column_count` so analyzing predicate columns cannot be applied", err.Error())
-	tk.MustExec("set global tidb_wide_table_column_count = 2")
-	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "No predicate column has been collected yet for table t", err.Error())
-	tk.MustExec("select * from t where a > 1")
-	require.NoError(t, h.DumpColStatsUsageToKV())
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustExec("analyze table t predicate columns")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
+	))
 }
 
 func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
@@ -1534,16 +1529,16 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
 				))
 			case model.PredicateColumns:
-				wideTableColumnCount := tk.MustQuery("select @@tidb_wide_table_column_count").Rows()[0][0].(string)
-				tk.MustExec("set global tidb_wide_table_column_count = 1")
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 				defer func() {
-					tk.MustExec(fmt.Sprintf("set global tidb_wide_table_column_count = '%v'", wideTableColumnCount))
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
 				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
 				tk.MustExec("select * from t where a < 1")
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
 				require.Equal(t, 1, len(rows))
-				require.Equal(t, "a", rows[0][3])
+				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
 				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
 			}
 
@@ -1627,7 +1622,6 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 	}
 }
 
-
 func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
@@ -1651,14 +1645,30 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			p0ID := defs[0].ID
 			p1ID := defs[1].ID
 
-			tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
-			tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-				"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
-				"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
-				"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
-			))
+			switch val {
+			case model.ColumnList:
+				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
+				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
+					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+				))
+			case model.PredicateColumns:
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+				defer func() {
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
+				tk.MustExec("select * from t where a < 1")
+				require.NoError(t, h.DumpColStatsUsageToKV())
+				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+				require.Equal(t, 1, len(rows))
+				require.Equal(t, []interface{}{"test", "t", "global", "a"}, rows[0][:4])
+				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
+			}
+
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
-			require.Equal(t, t, len(rows))
+			require.Equal(t, 4, len(rows))
 			require.Equal(t, []interface{}{"test", "t", "p0", "a"}, rows[0][:4])
 			require.Equal(t, []interface{}{"test", "t", "p0", "c"}, rows[1][:4])
 			require.Equal(t, []interface{}{"test", "t", "p1", "a"}, rows[2][:4])
@@ -1719,3 +1729,143 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 	}
 }
 
+func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
+	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
+		func(choice model.ColumnChoice) {
+			store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+			defer clean()
+
+			tk := testkit.NewTestKit(t, store)
+			h := dom.StatsHandle()
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("set @@tidb_analyze_version = 2")
+			tk.MustExec("set @@tidb_enable_extended_stats = on")
+			tk.MustExec("create table t (a int, b int, c int)")
+			tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
+			tk.MustExec("insert into t values (5,1,1), (4,2,2), (3,3,3), (2,4,4), (1,5,5)")
+			require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+			is := dom.InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
+			tblID := tbl.Meta().ID
+
+			switch val {
+			case model.ColumnList:
+				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+				))
+			case model.PredicateColumns:
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+				defer func() {
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
+				tk.MustExec("select * from t where b > 1")
+				require.NoError(t, h.DumpColStatsUsageToKV())
+				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+				require.Equal(t, 1, len(rows))
+				require.Equal(t, "b", rows[0][3])
+				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
+			}
+			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+			require.Equal(t, 2, len(rows))
+			require.Equal(t, "b", rows[0][3])
+			require.Equal(t, "c", rows[1][3])
+
+			tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+				testkit.Rows("0 5"))
+			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+				// db, tbl, part, col, is_idx, value, count
+				testkit.Rows("test t  b 0 1 1",
+					"test t  b 0 2 1",
+					"test t  c 0 1 1",
+					"test t  c 0 2 1"))
+			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+				testkit.Rows("0 1 0 0 5 0 0", // column a is not analyzed
+					"0 2 5 0 5 2 1",
+					"0 3 5 0 5 2 1",
+				))
+			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+				testkit.Rows("test t  b 0 0 2 1 3 4 0",
+					"test t  b 0 1 3 1 5 5 0",
+					"test t  c 0 0 2 1 3 4 0",
+					"test t  c 0 1 3 1 5 5 0"))
+			rows = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'").Rows()
+			require.Equal(t, 1, len(rows))
+			require.Equal(t, []interface{}{"test", "t", "s1", "[b,c]", "correlation", "1.000000"}, rows[0][:len(rows[0])-1])
+		}(val)
+	}
+}
+
+func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
+	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
+		func(choice model.ColumnChoice) {
+			store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+			defer clean()
+
+			tk := testkit.NewTestKit(t, store)
+			h := dom.StatsHandle()
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("set @@tidb_analyze_version = 2")
+			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
+			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
+			require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+			is := dom.InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			require.NoError(t, err)
+			tblID := tbl.Meta().ID
+
+			switch val {
+			case model.ColumnList:
+				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+					"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+					"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+				))
+			case model.PredicateColumns:
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+				defer func() {
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
+				tk.MustExec("select * from t where b > 1")
+				require.NoError(t, h.DumpColStatsUsageToKV())
+				rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+				require.Equal(t, 1, len(rows))
+				require.Equal(t, "b", rows[0][3])
+				tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
+			}
+			// virtual column c is skipped when dumping stats into disk, so only the stats of column b are updated
+			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
+			require.Equal(t, 1, len(rows))
+			require.Equal(t, "b", rows[0][3])
+
+			tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+				testkit.Rows("0 9"))
+			tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(
+				// db, tbl, part, col, is_idx, value, count
+				testkit.Rows("test t  b 0 4 2",
+					"test t  b 0 5 3",
+					"test t  idx 1 5 2",
+					"test t  idx 1 6 3"))
+			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+				testkit.Rows("0 1 0 0 0 0", // column a is not analyzed
+					"0 2 5 1 2 1",
+					"0 3 0 0 0 0", // column c is not analyzed
+					"1 1 5 1 2 0"))
+			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
+				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
+				testkit.Rows("test t  b 0 0 2 1 1 2 0",
+					"test t  b 0 1 3 1 3 3 0",
+					"test t  idx 1 0 2 1 2 3 0",
+					"test t  idx 1 1 3 1 4 4 0"))
+		}(val)
+	}
+}

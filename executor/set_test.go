@@ -589,27 +589,14 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
-	// test for tidb_wide_table_column_count
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("100"))
-	tk.MustExec("set global tidb_wide_table_column_count = 1")
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_wide_table_column_count = 4097")
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("4097"))
-	tk.MustExec("set global tidb_wide_table_column_count = 50")
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("50"))
-	tk.MustExec("set global tidb_wide_table_column_count = 0")
-	tk.MustQuery("show warnings").Check(testkit.Rows(" Truncated incorrect tidb_wide_table_column_count value: '0'"))
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_wide_table_column_count = -1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(" Truncated incorrect tidb_wide_table_column_count value: '-1'"))
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_wide_table_column_count = 10000")
-	tk.MustQuery("show warnings").Check(testkit.Rows(" Truncated incorrect tidb_wide_table_column_count value: '10000'"))
-	tk.MustQuery("select @@tidb_wide_table_column_count").Check(testkit.Rows("4097"))
-	err = tk.ExecToErr("set tidb_wide_table_column_count = 50")
-	c.Assert(err.Error(), Equals, "[variable:1229]Variable 'tidb_wide_table_column_count' is a GLOBAL variable and should be set with SET GLOBAL")
-	err = tk.ExecToErr("select @@session.tidb_wide_table_column_count")
-	c.Assert(err.Error(), Equals, "[variable:1238]Variable 'tidb_wide_table_column_count' is a GLOBAL variable")
+	// test for tidb_enable_column_tracking
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
+	// When set tidb_enable_column_tracking off, we record the time of the setting operation.
+	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
