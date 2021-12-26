@@ -114,11 +114,6 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
 		}
-		recursiveTypes := e.recursiveExec.base().retFieldTypes
-		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
-		if err = e.iterOutTbl.OpenAndRef(); err != nil {
-			return err
-		}
 	}
 
 	if e.isDistinct {

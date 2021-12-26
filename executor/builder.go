@@ -4610,7 +4610,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	if v.RecurPlan != nil {
 		// For non-recursive CTE, the result will be put into resTbl directly.
 		// So no need to build iterOutTbl.
-		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+		iterOutTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := iterOutTbl.OpenAndRef(); err != nil {
 			b.err = err
 			return nil
