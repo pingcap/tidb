@@ -3586,6 +3586,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
+	if tblInfo.Meta().Partition != nil {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 	return e, nil
 }
 

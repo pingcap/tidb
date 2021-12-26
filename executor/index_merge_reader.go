@@ -110,6 +110,9 @@ type IndexMergeReaderExecutor struct {
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
+	extraPIDColumnIndex offsetOptional
 }
 
 // Open implements the Executor Open interface
@@ -543,16 +546,17 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
-		table:            tbl,
-		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
-		readReplicaScope: e.readReplicaScope,
-		isStaleness:      e.isStaleness,
-		streaming:        e.tableStreaming,
-		columns:          e.columns,
-		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:            e.tblPlans,
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
+		table:               tbl,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		readReplicaScope:    e.readReplicaScope,
+		isStaleness:         e.isStaleness,
+		streaming:           e.tableStreaming,
+		columns:             e.columns,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: e.extraPIDColumnIndex,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
