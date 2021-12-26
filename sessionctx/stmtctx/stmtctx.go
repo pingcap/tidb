@@ -214,8 +214,8 @@ type StatementContext struct {
 	// Its life cycle is limited to this execution, and a new KvExecCounter is
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
-  
-  // Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
+
+	// Timestamp is used to store the timestamp set by set system vars,eg set SET TIMESTAMP=978364799;
 	Timestamp time.Time
 }
 
