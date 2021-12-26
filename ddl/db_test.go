@@ -7642,7 +7642,7 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testDBSuite2) TestCreateTables(c *C) {
+func (s *testDBSuite2) TestBatchCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
@@ -7661,7 +7661,8 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 		Name: model.NewCIStr("tables_3"),
 	})
 
-	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
+	// correct name
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
 	c.Check(err, IsNil)
 
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
@@ -7672,4 +7673,9 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	c.Assert(job[4], Equals, "public")
 	// FIXME: we must change column type to give multiple id
 	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(err.Error(), Equals, "[schema:1050]Table 'test.tables_1' already exists")
 }

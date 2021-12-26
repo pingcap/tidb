@@ -128,6 +128,16 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasPlan4ExplainFor checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
+	for i := range result.rows {
+		if strings.Contains(result.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
+}
+
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()

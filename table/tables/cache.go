@@ -183,6 +183,7 @@ func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, t
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
+
 func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -196,10 +197,12 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.AddRecord(ctx, r, opts...)
+
 }
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
@@ -211,10 +214,12 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	sctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
+
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
+
 func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -228,6 +233,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
 	return c.TableCommon.RemoveRecord(ctx, h, r)
+
 }
 
 func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) func() {

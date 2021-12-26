@@ -509,6 +509,7 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+
 	var err error = nil
 	if rc.batchDllSize > 0 {
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
@@ -531,6 +532,7 @@ func (rc *Client) GoCreateTables(
 		case <-c.Done():
 			return c.Err()
 		default:
+
 		}
 		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
 		if err != nil {
@@ -599,7 +601,9 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	lastSent := 0
+
 	for i := int(rc.batchDllSize); i < numOfTables+int(rc.batchDllSize); i = i + int(rc.batchDllSize) {
+
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
 		if i > numOfTables {
 			i = numOfTables

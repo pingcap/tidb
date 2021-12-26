@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -9501,3 +9503,4 @@ func (s *testSerialSuite) TestIssue30289(c *C) {
 	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 	c.Assert(err.Error(), Matches, "issue30289 build return error")
 }
+

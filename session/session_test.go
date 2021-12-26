@@ -5883,3 +5883,4 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 			"  `cs1` int(11) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
+

@@ -538,11 +538,14 @@ const (
 	version78 = 78
 	// version79 adds the mysql.table_cache_meta table
 	version79 = 79
+
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+
 var currentBootstrapVersion int64 = version79
+
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -625,6 +628,7 @@ var (
 		upgradeToVer77,
 		upgradeToVer78,
 		upgradeToVer79,
+
 	}
 )
 
@@ -1629,6 +1633,7 @@ func upgradeToVer79(s Session, ver int64) {
 	}
 	doReentrantDDL(s, CreateTableCacheMetaTable)
 }
+
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"

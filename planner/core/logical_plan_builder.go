@@ -740,6 +740,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	} else {
 		rFullSchema = rightPlan.Schema()
 		rFullNames = rightPlan.OutputNames()
+
 	}
 	if joinNode.Tp == ast.RightJoin {
 		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
@@ -760,6 +761,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
+
 	for _, rName := range rFullNames {
 		name := *rName
 		name.Redundant = true
@@ -4052,11 +4054,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	} else {
 		columns = tbl.Cols()
 	}
-	var statisticTable *statistics.Table
-	if _, ok := tbl.(table.PartitionedTable); !ok || b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
-	}
-
 	// extract the IndexMergeHint
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
@@ -4101,7 +4098,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		TableAsName:         asName,
 		table:               tbl,
 		tableInfo:           tableInfo,
-		statisticTable:      statisticTable,
+		physicalTableID:     tableInfo.ID,
 		astIndexHints:       tn.IndexHints,
 		IndexHints:          b.TableHints().indexHintList,
 		indexMergeHints:     indexMergeHints,
