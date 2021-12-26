@@ -259,7 +259,7 @@ func (s *Server) startHTTPServer() {
 	fmt.Println("register replay sql")
 	// HTTP path for start record and replay sql.
 	router.Handle("/record/{filename}/{status}/{startTS}", s.newSQLRecorderHandler())
-	router.Handle("/replay/{filename}", s.newSQLRecorderHandler())
+	router.Handle("/replay/{filename}", s.newSQLReplayHandler(tikvHandlerTool.Store))
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {

@@ -2870,8 +2870,10 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			var builder strings.Builder
 			if intxn {
 				builder.WriteString(id)
-				builder.WriteString(" ")
+			} else {
+				builder.WriteString("0")
 			}
+			builder.WriteString(" ")
 			// Logic TS
 			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
 			builder.WriteString(ts)

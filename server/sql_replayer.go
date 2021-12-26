@@ -16,6 +16,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"net/http"
 	"strconv"
 
@@ -66,10 +67,12 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	}
 }
 
-type SQLReplayHandler struct{}
+type SQLReplayHandler struct{
+	Store kv.Storage
+}
 
-func (s *Server) newSQLReplayHandler() *SQLReplayHandler {
-	prh := &SQLReplayHandler{}
+func (s *Server) newSQLReplayHandler(store kv.Storage) *SQLReplayHandler {
+	prh := &SQLReplayHandler{store}
 	return prh
 }
 
@@ -77,7 +80,7 @@ func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	if status, ok := params[pReplayStatus]; ok {
 		if status == "on" {
-			logutil.StartReplay(params[pFileName])
+			logutil.StartReplay(params[pFileName], h.Store)
 		} else {
 			logutil.StopReplay()
 		}
