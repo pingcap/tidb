@@ -2867,6 +2867,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
 		go func(sql, id string, intxn bool) {
+			//TODO: We need to add a client col also.
 			var builder strings.Builder
 			if intxn {
 				builder.WriteString(id)
