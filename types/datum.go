@@ -184,8 +184,8 @@ func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
 }
 
-// GetStringBinary gets the string value encoded with given charset.
-func (d *Datum) GetStringBinary() string {
+// GetBinaryStringEncoded gets the string value encoded with given charset.
+func (d *Datum) GetBinaryStringEncoded() string {
 	coll, err := charset.GetCollationByName(d.Collation())
 	if err != nil {
 		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
@@ -196,8 +196,8 @@ func (d *Datum) GetStringBinary() string {
 	return string(hack.String(replace))
 }
 
-// GetStringFromBinary gets the string value decoded with given charset.
-func (d *Datum) GetStringFromBinary(sc *stmtctx.StatementContext, chs string) (string, error) {
+// GetBinaryStringDecoded gets the string value decoded with given charset.
+func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string) (string, error) {
 	enc := charset.FindEncoding(chs)
 	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
 		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
@@ -210,6 +210,7 @@ func (d *Datum) GetStringFromBinary(sc *stmtctx.StatementContext, chs string) (s
 	return string(hack.String(trim)), err
 }
 
+// GetStringWithCheck gets the string and checks if it is valid in a given charset.
 func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (string, error) {
 	enc := charset.FindEncoding(chs)
 	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
@@ -1004,9 +1005,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		if fromBinary && toBinary {
 			s = d.GetString()
 		} else if fromBinary {
-			s, err = d.GetStringFromBinary(sc, target.Charset)
+			s, err = d.GetBinaryStringDecoded(sc, target.Charset)
 		} else if toBinary {
-			s = d.GetStringBinary()
+			s = d.GetBinaryStringEncoded()
 		} else {
 			s, err = d.GetStringWithCheck(sc, target.Charset)
 		}
@@ -1021,7 +1022,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
 	case KindBinaryLiteral:
-		s, err = d.GetStringFromBinary(sc, target.Charset)
+		s, err = d.GetBinaryStringDecoded(sc, target.Charset)
 	case KindMysqlBit:
 		// issue #25037
 		// bit to binary/varbinary. should consider transferring to uint first.
@@ -1616,7 +1617,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
-		if j, err = json.ParseBinaryFromString(d.GetStringBinary()); err == nil {
+		if j, err = json.ParseBinaryFromString(d.GetBinaryStringEncoded()); err == nil {
 			ret.SetMysqlJSON(j)
 		}
 	case KindInt64:
