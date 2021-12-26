@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -72,6 +73,8 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
 	}
 }
+
+func (c *TopSQLCollector) CollectStmtStatsRecords(rs []stmtstats.StatementStatsRecord) {}
 
 // GetSQLStatsBySQLWithRetry uses for testing.
 func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUTimeRecord {

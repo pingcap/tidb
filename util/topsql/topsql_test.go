@@ -279,7 +279,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 	sqlMetas := make(map[string]*tipb.SQLMeta)
 	planMetas := make(map[string]string)
-	records := make(map[string]*tipb.CPUTimeRecord)
+	records := make(map[string]*tipb.TopSQLRecord)
 
 	for {
 		r, err := stream.Recv()
@@ -287,8 +287,8 @@ func TestTopSQLPubSub(t *testing.T) {
 			break
 		}
 
-		if r.GetRecord() != nil {
-			rec := r.GetRecord()
+		if r.GetDataRecord() != nil {
+			rec := r.GetDataRecord()
 			if _, ok := records[string(rec.SqlDigest)]; !ok {
 				records[string(rec.SqlDigest)] = rec
 			} else {

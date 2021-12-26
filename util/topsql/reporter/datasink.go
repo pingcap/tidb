@@ -14,7 +14,17 @@
 
 package reporter
 
-import "time"
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
+)
 
 // DataSink collects and sends data to a target.
 type DataSink interface {
@@ -25,4 +35,107 @@ type DataSink interface {
 
 	// OnReporterClosing notifies DataSink that the reporter is closing.
 	OnReporterClosing()
+}
+
+// DataSinkRegisterer is for registering DataSink
+type DataSinkRegisterer interface {
+	Register(dataSink DataSink) error
+	Deregister(dataSink DataSink)
+}
+
+// ReportData contains data that reporter sends to the agent.
+type ReportData struct {
+	// DataRecords contains the topN records []tipb.TopSQLRecord and the `others`
+	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
+	DataRecords []tipb.TopSQLRecord
+	SQLMetas    []tipb.SQLMeta
+	PlanMetas   []tipb.PlanMeta
+}
+
+func (d *ReportData) hasData() bool {
+	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
+}
+
+var _ DataSink = &DefaultDataSinkRegisterer{}
+var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
+
+// DefaultDataSinkRegisterer implements DataSinkRegisterer.
+type DefaultDataSinkRegisterer struct {
+	sync.Mutex
+	ctx       context.Context
+	dataSinks map[DataSink]struct{}
+}
+
+// NewDefaultDataSinkRegisterer creates a new DefaultDataSinkRegisterer which implements DataSinkRegisterer.
+func NewDefaultDataSinkRegisterer(ctx context.Context) DefaultDataSinkRegisterer {
+	return DefaultDataSinkRegisterer{
+		ctx:       ctx,
+		dataSinks: make(map[DataSink]struct{}, 10),
+	}
+}
+
+// Register implements DataSinkRegisterer.
+func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
+	r.Lock()
+	defer r.Unlock()
+
+	select {
+	case <-r.ctx.Done():
+		return errors.New("DefaultDataSinkRegisterer closed")
+	default:
+		if len(r.dataSinks) >= 10 {
+			return errors.New("too many datasinks")
+		}
+		r.dataSinks[dataSink] = struct{}{}
+		if len(r.dataSinks) > 0 {
+			variable.TopSQLVariable.Enable.Store(true)
+		}
+		return nil
+	}
+}
+
+// Deregister implements DataSinkRegisterer.
+func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
+	r.Lock()
+	defer r.Unlock()
+
+	select {
+	case <-r.ctx.Done():
+	default:
+		delete(r.dataSinks, dataSink)
+		if len(r.dataSinks) == 0 {
+			variable.TopSQLVariable.Enable.Store(false)
+		}
+	}
+}
+
+// TrySend implements DataSink.
+//
+// TrySend sends ReportData to all internal registered DataSinks.
+func (r *DefaultDataSinkRegisterer) TrySend(data *ReportData, deadline time.Time) error {
+	r.Lock()
+	dataSinks := make([]DataSink, 0, len(r.dataSinks))
+	for ds := range r.dataSinks {
+		dataSinks = append(dataSinks, ds)
+	}
+	r.Unlock()
+	for _, ds := range dataSinks {
+		if err := ds.TrySend(data, deadline); err != nil {
+			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+// OnReporterClosing implements DataSink.
+//
+// OnReporterClosing calls the OnReporterClosing method of all internally registered DataSinks.
+func (r *DefaultDataSinkRegisterer) OnReporterClosing() {
+	var m map[DataSink]struct{}
+	r.Lock()
+	m, r.dataSinks = r.dataSinks, make(map[DataSink]struct{})
+	r.Unlock()
+	for d := range m {
+		d.OnReporterClosing()
+	}
 }

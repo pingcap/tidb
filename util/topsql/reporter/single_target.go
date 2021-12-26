@@ -30,6 +30,12 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
+const (
+	dialTimeout               = 5 * time.Second
+	grpcInitialWindowSize     = 1 << 30
+	grpcInitialConnWindowSize = 1 << 30
+)
+
 // SingleTargetDataSink reports data to grpc servers.
 type SingleTargetDataSink struct {
 	ctx    context.Context
