@@ -1526,7 +1526,12 @@ DirectPlacementOption:
 	}
 |	"FOLLOWERS" EqOpt LengthNum
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("FOLLOWERS must be positive"))
+			return 1
+		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: cnt}
 	}
 |	"VOTERS" EqOpt LengthNum
 	{
