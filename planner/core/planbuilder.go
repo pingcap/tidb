@@ -2584,6 +2584,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowRestores:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
+	case ast.ShowExports:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or EXPORT_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "EXPORT_ADMIN", false, err)
 	case ast.ShowTableNextRowId:
 		p := &ShowNextRowID{TableName: show.Table}
 		p.setSchemaAndNames(buildShowNextRowID())
@@ -2678,12 +2681,16 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		}
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
-		if raw.Kind == ast.BRIEKindRestore {
+		switch raw.Kind {
+		case ast.BRIEKindRestore:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESTORE_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "RESTORE_ADMIN", false, err)
-		} else {
+		case ast.BRIEKindBackup:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "BACKUP_ADMIN", false, err)
+		case ast.BRIEKindExport:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or EXPORT_ADMIN")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "EXPORT_ADMIN", false, err)
 		}
 	case *ast.GrantRoleStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
@@ -4376,7 +4383,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
-	case ast.ShowBackups, ast.ShowRestores:
+	case ast.ShowBackups, ast.ShowRestores, ast.ShowExports:
 		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowPlacementLabels:

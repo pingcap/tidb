@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/dumpling/export"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -200,6 +201,23 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 }
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	switch s.Kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		return b.buildBR(s, schema)
+	case ast.BRIEKindExport:
+		return b.buildE(s, schema)
+	default:
+		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
+		return nil
+	}
+}
+
+func (b *executorBuilder) buildE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	b.err = errors.Errorf("export unimplement!")
+	return nil
+}
+
+func (b *executorBuilder) buildBR(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
@@ -341,6 +359,7 @@ type BRIEExec struct {
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
+	exportCfg  *export.Config
 	info       *brieTaskInfo
 }
 

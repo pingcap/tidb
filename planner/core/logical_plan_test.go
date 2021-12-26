@@ -1358,6 +1358,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "SHOW EXPORTS",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "EXPORT_ADMIN", false},
+			},
+		},
+		{
 			sql: "GRANT rolename TO user1",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
