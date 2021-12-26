@@ -2599,6 +2599,7 @@ const (
 	ShowBackups
 	ShowRestores
 	ShowImports
+	ShowExports
 	ShowCreateImport
 	ShowPlacement
 	ShowPlacementForDatabase
@@ -2948,6 +2949,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("RESTORES")
 		case ShowImports:
 			ctx.WriteKeyWord("IMPORTS")
+		case ShowExports:
+			ctx.WriteKeyWord("EXPORTS")
 		case ShowPlacement:
 			ctx.WriteKeyWord("PLACEMENT")
 		case ShowPlacementLabels:

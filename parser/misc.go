@@ -326,6 +326,8 @@ var tokenMap = map[string]int{
 	"EXPANSION":                expansion,
 	"EXPIRE":                   expire,
 	"EXPLAIN":                  explain,
+	"EXPORT":                   export,
+	"EXPORTS":                  exports,
 	"EXPR_PUSHDOWN_BLACKLIST":  exprPushdownBlacklist,
 	"EXTENDED":                 extended,
 	"EXTRACT":                  extract,

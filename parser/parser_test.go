@@ -1146,6 +1146,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show backup", false, ""},
 		{"show restore", false, ""},
 		{"show imports", true, "SHOW IMPORTS"},
+		{"show export", false, ""},
+		{"show exports", true, "SHOW EXPORTS"},
 		// for show create import
 		{"show create import test", true, "SHOW CREATE IMPORT `test`"},
 
@@ -6054,6 +6056,20 @@ func TestBRIE(t *testing.T) {
 		},
 		{"restore table g from 'noop://' checksum off", true, "RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OFF"},
 		{"restore table g from 'noop://' checksum optional", true, "RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OPTIONAL"},
+		{"EXPORT DATABASE a TO 'local:///tmp/archive01/'", true, "EXPORT DATABASE `a` TO 'local:///tmp/archive01/'"},
+		{"EXPORt SCHEMA a TO 'local:///tmp/archive01/'", true, "EXPORT DATABASE `a` TO 'local:///tmp/archive01/'"},
+		{"EXPORT DATABASE a,b,c TO 'noop://'", true, "EXPORT DATABASE `a`, `b`, `c` TO 'noop://'"},
+		{"EXPORT DATABASE a.b TO 'noop://'", false, ""},
+		{"EXPORT DATABASE * TO 'noop://'", true, "EXPORT DATABASE * TO 'noop://'"},
+		{"EXPORT DATABASE *, a TO 'noop://'", false, ""},
+		{"EXPORT DATABASE a, * TO 'noop://'", false, ""},
+		{"EXPORT DATABASE TO 'noop://'", false, ""},
+		{"EXPORT TABLE a TO 'noop://'", true, "EXPORT TABLE `a` TO 'noop://'"},
+		{"EXPORT TABLE a.b TO 'noop://'", true, "EXPORT TABLE `a`.`b` TO 'noop://'"},
+		{"EXPORT TABLE a.b,c.d,e TO 'noop://'", true, "EXPORT TABLE `a`.`b`, `c`.`d`, `e` TO 'noop://'"},
+		{"EXPORT TABLE a.* TO 'noop://'", false, ""},
+		{"EXPORT TABLE * TO 'noop://'", false, ""},
+		{"EXPORT TABLE TO 'noop://'", false, ""},
 	}
 
 	RunTest(t, table, false)

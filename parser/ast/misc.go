@@ -2710,6 +2710,7 @@ type BRIEOptionType uint16
 const (
 	BRIEKindBackup BRIEKind = iota
 	BRIEKindRestore
+	BRIEKindExport
 
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
@@ -2759,6 +2760,8 @@ func (kind BRIEKind) String() string {
 		return "BACKUP"
 	case BRIEKindRestore:
 		return "RESTORE"
+	case BRIEKindExport:
+		return "EXPORT"
 	default:
 		return ""
 	}
@@ -2918,7 +2921,7 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	switch n.Kind {
-	case BRIEKindBackup:
+	case BRIEKindBackup, BRIEKindExport:
 		ctx.WriteKeyWord(" TO ")
 	case BRIEKindRestore:
 		ctx.WriteKeyWord(" FROM ")

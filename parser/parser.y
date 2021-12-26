@@ -392,6 +392,8 @@ import (
 	execute               "EXECUTE"
 	expansion             "EXPANSION"
 	expire                "EXPIRE"
+	export                "EXPORT"
+	exports               "EXPORTS"
 	extended              "EXTENDED"
 	faultsSym             "FAULTS"
 	fields                "FIELDS"
@@ -4651,12 +4653,14 @@ ExplainFormatType:
 |	"VERBOSE"
 
 /*******************************************************************
- * Backup / restore / import statements
+ * Backup / restore / import / export statements
  *
  *	BACKUP DATABASE [ * | db1, db2, db3 ] TO 'scheme://location' [ options... ]
  *	BACKUP TABLE [ db1.tbl1, db2.tbl2 ] TO 'scheme://location' [ options... ]
  *	RESTORE DATABASE [ * | db1, db2, db3 ] FROM 'scheme://location' [ options... ]
  *	RESTORE TABLE [ db1.tbl1, db2.tbl2 ] FROM 'scheme://location' [ options... ]
+ *	EXPORT DATABASE [ * | db1, db2, db3 ] TO 'scheme://location' [ options... ]
+ *	EXPORT TABLE [ db1.tbl1, db2.tbl2 ] TO 'scheme://location' [ options... ]
  */
 BRIEStmt:
 	"BACKUP" BRIETables "TO" stringLit BRIEOptions
@@ -4671,6 +4675,14 @@ BRIEStmt:
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"EXPORT" BRIETables "TO" stringLit BRIEOptions
+	{
+		stmt := $2.(*ast.BRIEStmt)
+		stmt.Kind = ast.BRIEKindExport
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
@@ -6042,6 +6054,8 @@ UnReservedKeyword:
 |	"CSV_SEPARATOR"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
+|	"EXPORT"
+|	"EXPORTS"
 |	"REPLICAS"
 |	"POLICY"
 |	"WAIT"
@@ -10705,6 +10719,10 @@ ShowTargetFilterable:
 |	"IMPORTS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImports}
+	}
+|	"EXPORTS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowExports}
 	}
 |	"PLACEMENT"
 	{
