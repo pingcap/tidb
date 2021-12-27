@@ -92,10 +92,6 @@ const (
 	defaultEngineMemCacheSize              = 512 * units.MiB
 	defaultLocalWriterMemCacheSize         = 128 * units.MiB
 
-	maxRetryTimes           = 4
-	defaultRetryBackoffTime = 100 * time.Millisecond
-	pdStores                = "/pd/api/v1/stores"
-
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
