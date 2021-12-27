@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/metrics"
@@ -59,18 +60,6 @@ var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelVal
 const (
 	copBuildTaskMaxBackoff = 5000
 	copNextMaxBackoff      = 20000
-)
-
-// A paging request may be separated into multi requests if there are more data than a page.
-// The paging size grows from min to max, it's not well tuned yet.
-// e.g. a paging request scans over range (r1, r200), it requires 64 rows in the first batch,
-// if it's not drained, then the paging size grows, the new range is calculated like (r100, r200), then send a request again.
-// Compare with the common unary request, paging request allows early access of data, it offers a streaming-like way processing data.
-// TODO: may make the paging parameters configurable.
-const (
-	minPagingSize  uint64 = 64
-	maxPagingSize         = minPagingSize * 128
-	pagingSizeGrow uint64 = 2
 )
 
 // CopClient is coprocessor client.
@@ -212,7 +201,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			// the size will grow every round.
 			pagingSize := uint64(0)
 			if req.Paging {
-				pagingSize = minPagingSize
+				pagingSize = paging.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
 				region:     loc.Location.Region,
@@ -928,7 +917,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	if task.ranges.Len() == 0 {
 		return nil, nil
 	}
-	task.pagingSize = growPagingSize(task.pagingSize)
+	task.pagingSize = paging.GrowPagingSize(task.pagingSize)
 	return []*copTask{task}, nil
 }
 
@@ -1331,12 +1320,4 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
-}
-
-func growPagingSize(size uint64) uint64 {
-	size *= pagingSizeGrow
-	if size > maxPagingSize {
-		return maxPagingSize
-	}
-	return size
 }

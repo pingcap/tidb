@@ -93,14 +93,13 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		return errors.Trace(err)
 	}
 
-	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError, false /*tryRetainID*/)
+	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
 }
 
 func (d *ddl) CreateSchemaWithInfo(
 	ctx sessionctx.Context,
 	dbInfo *model.DBInfo,
 	onExist OnExist,
-	tryRetainID bool,
 ) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(dbInfo.Name)
@@ -2000,7 +1999,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2021,12 +2020,14 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
+// WARNING!!!: if retainID == true, it will not allocate ID by itself. That means if the caller
+// can not promise ID is unique, then we got inconsistency.
 func (d *ddl) createTableWithInfoJob(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	onExist OnExist,
-	tryRetainID bool,
+	retainID bool,
 ) (job *model.Job, err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(dbName)
@@ -2057,14 +2058,17 @@ func (d *ddl) createTableWithInfoJob(
 		}
 	}
 
-	// FIXME: Implement `tryRetainID`
-	if err := d.assignTableID(tbInfo); err != nil {
-		return nil, errors.Trace(err)
+	if !retainID {
+		if err := d.assignTableID(tbInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	if tbInfo.Partition != nil {
-		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
-			return nil, errors.Trace(err)
+		if !retainID {
+			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
@@ -2124,9 +2128,8 @@ func (d *ddl) CreateTableWithInfo(
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	onExist OnExist,
-	tryRetainID bool,
 ) (err error) {
-	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, tryRetainID)
+	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
 	if err != nil {
 		return err
 	}
@@ -2143,6 +2146,46 @@ func (d *ddl) CreateTableWithInfo(
 		}
 	} else {
 		err = d.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
+	dbName model.CIStr,
+	infos []*model.TableInfo,
+	onExist OnExist) error {
+	jobs := &model.Job{
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	args := make([]*model.TableInfo, 0, len(infos))
+
+	var err error
+
+	// 1. counts how many IDs are there
+	// 2. if there is any duplicated table name
+	totalID := 0
+	duplication := make(map[string]struct{})
+	for _, info := range infos {
+		if _, ok := duplication[info.Name.L]; ok {
+			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				err = nil
+			}
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		duplication[info.Name.L] = struct{}{}
+
+		totalID += 1
+		parts := info.GetPartitionInfo()
+		if parts != nil {
+			totalID += len(parts.Definitions)
+		}
 	}
 
 	genIDs, err := d.genGlobalIDs(totalID)
@@ -2201,69 +2244,6 @@ func (d *ddl) CreateTableWithInfo(
 	}
 
 	for j := range infos {
-		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
-			return errors.Trace(d.callHookOnChanged(err))
-		}
-	}
-
-	return nil
-}
-
-func (d *ddl) CreateTablesWithInfo(ctx sessionctx.Context,
-	dbName model.CIStr,
-	infos []*model.TableInfo,
-	onExist OnExist,
-	tryRetainID bool) error {
-	jobs := &model.Job{
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       make([]interface{}, 0, 2),
-	}
-	args := make([]*model.TableInfo, 0, len(infos))
-	idx := make([]int, 0, len(infos))
-	for i, info := range infos {
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, tryRetainID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if job == nil {
-			continue
-		}
-
-		if jobs.Type != model.ActionCreateTables {
-			jobs.Type = model.ActionCreateTables
-			jobs.SchemaID = job.SchemaID
-			jobs.SchemaName = job.SchemaName
-		}
-
-		// store index to table info
-		idx = append(idx, i)
-
-		// append table job args
-		if len(job.Args) != 1 {
-			return fmt.Errorf("except only one argument")
-		}
-		info, ok := job.Args[0].(*model.TableInfo)
-		if !ok {
-			return fmt.Errorf("except table info")
-		}
-		args = append(args, info)
-	}
-	if len(args) == 0 {
-		return nil
-	}
-	jobs.Args = append(jobs.Args, args)
-
-	err := d.doDDLJob(ctx, jobs)
-	if err != nil {
-		// table exists, but if_not_exists flags is true, so we ignore this error.
-		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			err = nil
-		}
-		return errors.Trace(d.callHookOnChanged(err))
-	}
-
-	for _, j := range idx {
 		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}
@@ -2371,7 +2351,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
@@ -5512,6 +5492,11 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Hidden:              true,
 			FieldType:           *expr.GetType(),
 		}
+		// Reset some flag, it may be caused by wrong type infer. But it's not easy to fix them all, so reset them here for safety.
+		colInfo.Flag &= ^mysql.PriKeyFlag
+		colInfo.Flag &= ^mysql.UniqueKeyFlag
+		colInfo.Flag &= ^mysql.AutoIncrementFlag
+
 		if colInfo.Tp == mysql.TypeDatetime || colInfo.Tp == mysql.TypeDate || colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDuration {
 			if colInfo.FieldType.Decimal == types.UnspecifiedLength {
 				colInfo.FieldType.Decimal = int(types.MaxFsp)
@@ -6335,7 +6320,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist)
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {

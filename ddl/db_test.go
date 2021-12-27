@@ -7642,34 +7642,40 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testDBSuite2) TestCreateTables(c *C) {
+func (s *testDBSuite2) TestBatchCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists s1")
-	tk.MustExec("drop table if exists s2")
-	tk.MustExec("drop table if exists s3")
+	tk.MustExec("drop table if exists tables_1")
+	tk.MustExec("drop table if exists tables_2")
+	tk.MustExec("drop table if exists tables_3")
 
 	d := s.dom.DDL()
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("s1"),
+		Name: model.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("s2"),
+		Name: model.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("s3"),
+		Name: model.NewCIStr("tables_3"),
 	})
 
-	err := d.CreateTablesWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
+	// correct name
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
 	c.Check(err, IsNil)
 
-	tk.MustQuery("show tables").Check(testkit.Rows("s1", "s2", "s3"))
+	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
 	c.Assert(job[1], Equals, "test")
-	c.Assert(job[2], Equals, "s1,s2,s3")
+	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
 	c.Assert(job[3], Equals, "create tables")
 	c.Assert(job[4], Equals, "public")
 	// FIXME: we must change column type to give multiple id
 	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
+	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
 }

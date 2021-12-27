@@ -68,6 +68,14 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionAlterPlacementPolicy:
 		return b.applyAlterPolicy(m, diff)
 	case model.ActionCreateTables:
+		roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
+		if !ok {
+			return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+			)
+		}
+		dbInfo := b.copySchemaTables(roDBInfo.Name.L)
+
 		tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 		if diff.AffectedOpts != nil {
 			for _, opt := range diff.AffectedOpts {
@@ -79,7 +87,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 					OldSchemaID: opt.OldSchemaID,
 					OldTableID:  opt.OldTableID,
 				}
-				affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+				affectedIDs, err := b.defaultApplyDiff(m, affectedDiff, dbInfo)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -94,147 +102,142 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 			)
 		}
-		var oldTableID, newTableID int64
-		switch diff.Type {
-		case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
-			newTableID = diff.TableID
-		case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-			oldTableID = diff.TableID
-		case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
-			oldTableID = diff.OldTableID
-			newTableID = diff.TableID
-		default:
-			oldTableID = diff.TableID
-			newTableID = diff.TableID
-		}
-		// handle placement rule cache
-		switch diff.Type {
-		case model.ActionCreateTable:
-			if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-				return nil, errors.Trace(err)
-			}
-		case model.ActionDropTable:
-			b.applyPlacementDelete(placement.GroupID(oldTableID))
-		case model.ActionTruncateTable:
-			b.applyPlacementDelete(placement.GroupID(oldTableID))
-			if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-				return nil, errors.Trace(err)
-			}
-		case model.ActionRecoverTable:
-			if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-				return nil, errors.Trace(err)
-			}
-		case model.ActionExchangeTablePartition:
-			if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 		dbInfo := b.copySchemaTables(roDBInfo.Name.L)
-		b.copySortedTables(oldTableID, newTableID)
+		return b.defaultApplyDiff(m, diff, dbInfo)
+	}
+}
 
-		tblIDs := make([]int64, 0, 2)
-		// We try to reuse the old allocator, so the cached auto ID can be reused.
-		var allocs autoid.Allocators
-		if tableIDIsValid(oldTableID) {
-			if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
-				diff.Type != model.ActionExchangeTablePartition &&
-				// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
-				// For normal node's information schema, repaired table is existed.
-				// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
-				// So here skip to reserve the allocators when repairing table.
-				diff.Type != model.ActionRepairTable &&
-				// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-				diff.Type != model.ActionAlterSequence {
-				oldAllocs, _ := b.is.AllocByID(oldTableID)
-				allocs = filterAllocators(diff, oldAllocs)
-			}
-
-			tmpIDs := tblIDs
-			if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
-				oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
-				if !ok {
-					return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-						fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
-					)
-				}
-				oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
-				tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
-			} else {
-				tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
-			}
-
-			if oldTableID != newTableID {
-				// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
-				tblIDs = tmpIDs
-			}
+// defaultApplyDiff handles all action types that is not handled in ApplyDiff.
+func (b *Builder) defaultApplyDiff(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	var oldTableID, newTableID int64
+	switch diff.Type {
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
+		newTableID = diff.TableID
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+		oldTableID = diff.TableID
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
+		oldTableID = diff.OldTableID
+		newTableID = diff.TableID
+	default:
+		oldTableID = diff.TableID
+		newTableID = diff.TableID
+	}
+	// handle placement rule cache
+	switch diff.Type {
+	case model.ActionCreateTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
 		}
-		if tableIDIsValid(newTableID) {
-			// All types except DropTableOrView.
-			var err error
-			tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	case model.ActionDropTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+	case model.ActionTruncateTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
 		}
-		if diff.AffectedOpts != nil {
-			for _, opt := range diff.AffectedOpts {
-				switch diff.Type {
-				case model.ActionAlterTableAlterPartition:
-					partitionID := opt.TableID
-					// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-					return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
-				case model.ActionTruncateTablePartition:
-					// Reduce the impact on DML when executing partition DDL. eg.
-					// While session 1 performs the DML operation associated with partition 1,
-					// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
-					tblIDs = append(tblIDs, opt.OldTableID)
-					b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-					err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					continue
-				case model.ActionDropTable, model.ActionDropTablePartition:
-					b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-					continue
-				case model.ActionTruncateTable:
-					b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-					err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					continue
-				case model.ActionRecoverTable:
-					err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					continue
-				}
-				var err error
-				affectedDiff := &model.SchemaDiff{
-					Version:     diff.Version,
-					Type:        diff.Type,
-					SchemaID:    opt.SchemaID,
-					TableID:     opt.TableID,
-					OldSchemaID: opt.OldSchemaID,
-					OldTableID:  opt.OldTableID,
-				}
-				affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+	case model.ActionRecoverTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionExchangeTablePartition:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	b.copySortedTables(oldTableID, newTableID)
+
+	tblIDs := make([]int64, 0, 2)
+	// We try to reuse the old allocator, so the cached auto ID can be reused.
+	var allocs autoid.Allocators
+	if tableIDIsValid(oldTableID) {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition &&
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable &&
+			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
+			diff.Type != model.ActionAlterSequence {
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
+		}
+
+		tmpIDs := tblIDs
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
+			if !ok {
+				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
+				)
+			}
+			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
+		} else {
+			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+		}
+
+		if oldTableID != newTableID {
+			// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
+			tblIDs = tmpIDs
+		}
+	}
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			switch diff.Type {
+			case model.ActionTruncateTablePartition:
+				// Reduce the impact on DML when executing partition DDL. eg.
+				// While session 1 performs the DML operation associated with partition 1,
+				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
+				tblIDs = append(tblIDs, opt.OldTableID)
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				tblIDs = append(tblIDs, affectedIDs...)
+				continue
+			case model.ActionDropTable, model.ActionDropTablePartition:
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				continue
+			case model.ActionTruncateTable:
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			case model.ActionRecoverTable:
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
 			}
-		} else {
-			switch diff.Type {
-			case model.ActionAlterTableAlterPartition:
-				// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
-				return []int64{}, nil
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
 			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
 		}
-		return tblIDs, nil
 	}
+	return tblIDs, nil
 }
 
 func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
