@@ -220,7 +220,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := stmt.(*ast.SelectStmt); ok {
+	if p.Schema().Len() > 0 {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
@@ -316,9 +316,8 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		bindSQL := planner.GetBindSQL4PlanCache(e.ctx, prepared.Stmt)
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
-			vars, id, prepared.SchemaVersion, bindSQL,
+			vars, id, prepared.SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)
