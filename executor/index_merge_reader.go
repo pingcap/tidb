@@ -157,19 +157,16 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 	}
 	for i, plan := range e.partialPlans {
 		if e.isCorColInPartialAccess[i] {
-			is, isIndexScan := plan[0].(*plannercore.PhysicalIndexScan)
-			if isIndexScan {
-				if e.ranges[i], err = rebuildIndexRanges(e.ctx, is, is.IdxCols, is.IdxColLens); err != nil {
-					return err
-				}
-			} else {
-				ts, isTableScan := plan[0].(*plannercore.PhysicalTableScan)
-				if !isTableScan {
-					return errors.Errorf("unexpected plan type, expect TableScan, got %s", plan[0].TP())
-				}
-				if e.ranges[i], err = ts.ResolveCorrelatedColumns(); err != nil {
-					return err
-				}
+			switch x := plan[0].(type) {
+			case *plannercore.PhysicalIndexScan:
+				e.ranges[i], err = rebuildIndexRanges(e.ctx, x, x.IdxCols, x.IdxColLens)
+			case *plannercore.PhysicalTableScan:
+				e.ranges[i], err = x.ResolveCorrelatedColumns()
+			default:
+				err = errors.Errorf("unsupported plan type %T", plan[0])
+			}
+			if err != nil {
+				return err
 			}
 		}
 	}
