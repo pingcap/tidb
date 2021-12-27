@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 )
@@ -77,8 +76,6 @@ type parallelCPUProfiler struct {
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
 
-	// some data cache for profiling.
-	data         *ProfileData
 	lastDataSize int
 
 	started bool
@@ -159,7 +156,6 @@ func (p *parallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(defProfileDuration)
 	defer func() {
 		checkTicker.Stop()
-		pprof.StopCPUProfile()
 		p.wg.Done()
 	}()
 	for {
@@ -167,37 +163,36 @@ func (p *parallelCPUProfiler) profilingLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-p.notifyRegister:
-			if !p.inProfilingStatus() {
-				p.profileCycle()
-			}
+			p.doProfiling()
 		case <-checkTicker.C:
-			p.profileCycle()
+			p.doProfiling()
 		}
 	}
 }
 
-func (p *parallelCPUProfiler) profileCycle() {
-	if p.inProfilingStatus() {
-		pprof.StopCPUProfile()
-		p.lastDataSize = p.data.Data.Len()
-		p.sendToConsumers()
+func (p *parallelCPUProfiler) doProfiling() {
+	if p.consumersCount() == 0 {
+		return
 	}
 
-	// Only do cpu profiling when there are consumers.
-	if p.consumersCount() > 0 {
-		metrics.CPUProfileCounter.Inc()
-		p.data = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize)), Begin: time.Now()}
-		err := pprof.StartCPUProfile(p.data.Data)
-		if err != nil {
-			p.data.Error = err
-			// notify error as soon as possible
-			p.sendToConsumers()
-		}
+	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize)), Begin: time.Now()}
+	err := pprof.StartCPUProfile(data.Data)
+	if err != nil {
+		data.Error = err
+		// notify error as soon as possible
+		p.sendToConsumers(data)
+		return
 	}
-}
 
-func (p *parallelCPUProfiler) inProfilingStatus() bool {
-	return p.data != nil
+	// wait 1 second
+	select {
+	case <-p.ctx.Done():
+	case <-time.After(defProfileDuration):
+	}
+
+	pprof.StopCPUProfile()
+	p.lastDataSize = data.Data.Len()
+	p.sendToConsumers(data)
 }
 
 func (p *parallelCPUProfiler) consumersCount() int {
@@ -207,16 +202,15 @@ func (p *parallelCPUProfiler) consumersCount() int {
 	return n
 }
 
-func (p *parallelCPUProfiler) sendToConsumers() {
-	p.data.End = time.Now()
+func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
+	data.End = time.Now()
 	p.Lock()
 	for c := range p.cs {
 		select {
-		case c <- p.data:
+		case c <- data:
 		default:
 			// ignore
 		}
 	}
 	p.Unlock()
-	p.data = nil
 }

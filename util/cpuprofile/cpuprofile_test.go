@@ -34,6 +34,8 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
+	// To speed up testing
+	defProfileDuration = time.Millisecond * 200
 	goleak.VerifyTestMain(m)
 }
 
@@ -67,7 +69,6 @@ func TestParallelCPUProfiler(t *testing.T) {
 	require.Equal(t, 0, globalCPUProfiler.consumersCount())
 	Unregister(nil)
 	require.Equal(t, 0, globalCPUProfiler.consumersCount())
-	require.False(t, globalCPUProfiler.inProfilingStatus())
 
 	// Test profile error and duplicate register.
 	dataCh := make(ProfileConsumer, 10)
@@ -165,7 +166,7 @@ func TestGetCPUProfile(t *testing.T) {
 	// Test profile error
 	err = pprof.StartCPUProfile(bytes.NewBuffer(nil))
 	require.NoError(t, err)
-	err = getCPUProfile(time.Second, bytes.NewBuffer(nil))
+	err = getCPUProfile(time.Millisecond*50, bytes.NewBuffer(nil))
 	require.Error(t, err)
 	require.Equal(t, "cpu profiling already in use", err.Error())
 	pprof.StopCPUProfile()
@@ -180,7 +181,7 @@ func TestGetCPUProfile(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			buf := bytes.NewBuffer(nil)
-			err = getCPUProfile(time.Second, buf)
+			err = getCPUProfile(time.Millisecond*400, buf)
 			require.NoError(t, err)
 			profileData, err := profile.Parse(buf)
 			require.NoError(t, err)
