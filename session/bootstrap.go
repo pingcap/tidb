@@ -1744,8 +1744,8 @@ func doDMLWorks(s Session) {
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Session only variable should not be inserted.
-		if v.Scope != variable.ScopeSession {
+		// Only global variables should be inserted.
+		if v.HasGlobalScope() {
 			vVal := v.Value
 			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"

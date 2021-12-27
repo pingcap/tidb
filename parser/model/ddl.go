@@ -182,7 +182,9 @@ type HistoryInfo struct {
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
 	FinishedTS    uint64
-	Affected      []HistoryInfoAffected
+
+	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
+	MultipleTableInfos []*TableInfo
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
@@ -202,9 +204,9 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 // SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
 func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
 	h.SchemaVersion = schemaVer
-	h.Affected = make([]HistoryInfoAffected, len(tblInfos))
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
 	for i, info := range tblInfos {
-		h.Affected[i].TableInfo = info
+		h.MultipleTableInfos[i] = info
 	}
 }
 
@@ -213,6 +215,7 @@ func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
 	h.DBInfo = nil
 	h.TableInfo = nil
+	h.MultipleTableInfos = nil
 }
 
 // DDLReorgMeta is meta info of DDL reorganization.
@@ -294,6 +297,16 @@ func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver i
 	job.State = jobState
 	job.SchemaState = schemaState
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishMultipleTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfos to the binlog.
+func (job *Job) FinishMultipleTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfos []*TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.SchemaVersion = ver
+	job.BinlogInfo.MultipleTableInfos = tblInfos
+	job.BinlogInfo.TableInfo = tblInfos[len(tblInfos)-1]
 }
 
 // FinishDBJob is called when a job is finished.

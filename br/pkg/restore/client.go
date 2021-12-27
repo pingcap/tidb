@@ -511,7 +511,9 @@ func (rc *Client) GoCreateTables(
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 
 	var err error = nil
-	if rc.batchDllSize > 0 {
+
+	if rc.batchDllSize > 1 {
+
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
 		if err == nil {
@@ -566,6 +568,7 @@ func (rc *Client) GoCreateTables(
 			errCh <- err
 		}
 	}()
+
 	return outCh
 }
 

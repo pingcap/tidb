@@ -3,20 +3,18 @@
 package task
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/stretchr/testify/require"
 )
 
-type testRestoreSuite struct{}
-
-var _ = Suite(&testRestoreSuite{})
-
-func (s *testRestoreSuite) TestRestoreConfigAdjust(c *C) {
+func TestRestoreConfigAdjust(t *testing.T) {
 	cfg := &RestoreConfig{}
 	cfg.adjustRestoreConfig()
 
-	c.Assert(cfg.Config.Concurrency, Equals, uint32(defaultRestoreConcurrency))
-	c.Assert(cfg.Config.SwitchModeInterval, Equals, defaultSwitchInterval)
-	c.Assert(cfg.MergeSmallRegionKeyCount, Equals, restore.DefaultMergeRegionKeyCount)
-	c.Assert(cfg.MergeSmallRegionSizeBytes, Equals, restore.DefaultMergeRegionSizeBytes)
+	require.Equal(t, uint32(defaultRestoreConcurrency), cfg.Config.Concurrency)
+	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
+	require.Equal(t, restore.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount)
+	require.Equal(t, restore.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
 }

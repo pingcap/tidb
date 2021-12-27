@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -296,6 +297,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
+	enc := charset.FindEncoding(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
@@ -311,7 +313,10 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if err != nil {
 				return false
 			}
-			if !isNull && !isValidString(str, ec.Charset) {
+			if isNull {
+				continue
+			}
+			if !enc.IsValid(hack.Slice(str)) {
 				return false
 			}
 		} else {
@@ -322,25 +327,6 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 	}
 
 	return true
-}
-
-// isValidString check if str can convert to dstChs charset without data loss.
-func isValidString(str string, dstChs string) bool {
-	switch dstChs {
-	case charset.CharsetASCII:
-		return charset.StringValidatorASCII{}.Validate(str) == -1
-	case charset.CharsetLatin1:
-		// For backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
-		return true
-	case charset.CharsetUTF8, charset.CharsetUTF8MB4:
-		// String in tidb is actually use utf8mb4 encoding.
-		return true
-	case charset.CharsetBinary:
-		// Convert to binary is always safe.
-		return true
-	default:
-		return charset.StringValidatorOther{Charset: dstChs}.Validate(str) == -1
-	}
 }
 
 // inferCollation infers collation, charset, coercibility and check the legitimacy.

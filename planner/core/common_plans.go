@@ -403,7 +403,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion, bindSQL)
+		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -444,8 +444,15 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
+			cachedVals := cacheValue.([]*PlanCacheValue)
 			for _, cachedVal := range cachedVals {
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
 				}
@@ -509,30 +516,27 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
+			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		} else {
-			// We need to reconstruct the plan cache key based on the bindSQL.
-			cacheKey = NewPSTMTPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
+			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
 				if cacheVal.UserVarTypes.Equal(tps) {
 					hitVal = true
-					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
+					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
 				}
 			}
 			if !hitVal {
-				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
+				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
 			}
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
+			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
