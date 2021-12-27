@@ -2408,4 +2408,19 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
 	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+	// Test prepare and execute.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+	tk.MustExec("set @p = 1")
+	tk.MustExec("execute stmt using @p")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 }

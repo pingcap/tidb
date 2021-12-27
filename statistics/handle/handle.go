@@ -168,14 +168,6 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 	})
 }
 
-func execRestrictedSQL(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return exec.ExecRestrictedStmt(ctx, stmt)
-}
-
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
@@ -1812,8 +1804,9 @@ type colStatsTimeInfo struct {
 	LastAnalyzedAt *types.Time
 }
 
-func getDisableColumnTrackingTime(exec sqlexec.RestrictedSQLExecutor) (*time.Time, error) {
-	rows, fields, err := execRestrictedSQL(context.Background(), exec, "SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
+// getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.
+func (h *Handle) getDisableColumnTrackingTime() (*time.Time, error) {
+	rows, fields, err := h.execRestrictedSQL(context.Background(), "SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1821,11 +1814,12 @@ func getDisableColumnTrackingTime(exec sqlexec.RestrictedSQLExecutor) (*time.Tim
 		return nil, nil
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	// The string represents the UTC time when tidb_enable_column_tracking is set to 0.
 	value, err := d.ToString()
 	if err != nil {
 		return nil, err
 	}
-	t, err := time.Parse(types.TimeFormat, value)
+	t, err := time.Parse(types.TimeFormat+" UTC", value)
 	if err != nil {
 		return nil, err
 	}
@@ -1833,20 +1827,12 @@ func getDisableColumnTrackingTime(exec sqlexec.RestrictedSQLExecutor) (*time.Tim
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsTimeInfo, error) {
-	se, err := h.pool.Get()
+func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+	disableTime, err := h.getDisableColumnTrackingTime()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	loc := sctx.GetSessionVars().Location()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	disableTime, err := getDisableColumnTrackingTime(exec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rows, _, err := execRestrictedSQL(context.Background(), exec, "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1859,19 +1845,25 @@ func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsTimeInf
 		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
 			t := row.GetTime(2)
-			statsUsage.LastUsedAt = &t
-		}
-		if !row.IsNull(3) {
-			t := row.GetTime(3)
-			gt, err := t.GoTime(loc)
+			gt, err := t.GoTime(time.UTC)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
 			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
-				statsUsage.LastAnalyzedAt = &t
+				if err := t.ConvertTimeZone(time.UTC, loc); err != nil {
+					return nil, errors.Trace(err)
+				}
+				statsUsage.LastUsedAt = &t
 			}
+		}
+		if !row.IsNull(3) {
+			t := row.GetTime(3)
+			if err := t.ConvertTimeZone(time.UTC, loc); err != nil {
+				return nil, errors.Trace(err)
+			}
+			statsUsage.LastAnalyzedAt = &t
 		}
 		colStatsMap[tblColID] = statsUsage
 	}
@@ -1905,19 +1897,11 @@ func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
-	se, err := h.pool.Get()
+	disableTime, err := h.getDisableColumnTrackingTime()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	loc := sctx.GetSessionVars().Location()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	disableTime, err := getDisableColumnTrackingTime(exec)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	rows, _, err := execRestrictedSQL(context.Background(), exec, "SELECT column_id, last_used_at FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1928,7 +1912,7 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 		}
 		colID := row.GetInt64(0)
 		t := row.GetTime(1)
-		gt, err := t.GoTime(loc)
+		gt, err := t.GoTime(time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

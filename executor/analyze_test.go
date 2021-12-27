@@ -1462,40 +1462,6 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 	}
 }
 
-func TestAnalyzeColumnsError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-
-	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn`/`ANALYZE PREDICATE COLUMNS` currently
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	err := tk.ExecToErr("analyze table t columns a")
-	require.Equal(t, "Only the analyze version 2 supports analyzing the specified columns", err.Error())
-	err = tk.ExecToErr("analyze table t predicate columns")
-	require.Equal(t, "Only the analyze version 2 supports analyzing predicate columns", err.Error())
-
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	// invalid column
-	err = tk.ExecToErr("analyze table t columns c")
-	terr := errors.Cause(err).(*terror.Error)
-	require.Equal(t, errors.ErrCode(errno.ErrAnalyzeMissColumn), terr.Code())
-
-	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
-	}()
-	tk.MustExec("set global tidb_enable_column_tracking = 1")
-	tk.MustExec("analyze table t predicate columns")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
-		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
-	))
-}
-
 func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
@@ -1868,4 +1834,70 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 					"test t  idx 1 1 3 1 4 4 0"))
 		}(val)
 	}
+}
+
+func TestAnalyzeColumnsError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn`/`ANALYZE PREDICATE COLUMNS` currently
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	err := tk.ExecToErr("analyze table t columns a")
+	require.Equal(t, "Only the analyze version 2 supports analyzing the specified columns", err.Error())
+	err = tk.ExecToErr("analyze table t predicate columns")
+	require.Equal(t, "Only the analyze version 2 supports analyzing predicate columns", err.Error())
+
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	// invalid column
+	err = tk.ExecToErr("analyze table t columns c")
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrAnalyzeMissColumn), terr.Code())
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("analyze table t predicate columns")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
+	))
+}
+
+func TestEnableColumnTracking(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t1 (a int, b int)")
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b > 1")
+	require.NoError(t, h.DumpColStatsUsageToKV())
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "b", rows[0][3])
+	tk.MustExec("analyze table t predicate columns")
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "b", rows[0][3])
+
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
 }

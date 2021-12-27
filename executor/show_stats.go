@@ -16,9 +16,6 @@ package executor
 
 import (
 	"fmt"
-	"sort"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
+	"sort"
+	"strings"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -459,7 +458,7 @@ func (e *ShowExec) fetchShowAnalyzeStatus() {
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
-	colStatsMap, err := h.LoadColumnStatsUsage()
+	colStatsMap, err := h.LoadColumnStatsUsage(e.ctx.GetSessionVars().Location())
 	if err != nil {
 		return err
 	}
