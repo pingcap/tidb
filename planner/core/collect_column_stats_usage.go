@@ -64,6 +64,7 @@ func newColumnStatsUsageCollector(collectMode uint64) *columnStatsUsageCollector
 func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column) {
 	tblColIDs, ok := c.colMap[col.UniqueID]
 	if !ok {
+		// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
 		return
 	}
 	for tblColID := range tblColIDs {
@@ -85,6 +86,7 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 	for _, relatedCol := range relatedCols {
 		tblColIDs, ok := c.colMap[relatedCol.UniqueID]
 		if !ok {
+			// It may happen if some leaf of logical plan is LogicalMemTable/LogicalShow/LogicalShowDDLJobs.
 			continue
 		}
 		for tblColID := range tblColIDs {
@@ -106,8 +108,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *Dat
 		c.colMap[col.UniqueID] = map[model.TableColumnID]struct{}{tblColID: {}}
 	}
 	// We should use `pushedDownConds` here. `allConds` is used for partition pruning, which doesn't need stats.
-	// We still need to add predicate columns from `pushedDownConds` even if the number of columns is less than `wideTableColumnCount`
-	// because there may be some correlated columns in `pushedDownConds`.
 	c.addPredicateColumnsFromExpressions(ds.pushedDownConds)
 }
 

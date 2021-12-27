@@ -1867,6 +1867,8 @@ func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsTimeInf
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
+			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
 				statsUsage.LastAnalyzedAt = &t
 			}
@@ -1930,6 +1932,8 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we don't regard the column as predicate column because
+		// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
 		if disableTime == nil || gt.After(*disableTime) {
 			columnIDs = append(columnIDs, colID)
 		}
