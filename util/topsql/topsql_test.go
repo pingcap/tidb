@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
@@ -34,6 +35,10 @@ import (
 )
 
 func TestTopSQLCPUProfile(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	collector := mock.NewTopSQLCollector()
 	topsql.SetupTopSQLForTest(collector)
 	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
@@ -80,6 +85,10 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 }
 
 func TestTopSQLReporter(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	server, err := mockServer.StartMockAgentServer()
 	require.NoError(t, err)
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
@@ -154,6 +163,10 @@ func TestTopSQLReporter(t *testing.T) {
 }
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	collector := mock.NewTopSQLCollector()
 	topsql.SetupTopSQLForTest(collector)
 
@@ -187,6 +200,10 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 }
 
 func TestTopSQLPubSub(t *testing.T) {
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 

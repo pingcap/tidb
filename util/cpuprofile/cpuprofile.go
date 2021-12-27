@@ -101,13 +101,14 @@ var (
 
 func (p *parallelCPUProfiler) start() error {
 	p.Lock()
-	defer p.Unlock()
 	if p.started {
+		p.Unlock()
 		return errProfilerAlreadyStarted
 	}
 
 	p.started = true
 	p.ctx, p.cancel = context.WithCancel(context.Background())
+	p.Unlock()
 	p.wg.Add(1)
 	go util.WithRecovery(p.profilingLoop, nil)
 
@@ -117,14 +118,16 @@ func (p *parallelCPUProfiler) start() error {
 
 func (p *parallelCPUProfiler) stop() {
 	p.Lock()
-	defer p.Unlock()
 	if !p.started {
+		p.Unlock()
 		return
 	}
 	p.started = false
 	if p.cancel != nil {
 		p.cancel()
 	}
+	p.Unlock()
+
 	p.wg.Wait()
 	logutil.BgLogger().Info("parallel cpu profiler stopped")
 }

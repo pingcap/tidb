@@ -17,20 +17,17 @@ package topsql
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-	_ = cpuprofile.StartCPUProfiler()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/cpuprofile.(*parallelCPUProfiler).profilingLoop"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

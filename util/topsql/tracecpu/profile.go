@@ -84,6 +84,7 @@ func (sp *SQLCPUCollector) Close() {
 	if sp.cancel != nil {
 		sp.cancel()
 	}
+	sp.Disable()
 	sp.wg.Wait()
 }
 
