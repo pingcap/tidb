@@ -133,6 +133,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		memTracker: kvReq.MemTracker,
 		encodeType: encodetype,
 		storeType:  kvReq.StoreType,
+		paging:     kvReq.Paging,
 	}, nil
 }
 

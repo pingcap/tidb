@@ -32,7 +32,7 @@ import (
 var testDataMap = make(testdata.BookKeeper, 3)
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	if !flag.Parsed() {
 		flag.Parse()
