@@ -160,6 +160,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		// add the extra Limit after matching the bind record
 		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
 		node = stmtNode
+
+	}
+	if ok {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
 	}
 
 	var (
