@@ -789,7 +789,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
 	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
 		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
+		engineID, err := strconv.Atoi(engine[index+1:]) // nolint:gosec
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
