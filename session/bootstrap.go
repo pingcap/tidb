@@ -541,11 +541,14 @@ const (
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
 	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
 	version80 = 80
+	// version81 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
+	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
+	version81 = 81
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version80
+var currentBootstrapVersion int64 = version81
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -629,6 +632,7 @@ var (
 		upgradeToVer78,
 		upgradeToVer79,
 		upgradeToVer80,
+		upgradeToVer81,
 	}
 )
 
@@ -1655,6 +1659,29 @@ func upgradeToVer80(s Session, ver int64) {
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
 }
 
+// For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
+// This helps minimize query plan regressions.
+func upgradeToVer81(s Session, ver int64) {
+	if ver >= version81 {
+		return
+	}
+	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
+	// If not, insert "tidb_enable_index_merge | off".
+	ctx := context.Background()
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1764,8 +1791,8 @@ func doDMLWorks(s Session) {
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Session only variable should not be inserted.
-		if v.Scope != variable.ScopeSession {
+		// Only global variables should be inserted.
+		if v.HasGlobalScope() {
 			vVal := v.Value
 			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"

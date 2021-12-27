@@ -779,6 +779,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableIndexMerge               = true
 )
 
 // Process global variables.
@@ -832,5 +833,5 @@ type TopSQL struct {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
+	return TopSQLVariable.Enable.Load()
 }
