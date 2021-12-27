@@ -51,8 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1284,12 +1284,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(collector)
-	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
+	topsql.SetupTopSQLForTest(mc)
+	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
-	sqlCPUCollector.Enable()
-	defer sqlCPUCollector.Close()
+	defer sqlCPUCollector.Stop()
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
@@ -1343,13 +1342,13 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	defer cancel()
 	checkFn := func(sql, planRegexp string) {
 		require.NoError(t, timeoutCtx.Err())
-		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
+		stats := mc.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		require.Greaterf(t, len(stats), 0, "sql: %v", sql)
 
 		for _, s := range stats {
-			sqlStr := collector.GetSQL(s.SQLDigest)
-			encodedPlan := collector.GetPlan(s.PlanDigest)
+			sqlStr := mc.GetSQL(s.SQLDigest)
+			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
 			normalizedSQL := parser.Normalize(sql)
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
@@ -1363,7 +1362,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		}
 	}
 	// Wait the top sql collector to collect profile data.
-	collector.WaitCollectCnt(1)
+	mc.WaitCollectCnt(1)
 	// Check result of test case 1.
 	for _, ca := range cases1 {
 		checkFn(ca.sql, ca.planRegexp)
@@ -1411,7 +1410,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		})
 	}
 	// Wait the top sql collector to collect profile data.
-	collector.WaitCollectCnt(1)
+	mc.WaitCollectCnt(1)
 	// Check result of test case 2.
 	for _, ca := range cases2 {
 		checkFn(ca.prepare, ca.planRegexp)
@@ -1473,7 +1472,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 
 	// Wait the top sql collector to collect profile data.
-	collector.WaitCollectCnt(1)
+	mc.WaitCollectCnt(1)
 	// Check result of test case 3.
 	for _, ca := range cases3 {
 		checkFn(ca.prepare, ca.planRegexp)

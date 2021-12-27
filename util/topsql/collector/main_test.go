@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tracecpu_test
+package collector_test
 
 import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/testbridge"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/collector/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -35,15 +35,15 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
-	collector := mock.NewTopSQLCollector()
-	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	mc := mock.NewTopSQLCollector()
+	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
 
-	collector.WaitCollectCnt(1)
-	require.True(t, collector.CollectCnt() >= 1)
+	mc.WaitCollectCnt(1)
+	require.True(t, mc.CollectCnt() >= 1)
 	sqlCPUCollector.Stop()
 	sqlCPUCollector.Start()
-	collector.WaitCollectCnt(2)
-	require.True(t, collector.CollectCnt() >= 2)
+	mc.WaitCollectCnt(2)
+	require.True(t, mc.CollectCnt() >= 2)
 	sqlCPUCollector.Stop()
 }

@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -47,9 +47,9 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 		tsr.RegisterPlan(key, value)
 	}
 	// collect
-	var records []tracecpu.SQLCPUTimeRecord
+	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, tracecpu.SQLCPUTimeRecord{
+		records = append(records, collector.SQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
@@ -190,7 +190,7 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
-func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
@@ -199,14 +199,14 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	value = "planNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterPlan(key, value)
 
-	return tracecpu.SQLCPUTimeRecord{
+	return collector.SQLCPUTimeRecord{
 		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
 		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
 		CPUTimeMs:  cpuTimeMs,
 	}
 }
 
-func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []collector.SQLCPUTimeRecord) {
 	tsr.Collect(timestamp, records)
 	time.Sleep(time.Millisecond * 100)
 }
@@ -222,32 +222,32 @@ func TestCollectAndTopN(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
 	collectAndWait(tsr, 1, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 3, 3),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 2, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 3, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 5, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 4, records)
 
 	// Test for time jump back.
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 6, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
@@ -304,10 +304,10 @@ func TestCollectCapacity(t *testing.T) {
 			tsr.RegisterPlan(key, value)
 		}
 	}
-	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
-		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+	genRecord := func(n int) []collector.SQLCPUTimeRecord {
+		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
-			records = append(records, tracecpu.SQLCPUTimeRecord{
+			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 				CPUTimeMs:  uint32(i + 1),
@@ -434,7 +434,7 @@ func TestCollectInternal(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
@@ -479,7 +479,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.NoError(t, tsr.Register(ds))
 	}
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
 	tsr.Collect(3, records)
@@ -510,7 +510,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		tsr.Deregister(dss[i])
 	}
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
 	tsr.Collect(6, records)

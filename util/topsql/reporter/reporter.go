@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
@@ -48,7 +48,7 @@ var _ TopSQLReporter = &RemoteTopSQLReporter{}
 
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
-	tracecpu.Collector
+	collector.Collector
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 	Close()
@@ -62,7 +62,7 @@ type DataSinkRegisterer interface {
 
 type cpuData struct {
 	timestamp uint64
-	records   []tracecpu.SQLCPUTimeRecord
+	records   []collector.SQLCPUTimeRecord
 }
 
 // dataPoints represents the cumulative SQL plan CPU time in current minute window
@@ -106,7 +106,7 @@ func (t dataPointsOrderByCPUTime) Swap(i, j int) {
 	t[i], t[j] = t[j], t[i]
 }
 
-type sqlCPUTimeRecordSlice []tracecpu.SQLCPUTimeRecord
+type sqlCPUTimeRecordSlice []collector.SQLCPUTimeRecord
 
 func (t sqlCPUTimeRecordSlice) Len() int {
 	return len(t)
@@ -131,7 +131,7 @@ type RemoteTopSQLReporter struct {
 	dataSinkMu sync.Mutex
 	dataSinks  map[DataSink]struct{}
 
-	sqlCPUCollector *tracecpu.SQLCPUCollector
+	sqlCPUCollector *collector.SQLCPUCollector
 
 	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
@@ -174,7 +174,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 
-	tsr.sqlCPUCollector = tracecpu.NewSQLCPUCollector(tsr)
+	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
 
 	go tsr.collectWorker()
 	go tsr.reportWorker()
@@ -282,7 +282,7 @@ func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
 
 // Collect receives CPU time records for processing. WARN: It will drop the records if the processing is not in time.
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []collector.SQLCPUTimeRecord) {
 	if len(records) == 0 {
 		return
 	}
@@ -419,7 +419,7 @@ func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
 	return buf.String()
 }
 
-func getTopNRecords(records []tracecpu.SQLCPUTimeRecord) (topN, shouldEvict []tracecpu.SQLCPUTimeRecord) {
+func getTopNRecords(records []collector.SQLCPUTimeRecord) (topN, shouldEvict []collector.SQLCPUTimeRecord) {
 	maxStmt := int(variable.TopSQLVariable.MaxStatementCount.Load())
 	if len(records) <= maxStmt {
 		return records, nil
@@ -446,11 +446,11 @@ func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) 
 // doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
 // All the evicted record will be summary into the collectedData.others.
 func (tsr *RemoteTopSQLReporter) doCollect(
-	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+	collectTarget map[string]*dataPoints, timestamp uint64, records []collector.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
 
 	// Get top N records of each round records.
-	var evicted []tracecpu.SQLCPUTimeRecord
+	var evicted []collector.SQLCPUTimeRecord
 	records, evicted = getTopNRecords(records)
 
 	keyBuf := bytes.NewBuffer(make([]byte, 0, 64))

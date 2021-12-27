@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -87,7 +87,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
 	}
-	ctx = tracecpu.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
 	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {

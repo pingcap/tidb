@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/collector/mock"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
-	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -39,9 +39,9 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
-	collector := mock.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(collector)
-	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
+	mc := mock.NewTopSQLCollector()
+	topsql.SetupTopSQLForTest(mc)
+	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
 
@@ -70,10 +70,10 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 
 	for _, req := range reqs {
-		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
+		stats := mc.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
 		require.Equal(t, 1, len(stats))
-		sql := collector.GetSQL(stats[0].SQLDigest)
-		plan := collector.GetPlan(stats[0].PlanDigest)
+		sql := mc.GetSQL(stats[0].SQLDigest)
+		plan := mc.GetPlan(stats[0].PlanDigest)
 		require.Equal(t, req.sql, sql)
 		require.Equal(t, req.plan, plan)
 	}
