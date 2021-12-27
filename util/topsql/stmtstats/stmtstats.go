@@ -42,8 +42,8 @@ type StatementObserver interface {
 	// This function only use to record the SQL and plan digest, it doesn't matter if you delay calling this function.
 	OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte)
 
-	// OnExecFinished should be called after the statement execution finish.
-	OnExecFinished()
+	// OnExecutionFinished should be called after the statement execution finish.
+	OnExecutionFinished()
 }
 
 // StatementStats is a counter used locally in each session.
@@ -51,9 +51,8 @@ type StatementObserver interface {
 // and it is expected that these statistics will eventually be collected and merged
 // in the background.
 type StatementStats struct {
-	seCtx StatementExecutionContext
-	state StmtExecState
-
+	seCtx    StatementExecutionContext
+	state    StmtExecState
 	mu       sync.Mutex
 	data     StatementStatsMap
 	finished *atomic.Bool
@@ -123,8 +122,8 @@ func (s *StatementStats) OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []by
 	item.ExecCount++
 }
 
-// OnExecFinished implements StatementObserver.OnExecFinished.
-func (s *StatementStats) OnExecFinished() {
+// OnExecutionFinished implements StatementObserver.OnExecutionFinished.
+func (s *StatementStats) OnExecutionFinished() {
 	if s.state != stmtExecStateDigestIsReady {
 		logutil.BgLogger().Warn("[stmt-stats] unexpect state",
 			zap.String("expect", stmtExecStateDigestIsReady.String()),
@@ -143,7 +142,7 @@ func (s *StatementStats) OnExecFinished() {
 	if cost > 0 {
 		item.SumExecNanoDuration += uint64(cost)
 	}
-	// Count more data here.
+	// Add more data here.
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -306,8 +305,6 @@ type StatementExecutionContext struct {
 	begin time.Time
 	// Add more required variables here
 }
-
-var zeroTime = time.Time{}
 
 func (sec *StatementExecutionContext) reset() {
 	sec.sqlDigest = nil

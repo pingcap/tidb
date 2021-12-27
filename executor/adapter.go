@@ -234,7 +234,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtOnSQLPlanDigestReadyForTopSQL()
+	a.observeStmtOnSQLAndPlanDigestReadyForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -401,7 +401,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtOnSQLPlanDigestReadyForTopSQL()
+	a.observeStmtOnSQLAndPlanDigestReadyForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -1277,7 +1277,7 @@ func (a *ExecStmt) GetTextToLog() string {
 	return sql
 }
 
-func (a *ExecStmt) observeStmtOnSQLPlanDigestReadyForTopSQL() {
+func (a *ExecStmt) observeStmtOnSQLAndPlanDigestReadyForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		vars.StmtStats.OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest)
@@ -1288,7 +1288,7 @@ func (a *ExecStmt) observeStmtOnSQLPlanDigestReadyForTopSQL() {
 
 func (a *ExecStmt) observeStmtExecFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		vars.StmtStats.OnExecFinished()
+		vars.StmtStats.OnExecutionFinished()
 	}
 }
 

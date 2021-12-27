@@ -61,15 +61,15 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.register(stats)
 	stats.OnReceiveCmd()
 	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-1"), nil)
-	stats.OnExecFinished()
+	stats.OnExecutionFinished()
 
 	// test for double call
 	stats.OnReceiveCmd()
 	stats.OnReceiveCmd()
 	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
 	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
-	stats.OnExecFinished()
-	stats.OnExecFinished()
+	stats.OnExecutionFinished()
+	stats.OnExecutionFinished()
 
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {

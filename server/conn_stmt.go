@@ -282,7 +282,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
 			sessVars.StmtStats.OnSQLAndPlanDigestFirstReady(prepareObj.SQLDigest.Bytes(), nil)
-			defer sessVars.StmtStats.OnExecFinished()
+			defer sessVars.StmtStats.OnExecutionFinished()
 		}
 	}
 	sql := ""

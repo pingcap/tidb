@@ -186,13 +186,13 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	for n := 0; n < 2; n++ {
 		stats.OnReceiveCmd()
 		stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-1"), nil)
-		stats.OnExecFinished()
+		stats.OnExecutionFinished()
 	}
 	for n := 0; n < 3; n++ {
 		stats.OnReceiveCmd()
 		stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
 		mockUnixNanoTs.Add(100)
-		stats.OnExecFinished()
+		stats.OnExecutionFinished()
 	}
 
 	stats.OnReceiveCmd()
@@ -212,7 +212,7 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	assert.Len(t, m, 0)
 
 	// mock for statement SQL-3 execute finish.
-	stats.OnExecFinished()
+	stats.OnExecutionFinished()
 	// mock for SQL-4 begin to parse.
 	stats.OnReceiveCmd()
 
@@ -224,7 +224,7 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	// mock for statement SQL-4 execute finish.
 	stats.OnReceiveCmd()
 	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-4"), nil)
-	stats.OnExecFinished()
+	stats.OnExecutionFinished()
 
 	m = stats.Take()
 	assert.Len(t, m, 1)
