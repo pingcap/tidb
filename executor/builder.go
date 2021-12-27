@@ -3409,6 +3409,11 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
+	indexPaging := false
+	if v.Paging {
+		indexPaging = true
+		indexStreaming = false
+	}
 	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
 		return nil, err
@@ -3430,6 +3435,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
+		indexPaging:       indexPaging,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),

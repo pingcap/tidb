@@ -2203,6 +2203,10 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 					partition p1 values less than(11),
 					partition p2 values less than(16));`)
 	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	tk.MustExec("set @@tidb_enable_index_merge = off")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_index_merge = on")
+	}()
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
