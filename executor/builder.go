@@ -2370,14 +2370,21 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
 	err := pdHelper.GetPDRegionStats(tid, regionStats)
+	failpoint.Inject("calcSampleRateByStorageCount", func() {
+		// Force the TiDB thinking that there's PD and the count of region is small.
+		err = nil
+		regionStats.Count = 1
+	})
 	if err != nil {
 		return 0, false
 	}
-	// If this table is not small, we directly use the count from PD.
+	// If this table is not small, we directly use the count from PD,
+	// since for a small table, it's possible that it's data is in the same region with part of another large table.
+	// Thus, we use the number of the regions of the table's table KV to decide whether the table is small.
 	if regionStats.Count > 2 {
 		return float64(regionStats.StorageKeys), true
 	}
-	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in only one region.
+	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", task.DBName, task.TableName)
 	if task.PartitionName != "" {
