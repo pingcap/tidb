@@ -462,6 +462,18 @@ func (tr *TableRestore) restoreEngine(
 		}
 	}()
 
+	// check if we need to return chunk error instead
+	checkError := func(ck *checkpoints.ChunkCheckpoint, err error) error {
+		if err1 := chunkErr.Get(); err1 != nil {
+			if !common.IsContextCanceledError(err) {
+				log.L().Error("process chunk failed", zap.String("chunk", ck.Key.String()),
+					zap.Error(err))
+			}
+			return err1
+		}
+		return err
+	}
+
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -500,7 +512,8 @@ func (tr *TableRestore) restoreEngine(
 		// 	4. flush kvs data (into tikv node)
 		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			err = checkError(chunk, err)
+			return nil, err
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
@@ -513,12 +526,14 @@ func (tr *TableRestore) restoreEngine(
 
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
-			return nil, errors.Trace(err)
+			err = checkError(chunk, err)
+			return nil, err
 		}
 
 		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 		if err != nil {
-			return nil, errors.Trace(err)
+			err = checkError(chunk, err)
+			return nil, err
 		}
 
 		go func(w *worker.Worker, cr *chunkRestore) {
