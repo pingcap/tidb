@@ -1814,7 +1814,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
-func (b *PlanBuilder) getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	columnIDs := make(map[int64]struct{}, len(tbl.TableInfo.Columns))
 	for _, colName := range specifiedColumns {
 		colInfo := model.FindColumnInfo(tbl.TableInfo.Columns, colName.L)
@@ -1970,6 +1970,59 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	names []string,
 	tbl *ast.TableName,
 	version int,
+) ([]AnalyzeColumnsTask, error) {
+	if as.Incremental {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
+	}
+	colList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
+	if err != nil {
+		return nil, err
+	}
+	colsInfo, err := b.getFullAnalyzeColumnsInfo(colList, tbl)
+	if err != nil {
+		return nil, err
+	}
+	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
+	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
+	for i, id := range physicalIDs {
+		if id == tbl.TableInfo.ID {
+			id = -1
+		}
+		info := AnalyzeInfo{
+			DBName:        tbl.Schema.O,
+			TableName:     tbl.Name.O,
+			PartitionName: names[i],
+			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+			Incremental:   false,
+			StatsVersion:  version,
+		}
+		newTask := AnalyzeColumnsTask{
+			HandleCols:  handleCols,
+			ColsInfo:    colsInfo,
+			AnalyzeInfo: info,
+			TblInfo:     tbl.TableInfo,
+			Indexes:     indexes,
+		}
+		if newTask.HandleCols == nil {
+			extraCol := model.NewExtraHandleColInfo()
+			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
+		}
+		taskSlice = append(taskSlice, newTask)
+	}
+	return taskSlice, nil
+}
+
+// separate the implementation when persist_options is on since the behavior for globalstats is different
+func (b *PlanBuilder) buildAnalyzeFullSamplingTaskWithSavedOptions(
+	as *ast.AnalyzeTableStmt,
+	taskSlice []AnalyzeColumnsTask,
+	physicalIDs []int64,
+	names []string,
+	tbl *ast.TableName,
+	version int,
 	optionsMap map[int64]V2AnalyzeOptions,
 ) ([]AnalyzeColumnsTask, map[int64]V2AnalyzeOptions, error) {
 	if as.Incremental {
@@ -1979,7 +2032,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return nil, nil, err
 	}
-	colList, err := b.getAnalyzeColumnList(as.ColumnNames, tbl)
+	colList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2070,9 +2123,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
-	if !variable.PersistAnalyzeOptions.Load() {
-		return analyzeOptions, model.DefaultChoice, nil, nil
-	}
 	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), "select * from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
@@ -2165,6 +2215,7 @@ func (b *PlanBuilder) getFinalAnalyzeColList(choice model.ColumnChoice, list []*
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
+	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
@@ -2190,9 +2241,16 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			p.ColTasks, p.OptionsMap, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version, p.OptionsMap)
-			if err != nil {
-				return nil, err
+			if usePersistedOptions {
+				p.ColTasks, p.OptionsMap, err = b.buildAnalyzeFullSamplingTaskWithSavedOptions(as, p.ColTasks, physicalIDs, names, tbl, version, p.OptionsMap)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+				if err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
