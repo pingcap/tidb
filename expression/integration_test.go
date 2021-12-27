@@ -6944,9 +6944,18 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(date'101001', '19990329', 120101);").Check(testkit.Rows("2012-01-01"))
 	// compare Time/Date as DateTime type, return DateTime type
 	tk.MustQuery("select greatest(time '20:00', date'691231');").Check(testkit.Rows("2069-12-31 00:00:00"))
+	// compare Date/Date as Date type, return Date type
+	tk.MustQuery("select greatest(date '120301', date'691231');").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Time as Time type, return Time type
+	tk.MustQuery("select greatest(time '203001', time '2230');").Check(testkit.Rows("20:30:01"))
+	// compare DateTime/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(timestamp '2021-01-31 00:00:01', timestamp '2021-12-31 12:00:00');").Check(testkit.Rows("2021-12-31 12:00:00"))
+	// compare Time/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '00:00:01', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2069-12-31 12:00:00"))
+	// compare Date/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(date '21000101', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2100-01-01 00:00:00"))
 	//Original 30264 Issue:
 	tk.MustQuery("select greatest(time '20:00:00', 120000);").Check(testkit.Rows("20:00:00"))
 	tk.MustQuery("select greatest(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
 	tk.MustQuery("select greatest(date '1995-05-05', 19910101, 20050505, 19930303);").Check(testkit.Rows("2005-05-05"))
-
 }
