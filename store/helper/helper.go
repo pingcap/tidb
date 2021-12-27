@@ -746,7 +746,7 @@ OutLoop:
 	return tableInfos
 }
 
-// BytesKeyToHex convert bytes key to hex key, it is exported only for test.
+// BytesKeyToHex converts bytes key to hex key, it is exported only for test.
 func BytesKeyToHex(key []byte) string {
 	return bytesKeyToHex(key)
 }
