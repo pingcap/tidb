@@ -465,7 +465,8 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams PreparedParams
+	PreparedParams    PreparedParams
+	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
