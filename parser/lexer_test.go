@@ -328,12 +328,12 @@ func TestSpecialComment(t *testing.T) {
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
 	requires.Equal(t, "select", lit)
-	requires.Equal(t, Pos{0, 9, 9}, pos)
+	requires.Equal(t, Pos{1, 9, 9}, pos)
 
 	tok, pos, lit = l.scan()
 	requires.Equal(t, intLit, tok)
 	requires.Equal(t, "5", lit)
-	requires.Equal(t, Pos{1, 1, 16}, pos)
+	requires.Equal(t, Pos{2, 1, 16}, pos)
 }
 
 func TestFeatureIDsComment(t *testing.T) {
@@ -341,12 +341,12 @@ func TestFeatureIDsComment(t *testing.T) {
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
 	requires.Equal(t, "auto_random", lit)
-	requires.Equal(t, Pos{0, 16, 16}, pos)
+	requires.Equal(t, Pos{1, 16, 16}, pos)
 	tok, pos, _ = l.scan()
 	requires.Equal(t, int('('), tok)
 	_, pos, lit = l.scan()
 	requires.Equal(t, "5", lit)
-	requires.Equal(t, Pos{0, 28, 28}, pos)
+	requires.Equal(t, Pos{1, 28, 28}, pos)
 	tok, pos, _ = l.scan()
 	requires.Equal(t, int(')'), tok)
 

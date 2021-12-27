@@ -139,17 +139,16 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 // ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	resetParams(parser)
+	parser.lexer.reset(sql)
 	for _, p := range params {
 		if err := p.ApplyOn(parser); err != nil {
 			return nil, nil, err
 		}
 	}
-	sql = parser.lexer.tryDecodeToUTF8String(sql)
 	parser.src = sql
 	parser.result = parser.result[:0]
 
 	var l yyLexer
-	parser.lexer.reset(sql)
 	l = &parser.lexer
 	yyParse(l, parser)
 
@@ -396,7 +395,6 @@ var (
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
-	p.lexer.encoding = charset.EncodingBinImpl
 }
 
 // ParseParam represents the parameter of parsing.
@@ -414,6 +412,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
+	p.lexer.connection = charset.FindEncoding(p.charset)
 	return nil
 }
 
@@ -436,6 +435,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.encoding = charset.FindEncodingTakeUTF8AsNoop(string(c))
+	p.lexer.client = charset.FindEncodingTakeUTF8AsNoop(string(c))
 	return nil
 }

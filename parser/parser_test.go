@@ -6413,18 +6413,29 @@ func TestGBKEncoding(t *testing.T) {
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
 
-	utf8SQL := "select '芢' from `玚`;"
-	sql, err = encoder.String(utf8SQL)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(sql, gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
-	require.NoError(t, err)
-
-	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
 }
 
 type gbkEncodingChecker struct {

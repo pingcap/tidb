@@ -39,7 +39,8 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	encoding charset.Encoding
+	client     charset.Encoding
+	connection charset.Encoding
 
 	errs         []error
 	warns        []error
@@ -88,7 +89,9 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql, p: Pos{Line: 1}}
+	s.client = charset.EncodingUTF8Impl
+	s.connection = charset.EncodingUTF8Impl
+	s.r = reader{s: sql, p: Pos{Line: 1}, f: s.client.MbLen, l: len(sql)}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -144,13 +147,20 @@ func (s *Scanner) AppendWarn(err error) {
 	s.warns = append(s.warns, err)
 }
 
-func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
+func (s *Scanner) convert2Connection(tok int, sql string) (int, string) {
+	if mysql.IsUTF8Charset(s.client.Name()) {
+		return tok, sql
+	}
+	utf8Lit, err := s.client.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
+		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
+			return invalid, sql
+		}
 		s.lastErrorAsWarn()
 	}
-	return string(utf8Lit)
+	utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplace)
+	return tok, string(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {
@@ -231,6 +241,9 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case quotedIdentifier, identifier:
 		tok = identifier
 		s.identifierDot = s.r.peek() == '.'
+		tok, v.ident = s.convert2Connection(tok, lit)
+	case stringLit:
+		tok, v.ident = s.convert2Connection(tok, lit)
 	}
 
 	return tok
@@ -265,7 +278,7 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
 		r:                 reader{s: sql},
-		encoding:          s.encoding,
+		client:            s.client,
 		sqlMode:           s.sqlMode,
 		supportWindowFunc: s.supportWindowFunc,
 	}
@@ -273,7 +286,9 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
-	return &Scanner{r: reader{s: s}}
+	lexer := &Scanner{r: reader{s: s}}
+	lexer.reset(s)
+	return lexer
 }
 
 func (s *Scanner) handleIdent(lval *yySymType) int {
@@ -586,6 +601,11 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	s.r.inc()
 	s.buf.Reset()
 	for !s.r.eof() {
+		tPos := s.r.pos()
+		if s.r.SkipRune() {
+			s.buf.WriteString(s.r.data(&tPos))
+			continue
+		}
 		ch := s.r.readByte()
 		if ch == '`' {
 			if s.r.peek() != '`' {
@@ -650,6 +670,9 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	ending := s.r.readByte()
 	foundEscape := false
 	for !s.r.eof() {
+		if s.r.SkipRune() {
+			continue
+		}
 		ch0 := s.r.readByte()
 		if ch0 == ending {
 			if s.r.peek() == ending {
@@ -659,7 +682,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 			}
 			str := s.r.data(&pos)
 			if foundEscape {
-				lit = handleEscape(str[1:len(str)-1], ending)
+				lit = s.handleEscape(str[1:len(str)-1], ending)
 				return
 			}
 			lit = str[1 : len(str)-1]
@@ -678,12 +701,18 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 }
 
 // handleEscape handles the case in scanString when previous char is '\'.
-func handleEscape(s string, sep byte) string {
+func (s *Scanner) handleEscape(str string, sep byte) string {
 	var buf bytes.Buffer
 	var ch0 byte
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' {
-			switch s[i+1] {
+	for i := 0; i < len(str); i++ {
+		mbLen := s.client.MbLen(str[i:])
+		if mbLen > 0 {
+			buf.WriteString(str[i : i+mbLen])
+			i += mbLen - 1
+			continue
+		}
+		if str[i] == '\\' {
+			switch str[i+1] {
 			/*
 				\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
 				\% \_ ==> preserve both char
@@ -703,17 +732,17 @@ func handleEscape(s string, sep byte) string {
 				ch0 = '\t'
 			case '%', '_':
 				buf.WriteByte('\\')
-				ch0 = s[i+1]
+				ch0 = str[i+1]
 			default:
-				ch0 = s[i+1]
+				ch0 = str[i+1]
 			}
 			buf.WriteByte(ch0)
 			i++
-		} else if s[i] == sep {
-			buf.WriteByte(s[i])
+		} else if str[i] == sep {
+			buf.WriteByte(str[i])
 			i++
 		} else {
-			buf.WriteByte(s[i])
+			buf.WriteByte(str[i])
 		}
 	}
 	return buf.String()
@@ -929,13 +958,15 @@ func (s *Scanner) lastErrorAsWarn() {
 type reader struct {
 	s string
 	p Pos
-	w int
+	l int
+
+	f func(string) int
 }
 
 var eof = Pos{-1, -1, -1}
 
 func (r *reader) eof() bool {
-	return r.p.Offset >= len(r.s)
+	return r.p.Offset >= r.l
 }
 
 // peek() peeks a rune from underlying reader.
@@ -945,7 +976,6 @@ func (r *reader) peek() byte {
 	if r.eof() {
 		return 0
 	}
-	r.w = 1
 	return r.s[r.p.Offset]
 }
 
@@ -956,7 +986,7 @@ func (r *reader) inc() {
 		r.p.Line++
 		r.p.Col = 0
 	}
-	r.p.Offset += r.w
+	r.p.Offset += 1
 	r.p.Col++
 }
 
@@ -998,4 +1028,14 @@ func (r *reader) incAsLongAs(fn func(b byte) bool) byte {
 		}
 		r.inc()
 	}
+}
+
+// SkipRune skip mb character, return true indicate something has been skipped.
+func (r *reader) SkipRune() bool {
+	if r.s[r.p.Offset] <= unicode.MaxASCII {
+		return false
+	}
+	c := r.f(r.s[r.p.Offset:])
+	r.incN(c)
+	return c > 0
 }
