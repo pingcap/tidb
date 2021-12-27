@@ -471,13 +471,13 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		}
-		if job.BinlogInfo.Affected != nil {
+		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)
-			for i, affect := range job.BinlogInfo.Affected {
+			for i, affect := range job.BinlogInfo.MultipleTableInfos {
 				if i > 0 {
 					fmt.Fprintf(tablenames, ",")
 				}
-				fmt.Fprintf(tablenames, "%s", affect.TableInfo.Name.L)
+				fmt.Fprintf(tablenames, "%s", affect.Name.L)
 			}
 			tableName = tablenames.String()
 		}
