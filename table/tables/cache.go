@@ -183,31 +183,57 @@ func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, t
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
-	return c.TableCommon.AddRecord(sctx, r, opts...)
-}
 
-func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle StateRemote) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]interface{})
+func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, err
 	}
-	if _, ok := txnCtx.CachedTables[tid]; !ok {
-		txnCtx.CachedTables[tid] = handle
+	now := txn.StartTS()
+	start := time.Now()
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
+	return c.TableCommon.AddRecord(ctx, r, opts...)
+
 }
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
+
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	now := txn.StartTS()
+	start := time.Now()
+	err = c.handle.LockForWrite(ctx, c.Meta().ID, leaseFromTS(now))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
+
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
-	return c.TableCommon.RemoveRecord(sctx, h, r)
+
+func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	now := txn.StartTS()
+	start := time.Now()
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.GetSessionVars().StmtCtx.WaitLockLeaseTime += time.Since(start)
+	return c.TableCommon.RemoveRecord(ctx, h, r)
+
 }
 
 func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) func() {

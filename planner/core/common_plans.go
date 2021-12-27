@@ -401,7 +401,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	stmtCtx.UseCache = prepared.UseCache
 
-	var bindSQL string
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)

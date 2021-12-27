@@ -24,8 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
-	"runtime"
+
 	"strconv"
 	"strings"
 	"sync"
@@ -9712,3 +9711,4 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 		c.Assert(fields, HasLen, test.fields)
 	}
 }
+

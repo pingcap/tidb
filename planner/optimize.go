@@ -152,9 +152,23 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !ok {
 		useBinding = false
 	}
-	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
-	if !match {
-		useBinding = false
+
+	var (
+		bindRecord *bindinfo.BindRecord
+		scope      string
+		err        error
+	)
+	if useBinding {
+		bindRecord, scope, err = getBindRecord(sctx, stmtNode)
+		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+			useBinding = false
+		}
+	}
+	if ok {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
+
 	}
 	if ok {
 		// add the extra Limit after matching the bind record

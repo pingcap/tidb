@@ -373,6 +373,7 @@ func TestCreateTables(t *testing.T) {
 	c.Assert(t3, NotNil)
 }
 
+
 func (s *testTableSuite) TestCreateTables(c *C) {
 	d := s.d
 	ctx := testNewContext(d)
@@ -409,6 +410,7 @@ func (s *testTableSuite) TestCreateTables(c *C) {
 	t3 := testGetTable(c, d, s.dbInfo.ID, genIDs[2])
 	c.Assert(t3, NotNil)
 }
+
 
 func (s *testTableSuite) TestTable(c *C) {
 	d := s.d
