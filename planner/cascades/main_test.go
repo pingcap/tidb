@@ -30,7 +30,7 @@ var stringerSuiteData testdata.TestData
 var transformationRulesSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 
