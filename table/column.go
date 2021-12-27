@@ -372,7 +372,7 @@ func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, co
 	}
 	// Check if the string is valid in the given column charset.
 	str := casted.GetBytes()
-	if !charset.IsValid(enc, str) {
+	if !enc.IsValid(str) {
 		replace, _ := enc.Transform(nil, str, charset.OpReplace)
 		casted.SetBytesAsString(replace, col.Collate, 0)
 		nSrc := charset.CountValidBytes(enc, str)
