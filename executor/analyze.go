@@ -67,10 +67,10 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks []*analyzeTask
-	wg    *sync.WaitGroup
-	opts  map[ast.AnalyzeOptionType]uint64
-	*core.V2AnalyzeOptions
+	tasks      []*analyzeTask
+	wg         *sync.WaitGroup
+	opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]core.V2AnalyzeOptions
 }
 
 var (
@@ -189,8 +189,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
 			globalOpts := e.opts
-			if e.V2AnalyzeOptions != nil {
-				globalOpts = e.V2AnalyzeOptions.FilledOpts
+			if e.OptionsMap != nil {
+				if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
+					globalOpts = v2Options.FilledOpts
+				}
 			}
 			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
@@ -219,19 +221,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
-	if !variable.PersistAnalyzeOptions.Load() || e.V2AnalyzeOptions == nil {
+	if !variable.PersistAnalyzeOptions.Load() || e.OptionsMap == nil {
 		return nil
 	}
-	err := saveAnalyzeOpts(e.V2AnalyzeOptions, e.ctx.(sqlexec.RestrictedSQLExecutor))
-	if err != nil {
-		return err
-	}
-	for _, task := range e.tasks {
-		if task.colExec != nil && task.colExec.PhyTableID != e.PhyTableID {
-			err = saveAnalyzeOpts(task.colExec.V2AnalyzeOptions, e.ctx.(sqlexec.RestrictedSQLExecutor))
-			if err != nil {
-				return err
-			}
+	for _, options := range e.OptionsMap {
+		err := saveAnalyzeOpts(options, e.ctx.(sqlexec.RestrictedSQLExecutor))
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -239,7 +235,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 
 var colChoiceEnum = [4]string{"UNDEFINED", "ALL", "PREDICATE", "LIST"}
 
-func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecutor) error {
+func saveAnalyzeOpts(opts core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecutor) error {
 	sampleNum := uint64(0)
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumSamples]; ok {
 		sampleNum = val
@@ -252,9 +248,9 @@ func saveAnalyzeOpts(opts *core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExec
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumBuckets]; ok {
 		buckets = val
 	}
-	topn := uint64(0)
+	topn := int64(-1)
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-		topn = val
+		topn = int64(val)
 	}
 	colChoice := colChoiceEnum[opts.ColChoice]
 	colIDs := make([]string, len(opts.ColumnList))

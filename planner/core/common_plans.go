@@ -981,7 +981,7 @@ type AnalyzeInfo struct {
 	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
-	*V2AnalyzeOptions
+	V2Options     *V2AnalyzeOptions
 }
 
 // V2AnalyzeOptions is used to hold analyze options information.
@@ -1014,10 +1014,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
-	*V2AnalyzeOptions
+	ColTasks   []AnalyzeColumnsTask
+	IdxTasks   []AnalyzeIndexTask
+	Opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]V2AnalyzeOptions
 }
 
 // LoadData represents a loaddata plan.

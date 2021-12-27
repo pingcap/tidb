@@ -368,12 +368,12 @@ const (
 	// CreateAnalyzeOptionsTable stores the analyze options used by analyze and auto analyze.
 	CreateAnalyzeOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_options (
 		table_id BIGINT(64) NOT NULL,
-        sample_num BIGINT(64),
-        sample_rate DOUBLE NOT NULL DEFAULT -1,
-        buckets BIGINT(64),
-        topn BIGINT(64),
-        column_choice enum('UNDEFINED','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'UNDEFINED',
-        column_ids varchar(1024),
+		sample_num BIGINT(64) NOT NULL DEFAULT 0,
+		sample_rate DOUBLE NOT NULL DEFAULT -1,
+		buckets BIGINT(64) NOT NULL DEFAULT 0,
+		topn BIGINT(64) NOT NULL DEFAULT -1,
+		column_choice enum('UNDEFINED','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'UNDEFINED',
+		column_ids varchar(1024),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 )
