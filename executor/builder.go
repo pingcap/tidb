@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -2286,9 +2285,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		if *sampleRate < 0 {
 			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
-				// We don't use the local variable sc.AppendNote(...) because we meet strange behavior
-				// when running test TestSmallTableAnalyzeV2 when failpoint enabled.
-				b.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
+				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
 					*sampleRate,
 					task.DBName,
@@ -2296,9 +2293,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 					task.PartitionName,
 				))
 			} else {
-				// We don't use the local variable sc.AppendNote(...) because we meet strange behavior
-				// when running test TestSmallTableAnalyzeV2 when failpoint enabled.
-				b.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
+				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s.",
 					*sampleRate,
 					task.DBName,
@@ -2396,22 +2391,19 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	if task.PartitionName != "" {
 		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
 	}
-	var rs sqlexec.RecordSet
-	rs, err = b.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
+	stmt, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(context.TODO(), sql.String())
+	if err != nil {
+		return 0, false
+	}
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return 0, false
 	}
 	// If the record set is nil, there's something wrong with the execution. The COUNT(*) would always return one row.
-	if rs == nil {
+	if len(rows) == 0 || rows[0].Len() == 0 {
 		return 0, false
 	}
-	defer terror.Call(rs.Close)
-	chk := rs.NewChunk(nil)
-	err = rs.Next(context.TODO(), chk)
-	if err != nil {
-		return 0, false
-	}
-	return float64(chk.GetRow(0).GetInt64(0)), true
+	return float64(rows[0].GetInt64(0)), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
