@@ -1970,129 +1970,37 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	names []string,
 	tbl *ast.TableName,
 	version int,
-) ([]AnalyzeColumnsTask, error) {
-	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
-	}
-	colList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
-	if err != nil {
-		return nil, err
-	}
-	colsInfo, err := b.getFullAnalyzeColumnsInfo(colList, tbl)
-	if err != nil {
-		return nil, err
-	}
-	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
-	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
-	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
-	for i, id := range physicalIDs {
-		if id == tbl.TableInfo.ID {
-			id = -1
-		}
-		info := AnalyzeInfo{
-			DBName:        tbl.Schema.O,
-			TableName:     tbl.Name.O,
-			PartitionName: names[i],
-			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   false,
-			StatsVersion:  version,
-		}
-		newTask := AnalyzeColumnsTask{
-			HandleCols:  handleCols,
-			ColsInfo:    colsInfo,
-			AnalyzeInfo: info,
-			TblInfo:     tbl.TableInfo,
-			Indexes:     indexes,
-		}
-		if newTask.HandleCols == nil {
-			extraCol := model.NewExtraHandleColInfo()
-			// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
-			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
-			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
-		}
-		taskSlice = append(taskSlice, newTask)
-	}
-	return taskSlice, nil
-}
-
-// separate the implementation when persist_options is on since the behavior for globalstats is different
-func (b *PlanBuilder) buildAnalyzeFullSamplingTaskWithSavedOptions(
-	as *ast.AnalyzeTableStmt,
-	taskSlice []AnalyzeColumnsTask,
-	physicalIDs []int64,
-	names []string,
-	tbl *ast.TableName,
-	version int,
-	optionsMap map[int64]V2AnalyzeOptions,
+	persistOpts bool,
+	rsOptionsMap map[int64]V2AnalyzeOptions,
 ) ([]AnalyzeColumnsTask, map[int64]V2AnalyzeOptions, error) {
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
-	optsV2, err := parseAnalyzeOptionsV2(as.AnalyzeOpts)
+	astOpts, err := parseAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
 		return nil, nil, err
 	}
-	colList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
+	astColList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
 	if err != nil {
 		return nil, nil, err
 	}
-	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
+	astColsInfo, err := b.getFullAnalyzeColumnsInfo(astColList, tbl)
 	if err != nil {
 		return nil, nil, err
 	}
-	tblOpts := tblSavedOpts
-	tblColChoice := tblSavedColChoice
-	tblColList := tblSavedColList
-	if len(as.PartitionNames) == 0 {
-		tblOpts = mergeAnalyzeOptions(optsV2, tblSavedOpts)
-		tblColChoice, tblColList = mergeColumnList(as.ColumnChoice, colList, tblSavedColChoice, tblSavedColList)
-	}
-	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
-	execColsInfo, tblColList, err := b.getFinalAnalyzeColList(tblColChoice, tblColList, tbl)
+	isAnalyzeTable := len(as.PartitionNames) == 0
+	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList)
 	if err != nil {
 		return nil, nil, err
 	}
-	tblAnalyzeOptions := V2AnalyzeOptions{
-		PhyTableID: tbl.TableInfo.ID,
-		RawOpts:    tblOpts,
-		FilledOpts: tblFilledOpts,
-		ColChoice:  tblColChoice,
-		ColumnList: tblColList,
+	for physicalID, opts := range optionsMap {
+		rsOptionsMap[physicalID] = opts
 	}
-	optionsMap[tblAnalyzeOptions.PhyTableID] = tblAnalyzeOptions
 	for i, id := range physicalIDs {
-		var v2Options V2AnalyzeOptions
 		physicalID := id
 		if id == tbl.TableInfo.ID {
-			v2Options = tblAnalyzeOptions
 			id = -1
-		} else {
-			savedOpts, savedColChoice, savedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
-			if err != nil {
-				return nil, nil, err
-			}
-			// merge partition level options with table level options firstly
-			savedOpts = mergeAnalyzeOptions(savedOpts, tblSavedOpts)
-			savedColChoice, savedColList = mergeColumnList(savedColChoice, savedColList, tblSavedColChoice, tblSavedColList)
-			// then merge statement level options
-			finalOpts := mergeAnalyzeOptions(optsV2, savedOpts)
-			filledFinalOpts := fillAnalyzeOptionsV2(finalOpts)
-			finalColChoice, finalColList := mergeColumnList(as.ColumnChoice, colList, savedColChoice, savedColList)
-			execColsInfo, finalColList, err = b.getFinalAnalyzeColList(finalColChoice, finalColList, tbl)
-			if err != nil {
-				return nil, nil, err
-			}
-			v2Options = V2AnalyzeOptions{
-				PhyTableID: id,
-				RawOpts:    finalOpts,
-				FilledOpts: filledFinalOpts,
-				ColChoice:  finalColChoice,
-				ColumnList: finalColList,
-			}
 		}
-		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
@@ -2100,8 +2008,17 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTaskWithSavedOptions(
 			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 			Incremental:   false,
 			StatsVersion:  version,
-			V2Options:     &v2Options,
 		}
+		if optsV2, ok := optionsMap[physicalID]; ok {
+			info.V2Options = &optsV2
+		}
+		execColsInfo := astColsInfo
+		if colsInfo, ok := colsInfoMap[physicalID]; ok {
+			execColsInfo = colsInfo
+		}
+		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
 			ColsInfo:    execColsInfo,
@@ -2116,9 +2033,78 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTaskWithSavedOptions(
 			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
 		}
 		taskSlice = append(taskSlice, newTask)
-		optionsMap[physicalID] = v2Options
 	}
-	return taskSlice, optionsMap, nil
+	return taskSlice, rsOptionsMap, nil
+}
+
+func (b *PlanBuilder) genV2AnalyzeOptions(
+	persist bool,
+	tbl *ast.TableName,
+	isAnalyzeTable bool,
+	physicalIDs []int64,
+	astOpts map[ast.AnalyzeOptionType]uint64,
+	astColChoice model.ColumnChoice,
+	astColList []*model.ColumnInfo,
+) (map[int64]V2AnalyzeOptions, map[int64][]*model.ColumnInfo, error) {
+	optionsMap := make(map[int64]V2AnalyzeOptions, len(physicalIDs))
+	colsInfoMap := make(map[int64][]*model.ColumnInfo, len(physicalIDs))
+	if !persist {
+		return optionsMap, colsInfoMap, nil
+	}
+	tblSavedOpts, tblSavedColChoice, tblSavedColList, err := b.getSavedAnalyzeOpts(tbl.TableInfo.ID, tbl.TableInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+	tblOpts := tblSavedOpts
+	tblColChoice := tblSavedColChoice
+	tblColList := tblSavedColList
+	if isAnalyzeTable {
+		tblOpts = mergeAnalyzeOptions(astOpts, tblSavedOpts)
+		tblColChoice, tblColList = mergeColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
+	}
+	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
+	tblColsInfo, tblColList, err := b.getFinalAnalyzeColList(tblColChoice, tblColList, tbl)
+	if err != nil {
+		return nil, nil, err
+	}
+	tblAnalyzeOptions := V2AnalyzeOptions{
+		PhyTableID: tbl.TableInfo.ID,
+		RawOpts:    tblOpts,
+		FilledOpts: tblFilledOpts,
+		ColChoice:  tblColChoice,
+		ColumnList: tblColList,
+	}
+	optionsMap[tbl.TableInfo.ID] = tblAnalyzeOptions
+	colsInfoMap[tbl.TableInfo.ID] = tblColsInfo
+	for _, id := range physicalIDs {
+		if id != tbl.TableInfo.ID {
+			parSavedOpts, parSavedColChoice, parSavedColList, err := b.getSavedAnalyzeOpts(id, tbl.TableInfo)
+			if err != nil {
+				return nil, nil, err
+			}
+			// merge partition level options with table level options firstly
+			savedOpts := mergeAnalyzeOptions(parSavedOpts, tblSavedOpts)
+			savedColChoice, savedColList := mergeColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
+			// then merge statement level options
+			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
+			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
+			finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
+			finalColsInfo, finalColList, err := b.getFinalAnalyzeColList(finalColChoice, mergedColList, tbl)
+			if err != nil {
+				return nil, nil, err
+			}
+			parV2Options := V2AnalyzeOptions{
+				PhyTableID: id,
+				RawOpts:    mergedOpts,
+				FilledOpts: filledMergedOpts,
+				ColChoice:  finalColChoice,
+				ColumnList: finalColList,
+			}
+			optionsMap[id] = parV2Options
+			colsInfoMap[id] = finalColsInfo
+		}
+	}
+	return optionsMap, colsInfoMap, nil
 }
 
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
@@ -2241,16 +2227,9 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			if usePersistedOptions {
-				p.ColTasks, p.OptionsMap, err = b.buildAnalyzeFullSamplingTaskWithSavedOptions(as, p.ColTasks, physicalIDs, names, tbl, version, p.OptionsMap)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
-				if err != nil {
-					return nil, err
-				}
+			p.ColTasks, p.OptionsMap, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version, usePersistedOptions, p.OptionsMap)
+			if err != nil {
+				return nil, err
 			}
 			continue
 		}

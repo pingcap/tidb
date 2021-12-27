@@ -373,7 +373,7 @@ const (
 		buckets BIGINT(64) NOT NULL DEFAULT 0,
 		topn BIGINT(64) NOT NULL DEFAULT -1,
 		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
-		column_ids varchar(19372),
+		column_ids TEXT(19372),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
 )
