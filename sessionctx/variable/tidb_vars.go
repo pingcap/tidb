@@ -786,6 +786,7 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount        = 3000
 	DefTiDBStmtSummaryMaxSQLLength        = 4096
 	DefTiDBCapturePlanBaseline            = Off
+	DefTiDBEnableIndexMerge               = true
 )
 
 // Process global variables.

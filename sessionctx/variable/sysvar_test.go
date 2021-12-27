@@ -821,3 +821,12 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCollationName)
 }
+
+func TestIndexMergeSwitcher(t *testing.T) {
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBEnableIndexMerge)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBEnableIndexMerge, true)
+	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
+}
