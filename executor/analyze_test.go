@@ -1235,7 +1235,7 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 }
 
 func TestSavedAnalyzeOptions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -1245,14 +1245,14 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
-	h := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
+	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
 	defer func() {
 		h.SetLease(oriLease)
 	}()
 	tk.MustExec("analyze table t with 1 topn, 2 buckets")
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := dom.InfoSchema()
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1324,7 +1324,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 }
 
 func TestSavedPartitionAnalyzeOptions(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -1339,7 +1339,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec(createTable)
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
 
-	h := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
+	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
 	defer func() {
@@ -1347,7 +1347,7 @@ PARTITION BY RANGE ( a ) (
 	}()
 	// analyze partition only sets options of partition
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := dom.InfoSchema()
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1459,7 +1459,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))")
 	tk.MustExec("insert into t values (21,21,21),(22,22,22),(23,23,23),(24,24,24)")
 	tk.MustExec("analyze table t partition p2")
-	is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is = dom.InfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	tableInfo = table.Meta()
@@ -1490,7 +1490,7 @@ PARTITION BY RANGE ( a ) (
 
 	// drop partition
 	tk.MustExec("alter table t drop partition p1")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	is = dom.InfoSchema() // refresh infoschema
 	require.Nil(t, h.GCStats(is, time.Duration(0)))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, len(rs.Rows()), 1)
@@ -1501,7 +1501,7 @@ PARTITION BY RANGE ( a ) (
 
 	// drop table
 	tk.MustExec("drop table t")
-	is = tk.Session().GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	is = dom.InfoSchema() // refresh infoschema
 	require.Nil(t, h.GCStats(is, time.Duration(0)))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
 	require.Equal(t, len(rs.Rows()), 0)
@@ -1510,7 +1510,7 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -1528,7 +1528,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
-	h := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
+	h := dom.StatsHandle()
 	oriLease := h.Lease()
 	h.SetLease(1)
 	defer func() {
@@ -1538,7 +1538,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table pt with 1 topn, 3 buckets")
 	tk.MustExec("analyze table t with 0 topn, 2 buckets")
 	tk.MustExec("analyze table t,pt with 2 topn")
-	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := dom.InfoSchema()
 	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.Nil(t, err)
 	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

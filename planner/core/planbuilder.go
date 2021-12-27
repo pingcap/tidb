@@ -1991,8 +1991,8 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	tblColChoice := tblSavedColChoice
 	tblColList := tblSavedColList
 	if len(as.PartitionNames) == 0 {
-		tblOpts = b.mergeAnalyzeOptions(optsV2, tblSavedOpts)
-		tblColChoice, tblColList = b.mergeColumnList(as.ColumnChoice, colList, tblSavedColChoice, tblSavedColList)
+		tblOpts = mergeAnalyzeOptions(optsV2, tblSavedOpts)
+		tblColChoice, tblColList = mergeColumnList(as.ColumnChoice, colList, tblSavedColChoice, tblSavedColList)
 	}
 	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
 	execColsInfo, tblColList, err := b.getFinalAnalyzeColList(tblColChoice, tblColList, tbl)
@@ -2019,12 +2019,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 				return nil, nil, err
 			}
 			// merge partition level options with table level options firstly
-			savedOpts = b.mergeAnalyzeOptions(savedOpts, tblSavedOpts)
-			savedColChoice, savedColList = b.mergeColumnList(savedColChoice, savedColList, tblSavedColChoice, tblSavedColList)
+			savedOpts = mergeAnalyzeOptions(savedOpts, tblSavedOpts)
+			savedColChoice, savedColList = mergeColumnList(savedColChoice, savedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
-			finalOpts := b.mergeAnalyzeOptions(optsV2, savedOpts)
+			finalOpts := mergeAnalyzeOptions(optsV2, savedOpts)
 			filledFinalOpts := fillAnalyzeOptionsV2(finalOpts)
-			finalColChoice, finalColList := b.mergeColumnList(as.ColumnChoice, colList, savedColChoice, savedColList)
+			finalColChoice, finalColList := mergeColumnList(as.ColumnChoice, colList, savedColChoice, savedColList)
 			execColsInfo, finalColList, err = b.getFinalAnalyzeColList(finalColChoice, finalColList, tbl)
 			if err != nil {
 				return nil, nil, err
@@ -2124,7 +2124,7 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 	}
 }
 
-func (b *PlanBuilder) mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uint64, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+func mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uint64, savedOpts map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
 	merged := map[ast.AnalyzeOptionType]uint64{}
 	for optType := range ast.AnalyzeOptionString {
 		if stmtOpt, ok := stmtOpts[optType]; ok {
@@ -2136,7 +2136,7 @@ func (b *PlanBuilder) mergeAnalyzeOptions(stmtOpts map[ast.AnalyzeOptionType]uin
 	return merged
 }
 
-func (b *PlanBuilder) mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choice2 model.ColumnChoice, list2 []*model.ColumnInfo) (model.ColumnChoice, []*model.ColumnInfo) {
+func mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choice2 model.ColumnChoice, list2 []*model.ColumnInfo) (model.ColumnChoice, []*model.ColumnInfo) {
 	if choice1 != model.DefaultChoice {
 		return choice1, list1
 	}

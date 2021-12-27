@@ -372,7 +372,7 @@ const (
 		sample_rate DOUBLE NOT NULL DEFAULT -1,
 		buckets BIGINT(64) NOT NULL DEFAULT 0,
 		topn BIGINT(64) NOT NULL DEFAULT -1,
-		column_choice enum('UNDEFINED','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'UNDEFINED',
+		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
 		column_ids varchar(1024),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`

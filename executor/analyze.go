@@ -233,8 +233,6 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 	return nil
 }
 
-var colChoiceEnum = [4]string{"UNDEFINED", "ALL", "PREDICATE", "LIST"}
-
 func saveAnalyzeOpts(opts core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecutor) error {
 	sampleNum := uint64(0)
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumSamples]; ok {
@@ -252,7 +250,7 @@ func saveAnalyzeOpts(opts core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecu
 	if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
 		topn = int64(val)
 	}
-	colChoice := colChoiceEnum[opts.ColChoice]
+	colChoice := opts.ColChoice.String()
 	colIDs := make([]string, len(opts.ColumnList))
 	for i, colInfo := range opts.ColumnList {
 		colIDs[i] = strconv.FormatInt(colInfo.ID, 10)

@@ -1287,13 +1287,13 @@ const (
 func (s ColumnChoice) String() string {
 	switch s {
 	case AllColumns:
-		return "AllColumns"
+		return "ALL"
 	case PredicateColumns:
-		return "PredicateColumns"
+		return "PREDICATE"
 	case ColumnList:
-		return "ColumnList"
+		return "LIST"
 	default:
-		return ""
+		return "DEFAULT"
 	}
 }
 
