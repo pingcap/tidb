@@ -986,6 +986,7 @@ backupLoop:
 				logutil.Key("small-range-end-key", resp.GetEndKey()))
 			err = respFn(resp)
 			if err != nil {
+				_ = bcli.CloseSend()
 				return errors.Trace(err)
 			}
 		}
