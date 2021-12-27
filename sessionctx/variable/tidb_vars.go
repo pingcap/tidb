@@ -786,7 +786,7 @@ const (
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
-  DefTiDBEnableColumnTracking           = true
+	DefTiDBEnableColumnTracking           = true
 )
 
 // Process global variables.
