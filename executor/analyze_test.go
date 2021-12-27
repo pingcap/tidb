@@ -1553,7 +1553,6 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
-	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	// no global stats since partition stats missing
 	require.Equal(t, 0, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
@@ -1573,7 +1572,7 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, 2, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
@@ -1613,7 +1612,6 @@ PARTITION BY RANGE ( a ) (
 	require.NoError(t, h.LoadNeededHistograms())
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
-	lastVersion = tbl.Version
 	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
 	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
