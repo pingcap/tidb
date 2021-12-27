@@ -1912,7 +1912,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 					return errors.Trace(err)
 				}
 				if err := rc.clusterResource(ctx, source); err != nil {
-					return rc.taskMgr.CleanupTask(ctx)
+					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
+						log.L().Warn("cleanup task failed", zap.Error(err1))
+						return err
+					}
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return errors.Trace(err)
@@ -1928,7 +1931,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			err := rc.taskMgr.CleanupTask(ctx)
 			if err != nil {
-				return errors.Trace(err)
+				log.L().Warn("cleanup task failed", zap.Error(err))
 			}
 		}
 		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())

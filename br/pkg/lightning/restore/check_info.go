@@ -988,7 +988,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -999,7 +999,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
