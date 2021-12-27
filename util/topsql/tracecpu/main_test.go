@@ -28,7 +28,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	variable.TopSQLVariable.Enable.Store(false)
 	config.UpdateGlobal(func(conf *config.Config) {
