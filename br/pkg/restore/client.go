@@ -517,13 +517,14 @@ func (rc *Client) GoCreateTables(
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
 		if err == nil {
-			log.Info("bulk to create tables success.")
+			log.Info("bulk create tables success.")
 			defer close(outCh)
+			return outCh
 			// fall back to old create table (sequential create table)
 		} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
 			log.Info("fall back to the old DDL way to create table.")
 		} else {
-			log.Error("bulk to create tables failure.")
+			log.Error("bulk create tables failure.")
 			errCh <- err
 			return outCh
 		}
