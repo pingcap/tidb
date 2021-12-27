@@ -75,6 +75,19 @@ func newTsItem() tsItem {
 	}
 }
 
+// toProto converts the tsItem to the corresponding protobuf representation.
+func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
+	return &tipb.TopSQLRecordItem{
+		TimestampSec:    i.timestamp,
+		CpuTimeMs:       i.cpuTimeMs,
+		StmtExecCount:   i.stmtStats.ExecCount,
+		StmtKvExecCount: i.stmtStats.KvStatsItem.KvExecCount,
+		// TODO: add duration
+		// StmtDurationSumNs: ti.stmtStats.,
+		// Convert more indicators here.
+	}
+}
+
 var _ sort.Interface = &tsItems{}
 
 // tsItems is a sortable list of tsItem, sort by tsItem.timestamp (asc).
@@ -90,6 +103,19 @@ func (ts tsItems) Less(i, j int) bool {
 
 func (ts tsItems) Swap(i, j int) {
 	ts[i], ts[j] = ts[j], ts[i]
+}
+
+// toProto converts the tsItems to the corresponding protobuf representation.
+func (ts tsItems) toProto() []*tipb.TopSQLRecordItem {
+	capacity := len(ts)
+	if capacity == 0 {
+		return nil
+	}
+	items := make([]*tipb.TopSQLRecordItem, 0, capacity)
+	for _, i := range ts {
+		items = append(items, i.toProto())
+	}
+	return items
 }
 
 var _ sort.Interface = &record{}
@@ -332,36 +358,10 @@ func (r *record) rebuildTsIndex() {
 
 // toProto converts the record to the corresponding protobuf representation.
 func (r *record) toProto() tipb.TopSQLRecord {
-	capacity := len(r.tsItems)
-	if capacity == 0 {
-		return tipb.TopSQLRecord{
-			SqlDigest:  r.sqlDigest,
-			PlanDigest: r.planDigest,
-		}
-	}
-	timestampList := make([]uint64, 0, capacity)
-	cpuTimeList := make([]uint32, 0, capacity)
-	execCountList := make([]uint64, 0, capacity)
-	durationSumList := make([]uint64, 0, capacity)
-	kvExecCountList := make([]*tipb.TopSQLStmtKvExecCount, 0, capacity)
-	for _, item := range r.tsItems {
-		timestampList = append(timestampList, item.timestamp)
-		cpuTimeList = append(cpuTimeList, item.cpuTimeMs)
-		execCountList = append(execCountList, item.stmtStats.ExecCount)
-		kvExecCountList = append(kvExecCountList, &tipb.TopSQLStmtKvExecCount{
-			ExecCount: item.stmtStats.KvStatsItem.KvExecCount,
-		})
-		// TODO: append duration
-	}
 	return tipb.TopSQLRecord{
-		SqlDigest:                   r.sqlDigest,
-		PlanDigest:                  r.planDigest,
-		RecordListTimestampSec:      timestampList,
-		RecordListCpuTimeMs:         cpuTimeList,
-		RecordListStmtExecCount:     execCountList,
-		RecordListStmtKvExecCount:   kvExecCountList,
-		RecordListStmtDurationSumNs: durationSumList,
-		// Add more indicators here.
+		SqlDigest:  r.sqlDigest,
+		PlanDigest: r.planDigest,
+		Items:      r.tsItems.toProto(),
 	}
 }
 

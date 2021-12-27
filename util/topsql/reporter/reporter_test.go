@@ -126,13 +126,10 @@ func TestCollectAndSendBatch(t *testing.T) {
 			require.NoError(t, err)
 			id = n
 		}
-		require.Len(t, req.RecordListCpuTimeMs, 1)
-		for i := range req.RecordListCpuTimeMs {
-			require.Equal(t, uint32(id), req.RecordListCpuTimeMs[i])
-		}
-		require.Len(t, req.RecordListTimestampSec, 1)
-		for i := range req.RecordListTimestampSec {
-			require.Equal(t, uint64(1), req.RecordListTimestampSec[i])
+		require.Len(t, req.Items, 1)
+		for i := range req.Items {
+			require.Equal(t, uint64(1), req.Items[i].TimestampSec)
+			require.Equal(t, uint32(id), req.Items[i].CpuTimeMs)
 		}
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
@@ -168,19 +165,18 @@ func TestCollectAndEvicted(t *testing.T) {
 			require.NoError(t, err)
 			id = n
 		}
-		require.Len(t, req.RecordListTimestampSec, 1)
-		require.Equal(t, uint64(2), req.RecordListTimestampSec[0])
-		require.Len(t, req.RecordListCpuTimeMs, 1)
+		require.Len(t, req.Items, 1)
+		require.Equal(t, uint64(2), req.Items[0].TimestampSec)
 		if id == 0 {
 			// test for others
 			require.Nil(t, req.SqlDigest)
 			require.Nil(t, req.PlanDigest)
 			// 12502500 is the sum of all evicted item's cpu time. 1 + 2 + 3 + ... + 5000 = (1 + 5000) * 2500 = 12502500
-			require.Equal(t, 12502500, int(req.RecordListCpuTimeMs[0]))
+			require.Equal(t, 12502500, int(req.Items[0].CpuTimeMs))
 			continue
 		}
 		require.Greater(t, id, maxSQLNum)
-		require.Equal(t, uint32(id), req.RecordListCpuTimeMs[0])
+		require.Equal(t, uint32(id), req.Items[0].CpuTimeMs)
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
@@ -264,15 +260,21 @@ func TestCollectAndTopN(t *testing.T) {
 	})
 	getTotalCPUTime := func(record *tipb.TopSQLRecord) int {
 		total := uint32(0)
-		for _, v := range record.RecordListCpuTimeMs {
-			total += v
+		for _, i := range record.Items {
+			total += i.CpuTimeMs
 		}
 		return int(total)
 	}
 	require.Nil(t, results[0].SqlDigest)
 	require.Equal(t, 5, getTotalCPUTime(results[0]))
-	require.Equal(t, []uint64{0, 1, 3, 4}, results[0].RecordListTimestampSec)
-	require.Equal(t, []uint32{1, 2, 1, 1}, results[0].RecordListCpuTimeMs)
+	require.Equal(t, uint64(0), results[0].Items[0].TimestampSec)
+	require.Equal(t, uint64(1), results[0].Items[1].TimestampSec)
+	require.Equal(t, uint64(3), results[0].Items[2].TimestampSec)
+	require.Equal(t, uint64(4), results[0].Items[3].TimestampSec)
+	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
+	require.Equal(t, uint32(2), results[0].Items[1].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[2].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[3].CpuTimeMs)
 	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
 	require.Equal(t, 5, getTotalCPUTime(results[1]))
 	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
@@ -407,8 +409,9 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Len(t, d.DataRecords, 1)
 		require.Equal(t, []byte("sqlDigest1"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest1"), d.DataRecords[0].PlanDigest)
-		require.Equal(t, []uint64{3}, d.DataRecords[0].RecordListTimestampSec)
-		require.Equal(t, []uint32{2}, d.DataRecords[0].RecordListCpuTimeMs)
+		require.Len(t, d.DataRecords[0].Items, 1)
+		require.Equal(t, uint64(3), d.DataRecords[0].Items[0].TimestampSec)
+		require.Equal(t, uint32(2), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest1"),
@@ -437,8 +440,9 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Len(t, d.DataRecords, 1)
 		require.Equal(t, []byte("sqlDigest4"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest4"), d.DataRecords[0].PlanDigest)
-		require.Equal(t, []uint64{6}, d.DataRecords[0].RecordListTimestampSec)
-		require.Equal(t, []uint32{5}, d.DataRecords[0].RecordListCpuTimeMs)
+		require.Len(t, d.DataRecords[0].Items, 1)
+		require.Equal(t, uint64(6), d.DataRecords[0].Items[0].TimestampSec)
+		require.Equal(t, uint32(5), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest4"),

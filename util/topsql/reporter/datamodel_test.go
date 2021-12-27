@@ -26,6 +26,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func Test_tsItem_toProto(t *testing.T) {
+	item := &tsItem{
+		timestamp: 1,
+		cpuTimeMs: 2,
+		stmtStats: stmtstats.StatementStatsItem{
+			ExecCount:   3,
+			KvStatsItem: stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
+		},
+	}
+	pb := item.toProto()
+	assert.Equal(t, uint64(1), pb.TimestampSec)
+	assert.Equal(t, uint32(2), pb.CpuTimeMs)
+	assert.Equal(t, uint64(3), pb.StmtExecCount)
+	assert.Equal(t, uint64(4), pb.StmtKvExecCount[""])
+}
+
 func Test_tsItems_Sort(t *testing.T) {
 	items := tsItems{
 		{timestamp: 2},
@@ -36,6 +52,12 @@ func Test_tsItems_Sort(t *testing.T) {
 	assert.Equal(t, uint64(1), items[0].timestamp)
 	assert.Equal(t, uint64(2), items[1].timestamp)
 	assert.Equal(t, uint64(3), items[2].timestamp)
+}
+
+func Test_tsItems_toProto(t *testing.T) {
+	items := &tsItems{{}, {}, {}}
+	pb := items.toProto()
+	assert.Len(t, pb, 3)
 }
 
 func Test_record_Sort(t *testing.T) {
@@ -165,40 +187,12 @@ func Test_record_toProto(t *testing.T) {
 		sqlDigest:      []byte("SQL-1"),
 		planDigest:     []byte("PLAN-1"),
 		totalCPUTimeMs: 123,
-		tsItems: tsItems{{
-			timestamp: 1,
-			cpuTimeMs: 1,
-			stmtStats: stmtstats.StatementStatsItem{
-				ExecCount:   1,
-				KvStatsItem: stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
-			},
-		}, {
-			timestamp: 2,
-			cpuTimeMs: 2,
-			stmtStats: stmtstats.StatementStatsItem{
-				ExecCount:   2,
-				KvStatsItem: stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 2}},
-			},
-		}, {
-			timestamp: 3,
-			cpuTimeMs: 3,
-			stmtStats: stmtstats.StatementStatsItem{
-				ExecCount:   3,
-				KvStatsItem: stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 3}},
-			},
-		}},
+		tsItems:        tsItems{{}, {}, {}},
 	}
 	pb := r.toProto()
 	assert.Equal(t, []byte("SQL-1"), pb.SqlDigest)
 	assert.Equal(t, []byte("PLAN-1"), pb.PlanDigest)
-	assert.Equal(t, []uint64{1, 2, 3}, pb.RecordListTimestampSec)
-	assert.Equal(t, []uint32{1, 2, 3}, pb.RecordListCpuTimeMs)
-	assert.Equal(t, []uint64{1, 2, 3}, pb.RecordListStmtExecCount)
-	assert.Equal(t, []*tipb.TopSQLStmtKvExecCount{
-		{ExecCount: map[string]uint64{"": 1}},
-		{ExecCount: map[string]uint64{"": 2}},
-		{ExecCount: map[string]uint64{"": 3}},
-	}, pb.RecordListStmtKvExecCount)
+	assert.Len(t, pb.Items, 3)
 }
 
 func Test_records_Sort(t *testing.T) {
