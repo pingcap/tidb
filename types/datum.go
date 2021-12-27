@@ -198,13 +198,9 @@ func (d *Datum) GetBinaryStringEncoded() string {
 
 // GetBinaryStringDecoded gets the string value decoded with given charset.
 func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string) (string, error) {
-	enc := charset.FindEncoding(chs)
-	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
-		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
+	enc, skip := findEncoding(sc, chs)
+	if skip {
 		return d.GetString(), nil
-	}
-	if chs == charset.CharsetUTF8 && !sc.SkipUTF8MB4Check {
-		enc = charset.EncodingUTF8MB3StrictImpl
 	}
 	trim, err := enc.Transform(nil, d.GetBytes(), charset.OpDecode)
 	return string(hack.String(trim)), err
@@ -212,13 +208,9 @@ func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string)
 
 // GetStringWithCheck gets the string and checks if it is valid in a given charset.
 func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (string, error) {
-	enc := charset.FindEncoding(chs)
-	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
-		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
+	enc, skip := findEncoding(sc, chs)
+	if skip {
 		return d.GetString(), nil
-	}
-	if chs == charset.CharsetUTF8 && !sc.SkipUTF8MB4Check {
-		enc = charset.EncodingUTF8MB3StrictImpl
 	}
 	// Check if the string is valid in the given column charset.
 	str := d.GetBytes()
@@ -227,6 +219,18 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 		return string(hack.String(replace)), err
 	}
 	return d.GetString(), nil
+}
+
+func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
+	enc = charset.FindEncoding(chs)
+	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
+		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
+		return nil, true
+	}
+	if chs == charset.CharsetUTF8 && !sc.SkipUTF8MB4Check {
+		enc = charset.EncodingUTF8MB3StrictImpl
+	}
+	return enc, false
 }
 
 // SetString sets string value.
