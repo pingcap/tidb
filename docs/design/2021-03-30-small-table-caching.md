@@ -38,7 +38,7 @@ Put all things together, we have this interface:
 
 ```
 type StateRemote interface {
-	Load()
+    Load()
     LockForRead()
     LockForWrite()
     RenewLease()
