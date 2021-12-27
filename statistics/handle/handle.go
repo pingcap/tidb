@@ -1862,6 +1862,9 @@ func (h *Handle) SaveHistoryStatsToStorage(dbName string, tableInfo *model.Table
 	}
 	ts := txn.StartTS()
 	err = finishTransaction(ctx, exec, err)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	h.mu.Unlock()
 
 	rows, _, err := h.execRestrictedSQL(ctx, "select version from mysql.stats_meta WHERE table_id = %?", tableInfo.ID)

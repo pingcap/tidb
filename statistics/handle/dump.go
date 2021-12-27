@@ -121,6 +121,9 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn
 // DumpStatsToJSONBlocks dumps statistic to json, then compresses the json to blocks by gzip.
 func (h *Handle) DumpStatsToJSONBlocks(dbName string, tableInfo *model.TableInfo, blockSize int) ([][]byte, error) {
 	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
+	if err != nil {
+		return nil, err
+	}
 	data, err := json.Marshal(interface{}(js))
 	if err != nil {
 		return nil, err
