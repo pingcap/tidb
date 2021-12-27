@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -315,7 +316,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if isNull {
 				continue
 			}
-			if !charset.IsValidString(enc, str) {
+			if !enc.IsValid(hack.Slice(str)) {
 				return false
 			}
 		} else {
