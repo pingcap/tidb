@@ -4,6 +4,7 @@ package restore
 
 import (
 	"bytes"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
