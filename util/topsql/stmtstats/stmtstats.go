@@ -15,10 +15,13 @@
 package stmtstats
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var _ StatementObserver = &StatementStats{}
@@ -32,24 +35,12 @@ var nowFunc = time.Now
 // The caller only needs to be responsible for calling different methods at the
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
-	// OnParseBegin should be called on statement begin to parse.
-	// You do not always have to call this function for each statement,
-	// since some statements doesn't have parse process, such as execute prepared statement.
-	OnParseBegin()
+	// OnReceiveCmd should be called on TiDB receive command request.
+	OnReceiveCmd()
 
-	// OnSQLDigestReady should be called on statement SQL digest ready.
-	// This function only use to record the sql digest, it doesn't matter if you delay calling this function.
-	// It is ok to call this function multiple times, the final sql digest is the final call.
-	OnSQLDigestReady(sqlDigest []byte)
-
-	// OnPlanDigestReady should be called on statement plan digest ready.
-	// This function only use to record the plan digest, it doesn't matter if you delay calling this function.
-	// It is ok to call this function multiple times, the final sql digest is the final call.
-	OnPlanDigestReady(planDigest []byte)
-
-	// OnExecBegin should be called on statement begin to execute.
-	// For each statement, this function must be called before OnExecFinished.
-	OnExecBegin()
+	// OnSQLAndPlanDigestFirstReady should be called on statement SQL and plan digest are ready.
+	// This function only use to record the SQL and plan digest, it doesn't matter if you delay calling this function.
+	OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte)
 
 	// OnExecFinished should be called after the statement execution finish.
 	OnExecFinished()
@@ -61,17 +52,43 @@ type StatementObserver interface {
 // in the background.
 type StatementStats struct {
 	seCtx StatementExecutionContext
-	// alreadyTaken indicates the StatementExecutionContext whether has been counted.
-	alreadyTaken bool
+	state StmtExecState
 
 	mu       sync.Mutex
 	data     StatementStatsMap
 	finished *atomic.Bool
 }
 
+// StmtExecState is the state of StatementStats
+type StmtExecState int
+
+var (
+	stmtExecStateInitial       StmtExecState = 0
+	stmtExecStateCmdReceived   StmtExecState = 1
+	stmtExecStateDigestIsReady StmtExecState = 2
+	stmtExecStateFinished      StmtExecState = 3
+)
+
+// String implements Stringer interface.
+func (s StmtExecState) String() string {
+	switch s {
+	case stmtExecStateInitial:
+		return "initial"
+	case stmtExecStateCmdReceived:
+		return "cmd_received"
+	case stmtExecStateDigestIsReady:
+		return "digest_is_ready"
+	case stmtExecStateFinished:
+		return "finish"
+	default:
+		return fmt.Sprintf("unknow_%d", int(s))
+	}
+}
+
 // CreateStatementStats try to create and register an StatementStats.
 func CreateStatementStats() *StatementStats {
 	stats := &StatementStats{
+		state:    stmtExecStateInitial,
 		data:     StatementStatsMap{},
 		finished: atomic.NewBool(false),
 	}
@@ -79,57 +96,54 @@ func CreateStatementStats() *StatementStats {
 	return stats
 }
 
-// OnParseBegin implements StatementObserver.OnParseBegin.
-func (s *StatementStats) OnParseBegin() {
-	s.seCtx.parseBeginUnixNano = nowFunc().UnixNano()
+// OnReceiveCmd implements StatementObserver.OnParseBegin.
+func (s *StatementStats) OnReceiveCmd() {
+	s.state = stmtExecStateCmdReceived
+	s.seCtx.reset()
 }
 
-// OnSQLDigestReady implements StatementObserver.OnSQLDigestReady.
-func (s *StatementStats) OnSQLDigestReady(sqlDigest []byte) {
-	s.seCtx.sqlDigest.Store(sqlDigest)
-}
+// OnSQLAndPlanDigestFirstReady implements StatementObserver.OnSQLAndPlanDigestFirstReady.
+func (s *StatementStats) OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte) {
+	if s.state != stmtExecStateCmdReceived {
+		logutil.BgLogger().Warn("[stmt-stats] unexpect state",
+			zap.String("expect", stmtExecStateCmdReceived.String()),
+			zap.String("got", s.state.String()))
+		return
+	}
+	s.state = stmtExecStateDigestIsReady
 
-// OnPlanDigestReady implements StatementObserver.OnParseBegin.
-func (s *StatementStats) OnPlanDigestReady(planDigest []byte) {
-	s.seCtx.planDigest.Store(planDigest)
-}
-
-// OnExecBegin implements StatementObserver.OnExecBegin.
-func (s *StatementStats) OnExecBegin() {
-	s.seCtx.execBeginUnixNano = nowFunc().UnixNano()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.seCtx.sqlDigest) != 0 {
+		return
+	}
+	s.seCtx.sqlDigest = sqlDigest
+	s.seCtx.planDigest = planDigest
+	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item.ExecCount++
 }
 
 // OnExecFinished implements StatementObserver.OnExecFinished.
 func (s *StatementStats) OnExecFinished() {
-	sqlDigest, ok1 := s.seCtx.sqlDigest.Load().([]byte)
-	planDigest, ok2 := s.seCtx.planDigest.Load().([]byte)
-	if !ok1 || !ok2 || len(sqlDigest) == 0 {
+	if s.state != stmtExecStateDigestIsReady {
+		logutil.BgLogger().Warn("[stmt-stats] unexpect state",
+			zap.String("expect", stmtExecStateDigestIsReady.String()),
+			zap.String("got", s.state.String()))
 		return
 	}
+	s.state = stmtExecStateFinished
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
-
-	if s.alreadyTaken {
-		s.alreadyTaken = false
-	} else {
-		item.ExecCount++
+	if len(s.seCtx.sqlDigest) == 0 {
+		return
 	}
-	var cost int64
-	if s.seCtx.parseBeginUnixNano > 0 {
-		cost = nowFunc().UnixNano() - s.seCtx.parseBeginUnixNano
-	} else if s.seCtx.execBeginUnixNano > 0 {
-		// For execute prepare statement which doesn't have parse process.
-		cost = nowFunc().UnixNano() - s.seCtx.execBeginUnixNano
-	}
+	item := s.GetOrCreateStatementStatsItem(s.seCtx.sqlDigest, s.seCtx.planDigest)
+	cost := nowFunc().Sub(s.seCtx.begin).Nanoseconds()
 	if cost > 0 {
 		item.SumExecNanoDuration += uint64(cost)
 	}
 	// Count more data here.
-
-	// Reset StatementExecutionContext for next statement.
-	s.seCtx.reset()
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -160,26 +174,9 @@ func (s *StatementStats) addKvExecCount(sqlDigest, planDigest []byte, target str
 func (s *StatementStats) Take() StatementStatsMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.collectRunningStatementStats()
 	data := s.data
 	s.data = StatementStatsMap{}
 	return data
-}
-
-func (s *StatementStats) collectRunningStatementStats() {
-	sqlDigest, ok1 := s.seCtx.sqlDigest.Load().([]byte)
-	planDigest, ok2 := s.seCtx.planDigest.Load().([]byte)
-	if !ok1 || !ok2 || len(sqlDigest) == 0 {
-		return
-	}
-
-	if s.alreadyTaken {
-		return
-	}
-	s.alreadyTaken = true
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
-	item.ExecCount++
-	// collect more running statement stats here.
 }
 
 // SetFinished marks this StatementStats as "finished" and no more counting or
@@ -303,21 +300,17 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 
 // StatementExecutionContext represents a single statement execution information.
 type StatementExecutionContext struct {
-	// Digest will be read/write by session and stmtstat.aggregator goroutine, use atomic to avoid data race.
-	sqlDigest  atomic.Value
-	planDigest atomic.Value
-	// parseBeginTime is the unix nanoseconds of the statement begin to parse.
-	parseBeginUnixNano int64
-	// execBeginTime is the unix nanoseconds of the statement begin to exec.
-	execBeginUnixNano int64
+	sqlDigest  []byte
+	planDigest []byte
+	// begin is the time when receive the statement request.
+	begin time.Time
 	// Add more required variables here
 }
 
-var emptyDigest = []byte(nil)
+var zeroTime = time.Time{}
 
 func (sec *StatementExecutionContext) reset() {
-	sec.sqlDigest.Store(emptyDigest)
-	sec.planDigest.Store(emptyDigest)
-	sec.parseBeginUnixNano = 0
-	sec.execBeginUnixNano = 0
+	sec.sqlDigest = nil
+	sec.planDigest = nil
+	sec.begin = nowFunc()
 }

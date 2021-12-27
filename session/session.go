@@ -1373,6 +1373,7 @@ func (s *session) ClearDiskFullOpt() {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+	s.sessionVars.StmtStats.OnReceiveCmd()
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1436,7 +1437,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	parseStartTime := time.Now()
-	s.sessionVars.StmtStats.OnParseBegin()
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1470,7 +1470,6 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
 func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
-	s.sessionVars.StmtStats.OnParseBegin()
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlexec.EscapeSQL(sql, args...)
@@ -1532,6 +1531,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 
 // ParseWithParamsInternal is same as ParseWithParams except set `s.sessionVars.InRestrictedSQL = true`
 func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	s.sessionVars.StmtStats.OnReceiveCmd()
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1646,7 +1646,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	s.sessionVars.StmtStats.OnExecBegin()
 	s.sessionVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
@@ -2096,7 +2095,6 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 // ExecutePreparedStmt executes a prepared statement.
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
 	var err error
-	s.sessionVars.StmtStats.OnExecBegin()
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}

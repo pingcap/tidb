@@ -266,10 +266,6 @@ const (
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	sessVars := cc.ctx.GetSessionVars()
 	sessVars.StartTime = time.Now()
-	// Observe statement exec begin for TopSQL.
-	if sessVars.StmtStats != nil {
-		sessVars.StmtStats.OnExecBegin()
-	}
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
 	if err != nil {
@@ -285,7 +281,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
-			sessVars.StmtStats.OnSQLDigestReady(prepareObj.SQLDigest.Bytes())
+			sessVars.StmtStats.OnSQLAndPlanDigestFirstReady(prepareObj.SQLDigest.Bytes(), nil)
 			defer sessVars.StmtStats.OnExecFinished()
 		}
 	}

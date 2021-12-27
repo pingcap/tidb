@@ -1255,8 +1255,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
+	vars := cc.ctx.GetSessionVars()
 	if variable.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
+		if vars.StmtStats != nil {
+			vars.StmtStats.OnReceiveCmd()
+		}
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1294,7 +1298,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		cc.lastActive = time.Now()
 	}()
 
-	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {

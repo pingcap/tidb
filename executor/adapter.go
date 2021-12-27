@@ -1280,8 +1280,7 @@ func (a *ExecStmt) GetTextToLog() string {
 func (a *ExecStmt) observeStmtOnSQLPlanDigestReadyForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnSQLDigestReady(sqlDigest)
-		vars.StmtStats.OnPlanDigestReady(planDigest)
+		vars.StmtStats.OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
 	}

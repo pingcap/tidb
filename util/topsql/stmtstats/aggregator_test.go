@@ -59,16 +59,16 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}()
 
 	a.register(stats)
-	stats.OnParseBegin()
-	stats.OnExecBegin()
-	stats.OnSQLDigestReady([]byte("SQL-1"))
-	stats.OnPlanDigestReady(nil)
+	stats.OnReceiveCmd()
+	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-1"), nil)
 	stats.OnExecFinished()
 
-	// test for doesn't have parse process
-	stats.OnExecBegin()
-	stats.OnSQLDigestReady([]byte("SQL-2"))
-	stats.OnPlanDigestReady([]byte{})
+	// test for double call
+	stats.OnReceiveCmd()
+	stats.OnReceiveCmd()
+	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
+	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
+	stats.OnExecFinished()
 	stats.OnExecFinished()
 
 	var records []StatementStatsRecord
@@ -77,8 +77,9 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}))
 	a.aggregate()
 	assert.NotEmpty(t, records)
+	assert.True(t, records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}] != nil)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
 	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
 }
