@@ -2060,7 +2060,7 @@
     "Name": "TestIndexMergeWithCorrelatedColumns",
     "Cases": [
       {
-        "SQL": "explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
         "Plan": [
           "Sort 10000.00 root  test.t2.c1",
           "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
@@ -2076,17 +2076,14 @@
           "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
           "          └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
           "            └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
-        "Plan": [
+        ],
+        "Res": [
           "1 1 1",
           "2 2 2"
         ]
       },
       {
-        "SQL": "explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;",
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;",
         "Plan": [
           "Sort 10000.00 root  test.t2.c1",
           "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
@@ -2101,16 +2098,13 @@
           "        │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
           "        └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3))), reverse(cast(test.t1.c3, var_string(20)))",
           "          └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;",
-        "Plan": [
+        ],
+        "Res": [
           "2 2 2"
         ]
       },
       {
-        "SQL": "explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
         "Plan": [
           "Sort 10000.00 root  test.t2.c1",
           "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
@@ -2126,17 +2120,14 @@
           "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
           "          └─Selection(Probe) 3.78 cop[tikv]  or(and(ge(test.t1.c1, 10), eq(test.t1.c1, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
           "            └─TableRowIDScan 3338.67 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
-        "Plan": [
+        ],
+        "Res": [
           "1 1 1",
           "2 2 2"
         ]
       },
       {
-        "SQL": "explain format=brief select c_int from tt1 where c_decimal < all (select c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;",
+        "SQL": "select c_int from tt1 where c_decimal < all (select c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;",
         "Plan": [
           "Projection 10000.00 root  test.tt1.c_int",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(test.tt1.c_decimal), NULL, 0)))",
@@ -2147,18 +2138,15 @@
           "      └─StreamAgg 1.00 cop[tikv]  funcs:min(test.tt2.c_decimal)->Column#17, funcs:sum(isnull(test.tt2.c_decimal))->Column#18, funcs:count(1)->Column#19",
           "        └─Selection 3.32 cop[tikv]  or(and(eq(test.tt1.c_int, test.tt2.c_int), and(gt(test.tt1.c_datetime, test.tt2.c_datetime), eq(test.tt2.c_decimal, 9.060))), and(le(test.tt2.c_str, \"interesting shtern\"), eq(test.tt1.c_int, test.tt2.c_int)))",
           "          └─TableFullScan 10000.00 cop[tikv] table:tt2 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c_int from tt1 where c_decimal < all (select c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;",
-        "Plan": [
+        ],
+        "Res": [
           "7",
           "8",
           "10"
         ]
       },
       {
-        "SQL": "explain format=brief select c_int from tt1 where c_decimal > all (select c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;",
+        "SQL": "select c_int from tt1 where c_decimal > all (select c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;",
         "Plan": [
           "Projection 10000.00 root  test.tt1.c_int",
           "└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(gt(test.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(test.tt1.c_decimal), NULL, 0)))",
@@ -2169,11 +2157,8 @@
           "      └─StreamAgg 1.00 cop[tikv]  funcs:max(test.tt2.c_decimal)->Column#17, funcs:sum(isnull(test.tt2.c_decimal))->Column#18, funcs:count(1)->Column#19",
           "        └─Selection 4.13 cop[tikv]  or(and(eq(test.tt2.c_int, 7), lt(7, test.tt1.c_decimal)), and(ge(test.tt2.c_str, \"zzzzzzzzzzzzzzzzzzz\"), eq(test.tt1.c_int, test.tt2.c_int)))",
           "          └─TableFullScan 10000.00 cop[tikv] table:tt2 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c_int from tt1 where c_decimal > all (select c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;",
-        "Plan": [
+        ],
+        "Res": [
           "6",
           "7",
           "8",
