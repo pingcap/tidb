@@ -717,7 +717,7 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 	return tables
 }
 
-// ParseRegionsTableInfos parse the tables or indices in regions according to key range.
+// ParseRegionsTableInfos parses the tables or indices in regions according to key range.
 func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
