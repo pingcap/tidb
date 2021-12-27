@@ -6,19 +6,23 @@ create index td on t (d);
 load stats 's/explain_indexmerge_stats_t.json';
 explain format = 'brief' select * from t where a < 50 or b < 50;
 id	estRows	task	access object	operator info
-TableReader	98.00	root		data:Selection
-└─Selection	98.00	cop[tikv]		or(lt(test.t.a, 50), lt(test.t.b, 50))
-  └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
+IndexMerge	98.00	root		
+├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
+├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
+└─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where (a < 50 or b < 50) and f > 100;
 id	estRows	task	access object	operator info
-TableReader	98.00	root		data:Selection
-└─Selection	98.00	cop[tikv]		gt(test.t.f, 100), or(lt(test.t.a, 50), lt(test.t.b, 50))
-  └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
+IndexMerge	98.00	root		
+├─TableRangeScan(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
+├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
+└─Selection(Probe)	98.00	cop[tikv]		gt(test.t.f, 100)
+  └─TableRowIDScan	98.00	cop[tikv]	table:t	keep order:false
 explain format = 'brief' select * from t where b < 50 or c < 50;
 id	estRows	task	access object	operator info
-TableReader	98.00	root		data:Selection
-└─Selection	98.00	cop[tikv]		or(lt(test.t.b, 50), lt(test.t.c, 50))
-  └─TableFullScan	5000000.00	cop[tikv]	table:t	keep order:false
+IndexMerge	98.00	root		
+├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
+├─IndexRangeScan(Build)	49.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,50), keep order:false
+└─TableRowIDScan(Probe)	98.00	cop[tikv]	table:t	keep order:false
 set session tidb_enable_index_merge = on;
 explain format = 'brief' select * from t where a < 50 or b < 50;
 id	estRows	task	access object	operator info
