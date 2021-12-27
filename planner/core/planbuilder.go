@@ -1382,6 +1382,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &AdminResetTelemetryID{}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as}, nil
+	case ast.AdminFlushPlanCache:
+		return &Simple{Statement: as}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
