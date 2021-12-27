@@ -492,7 +492,8 @@ func (c *collecting) topN(n int) records {
 	} else {
 		others = newRecord(nil, nil)
 	}
-	for _, e := range evicted {
+	for _, evict := range evicted {
+		e := evict // Avoid implicit memory aliasing in for loop.
 		others.merge(&e)
 	}
 	if others.totalCPUTimeMs > 0 {
