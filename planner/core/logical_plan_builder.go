@@ -4190,7 +4190,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if err != nil {
 			return nil, err
 		}
-		leaseDuration := time.Duration(sessionVars.TiDBTableCacheLease) * time.Second
+		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 		// Use the TS of the transaction to determine whether the cache can be used.
 		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
 		if cacheData != nil {

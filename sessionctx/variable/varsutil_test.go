@@ -99,7 +99,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
-	require.Equal(t, int64(DefTiDBTableCacheLease), vars.TiDBTableCacheLease)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
