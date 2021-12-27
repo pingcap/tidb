@@ -670,7 +670,7 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 	}
 }
 
-// FilterMemDBs filter memory databases in the input schemas.
+// FilterMemDBs filters memory databases in the input schemas.
 func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
 		if util.IsMemDB(dbInfo.Name.L) {
