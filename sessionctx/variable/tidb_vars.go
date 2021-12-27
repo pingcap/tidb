@@ -785,7 +785,8 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
-	DefTiDBEnableColumnTracking           = true
+	DefTiDBEnableIndexMerge               = true
+  DefTiDBEnableColumnTracking           = true
 )
 
 // Process global variables.
