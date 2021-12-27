@@ -104,21 +104,21 @@ func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOpt
 }
 
 func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
 }
 
 func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
 }
 
 func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op.tracer == nil {
+	if op == nil || op.tracer == nil {
 		return
 	}
 	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
