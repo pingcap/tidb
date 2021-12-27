@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1071,19 +1070,17 @@ func (s *testHotRegionsHistoryTableSuite) TearDownSuite(c *C) {
 	}
 	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
 }
-func bytesKeyToHex(key []byte) string {
-	return strings.ToUpper(hex.EncodeToString(key))
-}
+
 func (s *testHotRegionsHistoryTableSuite) newTableKeyRange(tableID int64) []string {
 	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	startKey := helper.BytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := helper.BytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return []string{startKey, endKey}
 }
 func (s *testHotRegionsHistoryTableSuite) newIndexKeyRange(tableID, indexID int64) []string {
 	sk, ek := tablecodec.GetTableIndexKeyRange(tableID, indexID)
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	startKey := helper.BytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := helper.BytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return []string{startKey, endKey}
 }
 
@@ -1101,8 +1098,8 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 		{"2019-10-10 10:10:13", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:14", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// table_id = 1313, deleted schema
-		{"2019-10-10 10:10:15", "UNKONW", "UNKONW", "1313", "UNKONW", "<nil>", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:16", "UNKONW", "UNKONW", "1313", "UNKONW", "<nil>", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:15", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "<nil>", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:16", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "<nil>", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
 		{"2019-10-10 10:10:17", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "1", "1", "11111", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:18", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "2", "2", "22222", "0", "0", "WRITE", "99", "99", "99", "99"},
@@ -1113,8 +1110,8 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", "21", "TBL", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", "21", "TBL", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// table_id = 1313, index_id = 1, deleted schema
-		{"2019-10-10 10:10:23", "UNKONW", "UNKONW", "1313", "UNKONW", "1", "7", "7", "77777", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:24", "UNKONW", "UNKONW", "1313", "UNKONW", "1", "8", "8", "88888", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:23", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "7", "7", "77777", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:24", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "8", "8", "88888", "0", "0", "WRITE", "99", "99", "99", "99"},
 	}
 
 	pdResps := []map[string]*executor.HistoryHotRegions{
@@ -1322,7 +1319,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 				"update_time<='2019-10-11 10:10:10'",
 				"table_id=21",
 				"index_id=1",
-				"index_name='UNKONW'",
+				"index_name='UNKNOWN'",
 			}, // index_id != index_name -> nil
 			expected: [][]string{},
 		},
@@ -1394,7 +1391,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 				"index_id=1",
 				"index_name='IDX_VER'",
 				"table_id>=21", // unpushed down predicates
-				"db_name='UNKNOW'",
+				"db_name='UNKNOWN'",
 			},
 			expected: [][]string{},
 		},
