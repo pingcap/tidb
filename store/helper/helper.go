@@ -746,6 +746,11 @@ OutLoop:
 	return tableInfos
 }
 
+// BytesKeyToHex convert bytes key to hex key, it is exported only for test.
+func BytesKeyToHex(key []byte) string {
+	return bytesKeyToHex(key)
+}
+
 func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
