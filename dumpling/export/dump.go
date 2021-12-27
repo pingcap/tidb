@@ -1141,7 +1141,7 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *sql.Conn, taskChan ch
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
-	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN `%s`", conf.SQL), []string{"rows", "estRows", "count"})
+	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
 	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(c))
 	atomic.StoreInt64(&d.totalTables, int64(1))
 	d.sendTaskToChan(tctx, task, taskChan)
