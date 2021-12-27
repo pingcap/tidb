@@ -38,10 +38,12 @@ func TestPProfCPUProfile(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
 	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
 	sqlCPUCollector.Start()
-	defer sqlCPUCollector.Close()
 
-	sqlCPUCollector.Enable()
 	collector.WaitCollectCnt(1)
 	require.True(t, collector.CollectCnt() >= 1)
-	sqlCPUCollector.Disable()
+	sqlCPUCollector.Stop()
+	sqlCPUCollector.Start()
+	collector.WaitCollectCnt(2)
+	require.True(t, collector.CollectCnt() >= 2)
+	sqlCPUCollector.Stop()
 }

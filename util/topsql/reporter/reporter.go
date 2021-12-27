@@ -175,7 +175,6 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 	tsr.normalizedPlanMap.Store(&sync.Map{})
 
 	tsr.sqlCPUCollector = tracecpu.NewSQLCPUCollector(tsr)
-	tsr.sqlCPUCollector.Start()
 
 	go tsr.collectWorker()
 	go tsr.reportWorker()
@@ -257,7 +256,7 @@ func (tsr *RemoteTopSQLReporter) Register(dataSink DataSink) error {
 
 		if len(tsr.dataSinks) > 0 {
 			variable.TopSQLVariable.Enable.Store(true)
-			tsr.sqlCPUCollector.Enable()
+			tsr.sqlCPUCollector.Start()
 		}
 
 		return nil
@@ -276,7 +275,7 @@ func (tsr *RemoteTopSQLReporter) Deregister(dataSink DataSink) {
 
 		if len(tsr.dataSinks) == 0 {
 			variable.TopSQLVariable.Enable.Store(false)
-			tsr.sqlCPUCollector.Disable()
+			tsr.sqlCPUCollector.Stop()
 		}
 	}
 }
@@ -301,7 +300,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 // Close uses to close and release the reporter resource.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	tsr.sqlCPUCollector.Close()
+	tsr.sqlCPUCollector.Stop()
 
 	var m map[DataSink]struct{}
 	tsr.dataSinkMu.Lock()

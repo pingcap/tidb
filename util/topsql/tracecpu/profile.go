@@ -53,66 +53,71 @@ type SQLCPUTimeRecord struct {
 
 // SQLCPUCollector uses to consume cpu profile from globalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
 type SQLCPUCollector struct {
+	mu     sync.Mutex
+	stared bool
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	profileConsumer cpuprofile.ProfileConsumer
-	collector       Collector
+	collector Collector
 }
 
 // NewSQLCPUCollector create a SQLCPUCollector.
 func NewSQLCPUCollector(c Collector) *SQLCPUCollector {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &SQLCPUCollector{
-		ctx:             ctx,
-		cancel:          cancel,
-		profileConsumer: make(cpuprofile.ProfileConsumer, 1),
-		collector:       c,
+		collector: c,
 	}
 }
 
 // Start uses to start to run SQLCPUCollector.
+// This will register a consumer into globalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
 func (sp *SQLCPUCollector) Start() {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if sp.stared {
+		return
+	}
+	sp.stared = true
+	sp.ctx, sp.cancel = context.WithCancel(context.Background())
+
 	logutil.BgLogger().Info("sql cpu collector started")
 	sp.wg.Add(1)
-	go sp.startAnalyzeProfileWorker()
+	go sp.collectSQLCPULoop()
 }
 
-// Close uses to close the SQLCPUCollector.
-func (sp *SQLCPUCollector) Close() {
+// Stop uses to stop the SQLCPUCollector.
+func (sp *SQLCPUCollector) Stop() {
+	sp.mu.Lock()
+	if !sp.stared {
+		sp.mu.Unlock()
+		return
+	}
+	sp.stared = false
 	if sp.cancel != nil {
 		sp.cancel()
 	}
-	sp.Disable()
+	sp.mu.Unlock()
+
 	sp.wg.Wait()
+	logutil.BgLogger().Info("sql cpu collector stopped")
 }
 
-// Enable uses to enable the SQLCPUCollector to work.
-// This will register a consumer into globalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
-// WARN: SQLCPUCollector can't collect sql cpu data until enable it. It is ok to call this function repeatedly.
-func (sp *SQLCPUCollector) Enable() {
-	cpuprofile.Register(sp.profileConsumer)
-}
+func (sp *SQLCPUCollector) collectSQLCPULoop() {
+	profileConsumer := make(cpuprofile.ProfileConsumer, 1)
+	cpuprofile.Register(profileConsumer)
 
-// Disable uses to disable the SQLCPUCollector from working.
-// This will unregister a consumer from globalCPUProfiler, then SQLCPUCollector won't receive cpu profile data any more.
-// WARN: SQLCPUCollector won't collect sql cpu data after disable it. It is ok to call this function repeatedly.
-func (sp *SQLCPUCollector) Disable() {
-	cpuprofile.Unregister(sp.profileConsumer)
-}
-
-func (sp *SQLCPUCollector) startAnalyzeProfileWorker() {
 	defer func() {
 		util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 		sp.wg.Done()
+		cpuprofile.Unregister(profileConsumer)
 	}()
+
 	for {
 		var data *cpuprofile.ProfileData
 		select {
 		case <-sp.ctx.Done():
 			return
-		case data = <-sp.profileConsumer:
+		case data = <-profileConsumer:
 		}
 		ts := data.End.Unix()
 		if data.Error != nil || ts <= 0 {

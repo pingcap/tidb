@@ -43,8 +43,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	topsql.SetupTopSQLForTest(collector)
 	sqlCPUCollector := tracecpu.NewSQLCPUCollector(collector)
 	sqlCPUCollector.Start()
-	sqlCPUCollector.Enable()
-	defer sqlCPUCollector.Close()
+	defer sqlCPUCollector.Stop()
 
 	reqs := []struct {
 		sql  string
