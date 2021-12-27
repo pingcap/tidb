@@ -29,7 +29,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	runInGoTest = true // flag for NewServer to known it is running in test environment
 

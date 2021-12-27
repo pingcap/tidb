@@ -23,7 +23,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	_ = cpuprofile.StartCPUProfiler()
 
 	opts := []goleak.Option{
