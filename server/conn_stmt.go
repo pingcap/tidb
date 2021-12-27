@@ -642,6 +642,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_send_longdata")
 	}
+
 	paramID := int(binary.LittleEndian.Uint16(data[4:6]))
 	return stmt.AppendParam(paramID, data[6:])
 }
