@@ -48,7 +48,7 @@ type StateRemote interface {
 
 ### Management of lock meta information
 
-What’s the granularity of the lock? One option is to implement the meta lock at the key-value level. The advantage is that the granularity is finer and the updating performance is better. If we cache the key-value record, modifying one key would not affect the cache of the other keys.  The disadvantage is that this will invade the current transaction layer implementation, and make our transaction more complex. Considering the current implementation of the transaction is very complex already, it is not wise to do so.
+What’s the granularity of the lock? One option is to implement the meta lock at the key-value level. The advantage is that the granularity is finer and the updating performance is better. If we cache the key-value record, modifying one key would not affect the cache of the other keys. The disadvantage is that this will invade the current transaction layer implementation, and make our transaction more complex. Considering the current implementation of the transaction is very complex already, it is not wise to do so.
 
 The other option is to implement the meta lock at the table level. Each table corresponds to one meta lock record. As long as any key of the table is modified, the table cache becomes invalid. Assuming that we only deal with small tables, and this table is updated infrequently, this option should be acceptable.
 
