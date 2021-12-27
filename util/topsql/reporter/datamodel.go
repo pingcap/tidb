@@ -83,7 +83,7 @@ func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 		StmtExecCount:   i.stmtStats.ExecCount,
 		StmtKvExecCount: i.stmtStats.KvStatsItem.KvExecCount,
 		// TODO: add duration
-		// StmtDurationSumNs: ti.stmtStats.,
+		// StmtDurationSumNs: i.stmtStats.DurationSumNs,
 		// Convert more indicators here.
 	}
 }

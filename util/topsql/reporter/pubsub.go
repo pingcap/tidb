@@ -171,11 +171,11 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 		}
 	}()
 
-	topSQLRecord := &tipb.TopSQLSubResponse_DataRecord{}
+	topSQLRecord := &tipb.TopSQLSubResponse_Record{}
 	r := &tipb.TopSQLSubResponse{RespOneof: topSQLRecord}
 
 	for i := range records {
-		topSQLRecord.DataRecord = &records[i]
+		topSQLRecord.Record = &records[i]
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}

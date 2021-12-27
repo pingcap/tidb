@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type mockAgentServer struct {
@@ -85,10 +83,6 @@ func (svr *mockAgentServer) mayHang() {
 	if now.Before(endTime) && now.After(beginTime) {
 		time.Sleep(endTime.Sub(now))
 	}
-}
-
-func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	return status.Error(codes.Unimplemented, "unimplemented")
 }
 
 func (svr *mockAgentServer) ReportTopSQLRecords(stream tipb.TopSQLAgent_ReportTopSQLRecordsServer) error {

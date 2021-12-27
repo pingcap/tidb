@@ -287,8 +287,8 @@ func TestTopSQLPubSub(t *testing.T) {
 			break
 		}
 
-		if r.GetDataRecord() != nil {
-			rec := r.GetDataRecord()
+		if r.GetRecord() != nil {
+			rec := r.GetRecord()
 			if _, ok := records[string(rec.SqlDigest)]; !ok {
 				records[string(rec.SqlDigest)] = rec
 			} else {

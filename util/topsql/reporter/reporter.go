@@ -25,7 +25,12 @@ import (
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 )
 
-const reportTimeout = 40 * time.Second
+const (
+	reportTimeout         = 40 * time.Second
+	collectChanBufferSize = 2
+)
+
+var nowFunc = time.Now
 
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
@@ -58,13 +63,14 @@ type RemoteTopSQLReporter struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	collectCPUDataChan      chan cpuData
-	collectStmtRecordsChan  chan []stmtstats.StatementStatsRecord
+	collectCPUTimeChan      chan []tracecpu.SQLCPUTimeRecord
+	collectStmtStatsChan    chan stmtstats.StatementStatsMap
 	reportCollectedDataChan chan collectedData
 
 	collecting        *collecting
 	normalizedSQLMap  *normalizedSQLMap
 	normalizedPlanMap *normalizedPlanMap
+	stmtStatsMaps     map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
 
 	// calling decodePlan this can take a while, so should not block critical paths.
 	decodePlan planBinaryDecodeFunc
@@ -79,12 +85,13 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		DefaultDataSinkRegisterer: NewDefaultDataSinkRegisterer(ctx),
 		ctx:                       ctx,
 		cancel:                    cancel,
-		collectCPUDataChan:        make(chan cpuData, 1),
-		collectStmtRecordsChan:    make(chan []stmtstats.StatementStatsRecord, 1),
+		collectCPUTimeChan:        make(chan []tracecpu.SQLCPUTimeRecord, collectChanBufferSize),
+		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
 		reportCollectedDataChan:   make(chan collectedData, 1),
 		collecting:                newCollecting(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
 		normalizedPlanMap:         newNormalizedPlanMap(),
+		stmtStatsMaps:             map[uint64]stmtstats.StatementStatsMap{},
 		decodePlan:                decodePlan,
 	}
 	go tsr.collectWorker()
@@ -96,28 +103,28 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 //
 // WARN: It will drop the DataRecords if the processing is not in time.
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
-	if len(records) == 0 {
+func (tsr *RemoteTopSQLReporter) Collect(data []tracecpu.SQLCPUTimeRecord) {
+	if len(data) == 0 {
 		return
 	}
 	select {
-	case tsr.collectCPUDataChan <- cpuData{timestamp: timestamp, records: records}:
+	case tsr.collectCPUTimeChan <- data:
 	default:
 		// ignore if chan blocked
 		ignoreCollectChannelFullCounter.Inc()
 	}
 }
 
-// CollectStmtStatsRecords implements stmtstats.Collector.
+// CollectStmtStatsMap implements stmtstats.Collector.
 //
 // WARN: It will drop the DataRecords if the processing is not in time.
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) CollectStmtStatsRecords(rs []stmtstats.StatementStatsRecord) {
-	if len(rs) == 0 {
+func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
+	if len(data) == 0 {
 		return
 	}
 	select {
-	case tsr.collectStmtRecordsChan <- rs:
+	case tsr.collectStmtStatsChan <- data:
 	default:
 		// ignore if chan blocked
 		ignoreCollectStmtChannelFullCounter.Inc()
@@ -149,37 +156,36 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
+	collectTicker := time.NewTicker(time.Second)
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
 	for {
 		select {
-		case data := <-tsr.collectCPUDataChan:
-			tsr.doCollect(data.timestamp, data.records)
-		case rs := <-tsr.collectStmtRecordsChan:
-			tsr.doCollectStmtRecords(rs)
+		case <-tsr.ctx.Done():
+			return
+		case <-collectTicker.C:
+			tsr.takeDataFromCollectChanBuffer()
 		case <-reportTicker.C:
+			tsr.doCollectStmtStatsMaps()
 			tsr.takeDataAndSendToReportChan()
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
 				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
 			}
-		case <-tsr.ctx.Done():
-			return
 		}
 	}
 }
 
 // doCollect collects top N cpuRecords of each round into tsr.collecting, and evict the
 // data that is not in top N. All the evicted cpuRecords will be summary into the others.
-func (tsr *RemoteTopSQLReporter) doCollect(timestamp uint64, rs cpuRecords) {
+func (tsr *RemoteTopSQLReporter) doCollect(timestamp uint64, data cpuRecords) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
 
 	// Get top N cpuRecords of each round cpuRecords. Collect the top N to tsr.collecting
 	// for each round. SQL meta will not be evicted, since the evicted SQL can be appeared
 	// on other components (TiKV) TopN DataRecords.
-	var evicted cpuRecords
-	rs, evicted = rs.topN(int(variable.TopSQLVariable.MaxStatementCount.Load()))
-	for _, r := range rs {
+	top, evicted := data.topN(int(variable.TopSQLVariable.MaxStatementCount.Load()))
+	for _, r := range top {
 		tsr.collecting.getOrCreateRecord(r.SQLDigest, r.PlanDigest).appendCPUTime(timestamp, r.CPUTimeMs)
 	}
 	if len(evicted) == 0 {
@@ -196,14 +202,13 @@ func (tsr *RemoteTopSQLReporter) doCollect(timestamp uint64, rs cpuRecords) {
 	tsr.collecting.appendOthersCPUTime(timestamp, totalEvictedCPUTime)
 }
 
-// doCollectStmtRecords collects []stmtstats.StatementStatsRecord into tsr.collecting.
+// doCollectStmtStatsMaps collects tsr.stmtStatsMaps into tsr.collecting.
 // All the evicted items will be summary into the others.
-func (tsr *RemoteTopSQLReporter) doCollectStmtRecords(rs []stmtstats.StatementStatsRecord) {
+func (tsr *RemoteTopSQLReporter) doCollectStmtStatsMaps() {
 	defer util.Recover("top-sql", "doCollectStmtRecords", nil, false)
 
-	for _, r := range rs {
-		timestamp := uint64(r.Timestamp)
-		for digest, item := range r.Data {
+	for timestamp, data := range tsr.stmtStatsMaps {
+		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
 			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
 				// This timestamp+sql+plan has been evicted due to low CPUTime.
@@ -211,6 +216,21 @@ func (tsr *RemoteTopSQLReporter) doCollectStmtRecords(rs []stmtstats.StatementSt
 				continue
 			}
 			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+		}
+	}
+	tsr.stmtStatsMaps = map[uint64]stmtstats.StatementStatsMap{}
+}
+
+func (tsr *RemoteTopSQLReporter) takeDataFromCollectChanBuffer() {
+	timestamp := uint64(nowFunc().Unix())
+	for {
+		select {
+		case data := <-tsr.collectCPUTimeChan:
+			tsr.doCollect(timestamp, data)
+		case data := <-tsr.collectStmtStatsChan:
+			tsr.stmtStatsMaps[timestamp] = data
+		default:
+			return
 		}
 	}
 }
@@ -280,10 +300,4 @@ type collectedData struct {
 	collected         *collecting
 	normalizedSQLMap  *normalizedSQLMap
 	normalizedPlanMap *normalizedPlanMap
-}
-
-// cpuData is used for transmission in the channel.
-type cpuData struct {
-	timestamp uint64
-	records   []tracecpu.SQLCPUTimeRecord
 }

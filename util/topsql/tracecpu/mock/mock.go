@@ -50,7 +50,7 @@ func NewTopSQLCollector() *TopSQLCollector {
 }
 
 // Collect uses for testing.
-func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) {
+func (c *TopSQLCollector) Collect(stats []tracecpu.SQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -74,8 +74,8 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 	}
 }
 
-// CollectStmtStatsRecords implements stmtstats.Collector.
-func (c *TopSQLCollector) CollectStmtStatsRecords(rs []stmtstats.StatementStatsRecord) {}
+// CollectStmtStatsMap implements stmtstats.Collector.
+func (c *TopSQLCollector) CollectStmtStatsMap(_ stmtstats.StatementStatsMap) {}
 
 // GetSQLStatsBySQLWithRetry uses for testing.
 func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUTimeRecord {

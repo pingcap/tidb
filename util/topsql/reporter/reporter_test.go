@@ -55,7 +55,7 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	tsr.Collect(timestamp, records)
+	tsr.doCollect(timestamp, records)
 	// sleep a while for the asynchronous collect
 	time.Sleep(100 * time.Millisecond)
 }
@@ -203,7 +203,7 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 }
 
 func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
-	tsr.Collect(timestamp, records)
+	tsr.doCollect(timestamp, records)
 	time.Sleep(time.Millisecond * 100)
 }
 
@@ -401,7 +401,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
-	tsr.Collect(3, records)
+	tsr.doCollect(3, records)
 
 	for _, ch := range chs {
 		d := <-ch
@@ -432,7 +432,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	records = []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
-	tsr.Collect(6, records)
+	tsr.doCollect(6, records)
 
 	for i := 1; i < 7; i += 2 {
 		d := <-chs[i]
