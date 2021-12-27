@@ -200,10 +200,19 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 
+	var (
+		normalizedSQL4PC, hash4PC string
+		stmtNode                  ast.StmtNode
+	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
+		stmtNode, normalizedSQL4PC, hash4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		if err != nil || stmtNode == nil {
+			normalizedSQL4PC = ""
+			hash4PC = ""
+		}
 	}
 
 	// We try to build the real statement of preparedStmt.
@@ -237,6 +246,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		Hash4PC:             hash4PC,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

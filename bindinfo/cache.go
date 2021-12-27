@@ -103,6 +103,16 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
+// FindUsingBinding
+func (br *BindRecord) FindUsingBinding() (usingBinding []Binding) {
+	for _, binding := range br.Bindings {
+		if binding.Status == Using {
+			usingBinding = append(usingBinding, binding)
+		}
+	}
+	return usingBinding
+}
+
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
 	for i := range br.Bindings {

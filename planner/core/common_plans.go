@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -390,6 +391,34 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	return err
 }
 
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (bindSQL string) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.Hash4PC == "" || sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if len(usingBinding) > 0 {
+			return usingBinding[0].BindSQL
+		}
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	if globalHandle == nil {
+		return
+	}
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.Hash4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if len(usingBinding) > 0 {
+			return usingBinding[0].BindSQL
+		}
+	}
+	return
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
@@ -413,7 +442,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 
 	var bindSQL string
 	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
+		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
