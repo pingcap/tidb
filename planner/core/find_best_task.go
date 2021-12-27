@@ -187,11 +187,8 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	for j, child := range p.children {
 		multAll /= childCnts[j]
 		curClock = PlanCounterTp((planCounter-1)/multAll + 1)
-		childProp := pp.GetChildReqProps(j)
-		tmpInfo := opt.appendChildToCurrent(child, childProp.String())
-		childTask, _, err := child.findBestTask(childProp, &curClock, opt)
+		childTask, _, err := child.findBestTask(pp.GetChildReqProps(j), &curClock, opt)
 		planCounter = (planCounter-1)%multAll + 1
-		opt.setCurrent(tmpInfo)
 		if err != nil {
 			return err
 		}
@@ -213,6 +210,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
 	for _, pp := range physicalPlans {
+		candidateInfo := opt.appendCandidate(fmt.Sprintf("%v_%v", p.TP(), p.ID()), fmt.Sprintf("%v_%v", pp.TP(), pp.ID()))
 		// Find best child tasks firstly.
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
@@ -221,7 +219,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childProp := pp.GetChildReqProps(j)
-			tmpInfo := opt.appendChildToCurrent(child, childProp.String())
+			tmpInfo := opt.appendChildToCurrent(candidateInfo, child, childProp.String())
 			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
 			childCnts[j] = cnt
 			opt.setCurrent(tmpInfo)
@@ -280,7 +278,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			bestTask = curTask
 			break
 		}
-		opt.appendCandidate(&tracing.TaskInfo{Cost: curTask.cost()})
+		if candidateInfo != nil {
+			candidateInfo.SetCost(curTask.cost())
+		}
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
@@ -303,12 +303,12 @@ func (op *physicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.PhysicalO
 	return op
 }
 
-func (op *physicalOptimizeOp) appendChildToCurrent(plan Plan, prop string) *tracing.PhysicalOptimizeTraceInfo {
-	if op.tracer == nil {
+func (op *physicalOptimizeOp) appendChildToCurrent(candidateInfo *tracing.TaskInfo, plan Plan, prop string) *tracing.PhysicalOptimizeTraceInfo {
+	if op.tracer == nil || candidateInfo == nil {
 		return nil
 	}
 	info := buildPhysicalOptimizeTraceInfo(plan, prop)
-	return op.tracer.AppendPhysicalOptimizeToCurrent(info)
+	return op.tracer.AppendPhysicalOptimizeToCurrent(candidateInfo, info)
 }
 
 func (op *physicalOptimizeOp) setCurrent(info *tracing.PhysicalOptimizeTraceInfo) {
@@ -325,11 +325,14 @@ func (op *physicalOptimizeOp) setBest(info *tracing.TaskInfo) {
 	op.tracer.Current.BestTask = info
 }
 
-func (op *physicalOptimizeOp) appendCandidate(info *tracing.TaskInfo) {
+func (op *physicalOptimizeOp) appendCandidate(logicalPlan string, physicalPlan string) *tracing.TaskInfo {
 	if op.tracer == nil {
-		return
+		return nil
 	}
+	info := &tracing.TaskInfo{Name: physicalPlan}
 	op.tracer.Current.Candidates = append(op.tracer.Current.Candidates, info)
+	op.tracer.Mapping[logicalPlan] = append(op.tracer.Mapping[logicalPlan], physicalPlan)
+	return info
 }
 
 // findBestTask implements LogicalPlan interface.

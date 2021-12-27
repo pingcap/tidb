@@ -95,11 +95,16 @@ type CETraceRecord struct {
 }
 
 // PhysicalOptimizeTraceInfo indicates for the PhysicalOptimize trace information
+// The essence of the physical optimization stage is a Dynamic Programming(DP).
+// So, PhysicalOptimizeTraceInfo is to record the transfer and status information in the DP.
+// Each (logicalPlan, property), the so-called state in DP, has its own PhysicalOptimizeTraceInfo.
+// The Candidates are possible transfer paths.
+// Because DP is performed on the plan tree,
+// we need to record the state of each candidate's child node, namely Children.
 type PhysicalOptimizeTraceInfo struct {
-	ID       int                          `json:"id"`
-	TP       string                       `json:"type"`
-	Children []*PhysicalOptimizeTraceInfo `json:"children"`
-	Property string                       `json:"property"`
+	ID       int    `json:"id"`
+	TP       string `json:"type"`
+	Property string `json:"property"`
 
 	// ExplainInfo should be implemented by each implemented LogicalPlan
 	ExplainInfo string `json:"info"`
@@ -109,17 +114,26 @@ type PhysicalOptimizeTraceInfo struct {
 }
 
 type TaskInfo struct {
-	Cost float64 `json:"cost"`
+	Name     string                       `json:"name"`
+	Children []*PhysicalOptimizeTraceInfo `json:"children"`
+	Cost     float64                      `json:"cost"`
 }
+
+func (t *TaskInfo) SetCost(cost float64) {
+	t.Cost = cost
+}
+
+type PhysicalPlanList []string
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
 	Root    *PhysicalOptimizeTraceInfo
 	Current *PhysicalOptimizeTraceInfo
+	Mapping map[string]PhysicalPlanList
 }
 
-func (t *PhysicalOptimizeTracer) AppendPhysicalOptimizeToCurrent(info *PhysicalOptimizeTraceInfo) *PhysicalOptimizeTraceInfo {
-	t.Current.Children = append(t.Current.Children, info)
+func (t *PhysicalOptimizeTracer) AppendPhysicalOptimizeToCurrent(candidateInfo *TaskInfo, info *PhysicalOptimizeTraceInfo) *PhysicalOptimizeTraceInfo {
+	candidateInfo.Children = append(candidateInfo.Children, info)
 	tmpInfo := t.Current
 	t.Current = info
 	return tmpInfo
