@@ -2286,7 +2286,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		if *sampleRate < 0 {
 			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
-				sc.AppendNote(errors.Errorf(
+				// We don't use the local variable sc.AppendNote(...) because we meet strange behavior
+				// when running test TestSmallTableAnalyzeV2 when failpoint enabled.
+				b.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
 					*sampleRate,
 					task.DBName,
@@ -2294,7 +2296,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 					task.PartitionName,
 				))
 			} else {
-				sc.AppendNote(errors.Errorf(
+				// We don't use the local variable sc.AppendNote(...) because we meet strange behavior
+				// when running test TestSmallTableAnalyzeV2 when failpoint enabled.
+				b.ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s.",
 					*sampleRate,
 					task.DBName,
@@ -2374,6 +2378,8 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 		// Force the TiDB thinking that there's PD and the count of region is small.
 		err = nil
 		regionStats.Count = 1
+		// Set a very large approximate count.
+		regionStats.StorageKeys = 1000000
 	})
 	if err != nil {
 		return 0, false
