@@ -199,6 +199,8 @@ type AzureBlobStorage struct {
 	options *backuppb.AzureBlobStorage
 
 	containerClient azblob.ContainerClient
+
+	accessTier azblob.AccessTier
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
@@ -251,9 +253,23 @@ RESPITER:
 		}
 	}
 
+	// parse storage access-tier
+	var accessTier azblob.AccessTier
+	switch options.StorageClass {
+	case "Archive", "archive":
+		accessTier = azblob.AccessTierArchive
+	case "Cool", "cool":
+		accessTier = azblob.AccessTierCool
+	case "Hot", "hot":
+		accessTier = azblob.AccessTierHot
+	default:
+		return nil, errors.New(fmt.Sprintf("unsupported access tier: %s", options.StorageClass))
+	}
+
 	return &AzureBlobStorage{
 		options,
 		containerClient,
+		accessTier,
 	}, nil
 }
 
@@ -263,7 +279,7 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	_, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{})
+	_, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
 	if err != nil {
 		return errors.Annotatef(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
@@ -373,6 +389,8 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFil
 		blobClient: client,
 
 		blockIDList: make([]string, 0, 4),
+
+		accessTier: s.accessTier,
 	}
 
 	uploaderWriter := newBufferedWriter(uploader, azblob.BlockBlobMaxUploadBlobBytes, NoCompression)
@@ -462,6 +480,8 @@ type azblobUploader struct {
 	blobClient azblob.BlockBlobClient
 
 	blockIDList []string
+
+	accessTier azblob.AccessTier
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
@@ -481,6 +501,6 @@ func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
 }
 
 func (u *azblobUploader) Close(ctx context.Context) error {
-	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, nil)
+	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, &azblob.CommitBlockListOptions{Tier: &u.accessTier})
 	return errors.Trace(err)
 }
