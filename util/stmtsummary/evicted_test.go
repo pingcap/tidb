@@ -58,7 +58,6 @@ func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime
 
 // Test stmtSummaryByDigestMap.ToEvictedCountDatum
 func TestMapToEvictedCountDatum(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
 	now := time.Now().Unix()
@@ -143,7 +142,6 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 
 // Test stmtSummaryByDigestEvicted
 func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
-	t.Parallel()
 	ssbde := newStmtSummaryByDigestEvicted()
 	evictedKey, evictedValue := generateStmtSummaryByDigestKeyValue("a", 1, 2)
 
@@ -221,7 +219,6 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 
 // Test stmtSummaryByDigestEvictedElement.ToEvictedCountDatum
 func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
-	t.Parallel()
 	record := newStmtSummaryByDigestEvictedElement(0, 1)
 	evictedKey, evictedValue := generateStmtSummaryByDigestKeyValue("alpha", 0, 1)
 	digestValue := evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
@@ -250,7 +247,6 @@ func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
 // test stmtSummaryByDigestEvicted.addEvicted
 // test stmtSummaryByDigestEvicted.toEvictedCountDatum (single and multiple intervals)
 func TestEvictedCountDetailed(t *testing.T) {
-	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
 	err := ssMap.SetRefreshInterval("60", false)
@@ -314,7 +310,6 @@ func TestEvictedCountDetailed(t *testing.T) {
 }
 
 func TestNewStmtSummaryByDigestEvictedElement(t *testing.T) {
-	t.Parallel()
 	now := time.Now().Unix()
 	end := now + 60
 	stmtEvictedElement := newStmtSummaryByDigestEvictedElement(now, end)
@@ -324,14 +319,12 @@ func TestNewStmtSummaryByDigestEvictedElement(t *testing.T) {
 }
 
 func TestStmtSummaryByDigestEvicted(t *testing.T) {
-	t.Parallel()
 	stmtEvicted := newStmtSummaryByDigestEvicted()
 	require.Equal(t, 0, stmtEvicted.history.Len())
 }
 
 // test addInfo function
 func TestAddInfo(t *testing.T) {
-	t.Parallel()
 	now := time.Now().Unix()
 	addTo := stmtSummaryByDigestElement{
 		// user

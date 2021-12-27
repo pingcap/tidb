@@ -44,6 +44,9 @@ import (
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error)
 
+// GetBindSQL4PlanCache get the bindSQL for the ast.StmtNode
+var GetBindSQL4PlanCache func(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string)
+
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
@@ -104,21 +107,21 @@ func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, be
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace(before))
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.buildLogicalPlanTrace())
 }
 
-func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
+func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
+	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
 }
 
 func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
-	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace(final))
+	op.tracer.RecordFinalLogicalPlan(final.buildLogicalPlanTrace())
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

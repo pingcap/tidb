@@ -43,7 +43,6 @@ import (
 )
 
 func TestSelectNormal(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)
 
 	// Test Next.
@@ -63,7 +62,6 @@ func TestSelectNormal(t *testing.T) {
 }
 
 func TestSelectMemTracker(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectNormal(t, 2, 6, nil, nil)
 
 	// Test Next.
@@ -76,7 +74,6 @@ func TestSelectMemTracker(t *testing.T) {
 }
 
 func TestSelectNormalChunkSize(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	response, colTypes := createSelectNormal(t, 100, 1000000, nil, sctx)
@@ -86,7 +83,6 @@ func TestSelectNormalChunkSize(t *testing.T) {
 }
 
 func TestSelectWithRuntimeStats(t *testing.T) {
-	t.Parallel()
 	planIDs := []int{1, 2, 3}
 	response, colTypes := createSelectNormal(t, 1, 2, planIDs, nil)
 
@@ -111,7 +107,6 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
-	t.Parallel()
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
@@ -158,7 +153,6 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 }
 
 func TestSelectStreaming(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectStreaming(t, 1, 2)
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
@@ -176,7 +170,6 @@ func TestSelectStreaming(t *testing.T) {
 }
 
 func TestSelectStreamingWithNextRaw(t *testing.T) {
-	t.Parallel()
 	response, _ := createSelectStreaming(t, 1, 2)
 	data, err := response.NextRaw(context.TODO())
 	require.NoError(t, err)
@@ -184,14 +177,12 @@ func TestSelectStreamingWithNextRaw(t *testing.T) {
 }
 
 func TestSelectStreamingChunkSize(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectStreaming(t, 100, 1000000)
 	testChunkSize(t, response, colTypes)
 	require.NoError(t, response.Close())
 }
 
 func TestAnalyze(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -200,7 +191,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
@@ -217,7 +208,6 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestChecksum(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
