@@ -23,22 +23,22 @@ import (
 )
 
 const (
-	azblobEndpointOption     = "azblob.endpoint"
-	azblobStorageClassOption = "azblob.storage-class"
-	azblobAccountName        = "azblob.account-name"
-	azblobAccountKey         = "azblob.account-key"
+	azblobEndpointOption   = "azblob.endpoint"
+	azblobAccessTierOption = "azblob.access-tier"
+	azblobAccountName      = "azblob.account-name"
+	azblobAccountKey       = "azblob.account-key"
 )
 
 type AzblobBackendOptions struct {
-	Endpoint     string `json:"endpoint" toml:"endpoint"`
-	AccountName  string `json:"account-name" toml:"account-name"`
-	AccountKey   string `json:"account-key" toml:"account-key"`
-	StorageClass string `json:"storage-class" toml:"storage-class"`
+	Endpoint    string `json:"endpoint" toml:"endpoint"`
+	AccountName string `json:"account-name" toml:"account-name"`
+	AccountKey  string `json:"account-key" toml:"account-key"`
+	AccessTier  string `json:"access-tier" toml:"access-tier"`
 }
 
 func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) error {
 	azblob.Endpoint = options.Endpoint
-	azblob.StorageClass = options.StorageClass
+	azblob.StorageClass = options.AccessTier
 	azblob.AccountName = options.AccountName
 	azblob.SharedKey = options.AccountKey
 	return nil
@@ -46,7 +46,7 @@ func (options *AzblobBackendOptions) apply(azblob *backuppb.AzureBlobStorage) er
 
 func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobEndpointOption, "", "(experimental) Set the Azblob endpoint URL")
-	flags.String(azblobStorageClassOption, "", "(experimental) Specify the storage class for azblob")
+	flags.String(azblobAccessTierOption, "", "Specify the storage class for azblob")
 	flags.String(azblobAccountName, "", "Specify the account name for azblob")
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 }
@@ -58,7 +58,7 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 		return errors.Trace(err)
 	}
 
-	options.StorageClass, err = flags.GetString(azblobStorageClassOption)
+	options.AccessTier, err = flags.GetString(azblobAccessTierOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
