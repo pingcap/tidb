@@ -246,9 +246,8 @@ func TestCacheTableSizeLimit(t *testing.T) {
 		if tk.HasPlan("select * from cache_t2", "UnionScan") {
 			cached = true
 			break
-		} else {
-			time.Sleep(50 * time.Millisecond)
 		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	require.True(t, cached)
 
