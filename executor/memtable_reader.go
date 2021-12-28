@@ -40,6 +40,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -900,7 +901,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	tz := sctx.GetSessionVars().Location()
-	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
 	schemas := tikvHelper.FilterMemDBs(allSchemas)
 	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
