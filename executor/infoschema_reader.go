@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -69,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -2616,54 +2614,73 @@ type tiflashInstanceInfo struct {
 }
 
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
-	store := sctx.GetStore()
-	if etcd, ok := store.(kv.EtcdBackend); ok {
-		var addrs []string
-		var err error
-		if addrs, err = etcd.EtcdAddrs(); err != nil {
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx)
+	if err != nil {
+		return err
+	}
+
+	for _, info := range storeInfo {
+		if info.ServerType != kv.TiFlash.Name() {
+			continue
+		}
+		info.ResolveLoopBackAddr()
+		if len(tiflashInstances) > 0 && !tiflashInstances.Exist(info.Address) {
+			continue
+		}
+		hostAndStatusPort := strings.Split(info.StatusAddr, ":")
+		if len(hostAndStatusPort) != 2 {
+			return errors.Errorf("node status addr: %s format illegal", info.StatusAddr)
+		}
+		// fetch tiflash config
+		configURL := fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), info.StatusAddr)
+		resp, err := util.InternalHTTPClient().Get(configURL)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			return errors.Errorf("request %s failed: %s", configURL, resp.Status)
+		}
+		// parse http_port or https_port from the fetched config
+		var nestedConfig map[string]interface{}
+		if err = json.NewDecoder(resp.Body).Decode(&nestedConfig); err != nil {
 			return err
 		}
-		if addrs != nil {
-			domainFromCtx := domain.GetDomain(sctx)
-			if domainFromCtx != nil {
-				cli := domainFromCtx.GetEtcdClient()
-				prefix := "/tiflash/cluster/http_port/"
-				kv := clientv3.NewKV(cli)
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
-				cancel()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				for _, ev := range resp.Kvs {
-					id := string(ev.Key)[len(prefix):]
-					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
-						continue
-					}
-					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
-					req, err := http.NewRequest(http.MethodGet, url, nil)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					resp, err := util.InternalHTTPClient().Do(req)
-					if err != nil {
-						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						continue
-					}
-					resp.Body.Close()
-					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
-						id:  id,
-						url: url,
-					})
-					e.instanceCount += 1
-				}
-				e.initialized = true
-				return nil
+		if engineStoreConfig, ok := nestedConfig["engine-store"]; ok {
+			foundPort := false
+			var port interface{}
+			portProtocol := ""
+			if httpPort, ok := engineStoreConfig.(map[string]interface{})["http_port"]; ok {
+				foundPort = true
+				port = httpPort
+				portProtocol = "http"
+			} else if httpsPort, ok := engineStoreConfig.(map[string]interface{})["https_port"]; ok {
+				foundPort = true
+				port = httpsPort
+				portProtocol = "https"
 			}
+			if !foundPort {
+				return errors.Errorf("engine-store.http_port/https_port not found in server %s", info.Address)
+			}
+			switch portValue := port.(type) {
+			case float64:
+				e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+					id:  info.Address,
+					url: fmt.Sprintf("%s://%s:%d", portProtocol, hostAndStatusPort[0], int(portValue)),
+				})
+				e.instanceCount += 1
+			default:
+				return errors.Errorf("engine-store.http_port value(%p) unexpected in server %s", port, info.Address)
+			}
+		} else {
+			return errors.Errorf("engine-store config not found in server %s", info.Address)
 		}
-		return errors.Errorf("Etcd addrs not found")
+		if err = resp.Body.Close(); err != nil {
+			return err
+		}
 	}
-	return errors.Errorf("%T not an etcd backend", store)
+	e.initialized = true
+	return nil
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
