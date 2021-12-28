@@ -294,6 +294,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if prepared.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.PreparedPlanCache().DeleteAll()
+		prepared.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
 	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -404,7 +414,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	var bindSQL string
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, prepared.Stmt)
-		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion, bindSQL)
+		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -447,6 +457,13 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 			cachedVals := cacheValue.([]*PlanCacheValue)
 			for _, cachedVal := range cachedVals {
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
 				}
@@ -510,13 +527,10 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
+			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
-		} else {
-			// We need to reconstruct the plan cache key based on the bindSQL.
-			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion, sessVars.StmtCtx.BindSQL)
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {

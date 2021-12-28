@@ -798,21 +798,22 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo := &model.TableInfo{}
+	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
-		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, tblInfos)
 	return ver, nil
 }
 

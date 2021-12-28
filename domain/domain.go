@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -89,6 +90,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
+	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -333,6 +335,22 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
+}
+
+// ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
+func (do *Domain) ExpiredTimeStamp4PC() types.Time {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	return do.expiredTimeStamp4PC
+}
+
+// SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
+func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	do.expiredTimeStamp4PC = time
 }
 
 // DDL gets DDL from domain.
@@ -712,6 +730,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
 		renewLeaseCh:        make(chan func(), 10),
+		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)

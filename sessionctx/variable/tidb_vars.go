@@ -784,6 +784,7 @@ const (
 	DefTiDBRegardNULLAsPoint              = true
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
+	DefTiDBEnableIndexMerge               = true
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
 )
