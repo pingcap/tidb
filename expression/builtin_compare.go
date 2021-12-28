@@ -416,7 +416,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-//Greatest/Least interal string comparison mode
+// GLCmpStringMode represents Greatest/Least interal string comparison mode
 type GLCmpStringMode uint8
 
 const (
@@ -425,7 +425,7 @@ const (
 	GLCmpStringAsDatetime                 // 'yyyy-mm-dd hh:mm:ss'
 )
 
-//Greatest/Least return time type
+// GLRetTimeType represents Greatest/Least return time type
 type GLRetTimeType uint8
 
 const (
