@@ -782,7 +782,7 @@ const (
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
-	DefTiDBPersistAnalyzeOptions          = false
+	DefTiDBPersistAnalyzeOptions          = true
 )
 
 // Process global variables.
