@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/ddl/sst"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -509,6 +510,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// TODO: optimize index-ddl
+		sst.PrepareIndexOp(w.ctx, sst.DDLInfo{job.SchemaName, tblInfo, job.RealStartTS})
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
@@ -599,6 +602,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		// TODO: optimize index ddl.
+		err = sst.FinishIndexOp(w.ctx, job.StartTS)
+		if err != nil {
+			logutil.BgLogger().Error("FinishIndexOp err" + err.Error())
+		}
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}

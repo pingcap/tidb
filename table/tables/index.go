@@ -22,6 +22,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	lkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/ddl/sst"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -183,7 +185,12 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	if err != nil {
 		return nil, err
 	}
-
+	// TODO: optimize index ddl
+	if *sst.IndexDDLLightning {
+		var kvp lkv.KvPairs
+		err = sst.IndexOperator(ctx, txn.StartTS(), kvp)
+		return nil, err
+	}
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		return nil, err
