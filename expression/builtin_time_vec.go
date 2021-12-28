@@ -49,17 +49,6 @@ func (b *builtinMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		if result.IsNull(i) {
 			continue
 		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
-					return err
-				}
-				result.SetNull(i, true)
-				continue
-			}
-			i64s[i] = 0
-			continue
-		}
 		i64s[i] = int64(ds[i].Month())
 	}
 	return nil
@@ -86,17 +75,6 @@ func (b *builtinYearSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	ds := buf.Times()
 	for i := 0; i < input.NumRows(); i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
-					return err
-				}
-				result.SetNull(i, true)
-				continue
-			}
-			i64s[i] = 0
 			continue
 		}
 		i64s[i] = int64(ds[i].Year())
@@ -987,13 +965,6 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
 		i64s[i] = int64((date.Month() + 2) / 3)
 	}
 	return nil
@@ -1033,13 +1004,6 @@ func (b *builtinWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
 		if buf2.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -1613,13 +1577,6 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
 
 		week := date.Week(mode)
 		i64s[i] = int64(week)
@@ -2260,13 +2217,6 @@ func (b *builtinYearWeekWithModeSig) vecEvalInt(input *chunk.Chunk, result *chun
 			continue
 		}
 		date := ds[i]
-		if date.IsZero() {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
 		mode := int(ms[i])
 		if buf2.IsNull(i) {
 			mode = 0
@@ -2817,17 +2767,6 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	ds := buf.Times()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
-			continue
-		}
-		if ds[i].IsZero() {
-			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-				if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, ds[i].String())); err != nil {
-					return err
-				}
-				result.SetNull(i, true)
-				continue
-			}
-			i64s[i] = 0
 			continue
 		}
 		i64s[i] = int64(ds[i].Day())
