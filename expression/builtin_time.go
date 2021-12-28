@@ -1368,6 +1368,10 @@ func (b *builtinWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
+	if date.IsZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
+
 	mode, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1394,6 +1398,10 @@ func (b *builtinWeekWithoutModeSig) evalInt(row chunk.Row) (int64, bool, error) 
 
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+
+	if date.IsZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
 	mode := 0
