@@ -135,17 +135,18 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 	d := domain.GetDomain(gs.se).DDL()
 	log.Info("tidb start create tables")
 	var dbName model.CIStr
-	cloneTables := make([]*model.TableInfo, 0, len(tables))
 
 	for db, tablesInDB := range tables {
 		dbName = model.NewCIStr(db)
 		queryBuilder := strings.Builder{}
+		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
 			query, err := gs.showCreateTable(table)
 			if err != nil {
 				log.Error("Tidbsession to show create tables failure.")
 				return err
 			}
+
 			queryBuilder.WriteString(query)
 			queryBuilder.WriteString(";")
 
@@ -160,9 +161,9 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
 		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
-
+		//it possible caused by version mismatch with BR, in this case, we fall back to old way that creating table one by one
 		if err != nil {
-			log.Info("Bulk create table from tidb failure, it possible caused by version mismatch with BR.", zap.String("Error", err.Error()))
+			log.Warn("Bulk create table from tidb failure.", zap.String("Error", err.Error()))
 			return err
 		}
 		log.Info("BatchCreateTableWithInfo  DONE",
