@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -238,21 +236,6 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 			}
 			startKey, endKey := r.Range()
 
-			tableID := tablecodec.DecodeTableID(endKey)
-			tableID -= 1
-
-			tikvStore, ok := dr.store.(helper.Storage)
-			if ok {
-				tikvHelper := &helper.Helper{
-					Store:       tikvStore,
-					RegionCache: tikvStore.GetRegionCache(),
-				}
-				ruleID := fmt.Sprintf("table-%v-r", tableID)
-				// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
-				if err := tikvHelper.DeletePlacementRule("tiflash", ruleID); err != nil {
-					logutil.BgLogger().Error("delManager: delete tiflash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
-				}
-			}
 			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),

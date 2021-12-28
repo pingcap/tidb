@@ -20,8 +20,10 @@ package ddl_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -432,13 +434,18 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 
 // When gc worker works, it will automatically remove pd rule for TiFlash.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
-	_, pdClient, cluster, err := unistore.New("")
+	_, _, cluster, err := unistore.New("")
 	for _, s := range s.cluster.GetAllStores() {
 		cluster.AddStore(s.Id, s.Address, s.Labels...)
 	}
 
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
 	c.Assert(err, IsNil)
-	gcWorker, err := gcworker.NewGCWorker(s.store, pdClient)
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -462,9 +469,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	tk.MustExec("drop table ddltiflash")
 
 	// Now gc will trigger, and will remove dropped table.
-
-	gcWorker.Start()
-	defer gcWorker.Close()
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
 
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
