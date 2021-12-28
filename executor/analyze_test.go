@@ -1237,11 +1237,20 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 func TestSavedAnalyzeOptions(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 
@@ -1275,7 +1284,6 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	// auto-analyze uses the table-level options
 	handle.AutoAnalyzeMinCnt = 0
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.Nil(t, h.Update(is))
@@ -1326,12 +1334,16 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 func TestSavedPartitionAnalyzeOptions(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustExec("set global tidb_persist_analyze_options = true")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -1481,6 +1493,13 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "LIST", rs.Rows()[0][5])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 
+	// set analyze version back to 1, will not use persisted
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("analyze table t partition p2")
+	pi = tableInfo.GetPartitionInfo()
+	p2 = h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	require.NotEqual(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
+
 	// drop column
 	tk.MustExec("alter table t drop column b")
 	tk.MustExec("analyze table t")
@@ -1520,12 +1539,16 @@ PARTITION BY RANGE ( a ) (
 func TestSavedPartitionAnalyzeOptionsDynamic(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set global tidb_persist_analyze_options = true")
 	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (10),
@@ -1634,12 +1657,16 @@ PARTITION BY RANGE ( a ) (
 func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustExec("set global tidb_persist_analyze_options = true")
 	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t1 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
