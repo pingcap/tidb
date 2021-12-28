@@ -35,7 +35,7 @@ func (s *testLoadHistSuite) TestConcurrentLoadHist(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -71,8 +71,6 @@ func (s *testLoadHistSuite) TestConcurrentLoadHist(c *C) {
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	c.Assert(hg.Len()+topn.Num(), Greater, 0)
-
-	// TODO partition table
 }
 
 func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
@@ -80,7 +78,7 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -121,50 +119,6 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 			break
 		}
 	}
-	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
-}
-
-func (s *testLoadHistSuite) TestConcurrentLoadHistFail(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("set @@tidb_analyze_version=2")
-	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-
-	oriLease := s.do.StatsHandle().Lease()
-	s.do.StatsHandle().SetLease(1)
-	defer func() {
-		s.do.StatsHandle().SetLease(oriLease)
-	}()
-	testKit.MustExec("analyze table t")
-
-	is := s.do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := s.do.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Equals, 0)
-	stmtCtx := &stmtctx.StatementContext{}
-	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
-	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
-	}
-	timeout := time.Nanosecond * mathutil.MaxInt
-	// TODO failpoint, and works again after failpoint
-	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
-	rs := h.SyncWaitStatsLoad(stmtCtx)
-	c.Assert(rs, Equals, true)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN

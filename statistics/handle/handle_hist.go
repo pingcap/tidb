@@ -276,6 +276,8 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			if !ok {
 				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 			}
+			// if the task has already timeout, no sql is sync-waiting for it,
+			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
 				h.writeToTimeoutCh(task)
 				continue
@@ -303,6 +305,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	}
 }
 
+// writeToTimeoutCh writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task, since timeout task is not that critical.
 func (h *Handle) writeToTimeoutCh(task *NeededColumnTask) {
 	select {
 	case h.StatsLoad.TimeoutColumnsCh <- task:

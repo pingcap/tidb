@@ -70,7 +70,7 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 	}
 	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
 	var timeout = time.Duration(waitTime) * time.Millisecond
-	neededColumns := CollectHistColumns(plan)
+	_, neededColumns := CollectColumnStatsUsage(plan)
 	if config.GetGlobalConfig().Log.Level == "debug" && len(neededColumns) > 0 {
 		neededColInfos := make([]string, len(neededColumns))
 		is := domain.GetDomain(plan.SCtx()).InfoSchema()
