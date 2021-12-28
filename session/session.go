@@ -2869,12 +2869,6 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		go func(sql, id string, intxn bool) {
 			//TODO: We need to add a client col also.
 			var builder strings.Builder
-			if intxn {
-				builder.WriteString(id)
-			} else {
-				builder.WriteString("0")
-			}
-			builder.WriteString(" ")
 			builder.WriteString(fmt.Sprintf("%v", vars.ConnectionID))
 			builder.WriteString(" ")
 			// Logic TS
