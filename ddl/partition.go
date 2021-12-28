@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/sessionctx/variable"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -448,13 +450,17 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 	return partitions, nil
 }
 
-func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
+func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.PartitionDefinition, options []*ast.TableOption) error {
 	// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
 	// For example:
 	// t placement policy x (p1 placement policy y, p2)
 	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
 	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
 	// when policy x is altered.
+	placementMode := variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load())
+	ignorePlacement := placementMode == variable.PlacementModeIgnore
+	hasPlacement := false
+
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
@@ -463,6 +469,11 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
 			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
 			ast.TableOptionPlacementVoterConstraints:
+			hasPlacement = true
+			if ignorePlacement {
+				continue
+			}
+
 			if partition.DirectPlacementOpts == nil {
 				partition.DirectPlacementOpts = &model.PlacementSettings{}
 			}
@@ -471,16 +482,28 @@ func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, opti
 				return err
 			}
 		case ast.TableOptionPlacementPolicy:
+			hasPlacement = true
+			if ignorePlacement {
+				hasPlacement = true
+				continue
+			}
+
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
 			}
 		}
 	}
 
+	if ignorePlacement && hasPlacement {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Placement options is ignored for TIDB_PLACEMENT_MODE is '%s'", placementMode),
+		))
+	}
+
 	return nil
 }
 
-func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildHashPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
 	}
@@ -493,7 +516,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 			def := defs[i]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
-			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
+			if err := setPartitionPlacementFromOptions(ctx, &definitions[i], def.Options); err != nil {
 				return nil, err
 			}
 		}
@@ -532,7 +555,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			Comment: comment,
 		}
 
-		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+		if err = setPartitionPlacementFromOptions(ctx, &piDef, def.Options); err != nil {
 			return nil, err
 		}
 
@@ -596,7 +619,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			Comment: comment,
 		}
 
-		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+		if err = setPartitionPlacementFromOptions(ctx, &piDef, def.Options); err != nil {
 			return nil, err
 		}
 

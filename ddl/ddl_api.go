@@ -201,6 +201,13 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 }
 
 func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (err error) {
+	if variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load()) == variable.PlacementModeIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Alter table placement is ignored for TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2030,6 +2037,13 @@ func (d *ddl) CreateTableWithInfo(
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
+
+	placementMode := variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load())
+	if placementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Placement options is ignored for TIDB_PLACEMENT_MODE is '%s'", placementMode),
+		))
 	}
 
 	var oldViewTblID int64
@@ -6421,6 +6435,13 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 }
 
 func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent ast.Ident, spec *ast.AlterTableSpec, policyRefInfo *model.PolicyRefInfo, placementSettings *model.PlacementSettings) (err error) {
+	if variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load()) == variable.PlacementModeIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Alter table partition placement is ignored for TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
 	if err != nil {
 		return errors.Trace(err)
@@ -6467,7 +6488,42 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 	return policyInfo, nil
 }
 
+func removeTablePlacement(tbInfo *model.TableInfo) bool {
+	hasPlacementSettings := false
+	if tbInfo.PlacementPolicyRef != nil {
+		tbInfo.PlacementPolicyRef = nil
+		hasPlacementSettings = true
+	}
+
+	if tbInfo.DirectPlacementOpts != nil {
+		tbInfo.DirectPlacementOpts = nil
+		hasPlacementSettings = true
+	}
+
+	if tbInfo.Partition != nil {
+		for i := range tbInfo.Partition.Definitions {
+			def := &tbInfo.Partition.Definitions[i]
+			if def.PlacementPolicyRef != nil {
+				def.PlacementPolicyRef = nil
+				hasPlacementSettings = true
+			}
+			if def.DirectPlacementOpts != nil {
+				def.DirectPlacementOpts = nil
+				hasPlacementSettings = true
+			}
+		}
+	}
+	return hasPlacementSettings
+}
+
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
+	if variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load()) == variable.PlacementModeIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Create placement policy is ignored for TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
 	policyName := stmt.PolicyName
 	if policyName.L == defaultPlacementPolicyName {
 		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
@@ -6506,6 +6562,13 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 }
 
 func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
+	if variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load()) == variable.PlacementModeIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Drop placement policy is ignored for TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
 	policyName := stmt.PolicyName
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.
@@ -6536,6 +6599,13 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 }
 
 func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) (err error) {
+	if variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load()) == variable.PlacementModeIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Alter placement policy is ignored for TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
 	policyName := stmt.PolicyName
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.

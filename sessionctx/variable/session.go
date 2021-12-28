@@ -725,6 +725,11 @@ type SessionVars struct {
 	// EnablePlacementChecks indicates whether a user can check validation of placement.
 	EnablePlacementChecks bool
 
+	// PlacementMode the placement mode we use
+	//   strict: Check placement settings strictly in ddl operations
+	//   ignore: Ignore all placement settings in ddl operations
+	PlacementMode atomic2.String
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -1049,6 +1054,26 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 		SkipPositionRecording:       true,
+	}
+}
+
+// PlacementMode presents the placement mode used.
+type PlacementMode string
+
+const (
+	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
+	PlacementModeStrict PlacementMode = "strict"
+	// PlacementModeIgnore indicates ignore all placement operations in ddl
+	PlacementModeIgnore PlacementMode = "ignore"
+)
+
+// Valid indicate PlacementMode is validated.
+func (p PlacementMode) Valid() bool {
+	switch p {
+	case PlacementModeStrict, PlacementModeIgnore:
+		return true
+	default:
+		return false
 	}
 }
 
