@@ -79,7 +79,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 		for _, col := range cols {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits
+				autoRandomBits := rand.New(rand.NewSource(options.AutoRandomSeed)).Int63n(1<<meta.AutoRandomBits) << incrementalBits // nolint:gosec
 				autoIDFn = func(id int64) int64 {
 					return autoRandomBits | id
 				}
@@ -87,7 +87,7 @@ func NewTableKVEncoder(tbl table.Table, options *SessionOptions) (Encoder, error
 			}
 		}
 	} else if meta.ShardRowIDBits > 0 {
-		rd := rand.New(rand.NewSource(options.AutoRandomSeed))
+		rd := rand.New(rand.NewSource(options.AutoRandomSeed)) // nolint:gosec
 		mask := int64(1)<<meta.ShardRowIDBits - 1
 		shift := autoid.RowIDBitLength - meta.ShardRowIDBits - 1
 		autoIDFn = func(id int64) int64 {
