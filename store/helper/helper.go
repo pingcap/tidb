@@ -197,6 +197,7 @@ type StoreHotRegionInfos struct {
 // HotRegionsStat records echo store's hot region.
 // it's the response of PD.
 type HotRegionsStat struct {
+	Count       int          `json:"regions_count"`
 	RegionsStat []RegionStat `json:"statistics"`
 }
 
@@ -237,7 +238,11 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	metric := make(map[uint64]RegionMetric, metricCnt)
 	for _, hotRegions := range regionResp.AsLeader {
 		for _, region := range hotRegions.RegionsStat {
-			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
+			metric[region.RegionID] = RegionMetric{
+				FlowBytes:    uint64(region.FlowBytes),
+				MaxHotDegree: region.HotDegree,
+				Count:        hotRegions.Count,
+			}
 		}
 	}
 	return metric, nil
