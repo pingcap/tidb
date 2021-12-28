@@ -438,28 +438,6 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	))
 }
 
-func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists TestPlacementDB;")
-	tk.MustExec("create database TestPlacementDB;")
-	tk.MustExec("use TestPlacementDB;")
-	tk.MustExec("drop placement policy if exists placement_x;")
-	tk.MustExec("create placement policy placement_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
-	tk.MustExec("create table t(c int) partition by range (c) (partition p1 values less than (200) followers=2);")
-	defer func() {
-		tk.MustExec("drop database if exists TestPlacementDB;")
-		tk.MustExec("drop placement policy if exists placement_x;")
-	}()
-
-	tk.MustGetErrCode("create database TestPlacementDB2 followers=2;", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter database TestPlacementDB placement policy=placement_x", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("create table t (c int) FOLLOWERS=2;", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t voters=2;", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", mysql.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t partition p1 placement policy=\"placement_x\";", mysql.ErrUnsupportedDDLOperation)
-}
-
 func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
