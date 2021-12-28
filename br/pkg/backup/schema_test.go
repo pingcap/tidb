@@ -261,16 +261,11 @@ func (s *testBackupSchemaSuite) TestBackupSchemasForSystemTable(c *C) {
 	c.Assert(backupSchemas.Len(), Equals, systemTablesCount)
 
 	ctx := context.Background()
-	cipher := backuppb.CipherInfo{
-		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-	}
 	updateCh := new(simpleProgress)
 
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false)
 	err = backupSchemas.BackupSchemas(ctx, metaWriter2, s.mock.Storage, nil,
 		math.MaxUint64, 1, variable.DefChecksumTableConcurrency, true, updateCh)
-	c.Assert(err, IsNil)
-	err = metaWriter2.FlushBackupMeta(ctx)
 	c.Assert(err, IsNil)
 
 	schemas2 := s.GetSchemasFromMeta(c, es2)
