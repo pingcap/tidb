@@ -111,7 +111,13 @@ type IndexMergeReaderExecutor struct {
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
 
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
+	// Indicates whether there is correlated column in filter or table/index range.
+	// We need to refresh dagPBs before send DAGReq to storage.
+	isCorColInPartialFilters []bool
+	isCorColInTableFilter    bool
+	isCorColInPartialAccess  []bool
+
+  // extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
 	extraPIDColumnIndex offsetOptional
 }
 
@@ -119,6 +125,11 @@ type IndexMergeReaderExecutor struct {
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
+
+	if err = e.rebuildRangeForCorCol(); err != nil {
+		return err
+	}
+
 	if !e.partitionTableMode {
 		if e.keyRanges, err = e.buildKeyRangesForTable(e.table); err != nil {
 			return err
@@ -138,6 +149,30 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) (err error) {
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	return nil
+}
+
+func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
+	len1 := len(e.partialPlans)
+	len2 := len(e.isCorColInPartialAccess)
+	if len1 != len2 {
+		return errors.Errorf("unexpect length for partialPlans(%d) and isCorColInPartialAccess(%d)", len1, len2)
+	}
+	for i, plan := range e.partialPlans {
+		if e.isCorColInPartialAccess[i] {
+			switch x := plan[0].(type) {
+			case *plannercore.PhysicalIndexScan:
+				e.ranges[i], err = rebuildIndexRanges(e.ctx, x, x.IdxCols, x.IdxColLens)
+			case *plannercore.PhysicalTableScan:
+				e.ranges[i], err = x.ResolveCorrelatedColumns()
+			default:
+				err = errors.Errorf("unsupported plan type %T", plan[0])
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -221,7 +256,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
-func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
+func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) (err error) {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
@@ -245,6 +280,23 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				worker := &partialIndexWorker{
+					stats:        e.stats,
+					idxID:        e.getPartitalPlanID(workID),
+					sc:           e.ctx,
+					batchSize:    e.maxChunkSize,
+					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
+					maxChunkSize: e.maxChunkSize,
+				}
+
+				if e.isCorColInPartialFilters[workID] {
+					// We got correlated column, so need to refresh Selection operator.
+					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+				}
+
 				var builder distsql.RequestBuilder
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
@@ -256,15 +308,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
 					SetFromInfoSchema(e.ctx.GetInfoSchema())
-
-				worker := &partialIndexWorker{
-					stats:        e.stats,
-					idxID:        e.getPartitalPlanID(workID),
-					sc:           e.ctx,
-					batchSize:    e.maxChunkSize,
-					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-					maxChunkSize: e.maxChunkSize,
-				}
 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
@@ -316,7 +359,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) error {
+func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, workID int) (err error) {
 	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
@@ -344,6 +387,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
 				}
+
 				worker := &partialTableWorker{
 					stats:        e.stats,
 					sc:           e.ctx,
@@ -351,6 +395,14 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 					maxChunkSize: e.maxChunkSize,
 					tableReader:  partialTableReader,
+				}
+
+				if e.isCorColInPartialFilters[workID] {
+					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+						worker.syncErr(e.resultCh, err)
+						return
+					}
+					partialTableReader.dagPB = e.dagPBs[workID]
 				}
 
 				for _, tbl := range tbls {
@@ -544,7 +596,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 	}
 }
 
-func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (Executor, error) {
+func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ Executor, err error) {
 	tableReaderExec := &TableReaderExecutor{
 		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
 		table:               tbl,
@@ -557,6 +609,11 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:               e.tblPlans,
 		extraPIDColumnIndex: e.extraPIDColumnIndex,
+	}
+	if e.isCorColInTableFilter {
+		if tableReaderExec.dagPB.Executors, _, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
+			return nil, err
+		}
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
