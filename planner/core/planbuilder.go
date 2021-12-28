@@ -1380,6 +1380,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &AdminResetTelemetryID{}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as}, nil
+	case ast.AdminFlushPlanCache:
+		return &Simple{Statement: as}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -3232,9 +3234,16 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		if _, ok := assign.Expr.(*ast.SubqueryExpr); ok {
 			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
-		expr, _, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
+		expr, np, err := b.rewriteWithPreprocess(ctx, assign.Expr, usingPlan, nil, nil, true, checkRefColumn)
 		if err != nil {
 			return err
+		}
+		if np != nil {
+			if _, ok := np.(*LogicalTableDual); !ok {
+				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
+				// This is a TODO and we will support it later.
+				return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
+			}
 		}
 		if insertPlan.AllAssignmentsAreConstant {
 			_, isConstant := expr.(*expression.Constant)
@@ -3312,7 +3321,15 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				if _, ok := valueItem.(*ast.SubqueryExpr); ok {
 					usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				}
-				expr, _, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
+				var np LogicalPlan
+				expr, np, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
+				if np != nil {
+					if _, ok := np.(*LogicalTableDual); !ok {
+						// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
+						// This is a TODO and we will support it later.
+						return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
+					}
+				}
 			}
 			if err != nil {
 				return err

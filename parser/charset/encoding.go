@@ -29,6 +29,17 @@ func IsSupportedEncoding(charset string) bool {
 	return ok
 }
 
+// FindEncodingTakeUTF8AsNoop finds the encoding according to the charset
+// except that utf-8 is treated as no-operation encoding. This is used to
+// reduce the overhead of utf-8 validation in some cases.
+func FindEncodingTakeUTF8AsNoop(charset string) Encoding {
+	enc := FindEncoding(charset)
+	if enc.Tp() == EncodingTpUTF8 {
+		return EncodingBinImpl
+	}
+	return enc
+}
+
 // FindEncoding finds the encoding according to charset.
 func FindEncoding(charset string) Encoding {
 	if len(charset) == 0 {
@@ -105,7 +116,7 @@ const (
 )
 
 // CountValidBytes counts the first valid bytes in src that
-// can be encode to the current encoding.
+// can be encoded to the current encoding.
 func CountValidBytes(e Encoding, src []byte) int {
 	nSrc := 0
 	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
@@ -118,7 +129,7 @@ func CountValidBytes(e Encoding, src []byte) int {
 }
 
 // CountValidBytesDecode counts the first valid bytes in src that
-// can be decode to utf-8.
+// can be decoded to utf-8.
 func CountValidBytesDecode(e Encoding, src []byte) int {
 	nSrc := 0
 	e.Foreach(src, opToUTF8, func(from, to []byte, ok bool) bool {
