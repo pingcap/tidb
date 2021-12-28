@@ -445,7 +445,6 @@ func (kvcodec *tableKVEncoder) Encode(
 	kvPairs := kvcodec.se.takeKvPairs()
 	for i := 0; i < len(kvPairs.pairs); i++ {
 		kvPairs.pairs[i].RowID = rowID
-		kvPairs.pairs[i].Offset = offset
 	}
 	kvcodec.recordCache = record[:0]
 	return kvPairs, nil
