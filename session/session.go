@@ -1373,6 +1373,10 @@ func (s *session) ClearDiskFullOpt() {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+	if variable.TopSQLEnabled() {
+		s.sessionVars.StmtStats.OnHandleInternalStmtBegin()
+		defer s.sessionVars.StmtStats.OnHandleInternalStmtFinish()
+	}
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1555,6 +1559,11 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
+
+	if variable.TopSQLEnabled() {
+		se.sessionVars.StmtStats.OnHandleInternalStmtBegin()
+		defer se.sessionVars.StmtStats.OnHandleInternalStmtFinish()
+	}
 
 	startTime := time.Now()
 	// The special session will share the `InspectionTableCache` with current session

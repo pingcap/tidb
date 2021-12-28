@@ -26,6 +26,8 @@ const (
 	execStateHandleStmtFetchFinish
 	execStateUseDBBegin
 	execStateUseDBFinish
+	execStateHandleInternalStmtBegin
+	execStateHandleInternalStmtFinish
 	// Add new state here.
 )
 
@@ -76,6 +78,10 @@ func (s ExecState) String() string {
 		return "use_db_begin"
 	case execStateUseDBFinish:
 		return "use_db_finish"
+	case execStateHandleInternalStmtBegin:
+		return "handle_internal_stmt_begin"
+	case execStateHandleInternalStmtFinish:
+		return "handle_internal_stmt_finish"
 	default:
 		return fmt.Sprintf("unknown_%d", int(s))
 	}

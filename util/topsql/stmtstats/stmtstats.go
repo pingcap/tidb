@@ -71,6 +71,12 @@ type StatementObserver interface {
 
 	// OnHandleStmtFinish should be called on TiDB finished use db.
 	OnUseDBFinish()
+
+	// OnHandleInternalStmtBegin should be called on the begin of TiDB handle internal stmt.
+	OnHandleInternalStmtBegin()
+
+	// OnHandleInternalStmtFinish should be called on TiDB finished handle internal stmt.
+	OnHandleInternalStmtFinish()
 }
 
 // StatementStats is a counter used locally in each session.
@@ -159,11 +165,7 @@ func (s *StatementStats) OnHandleStmtFinish() {
 
 // OnStmtReadyToExecute implements StatementObserver.OnStmtReadyToExecute.
 func (s *StatementStats) OnStmtReadyToExecute(sqlDigest, planDigest []byte) {
-	if s.ctx.state == execStateInitial {
-		// TODO: remove this after support internal statement.
-		return
-	}
-	acceptLastStates := []ExecState{execStateHandleStmtBegin, execStateHandleStmtExecuteBegin, execStateUseDBBegin, execStateStmtReadyToExecute}
+	acceptLastStates := []ExecState{execStateHandleStmtBegin, execStateHandleStmtExecuteBegin, execStateHandleInternalStmtBegin, execStateUseDBBegin, execStateStmtReadyToExecute}
 	valid := s.ctx.state.tryGoTo(execStateStmtReadyToExecute, acceptLastStates)
 	if !valid {
 		return
@@ -229,6 +231,27 @@ func (s *StatementStats) OnUseDBBegin() {
 func (s *StatementStats) OnUseDBFinish() {
 	acceptLastStates := []ExecState{execStateStmtReadyToExecute, execStateUseDBBegin}
 	s.ctx.state.tryGoTo(execStateUseDBFinish, acceptLastStates)
+}
+
+// OnHandleInternalStmtBegin implements StatementObserver.OnHandleInternalStmtBegin.
+func (s *StatementStats) OnHandleInternalStmtBegin() {
+	acceptLastStates := []ExecState{execStateHandleInternalStmtFinish, execStateInitial}
+	valid := s.ctx.state.tryGoTo(execStateHandleInternalStmtBegin, acceptLastStates)
+	if !valid {
+		return
+	}
+
+	s.ctx.handleStmtBegin = nowFunc()
+	s.ctx.sqlDigest = nil
+	s.ctx.planDigest = nil
+}
+
+// OnHandleInternalStmtFinish implements StatementObserver.OnHandleInternalStmtFinish.
+func (s *StatementStats) OnHandleInternalStmtFinish() {
+	acceptLastStates := []ExecState{execStateHandleInternalStmtBegin, execStateStmtReadyToExecute}
+	s.ctx.state.tryGoTo(execStateHandleInternalStmtFinish, acceptLastStates)
+
+	s.onStmtFinished(s.ctx.handleStmtBegin)
 }
 
 func (s *StatementStats) onStmtFinished(begin time.Time) {

@@ -1638,6 +1638,14 @@ func TestTopSQLStatementStats(t *testing.T) {
 			},
 			execSQL: "execute stmt using @a, @b;",
 		},
+		{
+			prepare:  "prepare stmt from 'set global tidb_enable_top_sql = (? = sleep(?))';",
+			execStmt: "set global tidb_enable_top_sql = (0 = sleep(0.1))",
+			setSQLsGen: func(idx int) []string {
+				return []string{"set @a=0", "set @b=0.1"}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
 	}
 	for _, ca := range cases2 {
 		_, digest := parser.NormalizeDigest(ca.execStmt)
@@ -1708,6 +1716,12 @@ func TestTopSQLStatementStats(t *testing.T) {
 				return []interface{}{idx, 0.1}
 			},
 		},
+		{
+			prepare: "set global tidb_enable_1pc = (? = sleep(?))",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{0, 0.1}
+			},
+		},
 	}
 	for _, ca := range cases3 {
 		_, digest := parser.NormalizeDigest(ca.prepare)
@@ -1745,6 +1759,10 @@ func TestTopSQLStatementStats(t *testing.T) {
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
 			require.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
 			require.True(t, item.SumExecNanoDuration < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
+			if strings.HasPrefix(sqlStr, "set global") {
+				// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
+				continue
+			}
 			var kvSum uint64
 			for _, kvCount := range item.KvStatsItem.KvExecCount {
 				kvSum += kvCount
@@ -1753,7 +1771,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 		}
 	}
 	require.Equal(t, len(sqlDigests), found)
-	require.Equal(t, 18, found)
+	require.Equal(t, 20, found)
 }
 
 func TestTopSQLAgent(t *testing.T) {
