@@ -1080,8 +1080,7 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err = handleInvalidZeroTime(b.ctx, date)
-			return 0, isNull, err
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 		}
 		return 0, false, nil
 	}
@@ -1240,8 +1239,7 @@ func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if arg.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err = handleInvalidZeroTime(b.ctx, arg)
-			return 0, isNull, err
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 		}
 		return 0, false, nil
 	}
@@ -1284,8 +1282,7 @@ func (b *builtinDayOfWeekSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		isNull, err = handleInvalidZeroTime(b.ctx, arg)
-		return 0, isNull, err
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Weekday() + 1), false, nil
@@ -1327,8 +1324,7 @@ func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, arg)
-		return 0, isNull, err
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 
 	return int64(arg.YearDay()), false, nil
@@ -1562,8 +1558,7 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err := handleInvalidZeroTime(b.ctx, date)
-			return 0, isNull, err
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 		}
 		return 0, false, nil
 	}
@@ -6096,8 +6091,16 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, date)
-		return 0, isNull, err
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to 0 value (not null)
+		n, err := date.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := date.Fsp() > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return 0, false, nil
+		}
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
 	return int64((date.Month() + 2) / 3), false, nil
