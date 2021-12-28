@@ -31,8 +31,6 @@ import (
 )
 
 func TestDupDetectIterator(t *testing.T) {
-	t.Parallel()
-
 	var pairs []common.KvPair
 	prevRowMax := int64(0)
 	// Unique pairs.
@@ -183,8 +181,6 @@ func TestDupDetectIterator(t *testing.T) {
 }
 
 func TestDupDetectIterSeek(t *testing.T) {
-	t.Parallel()
-
 	pairs := []common.KvPair{
 		{
 			Key:   []byte{1, 2, 3, 0},

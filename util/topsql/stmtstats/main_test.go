@@ -12,4 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package stmtstats
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testbridge.SetupForCommonTest()
+	goleak.VerifyTestMain(m)
+}

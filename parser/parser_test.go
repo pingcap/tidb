@@ -16,6 +16,7 @@ package parser_test
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -809,6 +810,11 @@ func TestDMLStmt(t *testing.T) {
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
+		// Test for 'admin flush plan_cache'
+		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
+		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
+		// We do not support the global level. We will check it in the later.
+		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
@@ -2332,6 +2338,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) regions="us,3";`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
 		{`create table t (c int) followers="us,3";`, false, ""},
 		{`create table t (c int) followers=3;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) followers=0;`, false, ""},
 		{`create table t (c int) voters="us,3";`, false, ""},
 		{`create table t (c int) voters=3;`, true, "CREATE TABLE `t` (`c` INT) VOTERS = 3"},
 		{`create table t (c int) learners="us,3";`, false, ""},
@@ -2347,6 +2354,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) /*T![placement] regions="us,3" */;`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
 		{`create table t (c int) /*T![placement] followers=3 */;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) /*T![placement] followers=0 */;`, false, ""},
 		{`create table t (c int) /*T![placement] voters="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us' REGIONS = 'us,3'"},
 		{"create table t (c int) /*T![placement] placement policy=`x` */;", true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `x`"},
@@ -2355,6 +2363,7 @@ func TestDDL(t *testing.T) {
 		{`alter table t primary_region="us";`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
 		{`alter table t regions="us,3";`, true, "ALTER TABLE `t` REGIONS = 'us,3'"},
 		{`alter table t followers=3;`, true, "ALTER TABLE `t` FOLLOWERS = 3"},
+		{`alter table t followers=0;`, false, ""},
 		{`alter table t voters=3;`, true, "ALTER TABLE `t` VOTERS = 3"},
 		{`alter table t learners=3;`, true, "ALTER TABLE `t` LEARNERS = 3"},
 		{`alter table t schedule="even";`, true, "ALTER TABLE `t` SCHEDULE = 'even'"},
@@ -2369,6 +2378,7 @@ func TestDDL(t *testing.T) {
 		{`create database t primary_region="us";`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`create database t regions="us,3";`, true, "CREATE DATABASE `t` REGIONS = 'us,3'"},
 		{`create database t followers=3;`, true, "CREATE DATABASE `t` FOLLOWERS = 3"},
+		{`create database t followers=0;`, false, ""},
 		{`create database t voters=3;`, true, "CREATE DATABASE `t` VOTERS = 3"},
 		{`create database t learners=3;`, true, "CREATE DATABASE `t` LEARNERS = 3"},
 		{`create database t schedule="even";`, true, "CREATE DATABASE `t` SCHEDULE = 'even'"},
@@ -2384,6 +2394,7 @@ func TestDDL(t *testing.T) {
 		{`alter database t primary_region="us";`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`alter database t regions="us,3";`, true, "ALTER DATABASE `t` REGIONS = 'us,3'"},
 		{`alter database t followers=3;`, true, "ALTER DATABASE `t` FOLLOWERS = 3"},
+		{`alter database t followers=0;`, false, ""},
 		{`alter database t voters=3;`, true, "ALTER DATABASE `t` VOTERS = 3"},
 		{`alter database t learners=3;`, true, "ALTER DATABASE `t` LEARNERS = 3"},
 		{`alter database t schedule="even";`, true, "ALTER DATABASE `t` SCHEDULE = 'even'"},
@@ -3376,6 +3387,7 @@ func TestDDL(t *testing.T) {
 		{"create placement policy x primary_region='us'", true, "CREATE PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"create placement policy x region='us, 3'", false, ""},
 		{"create placement policy x followers=3", true, "CREATE PLACEMENT POLICY `x` FOLLOWERS = 3"},
+		{"create placement policy x followers=0", false, ""},
 		{"create placement policy x voters=3", true, "CREATE PLACEMENT POLICY `x` VOTERS = 3"},
 		{"create placement policy x learners=3", true, "CREATE PLACEMENT POLICY `x` LEARNERS = 3"},
 		{"create placement policy x schedule='even'", true, "CREATE PLACEMENT POLICY `x` SCHEDULE = 'even'"},
@@ -6441,4 +6453,37 @@ func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool
 
 func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
 	return n, true
+}
+
+func TestInsertStatementMemoryAllocation(t *testing.T) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	runtime.ReadMemStats(&newStats)
+	require.Less(t, int(newStats.TotalAlloc-oldStats.TotalAlloc), 1024*500)
+}
+
+func TestCharsetIntroducer(t *testing.T) {
+	p := parser.New()
+	// `_gbk` is treated as an identifier.
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
+	require.NoError(t, err)
+
+	charset.AddCharset(&charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+		Desc:             "gbk",
+		Maxlen:           2,
+	})
+	defer charset.RemoveCharset("gbk")
+	// `_gbk` is treated as a character set.
+	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }

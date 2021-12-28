@@ -32,8 +32,6 @@ func randBytes(n int) []byte {
 }
 
 func TestNoopKeyAdapter(t *testing.T) {
-	t.Parallel()
-
 	keyAdapter := noopKeyAdapter{}
 	key := randBytes(32)
 	require.Equal(t, len(key), keyAdapter.EncodedLen(key))
@@ -46,8 +44,6 @@ func TestNoopKeyAdapter(t *testing.T) {
 }
 
 func TestDupDetectKeyAdapter(t *testing.T) {
-	t.Parallel()
-
 	inputs := []struct {
 		key   []byte
 		rowID int64
@@ -83,8 +79,6 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 }
 
 func TestDupDetectKeyOrder(t *testing.T) {
-	t.Parallel()
-
 	keys := [][]byte{
 		{0x0, 0x1, 0x2},
 		{0x0, 0x1, 0x3},
@@ -104,8 +98,6 @@ func TestDupDetectKeyOrder(t *testing.T) {
 }
 
 func TestDupDetectEncodeDupKey(t *testing.T) {
-	t.Parallel()
-
 	keyAdapter := dupDetectKeyAdapter{}
 	key := randBytes(32)
 	result1 := keyAdapter.Encode(nil, key, 10)
@@ -118,8 +110,6 @@ func startWithSameMemory(x []byte, y []byte) bool {
 }
 
 func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
-	t.Parallel()
-
 	keyAdapters := []KeyAdapter{noopKeyAdapter{}, dupDetectKeyAdapter{}}
 	for _, keyAdapter := range keyAdapters {
 		key := randBytes(32)
@@ -134,8 +124,6 @@ func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
 }
 
 func TestDecodeKeyToPreAllocatedBuf(t *testing.T) {
-	t.Parallel()
-
 	data := []byte{
 		0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7,
 		0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf,
@@ -153,8 +141,6 @@ func TestDecodeKeyToPreAllocatedBuf(t *testing.T) {
 }
 
 func TestDecodeKeyDstIsInsufficient(t *testing.T) {
-	t.Parallel()
-
 	data := []byte{
 		0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7,
 		0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf,

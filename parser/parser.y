@@ -666,6 +666,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -1020,6 +1021,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -1524,7 +1526,12 @@ DirectPlacementOption:
 	}
 |	"FOLLOWERS" EqOpt LengthNum
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("FOLLOWERS must be positive"))
+			return 1
+		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: cnt}
 	}
 |	"VOTERS" EqOpt LengthNum
 	{
@@ -6123,6 +6130,7 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
+|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -6453,7 +6461,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6477,7 +6485,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6493,7 +6501,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -10148,6 +10156,13 @@ AdminStmt:
 			Tp: ast.AdminResetTelemetryID,
 		}
 	}
+|	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:             ast.AdminFlushPlanCache,
+			StatementScope: $3.(ast.StatementScope),
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -10727,6 +10742,23 @@ GlobalScope:
 |	"SESSION"
 	{
 		$$ = false
+	}
+
+StatementScope:
+	{
+		$$ = ast.StatementScopeSession
+	}
+|	"GLOBAL"
+	{
+		$$ = ast.StatementScopeGlobal
+	}
+|	"INSTANCE"
+	{
+		$$ = ast.StatementScopeInstance
+	}
+|	"SESSION"
+	{
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:
