@@ -1124,24 +1124,16 @@ func (e *tikvRegionStatusRetriever) genTableInfoWithKeyRange(dbNames, tableNames
 	indexIsExist := e.genExistFunc(indexNames, indexIDs)
 	for _, db := range dbSchemas {
 		for _, table := range db.Tables {
-			if len(tableNames) != 0 || len(tableIDs) != 0 {
-				if tableIsExist(table.Name.L, table.ID) {
-					if len(indexNames) == 0 && len(indexIDs) == 0 {
-						if pi := table.GetPartitionInfo(); pi != nil {
-							for _, partition := range pi.Definitions {
-								tableInfos = append(tableInfos, helper.NewPartitionTableWithKeyRange(db, table, partition.ID))
-							}
-						} else {
-							tableInfos = append(tableInfos, helper.NewTableWithKeyRange(db, table))
+			if tableIsExist(table.Name.L, table.ID) {
+				if len(indexNames) == 0 && len(indexIDs) == 0 {
+					if pi := table.GetPartitionInfo(); pi != nil {
+						for _, partition := range pi.Definitions {
+							tableInfos = append(tableInfos, helper.NewPartitionTableWithKeyRange(db, table, partition.ID))
 						}
-					}
-					for _, index := range table.Indices {
-						if indexIsExist(index.Name.L, index.ID) {
-							tableInfos = append(tableInfos, helper.NewIndexWithKeyRange(db, table, index))
-						}
+					} else {
+						tableInfos = append(tableInfos, helper.NewTableWithKeyRange(db, table))
 					}
 				}
-			} else {
 				for _, index := range table.Indices {
 					if indexIsExist(index.Name.L, index.ID) {
 						tableInfos = append(tableInfos, helper.NewIndexWithKeyRange(db, table, index))
