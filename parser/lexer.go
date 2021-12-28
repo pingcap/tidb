@@ -146,12 +146,6 @@ func (s *Scanner) AppendWarn(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	if mysql.IsUTF8Charset(s.encoding.Name()) {
-		// Skip utf8 encoding because `ToUTF8` validates the whole SQL.
-		// This can cause failure when the SQL contains BLOB values.
-		// TODO: Convert charset on every token and use 'binary' encoding to decode token.
-		return sql
-	}
 	utf8Lit, err := s.encoding.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
