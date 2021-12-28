@@ -2203,6 +2203,10 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 					partition p1 values less than(11),
 					partition p2 values less than(16));`)
 	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	tk.MustExec("set @@tidb_enable_index_merge = off")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_index_merge = on")
+	}()
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -4992,6 +4996,82 @@ func (s *testIntegrationSuite) TestIssue30094(c *C) {
 	))
 }
 
+func (s *testIntegrationSuite) TestIssue30200(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), key(c1), key(c2), c3 varchar(100));")
+	tk.MustExec("insert into t1 values('ab', '10', '10');")
+
+	// lpad has not been pushed to TiKV or TiFlash.
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Selection 15.99 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c1, 10, \"a\")), 10)))",
+		"└─IndexMerge 19.99 root  ",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows("1"))
+
+	// `left` has not been pushed to TiKV, but it has been pushed to TiFlash.
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows(
+		"Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
+		"└─IndexMerge 19.99 root  ",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows("1"))
+
+	// If no hint, we cannot use index merge if filter cannot be pushed to any storage.
+	oriIndexMergeSwitcher := tk.MustQuery("select @@tidb_enable_index_merge;").Rows()[0][0].(string)
+	tk.MustExec("set tidb_enable_index_merge = on;")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_index_merge = %s;", oriIndexMergeSwitcher))
+	}()
+	tk.MustQuery("explain format=brief select * from t1 where c1 = 'ab' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Selection 8000.00 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c1, 10, \"a\")), 10)))",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), c4 varchar(100), key idx_0(c1), key idx_1(c2, c3));")
+	tk.MustExec("insert into t1 values('ab', '10', '10', '10');")
+	// c3 is part of idx_1, so it will be put in partial_path's IndexFilters instead of TableFilters.
+	// But it still cannot be pushed to TiKV.
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c3, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Projection_4 15.99 root  1->Column#6",
+		"└─Selection_5 15.99 root  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c3, 10, \"a\")), 10)))",
+		"  └─IndexMerge_9 19.99 root  ",
+		"    ├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:idx_0(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"    ├─IndexRangeScan_7(Build) 10.00 cop[tikv] table:t1, index:idx_1(c2, c3) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"    └─TableRowIDScan_8(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c3, 10, 'a')) = 10;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 int , pk int, primary key( pk ) , unique key( c1));")
+	tk.MustExec("insert into t1 values(-3896405, -1), (-2, 1), (-1, -2);")
+	// to_base64(left(pk, 5)) is in partial_path's TableFilters. But it cannot be pushed to TiKV. So it should be executed in TiDB.
+	tk.MustQuery("explain select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows(
+		"Selection_5 2.40 root  or(eq(test.t1.c1, -3896405), and(in(test.t1.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(test.t1.pk, var_string(20)), 5)), double BINARY))))",
+		"└─IndexMerge_9 3.00 root  ",
+		"  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c1(c1) range:[-3896405,-3896405], keep order:false, stats:pseudo",
+		"  ├─TableRangeScan_7(Build) 2.00 cop[tikv] table:t1 range:[1,1], [53330,53330], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 3.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows("-3896405 -1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1(c1, c2) values(1, 1);")
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 < -10 or c2 < 10 and reverse(c3) = '2';").Check(testkit.Rows(
+		"Selection 2825.66 root  or(lt(test.t1.c1, -10), and(lt(test.t1.c2, 10), eq(reverse(cast(test.t1.c3, var_string(20))), \"2\")))",
+		"└─IndexMerge 5542.21 root  ",
+		"  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, index:c1(c1) range:[-inf,-10), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 < -10 or c2 < 10 and reverse(c3) = '2';").Check(testkit.Rows("1 1 2"))
+}
+
 func (s *testIntegrationSuite) TestIssue29705(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
@@ -5033,4 +5113,72 @@ func (s *testIntegrationSuite) TestIssue30804(c *C) {
 	err := tk.ExecToErr("select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b)")
 	c.Assert(core.ErrWindowNoSuchWindow.Equal(err), IsTrue)
 	tk.MustExec("select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b)")
+}
+
+func (s *testIntegrationSuite) TestIndexMergeWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg := "Warning 1105 IndexMerge is inapplicable or disabled. No available filter or available index."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 int, key(c1), key(c2))")
+	tk.MustExec("select /*+ use_index_merge(t1), no_index_merge() */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create temporary table t1(c1 int, c2 int, key(c1), key(c2))")
+	tk.MustExec("select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+}
+
+func (s *testIntegrationSuite) TestIndexMergeWithCorrelatedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));")
+	tk.MustExec("insert into t1 values(1, 1, 1);")
+	tk.MustExec("insert into t1 values(2, 2, 2);")
+	tk.MustExec("create table t2(c1 int, c2 int, c3 int);")
+	tk.MustExec("insert into t2 values(1, 1, 1);")
+	tk.MustExec("insert into t2 values(2, 2, 2);")
+
+	tk.MustExec("drop table if exists tt1, tt2;")
+	tk.MustExec("create table tt1  (c_int int, c_str varchar(40), c_datetime datetime, c_decimal decimal(12, 6), primary key(c_int), key(c_int), key(c_str), unique key(c_decimal), key(c_datetime));")
+	tk.MustExec("create table tt2  like tt1 ;")
+	tk.MustExec(`insert into tt1 (c_int, c_str, c_datetime, c_decimal) values (6, 'sharp payne', '2020-06-07 10:40:39', 6.117000) ,
+			    (7, 'objective kare', '2020-02-05 18:47:26', 1.053000) ,
+			    (8, 'thirsty pasteur', '2020-01-02 13:06:56', 2.506000) ,
+			    (9, 'blissful wilbur', '2020-06-04 11:34:04', 9.144000) ,
+			    (10, 'reverent mclean', '2020-02-12 07:36:26', 7.751000) ;`)
+	tk.MustExec(`insert into tt2 (c_int, c_str, c_datetime, c_decimal) values (6, 'beautiful joliot', '2020-01-16 01:44:37', 5.627000) ,
+			    (7, 'hopeful blackburn', '2020-05-23 21:44:20', 7.890000) ,
+			    (8, 'ecstatic davinci', '2020-02-01 12:27:17', 5.648000) ,
+			    (9, 'hopeful lewin', '2020-05-05 05:58:25', 7.288000) ,
+			    (10, 'sharp jennings', '2020-01-28 04:35:03', 9.758000) ;`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain format=brief " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+
 }
