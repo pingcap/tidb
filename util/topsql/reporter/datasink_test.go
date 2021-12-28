@@ -31,20 +31,10 @@ func TestDefaultDataSinkRegisterer(t *testing.T) {
 	assert.NoError(t, err)
 	err = r.Register(m2)
 	assert.NoError(t, err)
-	reporter := RemoteTopSQLReporter{DefaultDataSinkRegisterer: r}
-	err = reporter.trySend(&ReportData{}, time.Now().Add(time.Hour))
-	assert.NoError(t, err)
-	assert.Len(t, m1.data, 1)
-	assert.Len(t, m2.data, 1)
-	err = reporter.trySend(&ReportData{}, time.Now().Add(time.Hour))
-	assert.NoError(t, err)
-	assert.Len(t, m1.data, 2)
-	assert.Len(t, m2.data, 2)
-	assert.False(t, m1.closed)
-	assert.False(t, m2.closed)
-	reporter.onReporterClosing()
-	assert.True(t, m1.closed)
-	assert.True(t, m2.closed)
+	assert.Len(t, r.dataSinks, 2)
+	r.Deregister(m1)
+	r.Deregister(m2)
+	assert.Empty(t, r.dataSinks)
 }
 
 type mockDataSink2 struct {
