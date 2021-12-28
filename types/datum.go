@@ -212,7 +212,6 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 	if skip {
 		return d.GetString(), nil
 	}
-	// Check if the string is valid in the given column charset.
 	str := d.GetBytes()
 	if !enc.IsValid(str) {
 		replace, err := enc.Transform(nil, str, charset.OnReplace)
@@ -1005,7 +1004,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
 		fromBinary := d.Collation() == charset.CollationBin
-		toBinary := target.Charset == charset.CollationBin
+		toBinary := target.Collate == charset.CollationBin
 		if fromBinary && toBinary {
 			s = d.GetString()
 		} else if fromBinary {
@@ -1641,7 +1640,7 @@ func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldTy
 	case KindMysqlJSON:
 		ret = *d
 	case KindBinaryLiteral:
-		err = json.ErrInvalidJSONCharset.GenWithStackByArgs("binary")
+		err = json.ErrInvalidJSONCharset.GenWithStackByArgs(charset.CharsetBin)
 	default:
 		var s string
 		if s, err = d.ToString(); err == nil {
