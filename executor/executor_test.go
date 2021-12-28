@@ -7147,10 +7147,10 @@ func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	// TODO: should insert success and get (81,1) from the table
 	err := tk.ExecToErr("insert into t values ( 81, ( select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` ) );")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Insert's SET opration or VALUES_LIST doesn't support the subquery now")
+	c.Assert(err.Error(), Equals, "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
 	err = tk.ExecToErr("insert into t set a = 81, b =  (select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` );")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Insert's SET opration or VALUES_LIST doesn't support the subquery now")
+	c.Assert(err.Error(), Equals, "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
 
 }
 

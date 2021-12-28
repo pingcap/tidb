@@ -3240,7 +3240,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 		}
 		if np != nil {
 			if _, ok := np.(*LogicalTableDual); !ok {
-				return errors.New("Insert's SET opration or VALUES_LIST doesn't support the subquery now")
+				return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
 			}
 		}
 		if insertPlan.AllAssignmentsAreConstant {
@@ -3323,7 +3323,7 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 				expr, np, err = b.rewriteWithPreprocess(ctx, valueItem, usingPlan, nil, nil, true, checkRefColumn)
 				if np != nil {
 					if _, ok := np.(*LogicalTableDual); !ok {
-						return errors.New("Insert's SET opration or VALUES_LIST doesn't support the subquery now")
+						return errors.New("Insert's SET operation or VALUES_LIST doesn't support complex subqueries now")
 					}
 				}
 			}
