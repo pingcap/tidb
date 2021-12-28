@@ -416,15 +416,18 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 	return cmpTp
 }
 
-type CmpStringMode uint8
+//Greatest/Least interal string comparison mode
+type GLCmpStringMode uint8
 
 const (
-	CmpStringDirectly   CmpStringMode = iota
-	CmpStringAsDate                   // 'yyyy-mm-dd'
-	CmpStringAsDatetime               // 'yyyy-mm-dd hh:mm:ss'
+	GLCmpStringDirectly   GLCmpStringMode = iota
+	GLCmpStringAsDate                     // 'yyyy-mm-dd'
+	GLCmpStringAsDatetime                 // 'yyyy-mm-dd hh:mm:ss'
 )
 
-type GLRetTimeType uint8 //Greatest/Least return time type
+//Greatest/Least return time type
+type GLRetTimeType uint8
+
 const (
 	GLRetNoneTemporal GLRetTimeType = iota
 	GLRetDate                       // 'yyyy-mm-dd'
@@ -432,7 +435,7 @@ const (
 )
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode CmpStringMode) {
+func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
 	aggType := aggregateType(args)
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
@@ -448,9 +451,9 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GL
 
 		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(temporalItem.Tp) {
 			if temporalItem.Tp == mysql.TypeDate {
-				cmpStringMode = CmpStringAsDate
+				cmpStringMode = GLCmpStringAsDate
 			} else {
-				cmpStringMode = CmpStringAsDatetime
+				cmpStringMode = GLCmpStringAsDatetime
 			}
 		}
 		// TODO: String charset, collation checking are needed.
@@ -485,7 +488,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
 	argTp := tp
-	if cmpStringMode != CmpStringDirectly {
+	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
 	} else if tp == types.ETJson {
@@ -519,10 +522,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringMode == CmpStringAsDate {
+		if cmpStringMode == GLCmpStringAsDate {
 			sig = &builtinGreatestCmpStringAsTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsDate)
-		} else if cmpStringMode == CmpStringAsDatetime {
+		} else if cmpStringMode == GLCmpStringAsDatetime {
 			sig = &builtinGreatestCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
@@ -795,7 +798,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
 	argTp := tp
-	if cmpStringMode != CmpStringDirectly {
+	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
 	} else if tp == types.ETJson {
@@ -829,10 +832,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringMode == CmpStringAsDate {
+		if cmpStringMode == GLCmpStringAsDate {
 			sig = &builtinLeastCmpStringAsTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsDate)
-		} else if cmpStringMode == CmpStringAsDatetime {
+		} else if cmpStringMode == GLCmpStringAsDatetime {
 			sig = &builtinLeastCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
