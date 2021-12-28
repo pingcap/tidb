@@ -79,9 +79,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		if x.InnerChildIdx == 0 {
-			str = "RightHashJoin{" + strings.Join(children, ", ") + "}"
+			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
 		} else {
-			str = "LeftHashJoin{" + strings.Join(children, ", ") + "}"
+			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
 			l := eq.GetArgs()[0].String()
@@ -123,7 +123,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "Apply{" + strings.Join(children, ", ") + "}"
+		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
@@ -143,7 +143,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
-		str = "Join{" + strings.Join(children, ", ") + "}"
+		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
 			l := eq.GetArgs()[0].String()
@@ -159,7 +159,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.TP() == plancodec.TypePartitionUnion {
 			name = "PartitionUnionAll"
 		}
-		str = name + "{" + strings.Join(children, ", ") + "}"
+		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
@@ -219,7 +219,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "IndexJoin{" + strings.Join(children, ", ") + "}"
+		str = "IndexJoin{" + strings.Join(children, "->") + "}"
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
@@ -231,7 +231,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "IndexMergeJoin{" + strings.Join(children, ", ") + "}"
+		str = "IndexMergeJoin{" + strings.Join(children, "->") + "}"
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
@@ -243,7 +243,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		str = "IndexHashJoin{" + strings.Join(children, ", ") + "}"
+		str = "IndexHashJoin{" + strings.Join(children, "->") + "}"
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
@@ -300,17 +300,17 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
 	case *PhysicalExchangeReceiver:
-		str = "ExchangeReceiver("
+		str = "Recv("
 		for _, task := range x.Tasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
-		str = strings.TrimSuffix(str, ", ") + ")"
+		str += ")"
 	case *PhysicalExchangeSender:
-		str = "ExchangeSender("
+		str = "Send("
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
-		str = strings.TrimSuffix(str, ", ") + ")"
+		str += ")"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
