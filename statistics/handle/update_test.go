@@ -16,6 +16,7 @@ package handle_test
 
 import (
 	"fmt"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"math"
 	"math/rand"
 	"os"
@@ -2343,17 +2344,23 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	h := s.do.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("create table t2(a int)")
+	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("create table t3(a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
-	tk.MustExec("insert into t1 values (1, 2), (3, 4), (5, 6)")
-	tk.MustExec("insert into t2 values (1), (2), (3)")
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (5, 6), (7, 8)")
 	tk.MustExec("insert into t3 values (1, 2), (3, 4), (11, 12), (13, 14)")
 	tk.MustExec("select * from t1 where a > 1")
+	tk.MustExec("select * from t2 where b < 10")
 	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
 	// t1.a is collected as predicate column
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "b"})
 	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
 
@@ -2401,19 +2408,52 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
 	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
 	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+}
 
-	// Test prepare and execute.
-	tk.MustExec("delete from mysql.column_stats_usage")
-	tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
-	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
-	// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
-	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
-	tk.MustExec("set @p = 1")
-	tk.MustExec("execute stmt using @p")
-	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
-	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
-	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
-	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+func (s *testSerialStatsSuite) TestCollectPredicateColumnsFromExecute(c *C) {
+	for _, val := range []bool{false, true} {
+		func(planCache bool) {
+			originalVal := plannercore.PreparedPlanCacheEnabled()
+			defer func() {
+				plannercore.SetPreparedPlanCache(originalVal)
+			}()
+			plannercore.SetPreparedPlanCache(planCache)
+
+			defer cleanEnv(c, s.store, s.do)
+			tk := testkit.NewTestKit(c, s.store)
+			h := s.do.StatsHandle()
+			tk.MustExec("use test")
+			tk.MustExec("create table t1(a int, b int)")
+			tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
+			tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			tk.MustExec("set @p1 = 1")
+			tk.MustExec("execute stmt using @p1")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+			c.Assert(len(rows), Equals, 1)
+			c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+			c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+			c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+			tk.MustExec("delete from mysql.column_stats_usage")
+			tk.MustExec("set @p2 = 2")
+			tk.MustExec("execute stmt using @p2")
+			if planCache {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				// If the second execution uses the cached plan, no predicate column is collected.
+				tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			} else {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+				c.Assert(len(rows), Equals, 1)
+				c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+				c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+				c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+			}
+		}(val)
+	}
 }

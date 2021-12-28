@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -883,14 +884,43 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.data.merge(colMap)
 		h.colMap.Unlock()
 	}()
-	for tblColID, lastUsedAt := range colMap {
-		// TODO: maybe there is a better way to insert UTC timestamp.
-		t := lastUsedAt.UTC().Format(types.TimeFormat)
-		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)) ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) ELSE GREATEST(last_used_at, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)) END"
-		if _, _, err := h.execRestrictedSQL(context.Background(), sql, tblColID.TableID, tblColID.ColumnID, t, t, t); err != nil {
+	type pair struct {
+		tblColID   model.TableColumnID
+		lastUsedAt string
+	}
+	pairs := make([]pair, 0, len(colMap))
+	for id, t := range colMap {
+		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
+			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+		}
+		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+	})
+	// Use batch insert to reduce cost.
+	for i := 0; i < len(pairs); i += 10 {
+		end := i + 10
+		if end > len(pairs) {
+			end = len(pairs)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+		for j := i; j < end; j++ {
+			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
+		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
 			return errors.Trace(err)
 		}
-		delete(colMap, tblColID)
+		for j := i; j < end; j++ {
+			delete(colMap, pairs[j].tblColID)
+		}
 	}
 	return nil
 }

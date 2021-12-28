@@ -1132,7 +1132,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				}
 			}
 			if result.IsIndex == 0 {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
 					return err
 				}
 			}
