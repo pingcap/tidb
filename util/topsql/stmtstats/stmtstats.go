@@ -61,11 +61,11 @@ type StatementStats struct {
 // StmtExecState is the state of StatementStats
 type StmtExecState int
 
-var (
-	stmtExecStateInitial       StmtExecState = 0
-	stmtExecStateCmdReceived   StmtExecState = 1
-	stmtExecStateDigestIsReady StmtExecState = 2
-	stmtExecStateFinished      StmtExecState = 3
+const (
+	stmtExecStateInitial StmtExecState = iota
+	stmtExecStateCmdReceived
+	stmtExecStateDigestIsReady
+	stmtExecStateFinished
 )
 
 // String implements Stringer interface.
@@ -104,7 +104,7 @@ func (s *StatementStats) OnReceiveCmd() {
 // OnSQLAndPlanDigestFirstReady implements StatementObserver.OnSQLAndPlanDigestFirstReady.
 func (s *StatementStats) OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte) {
 	if s.state != stmtExecStateCmdReceived {
-		logutil.BgLogger().Warn("[stmt-stats] unexpect state",
+		logutil.BgLogger().Warn("[stmt-stats] unexpected state",
 			zap.String("expect", stmtExecStateCmdReceived.String()),
 			zap.String("got", s.state.String()))
 		return
@@ -125,7 +125,7 @@ func (s *StatementStats) OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []by
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
 func (s *StatementStats) OnExecutionFinished() {
 	if s.state != stmtExecStateDigestIsReady {
-		logutil.BgLogger().Warn("[stmt-stats] unexpect state",
+		logutil.BgLogger().Warn("[stmt-stats] unexpected state",
 			zap.String("expect", stmtExecStateDigestIsReady.String()),
 			zap.String("got", s.state.String()))
 		return
@@ -134,9 +134,6 @@ func (s *StatementStats) OnExecutionFinished() {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.seCtx.sqlDigest) == 0 {
-		return
-	}
 	item := s.GetOrCreateStatementStatsItem(s.seCtx.sqlDigest, s.seCtx.planDigest)
 	cost := nowFunc().Sub(s.seCtx.begin).Nanoseconds()
 	if cost > 0 {

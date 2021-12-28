@@ -121,6 +121,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
+	cc.ctx.GetSessionVars().StmtStats.OnReceiveCmd()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -265,6 +266,7 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	sessVars := cc.ctx.GetSessionVars()
+	sessVars.StmtStats.OnReceiveCmd()
 	sessVars.StartTime = time.Now()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)

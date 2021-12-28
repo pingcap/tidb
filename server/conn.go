@@ -1258,9 +1258,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	if variable.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
-		if vars.StmtStats != nil {
-			vars.StmtStats.OnReceiveCmd()
-		}
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1787,7 +1784,9 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
-	sc := cc.ctx.GetSessionVars().StmtCtx
+	vars := cc.ctx.GetSessionVars()
+	vars.StmtStats.OnReceiveCmd()
+	sc := vars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
