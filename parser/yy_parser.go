@@ -289,7 +289,7 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 		e := err.(*strconv.NumError)
 		if e.Err == strconv.ErrRange {
 			l.AppendError(types.ErrIllegalValueForType.GenWithStackByArgs("double", str))
-			return int(unicode.ReplacementChar)
+			return invalid
 		}
 		l.AppendError(l.Errorf("float literal: %v", err))
 		return invalid

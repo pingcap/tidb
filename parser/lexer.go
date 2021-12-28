@@ -91,7 +91,7 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 func (s *Scanner) reset(sql string) {
 	s.client = charset.EncodingUTF8Impl
 	s.connection = charset.EncodingUTF8Impl
-	s.r = reader{s: sql, p: Pos{Line: 1}, f: s.client.MbLen, l: len(sql)}
+	s.r = reader{s: sql, p: Pos{Line: 1}, l: len(sql)}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -147,15 +147,15 @@ func (s *Scanner) AppendWarn(err error) {
 	s.warns = append(s.warns, err)
 }
 
-func (s *Scanner) convert2Connection(tok int, sql string) (int, string) {
+func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if mysql.IsUTF8Charset(s.client.Name()) {
-		return tok, sql
+		return tok, lit
 	}
-	utf8Lit, err := s.client.Transform(nil, charset.Slice(sql), charset.OpDecodeReplace)
+	utf8Lit, err := s.client.Transform(nil, charset.Slice(lit), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
-			return invalid, sql
+			return invalid, lit
 		}
 		s.lastErrorAsWarn()
 	}
@@ -602,7 +602,7 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	s.buf.Reset()
 	for !s.r.eof() {
 		tPos := s.r.pos()
-		if s.r.SkipRune() {
+		if s.r.skipRune(s.client) {
 			s.buf.WriteString(s.r.data(&tPos))
 			continue
 		}
@@ -670,7 +670,7 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	ending := s.r.readByte()
 	foundEscape := false
 	for !s.r.eof() {
-		if s.r.SkipRune() {
+		if s.r.skipRune(s.client) {
 			continue
 		}
 		ch0 := s.r.readByte()
@@ -959,8 +959,6 @@ type reader struct {
 	s string
 	p Pos
 	l int
-
-	f func(string) int
 }
 
 var eof = Pos{-1, -1, -1}
@@ -1030,12 +1028,12 @@ func (r *reader) incAsLongAs(fn func(b byte) bool) byte {
 	}
 }
 
-// SkipRune skip mb character, return true indicate something has been skipped.
-func (r *reader) SkipRune() bool {
+// skipRune skip mb character, return true indicate something has been skipped.
+func (r *reader) skipRune(enc charset.Encoding) bool {
 	if r.s[r.p.Offset] <= unicode.MaxASCII {
 		return false
 	}
-	c := r.f(r.s[r.p.Offset:])
+	c := enc.MbLen(r.s[r.p.Offset:])
 	r.incN(c)
 	return c > 0
 }
