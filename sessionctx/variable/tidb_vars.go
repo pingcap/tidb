@@ -710,7 +710,6 @@ const (
 	DefTiDBMaxDeltaSchemaCount            = 1024
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
-	DefTiDBEnableAlterPlacement           = false
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
