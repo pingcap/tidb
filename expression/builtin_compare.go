@@ -415,14 +415,21 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	return cmpTp
 }
-
+type CmpStringMode uint8
+const (
+	CmpStringDirectly CmpStringMode = iota
+	CmpStringAsDate // 'yyyy-mm-dd'
+	CmpStringAsDatetime // 'yyyy-mm-dd hh:mm:ss'
+)
+type GLRetTimeType uint8  //Greatest/Least return time type
+const (
+	GLRetNoneTemporal GLRetTimeType = iota
+	GLRetDate // 'yyyy-mm-dd'
+	GLRetDatetime // 'yyyy-mm-dd hh:mm:ss'
+)
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-// cmpStringMode: 0 for cmp string directly; 1 for cmp string as date 'yyyy-mm-dd'; 2 for cmp string
-// as datetime 'yyyy-mm-dd hh:mm:ss'
-// fieldTimeType: the return type, 0 for non-temporary time; 1 for date type; 2 for datetime type
-func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType byte, cmpStringMode int) {
+func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode CmpStringMode) {
 	aggType := aggregateType(args)
-
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
 		for i := range args {
@@ -437,18 +444,18 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType by
 
 		if !types.IsTypeTemporal(aggType.Tp) && temporalItem != nil && types.IsTemporalWithDate(temporalItem.Tp) {
 			if temporalItem.Tp == mysql.TypeDate {
-				cmpStringMode = 1
+				cmpStringMode = CmpStringAsDate
 			} else {
-				cmpStringMode = 2
+				cmpStringMode = CmpStringAsDatetime
 			}
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	var timeType byte
+	var timeType GLRetTimeType
 	if aggType.Tp == mysql.TypeDate {
-		timeType = 1
+		timeType = GLRetDate
 	} else if aggType.Tp == mysql.TypeDatetime || aggType.Tp == mysql.TypeTimestamp {
-		timeType = 2
+		timeType = GLRetDatetime
 	}
 	return aggType.EvalType(), timeType, cmpStringMode
 }
@@ -474,7 +481,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
 	argTp := tp
-	if cmpStringMode > 0 {
+	if cmpStringMode != CmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
 	} else if tp == types.ETJson {
@@ -508,10 +515,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
-		if cmpStringMode == 1 {
+		if cmpStringMode == CmpStringAsDate {
 			sig = &builtinGreatestCmpStringAsTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsDate)
-		} else if cmpStringMode == 2 {
+		} else if cmpStringMode == CmpStringAsDatetime {
 			sig = &builtinGreatestCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
@@ -522,7 +529,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
 	case types.ETDatetime, types.ETTimestamp:
-		if fieldTimeType == 1 {
+		if fieldTimeType == GLRetDate {
 			sig = &builtinGreatestTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestDate)
 		} else {
@@ -784,7 +791,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
 	argTp := tp
-	if cmpStringMode > 0 {
+	if cmpStringMode != CmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
 	} else if tp == types.ETJson {
@@ -818,10 +825,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
-		if cmpStringMode == 1 {
+		if cmpStringMode == CmpStringAsDate {
 			sig = &builtinLeastCmpStringAsTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsDate)
-		} else if cmpStringMode == 2 {
+		} else if cmpStringMode == CmpStringAsDatetime {
 			sig = &builtinLeastCmpStringAsTimeSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
@@ -832,7 +839,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
 	case types.ETDatetime, types.ETTimestamp:
-		if fieldTimeType == 1 {
+		if fieldTimeType == GLRetDate {
 			sig = &builtinLeastTimeSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastDate)
 		} else {
