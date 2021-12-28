@@ -29,9 +29,10 @@ func IsSupportedEncoding(charset string) bool {
 	return ok
 }
 
-// FindEncodingUTF8AsNoop finds the encoding according to charset
-// except that utf-8 is treated as binary encoding.
-func FindEncodingUTF8AsNoop(charset string) Encoding {
+// FindEncodingTakeUTF8AsNoop finds the encoding according to the charset
+// except that utf-8 is treated as no-operation encoding. This is used to
+// reduce the overhead of utf-8 validation in some cases.
+func FindEncodingTakeUTF8AsNoop(charset string) Encoding {
 	enc := FindEncoding(charset)
 	if enc.Tp() == EncodingTpUTF8 {
 		return EncodingBinImpl
