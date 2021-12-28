@@ -1625,3 +1625,63 @@ func TestAccessCommittedLocks(t *testing.T) {
 		}
 	}
 }
+
+func TestTiKVRCRead(t *testing.T) {
+	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer close()
+
+	k0 := []byte("t0")
+	v0 := []byte("v0")
+	MustLoad(10, 20, store, "t0:v0")
+
+	// lock to be ignored
+	k1 := []byte("t1")
+	v1 := []byte("v1")
+	MustPrewritePut(k1, k1, v1, 30, store)
+	// write to be read
+	k2 := []byte("t2")
+	v2 := []byte("v2")
+	MustPrewritePut(k2, k2, v2, 40, store)
+	MustCommit(k2, 40, 50, store)
+	// large TS can also be read
+	k3 := []byte("t3")
+	v3 := []byte("v3")
+	MustPrewritePut(k3, k3, v3, 60, store)
+	MustCommit(k3, 60, math.MaxUint64-1, store)
+
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
+	expected := []struct {
+		key []byte
+		val []byte
+	}{{k0, v0}, {k1, nil}, {k2, v2}, {k3, v3}}
+	// get
+	for _, e := range expected {
+		v, err := store.MvccStore.Get(reqCtx, e.key, math.MaxUint64)
+		require.NoError(t, err)
+		require.Equal(t, v, e.val)
+	}
+	// batch get
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3}, math.MaxUint64)
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Key, e.key)
+		require.Equal(t, pair.Value, e.val)
+	}
+	// scan
+	pairs = store.MvccStore.Scan(reqCtx, &kvrpcpb.ScanRequest{
+		StartKey: []byte("t0"),
+		EndKey:   []byte("t4"),
+		Limit:    100,
+		Version:  math.MaxUint64,
+	})
+	expected = append(expected[:1], expected[2:]...)
+	require.Equal(t, len(pairs), len(expected))
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Key, e.key)
+		require.Equal(t, pair.Value, e.val)
+	}
+}

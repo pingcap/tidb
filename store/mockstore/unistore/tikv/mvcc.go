@@ -1410,14 +1410,19 @@ func (store *MVCCStore) DeleteFileInRange(start, end []byte) {
 
 // Get implements the MVCCStore interface.
 func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]byte, error) {
-	lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
-	if err != nil {
-		return nil, err
-	}
-	if len(lockPairs) != 0 {
-		return getValueFromLock(lockPairs[0].lock), nil
+	if reqCtx.isSnapshotIsolation() {
+		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+		if err != nil {
+			return nil, err
+		}
+		if len(lockPairs) != 0 {
+			return getValueFromLock(lockPairs[0].lock), nil
+		}
 	}
 	val, err := reqCtx.getDBReader().Get(key, version)
+	if val == nil {
+		return nil, err
+	}
 	return safeCopy(val), err
 }
 
@@ -1425,17 +1430,19 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint64) []*kvrpcpb.KvPair {
 	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
 	remain := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
-		if err != nil {
-			pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
-		} else if len(lockPairs) != 0 {
-			value := getValueFromLock(lockPairs[0].lock)
-			if value != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+	if reqCtx.isSnapshotIsolation() {
+		for _, key := range keys {
+			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
+			if err != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
+			} else if len(lockPairs) != 0 {
+				value := getValueFromLock(lockPairs[0].lock)
+				if value != nil {
+					pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+				}
+			} else {
+				remain = append(remain, key)
 			}
-		} else {
-			remain = append(remain, key)
 		}
 	}
 	batchGetFunc := func(key, value []byte, err error) {
@@ -1532,7 +1539,9 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
 	if req.SampleStep == 0 {
-		lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		if reqCtx.isSnapshotIsolation() {
+			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		}
 	} else {
 		limit = req.SampleStep * limit
 	}
