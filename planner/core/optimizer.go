@@ -44,9 +44,6 @@ import (
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error)
 
-// GetBindSQL4PlanCache get the bindSQL for the ast.StmtNode
-var GetBindSQL4PlanCache func(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string)
-
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 

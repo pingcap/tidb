@@ -1132,7 +1132,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				}
 			}
 			if result.IsIndex == 0 {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
 					return err
 				}
 			}
@@ -1832,6 +1832,7 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
 	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1844,15 +1845,14 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
 		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
-			t := row.GetTime(2)
-			gt, err := t.GoTime(time.UTC)
+			gt, err := row.GetTime(2).GoTime(time.UTC)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
 			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
-				t = types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
+				t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 				statsUsage.LastUsedAt = &t
 			}
 		}

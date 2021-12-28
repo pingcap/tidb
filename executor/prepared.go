@@ -200,10 +200,19 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 
+	var (
+		normalizedSQL4PC, normalizedSQL4PCHash string
+		selectStmtNode                         ast.StmtNode
+	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
+		selectStmtNode, normalizedSQL4PC, normalizedSQL4PCHash, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		if err != nil || selectStmtNode == nil {
+			normalizedSQL4PC = ""
+			normalizedSQL4PCHash = ""
+		}
 	}
 
 	// We try to build the real statement of preparedStmt.
@@ -231,12 +240,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:         prepared,
-		VisitInfos:          destBuilder.GetVisitInfo(),
-		NormalizedSQL:       normalizedSQL,
-		SQLDigest:           digest,
-		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		PreparedAst:          prepared,
+		VisitInfos:           destBuilder.GetVisitInfo(),
+		NormalizedSQL:        normalizedSQL,
+		SQLDigest:            digest,
+		ForUpdateRead:        destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator:  ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:     normalizedSQL4PC,
+		NormalizedSQL4PCHash: normalizedSQL4PCHash,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

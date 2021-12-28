@@ -969,9 +969,9 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 }
 
 func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {

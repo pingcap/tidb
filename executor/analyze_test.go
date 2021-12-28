@@ -1237,6 +1237,36 @@ func TestAnalyzeSamplingWorkPanic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"))
 }
 
+func TestSmallTableAnalyzeV2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCount", "return(1)"))
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table small_table_inject_pd(a int)")
+	tk.MustExec("insert into small_table_inject_pd values(1), (2), (3), (4), (5)")
+	tk.MustExec("analyze table small_table_inject_pd")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd."))
+	tk.MustExec(`
+create table small_table_inject_pd_with_partition(
+	a int
+) partition by range(a) (
+	partition p0 values less than (5),
+	partition p1 values less than (10),
+	partition p2 values less than (15)
+)`)
+	tk.MustExec("insert into small_table_inject_pd_with_partition values(1), (6), (11)")
+	tk.MustExec("analyze table small_table_inject_pd_with_partition")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p1.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.small_table_inject_pd_with_partition's partition p2.",
+	))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCount"))
+}
+
 func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
