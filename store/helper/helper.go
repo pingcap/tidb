@@ -622,6 +622,11 @@ func (xs byTableStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
+	return newTableWithKeyRange(db, table)
+}
+
 func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
@@ -636,6 +641,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 		startKey,
 		endKey,
 	}
+}
+
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
+	return newIndexWithKeyRange(db, table, index)
 }
 
 func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
