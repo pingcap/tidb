@@ -133,13 +133,26 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap) {
+// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
+type colStatsUsageMap map[model.TableColumnID]time.Time
+
+func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+	for id, t := range other {
+		if mt, ok := m[id]; !ok || mt.Before(t) {
+			m[id] = t
+		}
+	}
+}
+
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap, colMap colStatsUsageMap) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
 	feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
+	colMap.merge(s.colMap)
+	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
@@ -149,6 +162,7 @@ type SessionStatsCollector struct {
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
+	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
@@ -204,6 +218,13 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
+// UpdateColStatsUsage updates the last time when the column stats are used(needed).
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+	s.Lock()
+	defer s.Unlock()
+	s.colMap.merge(colMap)
+}
+
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
@@ -213,6 +234,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 		rateMap:  make(errorRateDeltaMap),
 		next:     h.listHead.next,
 		feedback: statistics.NewQueryFeedbackMap(),
+		colMap:   make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -384,12 +406,13 @@ func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
 	errorRateMap := make(errorRateDeltaMap)
 	feedback := statistics.NewQueryFeedbackMap()
+	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
 		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
-		merge(curr, deltaMap, errorRateMap, feedback)
+		merge(curr, deltaMap, errorRateMap, feedback, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -411,6 +434,9 @@ func (h *Handle) sweepList() {
 	h.feedback.data.Merge(feedback)
 	h.feedback.data.SiftFeedbacks()
 	h.feedback.Unlock()
+	h.colMap.Lock()
+	h.colMap.data.merge(colMap)
+	h.colMap.Unlock()
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
@@ -843,6 +869,30 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
+}
+
+// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+func (h *Handle) DumpColStatsUsageToKV() error {
+	h.sweepList()
+	h.colMap.Lock()
+	colMap := h.colMap.data
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
+	defer func() {
+		h.colMap.Lock()
+		h.colMap.data.merge(colMap)
+		h.colMap.Unlock()
+	}()
+	for tblColID, lastUsedAt := range colMap {
+		// TODO: maybe there is a better way to insert UTC timestamp.
+		t := lastUsedAt.UTC().Format(types.TimeFormat)
+		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)) ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN CONVERT_TZ(%?, '+00:00', @@TIME_ZONE) ELSE GREATEST(last_used_at, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)) END"
+		if _, _, err := h.execRestrictedSQL(context.Background(), sql, tblColID.TableID, tblColID.ColumnID, t, t, t); err != nil {
+			return errors.Trace(err)
+		}
+		delete(colMap, tblColID)
+	}
+	return nil
 }
 
 const (

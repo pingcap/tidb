@@ -2336,3 +2336,84 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
+
+func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("create table t3(a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t1 values (1, 2), (3, 4), (5, 6)")
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+	tk.MustExec("insert into t3 values (1, 2), (3, 4), (11, 12), (13, 14)")
+	tk.MustExec("select * from t1 where a > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a is collected as predicate column
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+	tk.MustExec("analyze table t1")
+	tk.MustExec("select * from t1 where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a updates last_used_at first and then updates last_analyzed_at while t1.b updates last_analyzed_at first and then updates last_used_at.
+	// Check both of them behave as expected.
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[1][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][5].(string) != "<nil>", IsTrue)
+
+	// Test partition table.
+	// No matter whether it is static or dynamic pruning mode, we record predicate columns using table ID rather than partition ID.
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", val))
+		tk.MustExec("delete from mysql.column_stats_usage")
+		tk.MustExec("select * from t3 where a < 5")
+		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
+		c.Assert(len(rows), Equals, 1)
+		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t3", "global", "a"})
+		c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+		c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	}
+
+	// Test non-correlated subquery.
+	// Non-correlated subquery will be executed during the plan building phase, which cannot be done by mock in (*testPlanSuite).TestCollectPredicateColumns.
+	// Hence we put the test of collecting predicate columns for non-correlated subquery here.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("select * from t2 where t2.a > (select count(*) from t1 where t1.b > 1)")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+	// Test prepare and execute.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+	tk.MustExec("set @p = 1")
+	tk.MustExec("execute stmt using @p")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+}
