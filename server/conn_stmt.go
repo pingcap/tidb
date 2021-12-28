@@ -331,7 +331,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
-			args[i] = types.NewBytesDatum(boundParams[i])
+			args[i] = types.NewBytesDatum(enc.decodeInput(boundParams[i]))
 			continue
 		}
 
