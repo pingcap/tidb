@@ -72,7 +72,7 @@ type RemoteTopSQLReporter struct {
 	collecting        *collecting
 	normalizedSQLMap  *normalizedSQLMap
 	normalizedPlanMap *normalizedPlanMap
-	stmtStatsMaps     map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
+	stmtStatsBuffer   map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
 
 	// calling decodePlan this can take a while, so should not block critical paths.
 	decodePlan planBinaryDecodeFunc
@@ -93,7 +93,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		collecting:                newCollecting(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
 		normalizedPlanMap:         newNormalizedPlanMap(),
-		stmtStatsMaps:             map[uint64]stmtstats.StatementStatsMap{},
+		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
 		decodePlan:                decodePlan,
 	}
 	go tsr.collectWorker()
@@ -180,17 +180,17 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 	}
 }
 
-// doCollect collects top N cpuRecords of each round into tsr.collecting, and evict the
+// processCPUTimeData collects top N cpuRecords of each round into tsr.collecting, and evict the
 // data that is not in top N. All the evicted cpuRecords will be summary into the others.
-func (tsr *RemoteTopSQLReporter) doCollect(timestamp uint64, data cpuRecords) {
-	defer util.Recover("top-sql", "doCollect", nil, false)
+func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRecords) {
+	defer util.Recover("top-sql", "processCPUTimeData", nil, false)
 
 	// Get top N cpuRecords of each round cpuRecords. Collect the top N to tsr.collecting
 	// for each round. SQL meta will not be evicted, since the evicted SQL can be appeared
 	// on other components (TiKV) TopN DataRecords.
 	top, evicted := data.topN(int(variable.TopSQLVariable.MaxStatementCount.Load()))
 	for _, r := range top {
-		tsr.collecting.getOrCreateRecord(r.SQLDigest, r.PlanDigest).appendCPUTime(timestamp, r.CPUTimeMs)
+		tsr.collecting.getOrCreateRecord(r.SQLDigest, r.PlanDigest).setCPUTime(timestamp, r.CPUTimeMs)
 	}
 	if len(evicted) == 0 {
 		return
@@ -206,12 +206,12 @@ func (tsr *RemoteTopSQLReporter) doCollect(timestamp uint64, data cpuRecords) {
 	tsr.collecting.appendOthersCPUTime(timestamp, totalEvictedCPUTime)
 }
 
-// doCollectStmtStatsMaps collects tsr.stmtStatsMaps into tsr.collecting.
+// doCollectStmtStatsMaps collects tsr.stmtStatsBuffer into tsr.collecting.
 // All the evicted items will be summary into the others.
 func (tsr *RemoteTopSQLReporter) doCollectStmtStatsMaps() {
 	defer util.Recover("top-sql", "doCollectStmtRecords", nil, false)
 
-	for timestamp, data := range tsr.stmtStatsMaps {
+	for timestamp, data := range tsr.stmtStatsBuffer {
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
 			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
@@ -219,10 +219,10 @@ func (tsr *RemoteTopSQLReporter) doCollectStmtStatsMaps() {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
 				continue
 			}
-			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).setStmtStatsItem(timestamp, *item)
 		}
 	}
-	tsr.stmtStatsMaps = map[uint64]stmtstats.StatementStatsMap{}
+	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
 }
 
 func (tsr *RemoteTopSQLReporter) takeDataFromCollectChanBuffer() {
@@ -230,9 +230,9 @@ func (tsr *RemoteTopSQLReporter) takeDataFromCollectChanBuffer() {
 	for {
 		select {
 		case data := <-tsr.collectCPUTimeChan:
-			tsr.doCollect(timestamp, data)
+			tsr.processCPUTimeData(timestamp, data)
 		case data := <-tsr.collectStmtStatsChan:
-			tsr.stmtStatsMaps[timestamp] = data
+			tsr.stmtStatsBuffer[timestamp] = data
 		default:
 			return
 		}
