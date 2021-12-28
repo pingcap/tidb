@@ -412,7 +412,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
-	p.lexer.connection = charset.FindEncodingTakeUTF8AsNoop(string(c))
+	p.lexer.connection = charset.FindEncoding(string(c))
 	return nil
 }
 
@@ -435,6 +435,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.client = charset.FindEncodingTakeUTF8AsNoop(string(c))
+	p.lexer.client = charset.FindEncoding(string(c))
 	return nil
 }
