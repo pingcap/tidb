@@ -33,13 +33,11 @@ import (
 func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
 	defer func() {
 		tk.MustExec("set @@tidb_enable_exchange_partition = 0")
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("drop table if exists t2")
-		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
 	initTable := func() []string {
@@ -102,10 +100,8 @@ func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	defer func() {
 		tk.MustExec("drop table if exists t1")
-		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
 	tk.MustExec(`create table t1 (c int)
@@ -256,13 +252,11 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
-	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	defer func() {
 		tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 		tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 		tk.MustExec("drop placement policy if exists PolicySchemaTest")
 		tk.MustExec("drop placement policy if exists PolicyTableTest")
-		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
 	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz,nl" FOLLOWERS=3`)
@@ -447,22 +441,17 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-
 	tk.MustExec("drop database if exists TestPlacementDB;")
 	tk.MustExec("create database TestPlacementDB;")
 	tk.MustExec("use TestPlacementDB;")
 	tk.MustExec("drop placement policy if exists placement_x;")
 	tk.MustExec("create placement policy placement_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
-	se.GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec("create table t(c int) partition by range (c) (partition p1 values less than (200) followers=2);")
 	defer func() {
 		tk.MustExec("drop database if exists TestPlacementDB;")
 		tk.MustExec("drop placement policy if exists placement_x;")
 	}()
 
-	tk.Se.GetSessionVars().EnableAlterPlacement = false
 	tk.MustGetErrCode("create database TestPlacementDB2 followers=2;", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter database TestPlacementDB placement policy=placement_x", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("create table t (c int) FOLLOWERS=2;", mysql.ErrUnsupportedDDLOperation)
