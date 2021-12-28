@@ -1806,6 +1806,7 @@ type colStatsTimeInfo struct {
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
 func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
 	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
