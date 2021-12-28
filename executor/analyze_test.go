@@ -1496,6 +1496,13 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 
 	// set analyze version back to 1, will not use persisted
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
@@ -1505,6 +1512,7 @@ PARTITION BY RANGE ( a ) (
 	require.NotEqual(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
 
 	// drop column
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("alter table t drop column b")
 	tk.MustExec("analyze table t")
 	colIDStrsA := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10)}, ",")
