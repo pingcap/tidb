@@ -1630,58 +1630,50 @@ func TestTiKVRCRead(t *testing.T) {
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
-	k0 := []byte("t0")
-	v0 := []byte("v0")
-	MustLoad(10, 20, store, "t0:v0")
-
-	// lock to be ignored
 	k1 := []byte("t1")
-	v1 := []byte("v1")
-	MustPrewritePut(k1, k1, v1, 30, store)
+	k2, v2 := []byte("t2"), []byte("v2")
+	k3, v3 := []byte("t3"), []byte("v3")
+	k4, v4 := []byte("t4"), []byte("v4")
+	MustLoad(10, 20, store, "t1:v1", "t2:v2", "t3:v3")
 	// write to be read
-	k2 := []byte("t2")
-	v2 := []byte("v2")
-	MustPrewritePut(k2, k2, v2, 40, store)
-	MustCommit(k2, 40, 50, store)
-	// large TS can also be read
-	k3 := []byte("t3")
-	v3 := []byte("v3")
-	MustPrewritePut(k3, k3, v3, 60, store)
-	MustCommit(k3, 60, math.MaxUint64-1, store)
+	MustPrewritePut(k1, k1, []byte("v11"), 30, store)
+	MustCommit(k1, 30, 40, store)
+	// lock to be ignored
+	MustPrewritePut(k2, k2, v2, 50, store)
+	MustPrewriteDelete(k3, k3, 60, store)
+	MustPrewritePut(k4, k4, v4, 70, store)
+
+	expected := map[string][]byte{string(k1): []byte("v11"), string(k2): v2, string(k3): v3, string(k4): nil}
 
 	reqCtx := store.newReqCtx()
 	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
-	expected := []struct {
-		key []byte
-		val []byte
-	}{{k0, v0}, {k1, nil}, {k2, v2}, {k3, v3}}
 	// get
-	for _, e := range expected {
-		v, err := store.MvccStore.Get(reqCtx, e.key, math.MaxUint64)
+	for k, v := range expected {
+		res, err := store.MvccStore.Get(reqCtx, []byte(k), math.MaxUint64)
 		require.NoError(t, err)
-		require.Equal(t, v, e.val)
+		require.Equal(t, res, v)
 	}
 	// batch get
-	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3}, math.MaxUint64)
-	for i, pair := range pairs {
-		e := expected[i]
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, math.MaxUint64)
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
 		require.Nil(t, pair.Error)
-		require.Equal(t, pair.Key, e.key)
-		require.Equal(t, pair.Value, e.val)
+		require.Equal(t, pair.Value, v)
 	}
 	// scan
 	pairs = store.MvccStore.Scan(reqCtx, &kvrpcpb.ScanRequest{
-		StartKey: []byte("t0"),
+		StartKey: []byte("t1"),
 		EndKey:   []byte("t4"),
 		Limit:    100,
 		Version:  math.MaxUint64,
 	})
-	expected = append(expected[:1], expected[2:]...)
-	require.Equal(t, len(pairs), len(expected))
-	for i, pair := range pairs {
-		e := expected[i]
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
 		require.Nil(t, pair.Error)
-		require.Equal(t, pair.Key, e.key)
-		require.Equal(t, pair.Value, e.val)
+		require.Equal(t, pair.Value, v)
 	}
 }
