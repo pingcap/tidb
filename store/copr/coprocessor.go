@@ -70,6 +70,9 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+	// directly disable rate-limit action
+	enabledRateLimitAction = false
+
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -119,9 +122,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
+	// forbid set action on tracker
+	//if sessionMemTracker != nil {
+	//	sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	//}
 
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
