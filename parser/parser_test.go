@@ -6428,6 +6428,7 @@ func TestGBKEncoding(t *testing.T) {
 		{"select '\xa5\x5c'", false},
 		{"select '''\xa5\x5c'", false},
 		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
 	} {
 		_, _, err = p.ParseSQL(test.sql, gbkOpt)
 		if test.err {
