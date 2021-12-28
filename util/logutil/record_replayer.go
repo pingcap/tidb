@@ -9,7 +9,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // RecordReplayer is used to replay sql
@@ -19,7 +21,7 @@ var Sessions map[string]session.Session
 // StartReplay starts replay
 func StartReplay(filename string, store kv.Storage) {
 	RecordReplayer = newRecordPlayer(filename, store)
-	RecordReplayer.start()
+	go RecordReplayer.start()
 }
 
 // StopReplay stops replay
@@ -28,8 +30,8 @@ func StopReplay() {
 }
 
 func newRecordPlayer(filename string, store kv.Storage) *recordReplayer {
-
 	r := &recordReplayer{
+		store:    store,
 		fileName: filename,
 		close:    make(chan struct{}),
 	}
@@ -53,6 +55,7 @@ func (r *recordReplayer) start() {
 
 	r.scanner = bufio.NewScanner(f)
 	Sessions = make(map[string]session.Session)
+	start := time.Now()
 	for r.scanner.Scan() {
 		select {
 		case <-r.close:
@@ -65,11 +68,14 @@ func (r *recordReplayer) start() {
 			fmt.Printf("invalid sql log %v\n", record)
 			continue
 		}
-		// fake code
+		ts, _ := strconv.ParseFloat(record[1], 10)
+		if sleepTime := time.Since(start).Seconds() - ts; sleepTime > 0 {
+			time.Sleep(time.Duration(sleepTime) * time.Second)
+		}
 		if s, exist := Sessions[record[0]]; !exist {
 			se, err := session.CreateSession(r.store)
 			if err != nil {
-				log.Info("init recordPlayer fail")
+				log.Info("init replay session fail")
 				return
 			}
 			Sessions[record[0]] = se
