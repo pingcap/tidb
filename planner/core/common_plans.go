@@ -392,31 +392,34 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (bindSQL string) {
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.Hash4PC == "" || sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+		return ""
+	}
+	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return ""
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
-		if len(usingBinding) > 0 {
-			return usingBinding[0].BindSQL
+		if usingBinding != nil {
+			return usingBinding.BindSQL
 		}
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	if globalHandle == nil {
-		return
+		return ""
 	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.Hash4PC, preparedStmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
-		if len(usingBinding) > 0 {
-			return usingBinding[0].BindSQL
+		if usingBinding != nil {
+			return usingBinding.BindSQL
 		}
 	}
-	return
+	return ""
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
