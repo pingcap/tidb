@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"sort"
 
@@ -450,8 +449,6 @@ func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
-	c.Assert(err, IsNil)
 
 	tk.MustExec("drop database if exists TestPlacementDB;")
 	tk.MustExec("create database TestPlacementDB;")
@@ -476,11 +473,6 @@ func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
 
 func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
-	c.Assert(err, IsNil)
-
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
@@ -501,7 +493,7 @@ func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
 	defer tk.MustExec("drop table if exists tp")
 	tk.MustExec("alter table tp set tiflash replica 1")
 
-	err = tk.ExecToErr("alter table tp placement policy p1")
+	err := tk.ExecToErr("alter table tp placement policy p1")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
 	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2'")
 	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
