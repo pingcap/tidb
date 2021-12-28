@@ -543,6 +543,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
+				} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+					createOptions = "cached=on"
 				}
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
@@ -575,9 +577,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				}
 				if table.IsSequence() {
 					tableType = "SEQUENCE"
-					if rowCount == 0 {
-						rowCount = 1
-					}
+					// sequence is always 1 row regardless of stats.
+					rowCount = 1
 				}
 				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"

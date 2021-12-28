@@ -3378,8 +3378,8 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
+func buildIndexReq(ctx sessionctx.Context, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+	indexReq, indexStreaming, err := constructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
@@ -3405,9 +3405,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, indexStreaming, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
+	}
+	indexPaging := false
+	if v.Paging {
+		indexPaging = true
+		indexStreaming = false
 	}
 	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
@@ -3430,6 +3435,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
+		indexPaging:       indexPaging,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
@@ -3532,6 +3538,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	descs := make([]bool, 0, partialPlanCount)
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
+	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	for i := 0; i < partialPlanCount; i++ {
 		var tempReq *tipb.DAGRequest
 		var tempStreaming bool
@@ -3542,7 +3550,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
@@ -3558,8 +3566,11 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		tempReq.CollectRangeCounts = &collect
 		partialReqs = append(partialReqs, tempReq)
 		partialStreamings = append(partialStreamings, tempStreaming)
+		isCorColInPartialFilters = append(isCorColInPartialFilters, b.corColInDistPlan(v.PartialPlans[i]))
+		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
 	}
 	tableReq, tableStreaming, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3568,21 +3579,24 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		return nil, err
 	}
 	e := &IndexMergeReaderExecutor{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPBs:            partialReqs,
-		startTS:           startTS,
-		table:             tblInfo,
-		indexes:           indexes,
-		descs:             descs,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		partialStreamings: partialStreamings,
-		tableStreaming:    tableStreaming,
-		partialPlans:      v.PartialPlans,
-		tblPlans:          v.TablePlans,
-		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		feedbacks:         feedbacks,
-		handleCols:        ts.HandleCols,
+		baseExecutor:             newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPBs:                   partialReqs,
+		startTS:                  startTS,
+		table:                    tblInfo,
+		indexes:                  indexes,
+		descs:                    descs,
+		tableRequest:             tableReq,
+		columns:                  ts.Columns,
+		partialStreamings:        partialStreamings,
+		tableStreaming:           tableStreaming,
+		partialPlans:             v.PartialPlans,
+		tblPlans:                 v.TablePlans,
+		dataReaderBuilder:        &dataReaderBuilder{executorBuilder: b},
+		feedbacks:                feedbacks,
+		handleCols:               ts.HandleCols,
+		isCorColInPartialFilters: isCorColInPartialFilters,
+		isCorColInTableFilter:    isCorColInTableFilter,
+		isCorColInPartialAccess:  isCorColInPartialAccess,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable

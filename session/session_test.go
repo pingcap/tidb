@@ -3058,7 +3058,8 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.PrepareTxnCtx(context.Background())
+	err = tk1.Se.PrepareTxnCtx(context.Background())
+	c.Assert(err, IsNil)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// AutoCommit update will retry, so it would not fail.
@@ -5419,7 +5420,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	doModify := func() {
@@ -5458,7 +5459,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	assertSelectAsUnModified()
