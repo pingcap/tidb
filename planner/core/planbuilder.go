@@ -1818,10 +1818,21 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
 // 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
 // 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName, physicalIDs []int64, version int) ([]*model.ColumnInfo, error) {
+	choice := as.ColumnChoice
+	if choice == model.PredicateColumns || choice == model.ColumnList {
+		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+		versionIsSame := statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &version)
+		if !versionIsSame {
+			// If @@tidb_analyze_version is 2 while the current statistics of the table is version 1, we cannot just use PredicateColumns or ColumnList,
+			// which may cause different analyze versions among the columns. Hence we fall back to AllColumns.
+			choice = model.AllColumns
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.", tbl.Schema.L, tbl.Name.L))
+		}
+	}
 	tblInfo := tbl.TableInfo
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	switch as.ColumnChoice {
+	switch choice {
 	case model.DefaultChoice:
 		// TODO: use analyze column config for DefaultChoice
 		return tblInfo.Columns, nil
@@ -1835,7 +1846,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 			return nil, err
 		}
 		if len(cols) == 0 {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
 			return tblInfo.Columns, nil
 		}
 		for _, id := range cols {
@@ -1979,7 +1990,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
-	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl, physicalIDs, version)
 	if err != nil {
 		return nil, err
 	}

@@ -1287,7 +1287,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1356,7 +1356,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1434,7 +1434,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1516,7 +1516,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			p0ID := defs[0].ID
 			p1ID := defs[1].ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1641,7 +1641,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			p0ID := defs[0].ID
 			p1ID := defs[1].ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1747,7 +1747,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1818,7 +1818,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			require.NoError(t, err)
 			tblID := tbl.Meta().ID
 
-			switch val {
+			switch choice {
 			case model.ColumnList:
 				tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
 				tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -1867,7 +1867,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -1892,8 +1892,33 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 	tk.MustExec("analyze table t predicate columns")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
-		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed",
+		"Warning 1105 No predicate column has been collected yet for table test.t so all columns are analyzed.",
 	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
 	require.Equal(t, 2, len(rows))
+
+	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
+		func(choice model.ColumnChoice) {
+			tk.MustExec("set @@tidb_analyze_version = 1")
+			tk.MustExec("analyze table t")
+			tk.MustExec("set @@tidb_analyze_version = 2")
+			switch choice {
+			case model.ColumnList:
+				tk.MustExec("analyze table t columns b")
+			case model.PredicateColumns:
+				originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+				defer func() {
+					tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+				}()
+				tk.MustExec("set global tidb_enable_column_tracking = 1")
+				tk.MustExec("select * from t where b > 1")
+				require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
+				tk.MustExec("analyze table t predicate columns")
+			}
+			tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+				"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+				"Warning 1105 Table test.t has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.",
+			))
+		}(val)
+	}
 }
