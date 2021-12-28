@@ -461,7 +461,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 
 	tk.MustExec("drop table ddltiflash")
 
-	//time.Sleep(5 * time.Second)
 	// Now gc will trigger, and will remove dropped table.
 
 	gcWorker.Start()

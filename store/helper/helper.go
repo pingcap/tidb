@@ -1100,8 +1100,8 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if i, ok := (*regionReplica)[r]; ok {
-			(*regionReplica)[r] = i + 1
+		if c, ok := (*regionReplica)[r]; ok {
+			(*regionReplica)[r] = c + 1
 		} else {
 			(*regionReplica)[r] = 1
 		}
