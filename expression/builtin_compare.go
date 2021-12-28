@@ -415,18 +415,22 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 
 	return cmpTp
 }
+
 type CmpStringMode uint8
+
 const (
-	CmpStringDirectly CmpStringMode = iota
-	CmpStringAsDate // 'yyyy-mm-dd'
-	CmpStringAsDatetime // 'yyyy-mm-dd hh:mm:ss'
+	CmpStringDirectly   CmpStringMode = iota
+	CmpStringAsDate                   // 'yyyy-mm-dd'
+	CmpStringAsDatetime               // 'yyyy-mm-dd hh:mm:ss'
 )
-type GLRetTimeType uint8  //Greatest/Least return time type
+
+type GLRetTimeType uint8 //Greatest/Least return time type
 const (
 	GLRetNoneTemporal GLRetTimeType = iota
-	GLRetDate // 'yyyy-mm-dd'
-	GLRetDatetime // 'yyyy-mm-dd hh:mm:ss'
+	GLRetDate                       // 'yyyy-mm-dd'
+	GLRetDatetime                   // 'yyyy-mm-dd hh:mm:ss'
 )
+
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
 func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode CmpStringMode) {
 	aggType := aggregateType(args)
@@ -451,7 +455,7 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GL
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	var timeType GLRetTimeType
+	var timeType = GLRetNoneTemporal
 	if aggType.Tp == mysql.TypeDate {
 		timeType = GLRetDate
 	} else if aggType.Tp == mysql.TypeDatetime || aggType.Tp == mysql.TypeTimestamp {
