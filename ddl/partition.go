@@ -496,7 +496,7 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 
 	if ignorePlacement && hasPlacement {
 		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement options is ignored for TIDB_PLACEMENT_MODE is '%s'", placementMode),
+			fmt.Sprintf("Placement options is ignored when TIDB_PLACEMENT_MODE is '%s'", placementMode),
 		))
 	}
 
