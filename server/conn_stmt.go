@@ -121,7 +121,11 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
-	cc.ctx.GetSessionVars().StmtStats.OnReceiveCmd()
+	enableTopSQL := variable.TopSQLEnabled()
+	if enableTopSQL {
+		cc.ctx.GetSessionVars().StmtStats.OnHandleStmtExecuteBegin()
+		defer cc.ctx.GetSessionVars().StmtStats.OnHandleStmtExecuteFinish()
+	}
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -129,7 +133,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
-	if variable.TopSQLEnabled() {
+	if enableTopSQL {
 		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
@@ -266,7 +270,14 @@ const (
 
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	sessVars := cc.ctx.GetSessionVars()
-	sessVars.StmtStats.OnReceiveCmd()
+	enableTopSQL := variable.TopSQLEnabled()
+	var sqlDigest, planDigest []byte
+	if enableTopSQL {
+		sessVars.StmtStats.OnHandleStmtFetchBegin()
+		defer func() {
+			sessVars.StmtStats.OnHandleStmtFetchFinish(sqlDigest, planDigest)
+		}()
+	}
 	sessVars.StartTime = time.Now()
 
 	stmtID, fetchSize, err := parseStmtFetchCmd(data)
@@ -279,12 +290,14 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
-	if variable.TopSQLEnabled() {
+	if enableTopSQL {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
 			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
-			sessVars.StmtStats.OnSQLAndPlanDigestFirstReady(prepareObj.SQLDigest.Bytes(), nil)
-			defer sessVars.StmtStats.OnExecutionFinished()
+			sqlDigest = prepareObj.SQLDigest.Bytes()
+			if prepareObj.PlanDigest != nil {
+				planDigest = prepareObj.PlanDigest.Bytes()
+			}
 		}
 	}
 	sql := ""

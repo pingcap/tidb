@@ -234,7 +234,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtOnSQLAndPlanDigestReadyForTopSQL()
+	a.observeStmtOnStmtReadyToExecuteForTopSQL()
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -401,7 +401,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtOnSQLAndPlanDigestReadyForTopSQL()
+	a.observeStmtOnStmtReadyToExecuteForTopSQL()
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -924,7 +924,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	a.observeStmtExecFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			totalTiFlashQuerySuccCounter.Inc()
@@ -1277,18 +1276,12 @@ func (a *ExecStmt) GetTextToLog() string {
 	return sql
 }
 
-func (a *ExecStmt) observeStmtOnSQLAndPlanDigestReadyForTopSQL() {
+func (a *ExecStmt) observeStmtOnStmtReadyToExecuteForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest)
+		vars.StmtStats.OnStmtReadyToExecute(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
-	}
-}
-
-func (a *ExecStmt) observeStmtExecFinishedForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		vars.StmtStats.OnExecutionFinished()
 	}
 }
 

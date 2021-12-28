@@ -184,27 +184,33 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 		nowFunc = time.Now
 	}()
 	for n := 0; n < 2; n++ {
-		stats.OnReceiveCmd()
-		stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-1"), nil)
-		stats.OnExecutionFinished()
+		stats.OnDispatchBegin()
+		stats.OnHandleQueryBegin()
+		stats.OnHandleStmtBegin()
+		stats.OnStmtReadyToExecute([]byte("SQL-1"), nil)
+		stats.OnHandleStmtFinish()
+		stats.OnHandleQueryFinish()
+		stats.OnDispatchFinish()
 	}
 	for n := 0; n < 3; n++ {
-		stats.OnReceiveCmd()
-		stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
-		mockUnixNanoTs.Add(100)
-		stats.OnExecutionFinished()
+		stats.OnDispatchBegin()
+		stats.OnHandleStmtExecuteBegin()
+		stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
+		stats.OnHandleStmtExecuteFinish()
+		stats.OnDispatchFinish()
 	}
 
-	stats.OnReceiveCmd()
-	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-3"), nil)
+	stats.OnDispatchBegin()
+	stats.OnHandleStmtExecuteBegin()
+	stats.OnStmtReadyToExecute([]byte("SQL-3"), nil)
 	// mock for statement SQL-3 doesn't execute finish.
 
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(2), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(200), m[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(400), m[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(3), m[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(600), m[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(300), m[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
 	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumExecNanoDuration)
 
@@ -212,22 +218,96 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	assert.Len(t, m, 0)
 
 	// mock for statement SQL-3 execute finish.
-	stats.OnExecutionFinished()
-	// mock for SQL-4 begin to parse.
-	stats.OnReceiveCmd()
+	stats.OnHandleStmtExecuteFinish()
+	stats.OnDispatchFinish()
+	// mock for fetch SQL-3 data.
+	stats.OnDispatchBegin()
+	stats.OnHandleStmtFetchBegin()
 
 	m = stats.Take()
 	assert.Len(t, m, 1)
 	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
 	assert.Equal(t, uint64(100), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumExecNanoDuration)
 
-	// mock for statement SQL-4 execute finish.
-	stats.OnReceiveCmd()
-	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-4"), nil)
-	stats.OnExecutionFinished()
+	// mock for fetch SQL-3 data finish.
+	stats.OnHandleStmtFetchFinish([]byte("SQL-3"), nil)
+	stats.OnDispatchFinish()
+	stats.OnDispatchBegin()
+	stats.OnStmtReadyToExecute([]byte("ignore-cmd"), nil)
+	stats.OnDispatchFinish()
 
 	m = stats.Take()
 	assert.Len(t, m, 1)
+	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	assert.Equal(t, uint64(100), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumExecNanoDuration)
+}
+
+func TestForHandleDiffCMD(t *testing.T) {
+	stats := CreateStatementStats()
+	nowFunc = mockNow
+	defer func() {
+		nowFunc = time.Now
+	}()
+
+	// test for handle 1 stmt.
+	stats.OnDispatchBegin()
+	stats.OnHandleQueryBegin()
+	stats.OnHandleStmtBegin()
+	stats.OnStmtReadyToExecute([]byte("SQL-1"), nil)
+	stats.OnHandleStmtFinish()
+	stats.OnHandleQueryFinish()
+	stats.OnDispatchFinish()
+
+	// test for handle 3 stmts in handle query
+	stats.OnDispatchBegin()
+	stats.OnHandleQueryBegin()
+
+	stats.OnHandleStmtBegin()
+	stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
+	stats.OnHandleStmtFinish()
+
+	stats.OnHandleStmtBegin()
+	stats.OnStmtReadyToExecute([]byte("SQL-3"), nil)
+	stats.OnHandleStmtFinish()
+
+	stats.OnHandleStmtBegin()
+	stats.OnStmtReadyToExecute(nil, nil)
+	stats.OnHandleStmtFinish()
+
+	stats.OnHandleQueryFinish()
+	stats.OnDispatchFinish()
+
+	// test for execute prepare stmt.
+	stats.OnDispatchBegin()
+	stats.OnHandleStmtExecuteBegin()
+	stats.OnStmtReadyToExecute(nil, nil)
+	stats.OnStmtReadyToExecute([]byte("SQL-4"), nil)
+	stats.OnHandleStmtExecuteFinish()
+	stats.OnDispatchFinish()
+
+	// test for fetch executed stmt data.
+	stats.OnDispatchBegin()
+	stats.OnHandleStmtFetchBegin()
+	stats.OnHandleStmtFetchFinish([]byte("SQL-4"), nil)
+	stats.OnDispatchFinish()
+
+	// test use db command.
+	stats.OnDispatchBegin()
+	stats.OnUseDBBegin()
+	stats.OnStmtReadyToExecute([]byte("use test"), nil)
+	stats.OnUseDBFinish()
+	stats.OnDispatchFinish()
+
+	m := stats.Take()
+	assert.Len(t, m, 5)
+	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(200), m[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(200), m[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	assert.Equal(t, uint64(100), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-4"}].ExecCount)
-	assert.Equal(t, uint64(100), m[SQLPlanDigest{SQLDigest: "SQL-4"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(200), m[SQLPlanDigest{SQLDigest: "SQL-4"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "use test"}].ExecCount)
+	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "use test"}].SumExecNanoDuration)
 }

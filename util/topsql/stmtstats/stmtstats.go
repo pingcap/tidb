@@ -15,13 +15,10 @@
 package stmtstats
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 var _ StatementObserver = &StatementStats{}
@@ -35,15 +32,45 @@ var nowFunc = time.Now
 // The caller only needs to be responsible for calling different methods at the
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
-	// OnReceiveCmd should be called on TiDB receive command request.
-	OnReceiveCmd()
+	// OnDispatchBegin should be called on the begin of TiDB dispatch command.
+	OnDispatchBegin()
 
-	// OnSQLAndPlanDigestFirstReady should be called on statement SQL and plan digest are ready.
-	// This function only use to record the SQL and plan digest, it doesn't matter if you delay calling this function.
-	OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte)
+	// OnDispatchFinish should be called on TiDB finished dispatch command.
+	OnDispatchFinish()
 
-	// OnExecutionFinished should be called after the statement execution finish.
-	OnExecutionFinished()
+	// OnHandleQueryBegin should be called on the begin of TiDB handle query.
+	OnHandleQueryBegin()
+
+	// OnHandleQueryFinish should be called on TiDB finished handle query.
+	OnHandleQueryFinish()
+
+	// OnHandleStmtBegin should be called on the begin of TiDB handle stmt.
+	OnHandleStmtBegin()
+
+	// OnHandleStmtFinish should be called on TiDB finished handle stmt.
+	OnHandleStmtFinish()
+
+	// OnStmtReadyToExecute should be called on statement ready to execute with physical plan.
+	// It's ok to call this function multiple time, but only the first time take effect. This is design for execution retry.
+	OnStmtReadyToExecute(sqlDigest, planDigest []byte)
+
+	// OnHandleStmtBegin should be called on the begin of TiDB handle stmt.
+	OnHandleStmtExecuteBegin()
+
+	// OnHandleStmtFinish should be called on TiDB finished stmt execute.
+	OnHandleStmtExecuteFinish()
+
+	// OnHandleStmtBegin should be called on the begin of TiDB handle stmt fetch.
+	OnHandleStmtFetchBegin()
+
+	// OnHandleStmtFinish should be called on TiDB finished stmt fetch.
+	OnHandleStmtFetchFinish(sqlDigest, planDigest []byte)
+
+	// OnHandleStmtBegin should be called on the begin of TiDB use db.
+	OnUseDBBegin()
+
+	// OnHandleStmtFinish should be called on TiDB finished use db.
+	OnUseDBFinish()
 }
 
 // StatementStats is a counter used locally in each session.
@@ -51,43 +78,16 @@ type StatementObserver interface {
 // and it is expected that these statistics will eventually be collected and merged
 // in the background.
 type StatementStats struct {
-	seCtx    StatementExecutionContext
-	state    StmtExecState
+	ctx      StatementExecutionContext
 	mu       sync.Mutex
 	data     StatementStatsMap
 	finished *atomic.Bool
 }
 
-// StmtExecState is the state of StatementStats
-type StmtExecState int
-
-const (
-	stmtExecStateInitial StmtExecState = iota
-	stmtExecStateCmdReceived
-	stmtExecStateDigestIsReady
-	stmtExecStateFinished
-)
-
-// String implements Stringer interface.
-func (s StmtExecState) String() string {
-	switch s {
-	case stmtExecStateInitial:
-		return "initial"
-	case stmtExecStateCmdReceived:
-		return "cmd_received"
-	case stmtExecStateDigestIsReady:
-		return "digest_is_ready"
-	case stmtExecStateFinished:
-		return "finish"
-	default:
-		return fmt.Sprintf("unknow_%d", int(s))
-	}
-}
-
 // CreateStatementStats try to create and register an StatementStats.
 func CreateStatementStats() *StatementStats {
 	stats := &StatementStats{
-		state:    stmtExecStateInitial,
+		//state:    stmtExecStateInitial,
 		data:     StatementStatsMap{},
 		finished: atomic.NewBool(false),
 	}
@@ -95,51 +95,153 @@ func CreateStatementStats() *StatementStats {
 	return stats
 }
 
-// OnReceiveCmd implements StatementObserver.OnParseBegin.
-func (s *StatementStats) OnReceiveCmd() {
-	s.state = stmtExecStateCmdReceived
-	s.seCtx.reset()
+// OnDispatchBegin implements StatementObserver.OnDispatchBegin.
+func (s *StatementStats) OnDispatchBegin() {
+	acceptLastStates := []ExecState{execStateDispatchFinish, execStateUseDBFinish, execStateInitial}
+	s.ctx.state.tryGoTo(execStateDispatchBegin, acceptLastStates)
+	s.ctx.state = execStateDispatchBegin
+	s.ctx.cmdDispatchBegin = nowFunc()
+	s.ctx.sqlDigest = nil
+	s.ctx.planDigest = nil
 }
 
-// OnSQLAndPlanDigestFirstReady implements StatementObserver.OnSQLAndPlanDigestFirstReady.
-func (s *StatementStats) OnSQLAndPlanDigestFirstReady(sqlDigest, planDigest []byte) {
-	if s.state != stmtExecStateCmdReceived {
-		logutil.BgLogger().Warn("[stmt-stats] unexpected state",
-			zap.String("expect", stmtExecStateCmdReceived.String()),
-			zap.String("got", s.state.String()))
+// OnDispatchFinish implements StatementObserver.OnDispatchFinish.
+func (s *StatementStats) OnDispatchFinish() {
+	acceptLastStates := []ExecState{execStateHandleQueryFinish, execStateHandleStmtExecuteFinish,
+		execStateHandleStmtFetchFinish, execStateUseDBFinish, execStateDispatchBegin, execStateStmtReadyToExecute}
+	s.ctx.state.tryGoTo(execStateDispatchFinish, acceptLastStates)
+}
+
+// OnHandleQueryBegin implements StatementObserver.OnHandleQueryBegin.
+func (s *StatementStats) OnHandleQueryBegin() {
+	acceptLastStates := []ExecState{execStateDispatchBegin}
+	valid := s.ctx.state.tryGoTo(execStateHandleQueryBegin, acceptLastStates)
+	if !valid {
 		return
 	}
-	s.state = stmtExecStateDigestIsReady
+	s.ctx.handleStmtIdx = 0
+}
 
+// OnHandleQueryFinish implements StatementObserver.OnHandleQueryFinish.
+func (s *StatementStats) OnHandleQueryFinish() {
+	acceptLastStates := []ExecState{execStateHandleQueryBegin, execStateHandleStmtFinish}
+	s.ctx.state.tryGoTo(execStateHandleQueryFinish, acceptLastStates)
+}
+
+// OnHandleStmtBegin implements StatementObserver.OnHandleStmtBegin.
+func (s *StatementStats) OnHandleStmtBegin() {
+	acceptLastStates := []ExecState{execStateHandleQueryBegin, execStateHandleStmtFinish}
+	valid := s.ctx.state.tryGoTo(execStateHandleStmtBegin, acceptLastStates)
+	if !valid {
+		return
+	}
+	s.ctx.state = execStateHandleStmtBegin
+	s.ctx.handleStmtBegin = nowFunc()
+	s.ctx.sqlDigest = nil
+	s.ctx.planDigest = nil
+}
+
+// OnHandleStmtFinish implements StatementObserver.OnHandleStmtFinish.
+func (s *StatementStats) OnHandleStmtFinish() {
+	acceptLastStates := []ExecState{execStateHandleStmtBegin, execStateStmtReadyToExecute}
+	valid := s.ctx.state.tryGoTo(execStateHandleStmtFinish, acceptLastStates)
+	if !valid {
+		return
+	}
+
+	if s.ctx.handleStmtIdx == 0 {
+		s.onStmtFinished(s.ctx.cmdDispatchBegin)
+	} else {
+		s.onStmtFinished(s.ctx.handleStmtBegin)
+	}
+	s.ctx.handleStmtIdx++
+}
+
+// OnStmtReadyToExecute implements StatementObserver.OnStmtReadyToExecute.
+func (s *StatementStats) OnStmtReadyToExecute(sqlDigest, planDigest []byte) {
+	if s.ctx.state == execStateInitial {
+		// TODO: remove this after support internal statement.
+		return
+	}
+	acceptLastStates := []ExecState{execStateHandleStmtBegin, execStateHandleStmtExecuteBegin, execStateUseDBBegin, execStateStmtReadyToExecute}
+	valid := s.ctx.state.tryGoTo(execStateStmtReadyToExecute, acceptLastStates)
+	if !valid {
+		return
+	}
+
+	if len(sqlDigest) == 0 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.seCtx.sqlDigest) != 0 {
+	// Only record execution count when SQL digest first ready.
+	if len(s.ctx.sqlDigest) != 0 {
 		return
 	}
-	s.seCtx.sqlDigest = sqlDigest
-	s.seCtx.planDigest = planDigest
+	s.ctx.sqlDigest = sqlDigest
+	s.ctx.planDigest = planDigest
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 	item.ExecCount++
 }
 
-// OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished() {
-	if s.state != stmtExecStateDigestIsReady {
-		logutil.BgLogger().Warn("[stmt-stats] unexpected state",
-			zap.String("expect", stmtExecStateDigestIsReady.String()),
-			zap.String("got", s.state.String()))
+// OnHandleStmtExecuteBegin implements StatementObserver.OnHandleStmtExecuteBegin.
+func (s *StatementStats) OnHandleStmtExecuteBegin() {
+	acceptLastStates := []ExecState{execStateDispatchBegin}
+	s.ctx.state.tryGoTo(execStateHandleStmtExecuteBegin, acceptLastStates)
+}
+
+// OnHandleStmtExecuteFinish implements StatementObserver.OnHandleStmtExecuteFinish.
+func (s *StatementStats) OnHandleStmtExecuteFinish() {
+	acceptLastStates := []ExecState{execStateHandleStmtExecuteBegin, execStateStmtReadyToExecute}
+	valid := s.ctx.state.tryGoTo(execStateHandleStmtExecuteFinish, acceptLastStates)
+	if !valid {
 		return
 	}
-	s.state = stmtExecStateFinished
 
+	s.onStmtFinished(s.ctx.cmdDispatchBegin)
+}
+
+// OnHandleStmtFetchBegin implements StatementObserver.OnHandleStmtFetchBegin.
+func (s *StatementStats) OnHandleStmtFetchBegin() {
+	acceptLastStates := []ExecState{execStateDispatchBegin}
+	s.ctx.state.tryGoTo(execStateHandleStmtFetchBegin, acceptLastStates)
+}
+
+// OnHandleStmtFetchFinish implements StatementObserver.OnHandleStmtFetchFinish.
+func (s *StatementStats) OnHandleStmtFetchFinish(sqlDigest, planDigest []byte) {
+	acceptLastStates := []ExecState{execStateHandleStmtFetchBegin}
+	valid := s.ctx.state.tryGoTo(execStateHandleStmtFetchFinish, acceptLastStates)
+	if !valid {
+		return
+	}
+
+	s.ctx.sqlDigest, s.ctx.planDigest = sqlDigest, planDigest
+	s.onStmtFinished(s.ctx.cmdDispatchBegin)
+}
+
+// OnUseDBBegin implements StatementObserver.OnUseDBBegin.
+func (s *StatementStats) OnUseDBBegin() {
+	acceptLastStates := []ExecState{execStateDispatchBegin, execStateInitial}
+	s.ctx.state.tryGoTo(execStateUseDBBegin, acceptLastStates)
+}
+
+// OnUseDBFinish implements StatementObserver.OnUseDBFinish.
+func (s *StatementStats) OnUseDBFinish() {
+	acceptLastStates := []ExecState{execStateStmtReadyToExecute, execStateUseDBBegin}
+	s.ctx.state.tryGoTo(execStateUseDBFinish, acceptLastStates)
+}
+
+func (s *StatementStats) onStmtFinished(begin time.Time) {
+	if len(s.ctx.sqlDigest) == 0 {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(s.seCtx.sqlDigest, s.seCtx.planDigest)
-	cost := nowFunc().Sub(s.seCtx.begin).Nanoseconds()
+	item := s.GetOrCreateStatementStatsItem(s.ctx.sqlDigest, s.ctx.planDigest)
+	cost := nowFunc().Sub(begin).Nanoseconds()
 	if cost > 0 {
 		item.SumExecNanoDuration += uint64(cost)
 	}
-	// Add more data here.
 }
 
 // GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
@@ -296,15 +398,10 @@ func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
 
 // StatementExecutionContext represents a single statement execution information.
 type StatementExecutionContext struct {
-	sqlDigest  []byte
-	planDigest []byte
-	// begin is the time when receive the statement request.
-	begin time.Time
-	// Add more required variables here
-}
-
-func (sec *StatementExecutionContext) reset() {
-	sec.sqlDigest = nil
-	sec.planDigest = nil
-	sec.begin = nowFunc()
+	state            ExecState
+	sqlDigest        []byte
+	planDigest       []byte
+	cmdDispatchBegin time.Time
+	handleStmtBegin  time.Time
+	handleStmtIdx    int
 }

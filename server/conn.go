@@ -1257,7 +1257,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	data = data[1:]
 	vars := cc.ctx.GetSessionVars()
 	if variable.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
+		vars.StmtStats.OnDispatchBegin()
+		defer func() {
+			pprof.SetGoroutineLabels(ctx)
+			vars.StmtStats.OnDispatchFinish()
+		}()
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1398,6 +1402,12 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 }
 
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
+	if variable.TopSQLEnabled() {
+		vars := cc.ctx.GetSessionVars()
+		vars.StmtStats.OnUseDBBegin()
+		defer vars.StmtStats.OnUseDBFinish()
+	}
+
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
@@ -1785,7 +1795,10 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	vars := cc.ctx.GetSessionVars()
-	vars.StmtStats.OnReceiveCmd()
+	if variable.TopSQLEnabled() {
+		vars.StmtStats.OnHandleQueryBegin()
+		defer vars.StmtStats.OnHandleQueryFinish()
+	}
 	sc := vars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
@@ -1833,33 +1846,47 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	if len(pointPlans) > 0 {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
-	var retryable bool
+	var shouldBreak bool
 	for i, stmt := range stmts {
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
-		if err != nil {
-			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
-				break
-			}
-			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if !allowTiFlashFallback {
-				break
-			}
-			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-			// server and fallback to TiKV.
-			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
-			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-			if err != nil {
-				break
-			}
+		shouldBreak, err = cc.handleStmtWithRetry(ctx, stmt, parserWarns, i == len(stmts)-1)
+		if shouldBreak {
+			break
 		}
 	}
 	return err
+}
+
+func (cc *clientConn) handleStmtWithRetry(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
+	if variable.TopSQLEnabled() {
+		vars := cc.ctx.GetSessionVars()
+		vars.StmtStats.OnHandleStmtBegin()
+		defer vars.StmtStats.OnHandleStmtFinish()
+	}
+
+	retryable, err := cc.handleStmt(ctx, stmt, warns, lastStmt)
+	if err != nil {
+		if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
+			return true, err
+		}
+		_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+		if !allowTiFlashFallback {
+			return true, err
+		}
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		warns := append(warns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		_, err = cc.handleStmt(ctx, stmt, warns, lastStmt)
+		cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		if err != nil {
+			return true, err
+		}
+	}
+	return false, err
 }
 
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,

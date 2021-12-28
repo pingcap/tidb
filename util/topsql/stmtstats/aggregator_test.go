@@ -59,17 +59,22 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}()
 
 	a.register(stats)
-	stats.OnReceiveCmd()
-	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-1"), nil)
-	stats.OnExecutionFinished()
 
+	stats.OnDispatchBegin()
+	stats.OnHandleQueryBegin()
+	stats.OnHandleStmtBegin()
+	stats.OnStmtReadyToExecute([]byte("SQL-1"), nil)
+	stats.OnHandleStmtFinish()
+	stats.OnHandleQueryFinish()
+	stats.OnDispatchFinish()
+
+	stats.OnDispatchBegin()
+	stats.OnHandleStmtExecuteBegin()
 	// test for double call
-	stats.OnReceiveCmd()
-	stats.OnReceiveCmd()
-	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
-	stats.OnSQLAndPlanDigestFirstReady([]byte("SQL-2"), nil)
-	stats.OnExecutionFinished()
-	stats.OnExecutionFinished()
+	stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
+	stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
+	stats.OnHandleStmtExecuteFinish()
+	stats.OnDispatchFinish()
 
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
@@ -79,7 +84,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	assert.NotEmpty(t, records)
 	assert.True(t, records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}] != nil)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
 	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
 }
