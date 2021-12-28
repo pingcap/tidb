@@ -1464,6 +1464,8 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
