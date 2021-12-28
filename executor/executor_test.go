@@ -8081,7 +8081,7 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(v1 datetime, v2 datetime(3))")
-	tk.MustExec("insert ingore into t values(0,0)")
+	tk.MustExec("insert ignore into t values(0,0)")
 
 	SQLs = []string{
 		`select YEAR(v1), YEAR(v2) from t`,

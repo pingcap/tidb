@@ -1446,6 +1446,10 @@ func (b *builtinWeekDaySig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
+	if date.IsZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+	}
+
 	return int64(date.Weekday()+6) % 7, false, nil
 }
 
@@ -1484,6 +1488,10 @@ func (b *builtinWeekOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
+	}
+
+	if date.IsZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
 	week := date.Week(3)
@@ -1576,6 +1584,9 @@ func (b *builtinYearWeekWithModeSig) evalInt(row chunk.Row) (int64, bool, error)
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
+	}
+	if date.IsZero() {
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(b.ctx, row)
