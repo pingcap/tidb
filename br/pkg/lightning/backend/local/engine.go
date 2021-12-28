@@ -33,6 +33,7 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	pkgkv "github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -423,7 +424,7 @@ func (e *Engine) getSizeProperties() (*sizeProperties, error) {
 					newRangeProps := make(rangeProperties, 0, len(rangeProps))
 					for _, p := range rangeProps {
 						if !bytes.Equal(p.Key, engineMetaKey) {
-							p.Key, _, _, err = e.keyAdapter.Decode(nil, p.Key)
+							p.Key, err = e.keyAdapter.Decode(nil, p.Key)
 							if err != nil {
 								log.L().Warn(
 									"decodeRangeProperties failed because the props key is invalid",
@@ -965,6 +966,22 @@ func (e *Engine) unfinishedRanges(ranges []Range) []Range {
 	return filterOverlapRange(ranges, e.finishedRanges.ranges)
 }
 
+func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) pkgkv.Iter {
+	if bytes.Compare(opts.LowerBound, normalIterStartKey) < 0 {
+		newOpts := *opts
+		newOpts.LowerBound = normalIterStartKey
+		opts = &newOpts
+	}
+	if !e.duplicateDetection {
+		return pebbleIter{Iterator: e.db.NewIter(opts)}
+	}
+	logger := log.With(
+		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
+		zap.Int64("tableID", e.tableInfo.ID),
+		zap.Stringer("engineUUID", e.UUID))
+	return newDupDetectIter(ctx, e.db, e.keyAdapter, opts, e.duplicateDB, logger)
+}
+
 type sstMeta struct {
 	path       string
 	minKey     []byte
@@ -992,11 +1009,10 @@ type Writer struct {
 	// if the kvs in writeBatch are in order, we can avoid doing a `sort.Slice` which
 	// is quite slow. in our bench, the sort operation eats about 5% of total CPU
 	isWriteBatchSorted bool
+	sortedKeyBuf       []byte
 
 	batchCount int
 	batchSize  int64
-	totalSize  int64
-	totalCount int64
 
 	lastMetaSeq int32
 }
@@ -1008,25 +1024,32 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		w.writer = writer
-		w.writer.minKey = append([]byte{}, kvs[0].Key...)
 	}
 
-	totalKeyLen := 0
+	keyAdapter := w.engine.keyAdapter
+	totalKeySize := 0
 	for i := 0; i < len(kvs); i++ {
-		totalKeyLen += w.engine.keyAdapter.EncodedLen(kvs[i].Key)
+		keySize := keyAdapter.EncodedLen(kvs[i].Key)
+		w.batchSize += int64(keySize + len(kvs[i].Val))
+		totalKeySize += keySize
 	}
-	buf := make([]byte, totalKeyLen)
-	encodedKvs := make([]common.KvPair, len(kvs))
-	for i := 0; i < len(kvs); i++ {
-		encodedKey := w.engine.keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID, kvs[i].Offset)
-		buf = buf[len(encodedKey):]
-		encodedKvs[i] = common.KvPair{Key: encodedKey, Val: kvs[i].Val}
-		w.batchSize += int64(len(encodedKvs[i].Key) + len(encodedKvs[i].Val))
+	w.batchCount += len(kvs)
+	// noopKeyAdapter doesn't really change the key,
+	// skipping the encoding to avoid unnecessary alloc and copy.
+	if _, ok := keyAdapter.(noopKeyAdapter); !ok {
+		if cap(w.sortedKeyBuf) < totalKeySize {
+			w.sortedKeyBuf = make([]byte, totalKeySize)
+		}
+		buf := w.sortedKeyBuf[:0]
+		newKvs := make([]common.KvPair, len(kvs))
+		for i := 0; i < len(kvs); i++ {
+			buf = keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID)
+			newKvs[i] = common.KvPair{Key: buf, Val: kvs[i].Val}
+			buf = buf[len(buf):]
+		}
+		kvs = newKvs
 	}
-
-	w.batchCount += len(encodedKvs)
-	w.totalCount += int64(len(encodedKvs))
-	return w.writer.writeKVs(encodedKvs)
+	return w.writer.writeKVs(kvs)
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1036,14 +1059,15 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	if cnt > 0 {
 		lastKey = w.writeBatch[cnt-1].Key
 	}
+	keyAdapter := w.engine.keyAdapter
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
 			w.isWriteBatchSorted = false
 		}
 		lastKey = pair.Key
 		w.batchSize += int64(len(pair.Key) + len(pair.Val))
-		buf := w.kvBuffer.AllocBytes(w.engine.keyAdapter.EncodedLen(pair.Key))
-		key := w.engine.keyAdapter.Encode(buf, pair.Key, pair.RowID, pair.Offset)
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key))
+		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
 		val := w.kvBuffer.AddBytes(pair.Val)
 		if cnt < l {
 			w.writeBatch[cnt].Key = key
@@ -1060,7 +1084,6 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 			return err
 		}
 	}
-	w.totalCount += int64(len(kvs))
 	return nil
 }
 
@@ -1099,7 +1122,6 @@ func (w *Writer) flush(ctx context.Context) error {
 		return nil
 	}
 
-	w.totalSize += w.batchSize
 	if len(w.writeBatch) > 0 {
 		if err := w.flushKVs(ctx); err != nil {
 			return errors.Trace(err)
@@ -1157,7 +1179,6 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		w.isWriteBatchSorted = true
 	}
 
-	writer.minKey = append(writer.minKey[:0], w.writeBatch[0].Key...)
 	err = writer.writeKVs(w.writeBatch[:w.batchCount])
 	if err != nil {
 		return errors.Trace(err)
@@ -1171,7 +1192,6 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	w.totalSize += w.batchSize
 	w.batchSize = 0
 	w.batchCount = 0
 	w.kvBuffer.Reset()
@@ -1222,7 +1242,9 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	if len(kvs) == 0 {
 		return nil
 	}
-
+	if len(sw.minKey) == 0 {
+		sw.minKey = append([]byte{}, kvs[0].Key...)
+	}
 	if bytes.Compare(kvs[0].Key, sw.maxKey) <= 0 {
 		return errorUnorderedSSTInsertion
 	}
@@ -1241,9 +1263,10 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		sw.totalSize += int64(len(p.Key)) + int64(len(p.Val))
+		lastKey = p.Key
 	}
 	sw.totalCount += int64(len(kvs))
-	sw.maxKey = append(sw.maxKey[:0], kvs[len(kvs)-1].Key...)
+	sw.maxKey = append(sw.maxKey[:0], lastKey...)
 	return nil
 }
 
