@@ -16,6 +16,9 @@ package executor
 
 import (
 	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
@@ -24,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
-	"sort"
-	"strings"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {

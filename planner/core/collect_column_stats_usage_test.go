@@ -62,9 +62,9 @@ func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID,
 	return "", false
 }
 
-func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, onlyHistNeeded bool, expected []string, comment CommentInterface) {
+func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment CommentInterface) {
 	var tblColIDs []model.TableColumnID
-	if onlyHistNeeded {
+	if histNeededOnly {
 		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
 	} else {
 		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)

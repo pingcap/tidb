@@ -1852,17 +1852,16 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
 			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
 			if disableTime == nil || gt.After(*disableTime) {
-				if err := t.ConvertTimeZone(time.UTC, loc); err != nil {
-					return nil, errors.Trace(err)
-				}
+				t = types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 				statsUsage.LastUsedAt = &t
 			}
 		}
 		if !row.IsNull(3) {
-			t := row.GetTime(3)
-			if err := t.ConvertTimeZone(time.UTC, loc); err != nil {
+			gt, err := row.GetTime(3).GoTime(time.UTC)
+			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 			statsUsage.LastAnalyzedAt = &t
 		}
 		colStatsMap[tblColID] = statsUsage
@@ -1911,8 +1910,7 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 			continue
 		}
 		colID := row.GetInt64(0)
-		t := row.GetTime(1)
-		gt, err := t.GoTime(time.UTC)
+		gt, err := row.GetTime(1).GoTime(time.UTC)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

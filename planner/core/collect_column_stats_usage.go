@@ -272,14 +272,6 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 	}
 }
 
-func set2slice(set map[model.TableColumnID]struct{}) []model.TableColumnID {
-	ret := make([]model.TableColumnID, 0, len(set))
-	for tblColID := range set {
-		ret = append(ret, tblColID)
-	}
-	return ret
-}
-
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
@@ -293,6 +285,13 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 	}
 	collector := newColumnStatsUsageCollector(mode)
 	collector.collectFromPlan(lp)
+	set2slice := func(set map[model.TableColumnID]struct{}) []model.TableColumnID {
+		ret := make([]model.TableColumnID, 0, len(set))
+		for tblColID := range set {
+			ret = append(ret, tblColID)
+		}
+		return ret
+	}
 	var predicateCols, histNeededCols []model.TableColumnID
 	if predicate {
 		predicateCols = set2slice(collector.predicateCols)
