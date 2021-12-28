@@ -307,7 +307,9 @@ func (r *record) merge(other *record) {
 		return
 	}
 
-	sort.Sort(other)
+	if !other.tsItems.sorted() {
+		sort.Sort(other) // this may never happen
+	}
 	if len(r.tsItems) == 0 {
 		r.totalCPUTimeMs = other.totalCPUTimeMs
 		r.tsItems = other.tsItems
