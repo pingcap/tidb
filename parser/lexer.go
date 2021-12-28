@@ -89,8 +89,8 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.client = charset.EncodingUTF8Impl
-	s.connection = charset.EncodingUTF8Impl
+	s.client = charset.FindEncodingTakeUTF8AsNoop(mysql.DefaultCharset)
+	s.connection = charset.FindEncodingTakeUTF8AsNoop(mysql.DefaultCharset)
 	s.r = reader{s: sql, p: Pos{Line: 1}, l: len(sql)}
 	s.buf.Reset()
 	s.errs = s.errs[:0]

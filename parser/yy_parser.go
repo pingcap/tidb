@@ -412,7 +412,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
-	p.lexer.connection = charset.FindEncoding(p.charset)
+	p.lexer.connection = charset.FindEncodingTakeUTF8AsNoop(string(c))
 	return nil
 }
 
