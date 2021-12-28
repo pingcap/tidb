@@ -310,7 +310,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 				continue
 			}
 			for _, tableInfo := range tableInfos {
-				t.DbName = tableInfo.DB.Name.O
+				t.DbName = tableInfo.DB.Name.String()
 				t.TableName = tableInfo.Table.Name.O
 				t.TableID = tableInfo.Table.ID
 				if tableInfo.IsIndex {
