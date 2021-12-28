@@ -2875,6 +2875,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 				builder.WriteString("0")
 			}
 			builder.WriteString(" ")
+			builder.WriteString(fmt.Sprintf("%v", vars.ConnectionID))
+			builder.WriteString(" ")
 			// Logic TS
 			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
 			builder.WriteString(ts)
