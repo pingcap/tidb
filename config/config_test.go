@@ -261,6 +261,12 @@ deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
 [top-sql]
 receiver-address = "127.0.0.1:10100"
+[status]
+grpc-keepalive-time = 20
+grpc-keepalive-timeout = 10
+grpc-concurrent-streams = 2048
+grpc-initial-window-size = 10240
+grpc-max-send-msg-size = 40960
 `)
 
 	require.NoError(t, err)
@@ -318,6 +324,11 @@ receiver-address = "127.0.0.1:10100"
 	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
