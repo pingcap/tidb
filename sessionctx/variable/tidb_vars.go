@@ -717,7 +717,7 @@ const (
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
 	DefTiDBEnableAlterPlacement           = false
-	DefTiDBPlacementMode                  = "strict"
+	DefTiDBPlacementMode                  = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset

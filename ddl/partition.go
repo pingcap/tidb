@@ -456,8 +456,7 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
 	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
 	// when policy x is altered.
-	placementMode := variable.PlacementMode(ctx.GetSessionVars().PlacementMode.Load())
-	ignorePlacement := placementMode == variable.PlacementModeIgnore
+	ignorePlacement := ctx.GetSessionVars().PlacementMode == variable.PlacementModeIgnore
 	hasPlacement := false
 
 	for _, opt := range options {
@@ -495,7 +494,7 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 
 	if ignorePlacement && hasPlacement {
 		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement options is ignored when TIDB_PLACEMENT_MODE is '%s'", placementMode),
+			fmt.Sprintf("Placement options is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		))
 	}
 

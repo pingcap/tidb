@@ -728,7 +728,7 @@ type SessionVars struct {
 	// PlacementMode the placement mode we use
 	//   strict: Check placement settings strictly in ddl operations
 	//   ignore: Ignore all placement settings in ddl operations
-	PlacementMode atomic2.String
+	PlacementMode string
 
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
@@ -1057,25 +1057,12 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
-// PlacementMode presents the placement mode used.
-type PlacementMode string
-
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
-	PlacementModeStrict PlacementMode = "strict"
+	PlacementModeStrict string = "STRICT"
 	// PlacementModeIgnore indicates ignore all placement operations in ddl
-	PlacementModeIgnore PlacementMode = "ignore"
+	PlacementModeIgnore string = "IGNORE"
 )
-
-// Valid indicate PlacementMode is validated.
-func (p PlacementMode) Valid() bool {
-	switch p {
-	case PlacementModeStrict, PlacementModeIgnore:
-		return true
-	default:
-		return false
-	}
-}
 
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string

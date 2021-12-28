@@ -856,14 +856,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlterPlacement = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlacementMode, Value: DefTiDBPlacementMode, Type: TypeStr, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		mode := PlacementMode(normalizedValue)
-		if !mode.Valid() {
-			return normalizedValue, ErrWrongTypeForVar.GenWithStackByArgs(TiDBPlacementMode)
-		}
-		return string(mode), nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		s.PlacementMode.Store(strings.ToLower(strings.TrimSpace(val)))
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPlacementMode, Value: DefTiDBPlacementMode, Type: TypeEnum, PossibleValues: []string{PlacementModeStrict, PlacementModeIgnore}, SetSession: func(s *SessionVars, val string) error {
+		s.PlacementMode = val
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBForcePriority, skipInit: true, Value: mysql.Priority2Str[DefTiDBForcePriority], SetSession: func(s *SessionVars, val string) error {

@@ -482,7 +482,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 	tk.MustExec("drop placement policy if exists p2")
 
 	// default should be strict
-	tk.MustQuery("select @@tidb_placement_mode").Check(testkit.Rows("strict"))
+	tk.MustQuery("select @@tidb_placement_mode").Check(testkit.Rows("STRICT"))
 
 	// prepare policy and tables
 	tk.MustExec("create placement policy p1 followers=4")
@@ -500,43 +500,41 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	// invalid values
-	err := tk.ExecToErr("set tidb_placement_mode=0")
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_placement_mode'")
-	err = tk.ExecToErr("set tidb_placement_mode='aaa'")
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_placement_mode'")
+	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'")
 
 	// ignore mode
 	tk.MustExec("set tidb_placement_mode='ignore'")
-	tk.MustQuery("select @@tidb_placement_mode").Check(testkit.Rows("ignore"))
+	tk.MustQuery("select @@tidb_placement_mode").Check(testkit.Rows("IGNORE"))
 
 	// create placement policy in ignore mode
 	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Create placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Create placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
 	tk.MustExec("create placement policy p3 primary_region='r1' regions='r1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Create placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Create placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
 	// alter placement policy in ignore mode
 	tk.MustExec("alter placement policy p1 primary_region='r1' regions='r1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
 	tk.MustExec("alter placement policy p3 primary_region='r1' regions='r1'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
 	// drop placement policy in ignore mode
 	tk.MustExec("drop placement policy p1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Drop placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Drop placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
 	tk.MustExec("drop placement policy p3")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Drop placement policy is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Drop placement policy is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
 	// create table in ignore mode
 	tk.MustExec("create table t3(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t3")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -557,19 +555,19 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 
 	// alter table placement in ignore mode
 	tk.MustExec("alter table t1 placement policy p2")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table placement is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
 	tk.MustExec("alter table t1 placement policy p3")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table placement is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
 
 	// add partition in ignore mode
 	tk.MustExec("alter table t2 add partition (partition p2 values less than(10000) placement policy p1)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
@@ -578,7 +576,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	tk.MustExec("alter table t2 add partition (partition p3 values less than(100000) placement policy p3)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
@@ -590,7 +588,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 
 	// alter partition placement in ignore mode
 	tk.MustExec("alter table t2 partition p0 placement policy p1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table partition placement is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table partition placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
@@ -600,7 +598,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 		" PARTITION `p2` VALUES LESS THAN (10000),\n" +
 		" PARTITION `p3` VALUES LESS THAN (100000))"))
 	tk.MustExec("alter table t2 partition p0 placement policy p3")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table partition placement is ignored when TIDB_PLACEMENT_MODE is 'ignore'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Alter table partition placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
