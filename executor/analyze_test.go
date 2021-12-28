@@ -1248,6 +1248,11 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	originalVal3 := handle.AutoAnalyzeMinCnt
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal3
+	}()
+	handle.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1283,7 +1288,6 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, "1", rs.Rows()[0][4])
 
 	// auto-analyze uses the table-level options
-	handle.AutoAnalyzeMinCnt = 0
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.Nil(t, h.Update(is))
