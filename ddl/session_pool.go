@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ngaut/pools"
@@ -60,7 +61,7 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 
 	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
-		return nil, errors.New("sessionPool resource get nil")
+		return nil, fmt.Errorf("sessionPool resource get %v", ctx)
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true

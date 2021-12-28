@@ -231,14 +231,14 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-// EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
+// EnableTiFlashPoll enables TiFlash poll loop aka pollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d interface{}) {
 	if dd, ok := d.(*ddl); ok {
 		dd.enableTiFlashPoll = true
 	}
 }
 
-// DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
+// DisableTiFlashPoll disables TiFlash poll loop aka pollTiFlashReplicaStatus.
 func DisableTiFlashPoll(d interface{}) {
 	if dd, ok := d.(*ddl); ok {
 		dd.enableTiFlashPoll = false

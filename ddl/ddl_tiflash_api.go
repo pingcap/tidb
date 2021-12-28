@@ -77,7 +77,7 @@ func NewTiFlashManagementContext() *TiFlashManagementContext {
 }
 
 var (
-	// PollTiFlashInterval is the interval between every PollTiFlashReplicaStatus call.
+	// PollTiFlashInterval is the interval between every pollTiFlashReplicaStatus call.
 	PollTiFlashInterval = 1 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we fully sync all TiFlash pd rules and tables.
 	PullTiFlashPdTick = 60 * 5
@@ -244,7 +244,7 @@ func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *TiFlashM
 	return nil
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
+func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 	defer func() {
 		pollTiFlashContext.HandlePdCounter += 1
@@ -479,7 +479,7 @@ func (d *ddl) PollTiFlashRoutine() {
 	pollTiflashContext := NewTiFlashManagementContext()
 	for {
 		if d.sessPool == nil {
-			logutil.BgLogger().Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+			logutil.BgLogger().Error("failed to get sessionPool for pollTiFlashReplicaStatus")
 			return
 		}
 		failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
@@ -489,9 +489,9 @@ func (d *ddl) PollTiFlashRoutine() {
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.ownerManager.IsOwner() {
-					_, err := d.PollTiFlashReplicaStatus(sctx, pollTiflashContext)
+					_, err := d.pollTiFlashReplicaStatus(sctx, pollTiflashContext)
 					if err != nil {
-						logutil.BgLogger().Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+						logutil.BgLogger().Warn("pollTiFlashReplicaStatus returns error", zap.Error(err))
 					}
 				}
 				d.sessPool.put(sctx)
@@ -499,7 +499,7 @@ func (d *ddl) PollTiFlashRoutine() {
 				if sctx != nil {
 					d.sessPool.put(sctx)
 				}
-				logutil.BgLogger().Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
+				logutil.BgLogger().Error("failed to get session for pollTiFlashReplicaStatus", zap.Error(err))
 			}
 		}
 
