@@ -63,71 +63,6 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 	return false
 }
 
-func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Column, opt *logicalOptimizeOp) {
-	if len(prunedColumns) < 1 {
-		return
-	}
-	s := make([]string, 0)
-	for _, item := range prunedColumns {
-		s = append(s, item.String())
-	}
-	appendItemPruneTraceStep(p, "columns", s, opt)
-}
-
-func appendFunctionPruneTraceStep(p LogicalPlan, prunedFunctions []*aggregation.AggFuncDesc, opt *logicalOptimizeOp) {
-	if len(prunedFunctions) < 1 {
-		return
-	}
-	s := make([]string, 0)
-	for _, item := range prunedFunctions {
-		s = append(s, item.String())
-	}
-	appendItemPruneTraceStep(p, "aggregation functions", s, opt)
-}
-
-func appendByItemsPruneTraceStep(p LogicalPlan, prunedByItems []*util.ByItems, opt *logicalOptimizeOp) {
-	if len(prunedByItems) < 1 {
-		return
-	}
-	s := make([]string, 0)
-	for _, item := range prunedByItems {
-		s = append(s, item.String())
-	}
-	appendItemPruneTraceStep(p, "byItems", s, opt)
-}
-
-func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []string, opt *logicalOptimizeOp) {
-	if len(prunedObjects) < 1 {
-		return
-	}
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's %v[", p.TP(), p.ID(), itemType))
-		for i, item := range prunedObjects {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item)
-		}
-		buffer.WriteString("] have been pruned")
-		return buffer.String()
-	}
-	reason := func() string {
-		return ""
-	}
-	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
-}
-
-func appendGroupByItemsPruneTraceStep(p LogicalPlan, prunedGroupByItems []expression.Expression, opt *logicalOptimizeOp) {
-	if len(prunedGroupByItems) < 1 {
-		return
-	}
-	s := make([]string, 0)
-	for _, item := range prunedGroupByItems {
-		s = append(s, item.String())
-	}
-	appendItemPruneTraceStep(p, "groupByItems", s, opt)
-}
-
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
@@ -321,14 +256,17 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 		}
 	}
 
+	prunedColumns := make([]*expression.Column, 0)
 	if hasBeenUsed {
 		// keep the schema of LogicalUnionAll same as its children's
 		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
 		for i := len(used) - 1; i >= 0; i-- {
 			if !used[i] {
+				prunedColumns = append(prunedColumns, p.schema.Columns[i])
 				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			}
 		}
+		appendColumnPruneTraceStep(p, prunedColumns, opt)
 		// It's possible that the child operator adds extra columns to the schema.
 		// Currently, (*LogicalAggregation).PruneColumns() might do this.
 		// But we don't need such columns, so we add an extra Projection to prune this column when this happened.
@@ -366,15 +304,18 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
 	exprUsed := expression.GetUsedList(exprCols, ds.schema)
+	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
+			prunedColumns = append(prunedColumns, ds.schema.Columns[i])
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
+	appendColumnPruneTraceStep(ds, prunedColumns, opt)
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
@@ -419,26 +360,31 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	default:
 		return nil
 	}
+	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.names = append(p.names[:i], p.names[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	return nil
 }
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
-
+	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
+			prunedColumns = append(prunedColumns, p.schema.Columns[i])
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 		}
 	}
+	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	return nil
 }
 
@@ -492,7 +438,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		joinCol := p.schema.Columns[len(p.schema.Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
-	p.inlineProjection(parentUsedCols)
+	p.inlineProjection(parentUsedCols, opt)
 	return nil
 }
 
@@ -598,7 +544,7 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *lo
 		return err
 	}
 	p.schema = nil
-	p.inlineProjection(savedUsedCols)
+	p.inlineProjection(savedUsedCols, opt)
 	return nil
 }
 
@@ -626,4 +572,69 @@ func addConstOneForEmptyProjection(p LogicalPlan) {
 		Value:   constOne.Value,
 		RetType: constOne.GetType(),
 	})
+}
+
+func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Column, opt *logicalOptimizeOp) {
+	if len(prunedColumns) < 1 {
+		return
+	}
+	s := make([]string, 0)
+	for _, item := range prunedColumns {
+		s = append(s, item.String())
+	}
+	appendItemPruneTraceStep(p, "columns", s, opt)
+}
+
+func appendFunctionPruneTraceStep(p LogicalPlan, prunedFunctions []*aggregation.AggFuncDesc, opt *logicalOptimizeOp) {
+	if len(prunedFunctions) < 1 {
+		return
+	}
+	s := make([]string, 0)
+	for _, item := range prunedFunctions {
+		s = append(s, item.String())
+	}
+	appendItemPruneTraceStep(p, "aggregation functions", s, opt)
+}
+
+func appendByItemsPruneTraceStep(p LogicalPlan, prunedByItems []*util.ByItems, opt *logicalOptimizeOp) {
+	if len(prunedByItems) < 1 {
+		return
+	}
+	s := make([]string, 0)
+	for _, item := range prunedByItems {
+		s = append(s, item.String())
+	}
+	appendItemPruneTraceStep(p, "byItems", s, opt)
+}
+
+func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []string, opt *logicalOptimizeOp) {
+	if len(prunedObjects) < 1 {
+		return
+	}
+	action := func() string {
+		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's %v[", p.TP(), p.ID(), itemType))
+		for i, item := range prunedObjects {
+			if i > 0 {
+				buffer.WriteString(",")
+			}
+			buffer.WriteString(item)
+		}
+		buffer.WriteString("] have been pruned")
+		return buffer.String()
+	}
+	reason := func() string {
+		return ""
+	}
+	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+}
+
+func appendGroupByItemsPruneTraceStep(p LogicalPlan, prunedGroupByItems []expression.Expression, opt *logicalOptimizeOp) {
+	if len(prunedGroupByItems) < 1 {
+		return
+	}
+	s := make([]string, 0)
+	for _, item := range prunedGroupByItems {
+		s = append(s, item.String())
+	}
+	appendItemPruneTraceStep(p, "groupByItems", s, opt)
 }

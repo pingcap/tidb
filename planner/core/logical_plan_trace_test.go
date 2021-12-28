@@ -87,6 +87,20 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+
+		},
+		{
+			sql:            "select a from t where b > 5;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
+				},
+			},
+		},
+		{
 			sql:            "select * from t as t1 join t as t2 on t1.a = t2.a where t1.a < 1;",
 			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "predicate_push_down",
