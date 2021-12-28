@@ -1302,6 +1302,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 	}
 	colValue := v.GetBytes()
 	if tblCol.Charset == charset.CharsetBin || tblCol.Charset == charset.CharsetASCII {
+		// Count character length by bytes if charset is binary or ascii.
 		if len(colValue) > idxCol.Length {
 			// truncate value and limit its length
 			if v.Kind() == types.KindBytes {
@@ -1311,6 +1312,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 			}
 		}
 	} else if utf8.RuneCount(colValue) > idxCol.Length {
+		// Count character length by characters for other charset, they all encoding as utf8.
 		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
