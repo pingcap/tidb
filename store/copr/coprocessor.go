@@ -70,10 +70,6 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
-	// directly disable rate-limit action
-	//nolint:staticcheck
-	enabledRateLimitAction = false
-
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
