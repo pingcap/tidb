@@ -525,7 +525,7 @@ func TestSkipInit(t *testing.T) {
 	require.True(t, sv.SkipInit())
 }
 
-// IsNoop is used by the documentation to auto-generate docs for real sysvars.
+// TestIsNoop is used by the documentation to auto-generate docs for real sysvars.
 func TestIsNoop(t *testing.T) {
 	sv := GetSysVar(TiDBMultiStatementMode)
 	require.False(t, sv.IsNoop)
@@ -608,7 +608,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	require.NoError(t, err)
@@ -639,7 +639,7 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.Equal(t, vars.TxnScope.GetVarValue(), val)
 }
 
-// Test that sysvars defaults are logically valid. i.e.
+// TestDefaultValuesAreSettable that sysvars defaults are logically valid. i.e.
 // the default itself must validate without error provided the scope and read-only is correct.
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
@@ -660,7 +660,7 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	}
 }
 
-// This tests that sysvars are logically correct with getter and setter functions.
+// TestSettersandGetters tests that sysvars are logically correct with getter and setter functions.
 // i.e. it doesn't make sense to have a SetSession function on a variable that is only globally scoped.
 func TestSettersandGetters(t *testing.T) {
 	for _, sv := range GetSysVars() {
@@ -782,6 +782,14 @@ func TestIdentity(t *testing.T) {
 	require.Equal(t, val, "21")
 }
 
+func TestLcTimeNamesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_time_names")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestDDLWorkers(t *testing.T) {
 	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
 	vars := NewSessionVars()
@@ -806,4 +814,23 @@ func TestDDLWorkers(t *testing.T) {
 	val, err = svBatchSize.Validate(vars, "100", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, val, "100") // unchanged
+}
+
+func TestDefaultCharsetAndCollation(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, CharacterSetConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCharset)
+	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCollationName)
+}
+
+func TestIndexMergeSwitcher(t *testing.T) {
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBEnableIndexMerge)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBEnableIndexMerge, true)
+	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
 }

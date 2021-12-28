@@ -523,6 +523,12 @@ func (s *testSuite7) TestUser(c *C) {
 		Check(testkit.Rows("engineering india"))
 	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
 		Check(testkit.Rows("engineering us"))
+
+	tk.MustExec("drop role engineering@INDIA;")
+	tk.MustExec("drop role engineering@US;")
+
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'india'").Check(testkit.Rows())
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
@@ -967,4 +973,40 @@ func (s *testSuite3) TestShowGrantsAfterDropRole(c *C) {
 	tk.MustExec("SET ROLE r29473")
 	tk.MustExec("DROP ROLE r29473")
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
+}
+
+func (s *testSuite3) TestDropRoleAfterRevoke(c *C) {
+	// issue 29781
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+
+	tk.MustExec("create role r1, r2, r3;")
+	defer tk.MustExec("drop role if exists r1, r2, r3;")
+	tk.MustExec("grant r1,r2,r3 to current_user();")
+	tk.MustExec("set role all;")
+	tk.MustExec("revoke r1, r3 from root;")
+	tk.MustExec("drop role r1;")
+}
+
+func (s *testSuiteWithCliBaseCharset) TestUserWithSetNames(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set names gbk;")
+
+	gbkString := string([]byte{0xD2, 0xBB})
+
+	tk.MustExec("drop user if exists '一'@'localhost';")
+	tk.MustExec("create user '一'@'localhost' IDENTIFIED BY '" + gbkString + "';")
+
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="一" and Host="localhost";`)
+	result.Check(testkit.Rows(auth.EncodePassword("一")))
+
+	tk.MustExec(`ALTER USER '一'@'localhost' IDENTIFIED BY '` + gbkString + gbkString + `';`)
+	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="一" and Host="localhost";`)
+	result.Check(testkit.Rows(auth.EncodePassword("一一")))
+
+	tk.MustExec(`RENAME USER '一'@'localhost' to '一'`)
+
+	tk.MustExec("drop user '一';")
 }

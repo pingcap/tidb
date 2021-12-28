@@ -22,8 +22,6 @@ import (
 )
 
 func TestRand(t *testing.T) {
-	t.Parallel()
-
 	x := Uint32N(1024)
 	require.Less(t, x, uint32(1024))
 	y := Uint64N(1 << 63)

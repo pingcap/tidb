@@ -473,6 +473,14 @@ type IgnoreColumns struct {
 	Columns     []string `toml:"columns" json:"columns"`
 }
 
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
+}
+
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
 func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSensitive bool) (*IgnoreColumns, error) {
 	if !caseSensitive {
@@ -519,6 +527,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -544,25 +553,35 @@ type Security struct {
 	KeyPath  string `toml:"key-path" json:"key-path"`
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
+
+	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
+	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
+	TLSConfigName string `toml:"-" json:"-"`
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
-	switch {
-	case err != nil:
+	if err != nil {
 		return errors.Trace(err)
-	case tlsConfig != nil:
+	}
+	if tlsConfig != nil {
 		// error happens only when the key coincides with the built-in names.
-		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
-	default:
-		gomysql.DeregisterTLSConfig("cluster")
+		_ = gomysql.RegisterTLSConfig(sec.TLSConfigName, tlsConfig)
 	}
 	return nil
+}
+
+// DeregisterMySQL deregisters the TLS config with security.TLSConfigName
+func (sec *Security) DeregisterMySQL() {
+	if sec == nil || len(sec.CAPath) == 0 {
+		return
+	}
+	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
 }
 
 // A duration which can be deserialized from a TOML string.
@@ -583,6 +602,48 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
+}
+
+// Charset defines character set
+type Charset int
+
+const (
+	Binary Charset = iota
+	UTF8MB4
+	GB18030
+	GBK
+)
+
+// String return the string value of charset
+func (c Charset) String() string {
+	switch c {
+	case Binary:
+		return "binary"
+	case UTF8MB4:
+		return "utf8mb4"
+	case GB18030:
+		return "gb18030"
+	case GBK:
+		return "gbk"
+	default:
+		return "unknown_charset"
+	}
+}
+
+// ParseCharset parser character set for string
+func ParseCharset(dataCharacterSet string) (Charset, error) {
+	switch strings.ToLower(dataCharacterSet) {
+	case "", "binary":
+		return Binary, nil
+	case "utf8mb4":
+		return UTF8MB4, nil
+	case "gb18030":
+		return GB18030, nil
+	case "gbk":
+		return GBK, nil
+	default:
+		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
+	}
 }
 
 func NewConfig() *Config {
@@ -785,6 +846,16 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 	if len(cfg.Mydumper.DataCharacterSet) == 0 {
 		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
+	if err1 != nil {
+		return err1
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
 	}
 
 	if cfg.TikvImporter.Backend == "" {
@@ -1064,7 +1135,10 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 	switch cfg.TiDB.TLS {
 	case "":
 		if len(cfg.TiDB.Security.CAPath) > 0 {
-			cfg.TiDB.TLS = "cluster"
+			if cfg.TiDB.Security.TLSConfigName == "" {
+				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+			}
+			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
 			cfg.TiDB.TLS = "false"
 		}

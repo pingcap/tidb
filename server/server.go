@@ -32,7 +32,6 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"math/rand"
 	"net"
@@ -88,7 +87,6 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
-	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
@@ -102,6 +100,7 @@ var (
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
+	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -618,6 +617,9 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
+			continue
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}

@@ -94,7 +94,7 @@ func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, e
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), `SELECT variable_name, variable_value FROM mysql.global_variables`)
+	stmt, err := exec.ParseWithParamsInternal(context.Background(), `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return tableContents, err
 	}
@@ -168,23 +168,23 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
+		var val float64
+		val, err = strconv.ParseFloat(sVal, 64)
+		if err != nil {
+			break
+		}
+		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
 			break
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
-		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
-		if err != nil {
-			break
-		}
 	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
-		variable.EnableTSOFollowerProxy.Store(val)
 		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
 			break
 		}
+		variable.EnableTSOFollowerProxy.Store(val)
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:

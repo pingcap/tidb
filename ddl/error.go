@@ -50,6 +50,7 @@ var (
 	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
 	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
+	errUnsupportedAlterCacheForSysTable       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
@@ -63,6 +64,8 @@ var (
 	errReorgPanic                             = dbterror.ClassDDL.NewStd(mysql.ErrReorgPanic)
 	errFkColumnCannotDrop                     = dbterror.ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
 	errFKIncompatibleColumns                  = dbterror.ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
+
+	errAlterReplicaForUnsupportedCharsetTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER table replica for table contain %s charset"), nil))
 
 	errOnlyOnRangeListPartition = dbterror.ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// errWrongKeyColumn is for table column cannot be indexed.
@@ -143,6 +146,8 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
+	// ErrWrongUsage returns for wrong ddl syntax usage.
+	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = dbterror.ClassDDL.NewStd(mysql.ErrInvalidGroupFuncUse)
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
@@ -305,4 +310,6 @@ var (
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
 	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
 	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
+	// ErrIncompatibleTiFlashAndPlacement when placement and tiflash replica options are set at the same time
+	ErrIncompatibleTiFlashAndPlacement = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
 )

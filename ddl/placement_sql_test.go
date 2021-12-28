@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -283,6 +284,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='SchemaDirectPlacementTest'").Check(testkit.Rows(`def SchemaDirectPlacementTest utf8mb4 utf8mb4_bin <nil> PRIMARY_REGION="nl" REGIONS="se,nz,nl" FOLLOWERS=3`))
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaDirectPlacementTest' AND TABLE_NAME = 'UseSchemaDefault'").Check(testkit.Rows(`def SchemaDirectPlacementTest UseSchemaDefault <nil> PRIMARY_REGION="nl" REGIONS="se,nz,nl" FOLLOWERS=3`))
 
 	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se" REGIONS="se"`)
@@ -302,6 +304,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicySchemaTest` */"))
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='SchemaPolicyPlacementTest'").Check(testkit.Rows(`def SchemaPolicyPlacementTest utf8mb4 utf8mb4_bin PolicySchemaTest <nil>`))
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaPolicyPlacementTest' AND TABLE_NAME = 'UseSchemaDefault'").Check(testkit.Rows(`def SchemaPolicyPlacementTest UseSchemaDefault PolicySchemaTest <nil>`))
 
 	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UsePolicy (a int unsigned primary key, b varchar(255)) PLACEMENT POLICY = "PolicyTableTest"`)
@@ -347,8 +350,11 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	// Policy Test
 	// Test for Non-Exist policy
 	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_z`;", mysql.ErrPlacementPolicyNotExists)
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin <nil> <nil>`))
 
 	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x`;")
+	// Test for information_schema.schemata
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin alter_x <nil>`))
 	// Test for Show Create Database
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
@@ -387,6 +393,8 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 
 	// DirectOption Test
 	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\";")
+	// Test for information_schema.schemata
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin <nil> PRIMARY_REGION="se" REGIONS="se" FOLLOWERS=2`))
 	// Test for Show Create Database
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
@@ -464,4 +472,108 @@ func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
 	tk.MustGetErrCode("alter table t voters=2;", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t partition p1 placement policy=\"placement_x\";", mysql.ErrUnsupportedDDLOperation)
+}
+
+func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop table if exists tp")
+
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	defer tk.MustExec("drop table if exists tp")
+	tk.MustExec("alter table tp set tiflash replica 1")
+
+	err = tk.ExecToErr("alter table tp placement policy p1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2'")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp partition p0 primary_region='r2' regions='r2'")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p1 ,
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) primary_region='r2' regions='r2' PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100)  primary_region='r3' regions='r3',
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3\" */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 }

@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump_test
+package mydump
 
 import (
 	"io"
 	"os"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 )
 
 var _ = Suite(&testCharsetConvertorSuite{})
@@ -51,7 +50,7 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 	gbkData, err := io.ReadAll(gbkReader)
 	c.Assert(err, IsNil)
 
-	cc, err := mydump.NewCharsetConvertor("gb18030", "\ufffd")
+	cc, err := NewCharsetConvertor("gb18030", "\ufffd")
 	c.Assert(err, IsNil)
 	gbkToUTF8Data, err := cc.Decode(string(gbkData))
 	c.Assert(err, IsNil)
@@ -79,7 +78,7 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	c.Assert(err, IsNil)
 	gbkData, err := io.ReadAll(gbkReader)
 	c.Assert(err, IsNil)
-	cc, err := mydump.NewCharsetConvertor("gb18030", dataInvalidCharReplace)
+	cc, err := NewCharsetConvertor("gb18030", dataInvalidCharReplace)
 	c.Assert(err, IsNil)
 	gbkToUTF8Data, err := cc.Decode(string(gbkData))
 	c.Assert(err, IsNil)

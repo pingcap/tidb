@@ -32,7 +32,6 @@ import (
 )
 
 func TestCastFunctions(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -310,7 +309,6 @@ var (
 )
 
 func TestCastFuncSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1119,7 +1117,6 @@ func TestCastFuncSig(t *testing.T) {
 }
 
 func TestCastJSONAsDecimalSig(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
@@ -1166,7 +1163,6 @@ func TestCastJSONAsDecimalSig(t *testing.T) {
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/Decimal.
 func TestWrapWithCastAsTypesClasses(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
@@ -1309,7 +1305,6 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 }
 
 func TestWrapWithCastAsTime(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	save := sc.TimeZone
@@ -1364,7 +1359,6 @@ func TestWrapWithCastAsTime(t *testing.T) {
 }
 
 func TestWrapWithCastAsDuration(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -1398,8 +1392,40 @@ func TestWrapWithCastAsDuration(t *testing.T) {
 	}
 }
 
+func TestWrapWithCastAsString(t *testing.T) {
+	ctx := createContext(t)
+
+	cases := []struct {
+		expr Expression
+		err  bool
+		ret  string
+	}{
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 1), Value: types.NewBinaryLiteralDatum([]byte{0x91})},
+			true,
+			"",
+		},
+		{
+			&Constant{RetType: types.NewFieldTypeWithCollation(mysql.TypeVarString, charset.CollationBin, 1), Value: types.NewBinaryLiteralDatum([]byte{0x61})},
+			false,
+			"a",
+		},
+	}
+	for _, c := range cases {
+		expr := BuildCastFunction(ctx, c.expr, types.NewFieldType(mysql.TypeVarString))
+		res, _, err := expr.EvalString(ctx, chunk.Row{})
+		if c.err {
+			require.Error(t, err)
+		} else {
+			require.Equal(t, c.ret, res)
+		}
+	}
+
+	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
+	require.NotContains(t, expr.String(), "to_binary")
+}
+
 func TestWrapWithCastAsJSON(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	input := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON}}
@@ -1411,8 +1437,6 @@ func TestWrapWithCastAsJSON(t *testing.T) {
 }
 
 func TestCastIntAsIntVec(t *testing.T) {
-	t.Parallel()
-
 	cast, input, result := genCastIntAsInt()
 	require.NoError(t, cast.vecEvalInt(input, result))
 	i64s := result.Int64s()
@@ -1441,8 +1465,6 @@ func TestCastIntAsIntVec(t *testing.T) {
 
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
-	t.Parallel()
-
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
 	b, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
 	require.NoError(t, err)

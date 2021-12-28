@@ -142,10 +142,10 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	parser "github.com/cznic/parser/yacc"
 	"github.com/cznic/sortutil"
 	"github.com/cznic/strutil"
-	"github.com/cznic/y"
+	parser "modernc.org/parser/yacc"
+	"modernc.org/y"
 )
 
 var (
@@ -528,6 +528,7 @@ type %[1]sLexer interface {
 	Lex(lval *%[1]sSymType) int
 	Errorf(format string, a ...interface{}) error
 	AppendError(err error)
+	AppendWarn(err error)
 	Errors() (warns []error, errs []error)
 }
 
