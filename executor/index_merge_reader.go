@@ -117,7 +117,7 @@ type IndexMergeReaderExecutor struct {
 	isCorColInTableFilter    bool
 	isCorColInPartialAccess  []bool
 
-  // extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
 	extraPIDColumnIndex offsetOptional
 }
 
