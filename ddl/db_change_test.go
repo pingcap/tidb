@@ -1066,7 +1066,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnWithData(c *C) {
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, column id may be updated by other DDL ran in parallel")
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
@@ -1089,7 +1089,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData(c 
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, column id may be updated by other DDL ran in parallel")
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
