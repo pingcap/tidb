@@ -43,12 +43,18 @@ func Test_tsItem_toProto(t *testing.T) {
 }
 
 func Test_tsItems_Sort(t *testing.T) {
-	items := tsItems{
+	items := tsItems{}
+	assert.True(t, items.sorted())
+	items = nil
+	assert.True(t, items.sorted())
+	items = tsItems{
 		{timestamp: 2},
 		{timestamp: 3},
 		{timestamp: 1},
 	}
+	assert.False(t, items.sorted())
 	sort.Sort(items)
+	assert.True(t, items.sorted())
 	assert.Equal(t, uint64(1), items[0].timestamp)
 	assert.Equal(t, uint64(2), items[1].timestamp)
 	assert.Equal(t, uint64(3), items[2].timestamp)

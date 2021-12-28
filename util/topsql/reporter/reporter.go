@@ -21,8 +21,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"go.uber.org/zap"
 )
 
 const (
@@ -148,7 +150,7 @@ func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan 
 // Close implements TopSQLReporter.
 func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.cancel()
-	tsr.OnReporterClosing()
+	tsr.onReporterClosing()
 }
 
 // collectWorker consumes and collects data from tracecpu.Collector/stmtstats.Collector.
@@ -157,7 +159,9 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	collectTicker := time.NewTicker(time.Second)
+	defer collectTicker.Stop()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
+	defer reportTicker.Stop()
 	for {
 		select {
 		case <-tsr.ctx.Done():
@@ -292,7 +296,34 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 			}
 		}
 	})
-	_ = tsr.TrySend(data, time.Now().Add(timeout))
+	_ = tsr.trySend(data, time.Now().Add(timeout))
+}
+
+// trySend sends ReportData to all internal registered DataSinks.
+func (tsr *RemoteTopSQLReporter) trySend(data *ReportData, deadline time.Time) error {
+	tsr.DefaultDataSinkRegisterer.Lock()
+	dataSinks := make([]DataSink, 0, len(tsr.dataSinks))
+	for ds := range tsr.dataSinks {
+		dataSinks = append(dataSinks, ds)
+	}
+	tsr.DefaultDataSinkRegisterer.Unlock()
+	for _, ds := range dataSinks {
+		if err := ds.TrySend(data, deadline); err != nil {
+			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+// onReporterClosing calls the OnReporterClosing method of all internally registered DataSinks.
+func (tsr *RemoteTopSQLReporter) onReporterClosing() {
+	var m map[DataSink]struct{}
+	tsr.DefaultDataSinkRegisterer.Lock()
+	m, tsr.dataSinks = tsr.dataSinks, make(map[DataSink]struct{})
+	tsr.DefaultDataSinkRegisterer.Unlock()
+	for d := range m {
+		d.OnReporterClosing()
+	}
 }
 
 // collectedData is used for transmission in the channel.

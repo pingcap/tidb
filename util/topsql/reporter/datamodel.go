@@ -105,6 +105,15 @@ func (ts tsItems) Swap(i, j int) {
 	ts[i], ts[j] = ts[j], ts[i]
 }
 
+func (ts tsItems) sorted() bool {
+	for n := 0; n < len(ts)-1; n++ {
+		if ts[n].timestamp > ts[n+1].timestamp {
+			return false
+		}
+	}
+	return true
+}
+
 // toProto converts the tsItems to the corresponding protobuf representation.
 func (ts tsItems) toProto() []*tipb.TopSQLRecordItem {
 	capacity := len(ts)
@@ -297,6 +306,7 @@ func (r *record) merge(other *record) {
 	if other == nil || len(other.tsItems) == 0 {
 		return
 	}
+
 	sort.Sort(other)
 	if len(r.tsItems) == 0 {
 		r.totalCPUTimeMs = other.totalCPUTimeMs
@@ -465,7 +475,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 	others.appendCPUTime(timestamp, totalCPUTimeMs)
 }
 
-// appendOthersCPUTime appends stmtstats.StatementStatsItem to a special record named "others".
+// appendOthersStmtStatsItem appends stmtstats.StatementStatsItem to a special record named "others".
 func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	others, ok := c.records[keyOthers]
 	if !ok {

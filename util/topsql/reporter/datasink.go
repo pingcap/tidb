@@ -21,9 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // DataSink collects and sends data to a target.
@@ -56,7 +54,6 @@ func (d *ReportData) hasData() bool {
 	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
-var _ DataSink = &DefaultDataSinkRegisterer{}
 var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 
 // DefaultDataSinkRegisterer implements DataSinkRegisterer.
@@ -106,36 +103,5 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 		if len(r.dataSinks) == 0 {
 			variable.TopSQLVariable.Enable.Store(false)
 		}
-	}
-}
-
-// TrySend implements DataSink.
-//
-// TrySend sends ReportData to all internal registered DataSinks.
-func (r *DefaultDataSinkRegisterer) TrySend(data *ReportData, deadline time.Time) error {
-	r.Lock()
-	dataSinks := make([]DataSink, 0, len(r.dataSinks))
-	for ds := range r.dataSinks {
-		dataSinks = append(dataSinks, ds)
-	}
-	r.Unlock()
-	for _, ds := range dataSinks {
-		if err := ds.TrySend(data, deadline); err != nil {
-			logutil.BgLogger().Warn("[top-sql] failed to send data to datasink", zap.Error(err))
-		}
-	}
-	return nil
-}
-
-// OnReporterClosing implements DataSink.
-//
-// OnReporterClosing calls the OnReporterClosing method of all internally registered DataSinks.
-func (r *DefaultDataSinkRegisterer) OnReporterClosing() {
-	var m map[DataSink]struct{}
-	r.Lock()
-	m, r.dataSinks = r.dataSinks, make(map[DataSink]struct{})
-	r.Unlock()
-	for d := range m {
-		d.OnReporterClosing()
 	}
 }
