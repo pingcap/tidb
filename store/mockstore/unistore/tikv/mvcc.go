@@ -1538,10 +1538,8 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	}
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
-	if req.SampleStep == 0 {
-		if reqCtx.isSnapshotIsolation() {
-			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
-		}
+	if req.SampleStep == 0 && reqCtx.isSnapshotIsolation() {
+		lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
 	} else {
 		limit = req.SampleStep * limit
 	}
