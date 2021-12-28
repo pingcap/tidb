@@ -6646,7 +6646,6 @@ func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 				return errors.Trace(err)
 			}
 		}
-		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!", totalSize, cacheTableSizeLimit)
 		return nil
 	})
 	return succ, err
