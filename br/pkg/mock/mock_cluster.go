@@ -207,7 +207,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
-		resp, err := http.Get(statusURL) // nolint:noctx
+		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
 			// Ignore errors.
 			_, _ = io.ReadAll(resp.Body)
