@@ -107,7 +107,7 @@ func (b *showPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{})
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
+	stmt, err := exec.ParseWithParamsInternal(ctx, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -202,8 +202,8 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 	}
 
 	var partition *model.PartitionDefinition
-	for _, par := range tblInfo.Partition.Definitions {
-		par := par
+	for i := range tblInfo.Partition.Definitions {
+		par := tblInfo.Partition.Definitions[i]
 		if par.Name.L == e.Partition.L {
 			partition = &par
 			break
@@ -330,7 +330,8 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 			}
 
 			if tblInfo.Partition != nil {
-				for _, partition := range tblInfo.Partition.Definitions {
+				for i := range tblInfo.Partition.Definitions {
+					partition := tblInfo.Partition.Definitions[i]
 					partitionPlacement, err := e.getPartitionPlacement(tblPlacement, &partition)
 					if err != nil {
 						return err

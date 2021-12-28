@@ -301,6 +301,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+			}
+		})
 		return nil
 	})
 	var jobs string
@@ -310,7 +315,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
-	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
@@ -829,12 +838,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(d, t, job)
-	case model.ActionAlterTablePartitionPolicy:
-		ver, err = onAlterTablePartitionOptions(d, t, job)
+	case model.ActionAlterTablePartitionPlacement:
+		ver, err = onAlterTablePartitionPlacement(t, job)
 	case model.ActionAlterTablePlacement:
 		ver, err = onAlterTablePlacement(d, t, job)
 	case model.ActionAlterCacheTable:
 		ver, err = onAlterCacheTable(t, job)
+	case model.ActionAlterNoCacheTable:
+		ver, err = onAlterNoCacheTable(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

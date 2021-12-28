@@ -25,9 +25,9 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	buildKeyInfo(lp)
-	return lp, nil
+func (s *buildKeySolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	buildKeyInfo(p)
+	return p, nil
 }
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.

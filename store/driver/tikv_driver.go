@@ -204,9 +204,7 @@ func (s *tikvStore) Describe() string {
 	return "TiKV is a distributed transactional key-value database"
 }
 
-var (
-	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
-)
+var ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
 
 const getAllMembersBackoff = 5000
 
@@ -300,17 +298,8 @@ func (s *tikvStore) GetMemCache() kv.MemManager {
 }
 
 // Begin a global transaction.
-func (s *tikvStore) Begin() (kv.Transaction, error) {
-	txn, err := s.KVStore.Begin()
-	if err != nil {
-		return nil, derr.ToTiDBErr(err)
-	}
-	return txn_driver.NewTiKVTxn(txn), err
-}
-
-// BeginWithOption begins a transaction with given option
-func (s *tikvStore) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
-	txn, err := s.KVStore.BeginWithOption(option)
+func (s *tikvStore) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin(opts...)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}

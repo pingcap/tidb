@@ -748,6 +748,9 @@ type Assignment struct {
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
 	ColName model.CIStr
 	Expr    Expression
+	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
+	// should be evaluated after the duplicate situation is detected in the executing procedure.
+	LazyErr error
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.
@@ -964,6 +967,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// string functions.
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+		InternalFuncFromBinary, InternalFuncToBinary,
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -1090,12 +1094,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringReal:
+		case tipb.ScalarFuncSig_AddDateDatetimeInt:
 			return true
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
+		case tipb.ScalarFuncSig_SubDateDatetimeInt:
 			return true
 		}
 	case ast.UnixTimestamp:

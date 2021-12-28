@@ -111,3 +111,5 @@ DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell g
 
 DUMPLING_GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
 DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+
+TEST_COVERAGE_DIR := "test_coverage"

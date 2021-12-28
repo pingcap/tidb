@@ -18,15 +18,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDDLAfterLoad(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -52,15 +51,14 @@ func TestDDLAfterLoad(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 
-	sc := new(stmtctx.StatementContext)
-	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
+	sctx := mock.NewContext()
+	count := statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
 	require.Equal(t, 0.0, count)
-	count = statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
+	count = statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
 	require.Equal(t, 333, int(count))
 }
 
 func TestDDLTable(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -100,7 +98,6 @@ func TestDDLTable(t *testing.T) {
 }
 
 func TestDDLHistogram(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	h := do.StatsHandle()
@@ -134,11 +131,11 @@ func TestDDLHistogram(t *testing.T) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
-	sc := new(stmtctx.StatementContext)
-	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[3].ID)
+	sctx := mock.NewContext()
+	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
-	count, err = statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(1), tableInfo.Columns[3].ID)
+	count, err = statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(0), count)
 
@@ -188,7 +185,6 @@ func TestDDLHistogram(t *testing.T) {
 }
 
 func TestDDLPartition(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testkit.WithPruneMode(testKit, variable.Static, func() {

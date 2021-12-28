@@ -389,7 +389,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	} else {
 		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.tableID.GetStatisticsID()}, e.idxInfo.ID, ranges)
 	}
-	kvReqBuilder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(e.snapshot).
@@ -400,7 +400,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		return err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return err
 	}
@@ -750,7 +750,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
-	builder.SetResourceGroupTag(e.ctx.GetSessionVars().StmtCtx)
+	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
@@ -763,7 +763,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -1570,7 +1570,7 @@ type AnalyzeFastExec struct {
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParams(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}
@@ -1853,7 +1853,8 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
@@ -1874,7 +1875,8 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
 	if readReplicaType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, readReplicaType)
@@ -2048,7 +2050,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, err error) {
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
-	if RandSeed == 1 {
+	if atomic.LoadInt64(&RandSeed) == 1 {
 		atomic.StoreInt64(&e.randSeed, time.Now().UnixNano())
 	} else {
 		atomic.StoreInt64(&e.randSeed, RandSeed)
@@ -2117,7 +2119,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) *statistics.A
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
-	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}}
+	ran := ranger.Range{LowVal: values, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hist, cms, fms, topN, err := idxExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
@@ -2172,7 +2174,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		maxVal = types.NewIntDatum(math.MaxInt64)
 	}
 	startPos := *colExec.oldHist.GetUpper(colExec.oldHist.Len() - 1)
-	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}}
+	ran := ranger.Range{LowVal: []types.Datum{startPos}, LowExclude: true, HighVal: []types.Datum{maxVal}, Collators: collate.GetBinaryCollatorSlice(1)}
 	hists, _, _, _, _, err := colExec.buildStats([]*ranger.Range{&ran}, false)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: colExec.job}

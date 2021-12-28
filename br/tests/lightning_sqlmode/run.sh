@@ -49,10 +49,39 @@ check_contains 'hex(c): '
 check_contains 'd: '
 
 run_sql 'DROP DATABASE IF EXISTS sqlmodedb'
+run_sql 'DROP DATABASE IF EXISTS sqlmodedb_lightning_task_info'
 
-set +e
 run_lightning --config "tests/$TEST_NAME/on.toml" --log-file "$TEST_DIR/sqlmode-error.log"
-[ $? -ne 0 ] || exit 1
-set -e
 
 grep -q '\["kv convert failed"\].*\[original=.*kind=uint64,val=9.*\] \[originalCol=1\] \[colName=a\] \[colType="timestamp BINARY"\]' "$TEST_DIR/sqlmode-error.log"
+
+run_sql 'SELECT min(id), max(id) FROM sqlmodedb.t'
+check_contains 'min(id): 4'
+check_contains 'max(id): 4'
+
+run_sql 'SELECT count(*) FROM sqlmodedb_lightning_task_info.type_error_v1'
+check_contains 'count(*): 4'
+
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(1,%";'
+check_contains 'path: sqlmodedb.t.1.sql'
+check_contains 'offset: 53'
+check_contains 'cannot convert datum from unsigned bigint to type timestamp.'
+check_contains "row_data: (1,9,128,'too long','x,y,z')"
+
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(2,%";'
+check_contains 'path: sqlmodedb.t.1.sql'
+check_contains 'offset: 100'
+check_contains "Incorrect timestamp value: '2000-00-00 00:00:00'"
+check_contains "row_data: (2,'2000-00-00 00:00:00',-99999,'🤩',3)"
+
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(3,%";'
+check_contains 'path: sqlmodedb.t.1.sql'
+check_contains 'offset: 149'
+check_contains "Incorrect timestamp value: '9999-12-31 23:59:59'"
+check_contains "row_data: (3,'9999-12-31 23:59:59','NaN',x'99','x+y')"
+
+run_sql 'SELECT path, `offset`, error, row_data FROM sqlmodedb_lightning_task_info.type_error_v1 WHERE table_name = "`sqlmodedb`.`t`" AND row_data LIKE "(5,%";'
+check_contains 'path: sqlmodedb.t.1.sql'
+check_contains 'offset: 237'
+check_contains "Column 'a' cannot be null"
+check_contains "row_data: (5,NULL,NULL,NULL,NULL)"

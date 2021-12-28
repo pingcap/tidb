@@ -29,6 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/util/tracing"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -64,29 +67,29 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue              bool
-	InInsertStmt                 bool
-	InUpdateStmt                 bool
-	InDeleteStmt                 bool
-	InSelectStmt                 bool
-	InLoadDataStmt               bool
-	InExplainStmt                bool
-	InCreateOrAlterStmt          bool
-	IgnoreTruncate               bool
-	IgnoreZeroInDate             bool
-	DupKeyAsWarning              bool
-	BadNullAsWarning             bool
-	DividedByZeroAsWarning       bool
-	TruncateAsWarning            bool
-	OverflowAsWarning            bool
-	InShowWarning                bool
-	UseCache                     bool
-	BatchCheck                   bool
-	InNullRejectCheck            bool
-	AllowInvalidDate             bool
-	IgnoreNoPartition            bool
-	MaybeOverOptimized4PlanCache bool
-	IgnoreExplainIDSuffix        bool
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
+	SkipPlanCache          bool
+	IgnoreExplainIDSuffix  bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -151,6 +154,9 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
+	// If the binding is not used by the stmt, the value is empty
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
@@ -170,16 +176,13 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
-	// resourceGroupTag cache for the current statement resource group tag.
-	resourceGroupTag atomic.Value
+
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
-	// cachedTables is used to store cache table id and a pointer to cache data when it satisfies the cache read condition
-	cachedTables []struct {
-		id        int64
-		memBuffer interface{} // is a point to cache.MemBuffer. in order to avoid import cycle
-	}
+
+	// If the statement read from table cache, this flag is set.
+	ReadFromTableCache bool
 
 	// cache is used to reduce object allocation.
 	cache struct {
@@ -193,6 +196,24 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+
+	// EnableOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableOptimizeTrace bool
+	// LogicalOptimizeTrace indicates the trace for optimize
+	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -276,19 +297,20 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 	return sc.planNormalized, sc.planDigest
 }
 
-// GetResourceGroupTag gets the resource group of the statement.
-func (sc *StatementContext) GetResourceGroupTag() []byte {
-	tag, _ := sc.resourceGroupTag.Load().([]byte)
-	if len(tag) > 0 {
-		return tag
+// GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
+func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
+	return func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	normalized, sqlDigest := sc.SQLDigest()
-	if len(normalized) == 0 {
-		return nil
-	}
-	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
-	sc.resourceGroupTag.Store(tag)
-	return tag
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.
@@ -329,35 +351,6 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
-}
-
-// StoreCacheTable stores the read condition and a point to cache data of the given key.
-func (sc *StatementContext) StoreCacheTable(tblID int64, buffer interface{}) {
-	for _, data := range sc.cachedTables {
-		if data.id == tblID {
-			data.memBuffer = buffer
-		}
-		return
-	}
-	sc.cachedTables = append(sc.cachedTables, struct {
-		id        int64
-		memBuffer interface{}
-	}{id: tblID, memBuffer: buffer})
-}
-
-// GetCacheTable gets the read condition and a point to cache data of the given key if it exists
-func (sc *StatementContext) GetCacheTable(tblID int64) (bool, interface{}) {
-	for _, data := range sc.cachedTables {
-		if data.id == tblID {
-			return true, data.memBuffer
-		}
-	}
-	return false, nil
-}
-
-// CacheTableUsed is used by test to check whether the last query use table cache.
-func (sc *StatementContext) CacheTableUsed() bool {
-	return len(sc.cachedTables) > 0
 }
 
 // TableEntry presents table in db.
