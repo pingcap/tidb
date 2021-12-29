@@ -15,20 +15,21 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"strings"
+
+	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
