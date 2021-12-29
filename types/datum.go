@@ -214,7 +214,7 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 	}
 	str := d.GetBytes()
 	if !enc.IsValid(str) {
-		replace, err := enc.Transform(nil, str, charset.OnReplace)
+		replace, err := enc.Transform(nil, str, charset.OpReplace)
 		return string(hack.String(replace)), err
 	}
 	return d.GetString(), nil
