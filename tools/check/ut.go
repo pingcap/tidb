@@ -367,6 +367,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 		cmd = n.testCommand(exe, fn, old)
 	}
 	cmd.Dir = path.Join(workDir, pkg)
+	// Combine the test case output, so the run result for failed cases can be displayed.
 	cmd.Stdout = &res.output
 	cmd.Stderr = &res.output
 	if err := cmd.Run(); err != nil {
