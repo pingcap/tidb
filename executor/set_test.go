@@ -597,6 +597,9 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	c.Assert(tk.ExecToErr("select @@session.tidb_enable_column_tracking"), NotNil)
+	c.Assert(tk.ExecToErr("set tidb_enable_column_tracking = 0"), NotNil)
+	c.Assert(tk.ExecToErr("set global tidb_enable_column_tracking = -1"), NotNil)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
