@@ -252,3 +252,17 @@ select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(c
 alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
 select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
 select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, primary key(c_int, c_str(9))  clustered, key idx((reverse(c_str))));
+replace into t (c_int, c_str) values (9, "beautiful hermann");
+select reverse(c_str) from t use index(idx);
+
+drop table t;

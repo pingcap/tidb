@@ -351,7 +351,10 @@ func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types
 	}
 	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
 	if err != nil {
-		return fmt.Sprintf("/* ERROR: %s */", err)
+		// if encode can't succeed, fallback to record the raw input strings
+		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
+		datumStr, _ := types.DatumsToString(row, true)
+		return datumStr
 	}
 	return resRow.(tidbRow).insertStmt
 }
@@ -435,7 +438,7 @@ rowLoop:
 				continue rowLoop
 			case utils.IsRetryableError(err):
 				// retry next loop
-			default:
+			case be.errorMgr.TypeErrorsRemain() > 0:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
 				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
@@ -443,6 +446,9 @@ rowLoop:
 					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
 					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
 				}
+				continue rowLoop
+			default:
+				return err
 			}
 		}
 		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)

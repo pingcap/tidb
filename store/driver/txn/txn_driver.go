@@ -28,11 +28,14 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 type tikvTxn struct {
@@ -230,6 +233,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
+	case kv.CommitTSUpperBoundCheck:
+		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
+	case kv.RPCInterceptor:
+		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	}
 }
 
@@ -287,6 +294,15 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 type TiDBKVFilter struct{}
 
 // IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
-func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
+	isUntouchedValue := tablecodec.IsUntouchedIndexKValue(key, value)
+	if isUntouchedValue && flags.HasPresumeKeyNotExists() {
+		logutil.BgLogger().Error("unexpected path the untouched key value with PresumeKeyNotExists flag",
+			zap.Stringer("key", kv.Key(key)), zap.Stringer("value", kv.Key(value)),
+			zap.Uint16("flags", uint16(flags)), zap.Stack("stack"))
+		return false, errors.Errorf(
+			"unexpected path the untouched key=%s value=%s contains PresumeKeyNotExists flag keyFlags=%v",
+			kv.Key(key).String(), kv.Key(value).String(), flags)
+	}
+	return isUntouchedValue, nil
 }

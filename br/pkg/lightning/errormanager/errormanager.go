@@ -112,6 +112,10 @@ type ErrorManager struct {
 	dupResolution  config.DuplicateResolutionAlgorithm
 }
 
+func (em *ErrorManager) TypeErrorsRemain() int64 {
+	return em.remainingError.Type.Load()
+}
+
 // New creates a new error manager.
 func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{

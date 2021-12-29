@@ -99,9 +99,20 @@ type Handle struct {
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap tableDeltaMap
+	globalMap struct {
+		sync.Mutex
+		data tableDeltaMap
+	}
 	// feedback is used to store query feedback info.
-	feedback *statistics.QueryFeedbackMap
+	feedback struct {
+		sync.Mutex
+		data *statistics.QueryFeedbackMap
+	}
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		sync.Mutex
+		data colStatsUsageMap
+	}
 
 	lease atomic2.Duration
 
@@ -122,7 +133,7 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -132,7 +143,7 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
 		// TODO: An ugly way to set @@tidb_partition_prune_mode. Need to be improved.
 		if _, ok := stmt.(*ast.AnalyzeTableStmt); ok {
 			pruneMode := h.CurrentPruneMode()
@@ -149,7 +160,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		stmt, err := exec.ParseWithParams(ctx, sql, params...)
+		stmt, err := exec.ParseWithParamsInternal(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -159,6 +170,7 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
+	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -167,13 +179,20 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback = statistics.NewQueryFeedbackMap()
+	h.feedback.Lock()
+	h.feedback.data = statistics.NewQueryFeedbackMap()
+	h.feedback.Unlock()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
-	h.globalMap = make(tableDeltaMap)
+	h.globalMap.Lock()
+	h.globalMap.data = make(tableDeltaMap)
+	h.globalMap.Unlock()
+	h.colMap.Lock()
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -188,17 +207,17 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle := &Handle{
 		ddlEventCh:       make(chan *util.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		globalMap:        make(tableDeltaMap),
-		feedback:         statistics.NewQueryFeedbackMap(),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
 	}
 	handle.lease.Store(lease)
-	handle.pool = pool
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	handle.globalMap.data = make(tableDeltaMap)
+	handle.feedback.data = statistics.NewQueryFeedbackMap()
+	handle.colMap.data = make(colStatsUsageMap)
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -218,10 +237,12 @@ func (h *Handle) SetLease(lease time.Duration) {
 
 // GetQueryFeedback gets the query feedback. It is only used in test.
 func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
+	h.feedback.Lock()
 	defer func() {
-		h.feedback = statistics.NewQueryFeedbackMap()
+		h.feedback.data = statistics.NewQueryFeedbackMap()
+		h.feedback.Unlock()
 	}()
-	return h.feedback
+	return h.feedback.data
 }
 
 // DurationToTS converts duration to timestamp.
@@ -1111,7 +1132,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				}
 			}
 			if result.IsIndex == 0 {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
 					return err
 				}
 			}
@@ -1373,7 +1394,7 @@ type statsReader struct {
 
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	ctx := context.TODO()
-	stmt, err := sr.ctx.ParseWithParams(ctx, sql, args...)
+	stmt, err := sr.ctx.ParseWithParamsInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1469,6 +1490,15 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+		return err
+	}
 	// Remove the existing 'deleted' records.
 	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
 		return err
@@ -1479,17 +1509,10 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
 	// next `Update()` to remove the cached item then.
 	h.removeExtendedStatsItem(tableID, statsName)
-	txn, err := h.mu.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	version := txn.StartTS()
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
 	if _, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited); err != nil {
 		return err
 	}
-	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
-	_, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID)
 	return
 }
 
@@ -1529,10 +1552,10 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return errors.Trace(err)
 	}
 	version := txn.StartTS()
-	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, StatsStatusDeleted, statsName, tableID); err != nil {
 		return err
 	}
 	return nil
@@ -1776,30 +1799,39 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-type colStatsUsage struct {
+type colStatsTimeInfo struct {
 	LastUsedAt     *types.Time
 	LastAnalyzedAt *types.Time
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
-	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
+func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
+	colStatsMap := make(map[model.TableColumnID]colStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
 		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
-		var statsUsage colStatsUsage
+		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
-			t := row.GetTime(2)
+			gt, err := row.GetTime(2).GoTime(time.UTC)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 			statsUsage.LastUsedAt = &t
 		}
 		if !row.IsNull(3) {
-			t := row.GetTime(3)
+			gt, err := row.GetTime(3).GoTime(time.UTC)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 			statsUsage.LastAnalyzedAt = &t
 		}
 		colStatsMap[tblColID] = statsUsage

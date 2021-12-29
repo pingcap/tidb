@@ -16,6 +16,7 @@ package variable
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -400,6 +402,9 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotInfoschema = nil
 		return nil
 	}
+	if s.ReadStaleness != 0 {
+		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
+	}
 
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
 		s.SnapshotTS = tso
@@ -444,6 +449,9 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		s.ReadStaleness = 0
 		return nil
 	}
+	if s.SnapshotTS != 0 {
+		return fmt.Errorf("tidb_snapshot should be clear before setting tidb_read_staleness")
+	}
 	sValue, err := strconv.ParseInt(sVal, 10, 32)
 	if err != nil {
 		return err
@@ -481,4 +489,22 @@ func (v *serverGlobalVariable) GetVal() string {
 		return v.serverVal
 	}
 	return v.globalVal
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	var str []string
+	for funcName := range GAFunction4ExpressionIndex {
+		str = append(str, funcName)
+	}
+	sort.Strings(str)
+	return strings.Join(str, ", ")
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }

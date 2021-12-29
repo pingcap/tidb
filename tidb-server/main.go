@@ -215,11 +215,6 @@ func main() {
 	syncLog()
 }
 
-func exit() {
-	syncLog()
-	os.Exit(0)
-}
-
 func syncLog() {
 	if err := log.Sync(); err != nil {
 		// Don't complain about /dev/stdout as Fsync will return EINVAL.
@@ -259,7 +254,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				exit()
+				os.Exit(1)
 			}
 			cpu = append(cpu, c)
 		}
@@ -267,7 +262,7 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		exit()
+		os.Exit(1)
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
