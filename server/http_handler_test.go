@@ -876,7 +876,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&lt)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, len(lt), 3)
+	require.Greater(t, len(lt), 2)
 
 	resp, err = ts.fetchStatus("/schema/abc")
 	require.NoError(t, err)
