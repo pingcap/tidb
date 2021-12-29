@@ -1838,9 +1838,9 @@ func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([
 // 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
 // 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
 // 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl *ast.TableName, warning bool) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	if len(columns) == 0 || len(columns) == len(tblInfo.Columns) {
+	if len(columns) == 0 {
 		return tblInfo.Columns, nil
 	}
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
@@ -1917,7 +1917,9 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl
 				missingNames = append(missingNames, col.Name.O)
 			}
 		}
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+		if warning {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+		}
 	}
 	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
 	for _, col := range tblInfo.Columns {
@@ -1986,7 +1988,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return nil, nil, err
 	}
-	astColsInfo, err := b.getFullAnalyzeColumnsInfo(astColList, tbl)
+	astColsInfo, err := b.getFullAnalyzeColumnsInfo(astColList, tbl, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2188,7 +2190,7 @@ func (b *PlanBuilder) getFinalAnalyzeColList(choice model.ColumnChoice, list []*
 	case model.AllColumns:
 		return fullColumns, emptyColumns, nil
 	case model.ColumnList:
-		list, err := b.getFullAnalyzeColumnsInfo(list, tbl)
+		list, err := b.getFullAnalyzeColumnsInfo(list, tbl, false)
 		if err != nil {
 			return nil, nil, err
 		}
