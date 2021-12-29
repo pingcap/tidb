@@ -84,11 +84,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
-		// can not emit REPLICAS with an array or empty label
-		if replicas == 0 {
-			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
-		}
-
 		rules = append(rules, NewRule(role, replicas, constraints1))
 		return rules, nil
 	}
@@ -111,10 +106,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 			ruleCnt += cnt
 		}
 
-		if replicas == 0 {
-			replicas = uint64(ruleCnt)
-		}
-
 		for labels, cnt := range constraints2 {
 			labelConstraints, err := NewConstraints(strings.Split(labels, ","))
 			if err != nil {
@@ -122,11 +113,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 			}
 
 			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
-		}
-
-		remain := int(replicas) - ruleCnt
-		if remain > 0 {
-			rules = append(rules, NewRule(role, uint64(remain), nil))
 		}
 		return rules, nil
 	}

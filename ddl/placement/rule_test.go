@@ -87,11 +87,13 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "zero replicas",
 		input:    "",
 		replicas: 0,
-		err:      ErrInvalidConstraintsRelicas,
+		output: []*Rule{
+			NewRule(Voter, 0, NewConstraintsDirect()),
+		},
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal array constraints",
+		name:     "normal list constraints",
 		input:    `["+zone=sh", "+region=sh"]`,
 		replicas: 3,
 		output: []*Rule{
@@ -103,8 +105,8 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal object constraints",
-		input:    `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
+		name:  "normal dict constraints",
+		input: `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
 		output: []*Rule{
 			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("zone", In, "sh"),
@@ -117,57 +119,41 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal object constraints, with count",
+		name:     "normal dict constraints, with count",
 		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		replicas: 4,
-		err: ErrInvalidConstraintsRelicas,
-	})
-
-	tests = append(tests, TestCase{
-		name:     "zero count in object constraints",
-		input:    `{"+zone=sh,-zone=bj":0, "+zone=sh": 1}`,
-		err:      ErrInvalidConstraintsMapcnt,
-	})
-
-	tests = append(tests, TestCase{
-		name:     "overlarge total count in object constraints",
-		input:    `{"+ne=sh,-zone=bj":1, "+zone=sh": 4}`,
-		replicas: 3,
 		err:      ErrInvalidConstraintsRelicas,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid array",
-		input:    `["+ne=sh", "+zone=sh"`,
-		replicas: 3,
-		err:      ErrInvalidConstraintsFormat,
+		name:  "zero count in dict constraints",
+		input: `{"+zone=sh,-zone=bj":0, "+zone=sh": 1}`,
+		err:   ErrInvalidConstraintsMapcnt,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid array constraints",
+		name:     "invalid list constraints",
 		input:    `["ne=sh", "+zone=sh"]`,
 		replicas: 3,
 		err:      ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid map",
-		input:    `{+ne=sh,-zone=bj:1, "+zone=sh": 4`,
-		replicas: 5,
-		err:      ErrInvalidConstraintsFormat,
+		name:  "invalid dict constraints",
+		input: `{+ne=sh,-zone=bj:1, "+zone=sh": 4`,
+		err:   ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid map constraints",
-		input:    `{"nesh,-zone=bj":1, "+zone=sh": 4}`,
-		err:      ErrInvalidConstraintFormat,
+		name:  "invalid dict constraints",
+		input: `{"nesh,-zone=bj":1, "+zone=sh": 4}`,
+		err:   ErrInvalidConstraintFormat,
 	})
 
 	tests = append(tests, TestCase{
-		name:     "invalid map separator",
-		input:    `{+region=us-east-2:2}`,
-		replicas: 6,
-		err:      ErrInvalidConstraintsMappingWrongSeparator,
+		name:  "invalid dict separator",
+		input: `{+region=us-east-2:2}`,
+		err:   ErrInvalidConstraintsMappingWrongSeparator,
 	})
 
 	for _, tt := range tests {

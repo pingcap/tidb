@@ -87,14 +87,15 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
 
-	if followerCount == 0 {
-		followerCount = 2
-	}
 	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 	}
 	for _, rule := range FollowerRules {
+		// give a default of 2 followers
+		if rule.Count == 0 {
+			rule.Count = 2
+		}
 		for _, cnst := range CommonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
