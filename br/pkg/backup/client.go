@@ -83,8 +83,8 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage storage.ExternalStorage
-	backend *backuppb.StorageBackend
+	storage    storage.ExternalStorage
+	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
 	gcTTL int64
