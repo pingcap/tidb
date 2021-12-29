@@ -20,8 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
@@ -149,7 +149,7 @@ type record struct {
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
-	listCap := variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1
+	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
 	if listCap > maxTsItemsCapacity {
 		listCap = maxTsItemsCapacity
 	}
@@ -586,7 +586,7 @@ func newNormalizedSQLMap() *normalizedSQLMap {
 // register saves the relationship between sqlDigest and normalizedSQL.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	if m.length.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedSQLCounter.Inc()
 		return
 	}
@@ -646,7 +646,7 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
-	if m.length.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
