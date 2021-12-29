@@ -1244,7 +1244,14 @@ var defaultSysVars = []*SysVar{
 		s.TMPTableSize = tidbOptInt64(val, DefTiDBTmpTableMaxSize)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10},
+	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {	
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TableCacheLease.Store(val)
+	}},
 	// variable for top SQL feature.
 	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(DefTiDBTopSQLEnable), Type: TypeBool, Hidden: true, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(TopSQLVariable.Enable.Load()), nil
