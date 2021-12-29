@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -292,7 +293,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
 	}
 	return builder
