@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -94,7 +96,7 @@ type Client struct {
 	statsHandler *handle.Handle
 	dom          *domain.Domain
 
-	batchDllSize uint
+	batchDdlSize uint
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -168,11 +170,11 @@ func (rc *Client) SetSwitchModeInterval(interval time.Duration) {
 }
 
 func (rc *Client) SetBatchDdlSize(batchDdlsize uint) {
-	rc.batchDllSize = batchDdlsize
+	rc.batchDdlSize = batchDdlsize
 }
 
 func (rc *Client) GetBatchDdlSize() uint {
-	return rc.batchDllSize
+	return rc.batchDdlSize
 }
 
 // Close a client.
@@ -510,22 +512,23 @@ func (rc *Client) GoCreateTables(
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 
-	var err error = nil
+	var err error
 
-	if rc.batchDllSize > 1 {
+	if rc.batchDdlSize > 1 {
 
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
 		if err == nil {
-			log.Info("bulk create tables success.")
+			log.Info("Bulk create tables success.")
 			defer close(outCh)
 			return outCh
 			// fall back to old create table (sequential create table)
-		} else if strings.Contains(err.Error(), "[ddl:8204]invalid ddl job") {
-			log.Info("fall back to the old DDL way to create table.")
+		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
+			log.Info("Fall back to the old DDL way to create table.")
 		} else {
-			log.Error("bulk create tables failure.")
+			log.Error("Batch create tables failure.")
 			errCh <- err
+			defer close(outCh)
 			return outCh
 		}
 	}
@@ -604,15 +607,12 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
-	lastSent := 0
 
-	for i := int(rc.batchDllSize); i < numOfTables+int(rc.batchDllSize); i = i + int(rc.batchDllSize) {
+	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
+		end := Min(lastSent+int(rc.batchDdlSize), len(tables))
+		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
-		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", i))
-		if i > numOfTables {
-			i = numOfTables
-		}
-		tableSlice := tables[lastSent:i]
+		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := dbPool[id%uint64(len(dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
@@ -633,7 +633,6 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 			}
 			return err
 		})
-		lastSent = i
 	}
 	return eg.Wait()
 }

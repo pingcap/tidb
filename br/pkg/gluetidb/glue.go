@@ -133,7 +133,6 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 // CreateTable implements glue.Session.
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
-	log.Info("tidb start create tables")
 	var dbName model.CIStr
 
 	for db, tablesInDB := range tables {
@@ -143,8 +142,7 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 		for _, table := range tablesInDB {
 			query, err := gs.showCreateTable(table)
 			if err != nil {
-				log.Error("Tidbsession to show create tables failure.")
-				return err
+				return errors.Trace(err)
 			}
 
 			queryBuilder.WriteString(query)
@@ -161,12 +159,14 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
 		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
-		//it possible caused by version mismatch with BR, in this case, we fall back to old way that creating table one by one
+		//It is possible to failure when TiDB does not support model.ActionCreateTables.
+		//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob, we fall back to old way that creating table one by one
 		if err != nil {
-			log.Warn("Bulk create table from tidb failure.", zap.String("Error", err.Error()))
+			log.Warn("Batch create table from tidb failure.", zap.String("Error", err.Error()))
 			return err
 		}
-		log.Info("BatchCreateTableWithInfo  DONE",
+
+		log.Info("BatchCreateTableWithInfo DONE",
 			zap.Stringer("DB", dbName),
 			zap.Int("table num", len(cloneTables)))
 	}

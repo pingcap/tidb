@@ -434,3 +434,10 @@ func unQuoteName(name string) string {
 	name = strings.TrimPrefix(name, "`")
 	return strings.TrimSuffix(name, "`")
 }
+
+func Min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
