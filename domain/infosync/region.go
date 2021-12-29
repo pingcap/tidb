@@ -24,11 +24,15 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 )
 
+// PlacementScheduleState is the returned third-valued state from GetReplicationState(). For convenience, the string of PD is deserialized into an enum first.
 type PlacementScheduleState int
 
 const (
+	// PlacementScheduleStateWaiting corresponds to "WAITING" from PD.
 	PlacementScheduleStateWaiting PlacementScheduleState = iota
+	// PlacementScheduleStateInProgress corresponds to "INPROGRESS" from PD.
 	PlacementScheduleStateInProgress
+	// PlacementScheduleStateScheduled corresponds to "REPLICATED" from PD.
 	PlacementScheduleStateScheduled
 )
 
