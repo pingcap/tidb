@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"strings"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
