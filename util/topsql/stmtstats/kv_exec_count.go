@@ -27,7 +27,7 @@ import (
 func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)},
+		digest: sqlPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)},
 		marked: map[string]struct{}{},
 	}
 }
@@ -37,7 +37,7 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvEx
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
 	stats  *StatementStats
-	digest SQLPlanDigest
+	digest sqlPlanDigest
 	mu     sync.Mutex
 	marked map[string]struct{} // HashSet<Target>
 }
@@ -57,7 +57,6 @@ func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
 }
 
 // mark this target during the current execution of statement.
-// If this target is marked for the first time, then increase the number of execution.
 // mark is thread-safe.
 func (c *KvExecCounter) mark(target string) {
 	firstMark := false
@@ -67,7 +66,12 @@ func (c *KvExecCounter) mark(target string) {
 		firstMark = true
 	}
 	c.mu.Unlock()
+
+	// If this target is marked for the first time, then increase the number of execution.
 	if firstMark {
-		c.stats.addKvExecCount([]byte(c.digest.SQLDigest), []byte(c.digest.PlanDigest), target, 1)
+		c.stats.mu.Lock()
+		defer c.stats.mu.Unlock()
+		item := c.stats.getOrCreate([]byte(c.digest.SQLDigest), []byte(c.digest.PlanDigest))
+		item.KvStatsItem.KvExecCount[target] += 1
 	}
 }

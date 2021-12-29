@@ -78,7 +78,7 @@ func (m *aggregator) aggregate() {
 		if stats.Finished() {
 			m.unregister(stats)
 		}
-		r.Data.Merge(stats.Take())
+		r.Data.Merge(stats.take())
 		return true
 	})
 	m.collectors.Range(func(c, _ interface{}) bool {

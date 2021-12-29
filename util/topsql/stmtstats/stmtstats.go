@@ -59,7 +59,7 @@ func CreateStatementStats() *StatementStats {
 func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.getOrCreate(sqlDigest, planDigest)
 
 	item.ExecCount++
 	// Count more data here.
@@ -70,12 +70,12 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
 	// Count more data here.
 }
 
-// GetOrCreateStatementStatsItem creates the corresponding StatementStatsItem
-// for the specified SQLPlanDigest and timestamp if it does not exist before.
-// GetOrCreateStatementStatsItem is just a helper function, not responsible for
-// concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []byte) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
+// getOrCreate creates the corresponding statementStatsItem
+// for the specified sqlPlanDigest and timestamp if it does not exist before.
+// getOrCreate is just a helper function, not responsible for
+// concurrency control, so getOrCreate is **not** thread-safe.
+func (s *StatementStats) getOrCreate(sqlDigest, planDigest []byte) *statementStatsItem {
+	key := sqlPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -84,18 +84,9 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []b
 	return item
 }
 
-// addKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
-// addKvExecCount is thread-safe.
-func (s *StatementStats) addKvExecCount(sqlDigest, planDigest []byte, target string, n uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
-	item.KvStatsItem.KvExecCount[target] += n
-}
-
-// Take takes out all existing StatementStatsMap data from StatementStats.
-// Take is thread-safe.
-func (s *StatementStats) Take() StatementStatsMap {
+// take takes out all existing StatementStatsMap data from StatementStats.
+// take is thread-safe.
+func (s *StatementStats) take() StatementStatsMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data := s.data
@@ -121,18 +112,18 @@ func (s *StatementStats) Finished() bool {
 // is to be used as the key of the map.
 type BinaryDigest string
 
-// SQLPlanDigest is used as the key of StatementStatsMap to
+// sqlPlanDigest is used as the key of StatementStatsMap to
 // distinguish different sql.
-type SQLPlanDigest struct {
+type sqlPlanDigest struct {
 	SQLDigest  BinaryDigest
 	PlanDigest BinaryDigest
 }
 
 // StatementStatsMap is the local data type of StatementStats.
-type StatementStatsMap map[SQLPlanDigest]*StatementStatsItem
+type StatementStatsMap map[sqlPlanDigest]*statementStatsItem
 
 // Merge merges other into StatementStatsMap.
-// Values with the same SQLPlanDigest will be merged.
+// Values with the same sqlPlanDigest will be merged.
 //
 // After executing Merge, some pointers in other may be referenced
 // by m. So after calling Merge, it is best not to continue to use
@@ -151,35 +142,35 @@ func (m StatementStatsMap) Merge(other StatementStatsMap) {
 	}
 }
 
-// StatementStatsItem represents a set of mergeable statistics.
-// StatementStatsItem is used in a larger data structure to represent
-// the stats of a certain SQLPlanDigest under a certain timestamp.
+// statementStatsItem represents a set of mergeable statistics.
+// statementStatsItem is used in a larger data structure to represent
+// the stats of a certain sqlPlanDigest under a certain timestamp.
 // If there are more indicators that need to be added in the future,
-// please add it in StatementStatsItem and implement its aggregation
+// please add it in statementStatsItem and implement its aggregation
 // in the Merge method.
-type StatementStatsItem struct {
+type statementStatsItem struct {
 	// ExecCount represents the number of SQL executions of TiDB.
 	ExecCount uint64
 
 	// KvStatsItem contains all indicators of kv layer.
-	KvStatsItem KvStatementStatsItem
+	KvStatsItem kvStatementStatsItem
 }
 
-// NewStatementStatsItem creates an empty StatementStatsItem.
-func NewStatementStatsItem() *StatementStatsItem {
-	return &StatementStatsItem{
-		KvStatsItem: NewKvStatementStatsItem(),
+// NewStatementStatsItem creates an empty statementStatsItem.
+func NewStatementStatsItem() *statementStatsItem {
+	return &statementStatsItem{
+		KvStatsItem: newKvStatementStatsItem(),
 	}
 }
 
-// Merge merges other into StatementStatsItem.
+// Merge merges other into statementStatsItem.
 //
 // After executing Merge, some pointers in other may be referenced
 // by i. So after calling Merge, it is best not to continue to use
 // other unless you understand what you are doing.
 //
 // If you add additional indicators, you need to add their merge code here.
-func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
+func (i *statementStatsItem) Merge(other *statementStatsItem) {
 	if i == nil || other == nil {
 		return
 	}
@@ -187,28 +178,28 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 
-// KvStatementStatsItem is part of StatementStatsItem, it only contains
+// kvStatementStatsItem is part of statementStatsItem, it only contains
 // indicators of kv layer.
-type KvStatementStatsItem struct {
+type kvStatementStatsItem struct {
 	// KvExecCount represents the number of SQL executions of TiKV.
 	KvExecCount map[string]uint64
 }
 
-// NewKvStatementStatsItem creates an empty KvStatementStatsItem.
-func NewKvStatementStatsItem() KvStatementStatsItem {
-	return KvStatementStatsItem{
+// newKvStatementStatsItem creates an empty kvStatementStatsItem.
+func newKvStatementStatsItem() kvStatementStatsItem {
+	return kvStatementStatsItem{
 		KvExecCount: map[string]uint64{},
 	}
 }
 
-// Merge merges other into KvStatementStatsItem.
+// Merge merges other into kvStatementStatsItem.
 //
 // After executing Merge, some pointers in other may be referenced
 // by i. So after calling Merge, it is best not to continue to use
 // other unless you understand what you are doing.
 //
 // If you add additional indicators, you need to add their merge code here.
-func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
+func (i *kvStatementStatsItem) Merge(other kvStatementStatsItem) {
 	if i.KvExecCount == nil {
 		i.KvExecCount = other.KvExecCount
 	} else {

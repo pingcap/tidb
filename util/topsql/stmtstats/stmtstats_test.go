@@ -24,7 +24,7 @@ import (
 )
 
 // String is only used for debugging.
-func (d SQLPlanDigest) String() string {
+func (d sqlPlanDigest) String() string {
 	bs := bytes.NewBufferString("")
 	if len(d.SQLDigest) >= 5 {
 		bs.Write([]byte(d.SQLDigest)[:5])
@@ -51,7 +51,7 @@ func (m StatementStatsMap) String() string {
 }
 
 // String is only used for debugging.
-func (i *StatementStatsItem) String() string {
+func (i *statementStatsItem) String() string {
 	if i == nil {
 		return "<nil>"
 	}
@@ -60,13 +60,13 @@ func (i *StatementStatsItem) String() string {
 }
 
 func TestKvStatementStatsItem_Merge(t *testing.T) {
-	item1 := KvStatementStatsItem{
+	item1 := kvStatementStatsItem{
 		KvExecCount: map[string]uint64{
 			"127.0.0.1:10001": 1,
 			"127.0.0.1:10002": 2,
 		},
 	}
-	item2 := KvStatementStatsItem{
+	item2 := kvStatementStatsItem{
 		KvExecCount: map[string]uint64{
 			"127.0.0.1:10002": 2,
 			"127.0.0.1:10003": 3,
@@ -83,13 +83,13 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 }
 
 func TestStatementsStatsItem_Merge(t *testing.T) {
-	item1 := &StatementStatsItem{
+	item1 := &statementStatsItem{
 		ExecCount:   1,
-		KvStatsItem: NewKvStatementStatsItem(),
+		KvStatsItem: newKvStatementStatsItem(),
 	}
-	item2 := &StatementStatsItem{
+	item2 := &statementStatsItem{
 		ExecCount:   2,
-		KvStatsItem: NewKvStatementStatsItem(),
+		KvStatsItem: newKvStatementStatsItem(),
 	}
 	item1.Merge(item2)
 	assert.Equal(t, uint64(3), item1.ExecCount)
@@ -97,18 +97,18 @@ func TestStatementsStatsItem_Merge(t *testing.T) {
 
 func TestStatementStatsMap_Merge(t *testing.T) {
 	m1 := StatementStatsMap{
-		SQLPlanDigest{SQLDigest: "SQL-1"}: &StatementStatsItem{
+		sqlPlanDigest{SQLDigest: "SQL-1"}: &statementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: KvStatementStatsItem{
+			KvStatsItem: kvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
 				},
 			},
 		},
-		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
+		sqlPlanDigest{SQLDigest: "SQL-2"}: &statementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: KvStatementStatsItem{
+			KvStatsItem: kvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -117,18 +117,18 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 		},
 	}
 	m2 := StatementStatsMap{
-		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
+		sqlPlanDigest{SQLDigest: "SQL-2"}: &statementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: KvStatementStatsItem{
+			KvStatsItem: kvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
 				},
 			},
 		},
-		SQLPlanDigest{SQLDigest: "SQL-3"}: &StatementStatsItem{
+		sqlPlanDigest{SQLDigest: "SQL-3"}: &statementStatsItem{
 			ExecCount: 1,
-			KvStatsItem: KvStatementStatsItem{
+			KvStatsItem: kvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
 					"KV-2": 2,
@@ -141,15 +141,15 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	m1.Merge(m2)
 	assert.Len(t, m1, 3)
 	assert.Len(t, m2, 2)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(4), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-2"])
-	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-1"])
-	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(1), m1[sqlPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(2), m1[sqlPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(1), m1[sqlPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	assert.Equal(t, uint64(1), m1[sqlPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1[sqlPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(2), m1[sqlPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(4), m1[sqlPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-2"])
+	assert.Equal(t, uint64(1), m1[sqlPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-1"])
+	assert.Equal(t, uint64(2), m1[sqlPlanDigest{SQLDigest: "SQL-3"}].KvStatsItem.KvExecCount["KV-2"])
 	m1.Merge(nil)
 	assert.Len(t, m1, 3)
 }
@@ -166,7 +166,7 @@ func TestCreateStatementStats(t *testing.T) {
 
 func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	stats := CreateStatementStats()
-	m := stats.Take()
+	m := stats.take()
 	assert.Len(t, m, 0)
 	for n := 0; n < 1; n++ {
 		stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
@@ -177,11 +177,11 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	for n := 0; n < 3; n++ {
 		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
 	}
-	m = stats.Take()
+	m = stats.take()
 	assert.Len(t, m, 3)
-	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(2), m[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(3), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
-	m = stats.Take()
+	assert.Equal(t, uint64(1), m[sqlPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(2), m[sqlPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(3), m[sqlPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	m = stats.take()
 	assert.Len(t, m, 0)
 }

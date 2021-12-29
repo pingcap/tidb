@@ -61,7 +61,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}))
 	a.aggregate()
 	assert.NotEmpty(t, records)
-	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(1), records[0].Data[sqlPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
