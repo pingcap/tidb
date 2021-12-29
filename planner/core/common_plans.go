@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -294,6 +295,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if prepared.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.PreparedPlanCache().DeleteAll()
+		prepared.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
 	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -380,6 +391,37 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	return err
 }
 
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+		return ""
+	}
+	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return ""
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	if globalHandle == nil {
+		return ""
+	}
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	return ""
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
@@ -401,8 +443,10 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	stmtCtx.UseCache = prepared.UseCache
 
+	var bindSQL string
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
+		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -443,8 +487,15 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
+			cachedVals := cacheValue.([]*PlanCacheValue)
 			for _, cachedVal := range cachedVals {
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
 				}
@@ -467,6 +518,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					err = e.setFoundInPlanCache(sctx, true)
 					if err != nil {
 						return err
+					}
+					if len(bindSQL) > 0 {
+						// When the `len(bindSQL) > 0`, it means we use the binding.
+						// So we need to record this.
+						err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
+						if err != nil {
+							return err
+						}
 					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -500,27 +559,27 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
+			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
 				if cacheVal.UserVarTypes.Equal(tps) {
 					hitVal = true
-					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
+					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
 				}
 			}
 			if !hitVal {
-				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
+				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
 			}
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
+			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)

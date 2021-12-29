@@ -23,8 +23,6 @@ import (
 )
 
 func TestStrToInt(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		output string
@@ -45,8 +43,6 @@ func TestStrToInt(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		f        float64
 		dec      int
@@ -64,8 +60,6 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestTruncateFloatToString(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		f        float64
 		dec      int

@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -191,6 +192,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -964,6 +966,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 	cc.rsEncoder = newResultEncoder(chs)
 }
 
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
+}
+
 // initConnect runs the initConnect SQL statement if it has been specified.
 // The semantics are MySQL compatible.
 func (cc *clientConn) initConnect(ctx context.Context) error {
@@ -1364,11 +1375,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
-	msg := []byte("Uptime: 0  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000")
+	var err error
+	var uptime int64 = 0
+	info := serverInfo{}
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+	} else {
+		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
+	}
+	msg := []byte(fmt.Sprintf("Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
+		uptime))
 	data := cc.alloc.AllocWithLen(4, len(msg))
 	data = append(data, msg...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}

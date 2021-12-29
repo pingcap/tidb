@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -969,9 +969,9 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
-	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	c.Assert(err, Equals, nil)
 }
 
 func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {

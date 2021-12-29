@@ -29,7 +29,10 @@ import (
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 type collectorWrapper struct {
@@ -115,9 +118,13 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
-	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	report := reporter.NewRemoteTopSQLReporter(client)
-	defer report.Close()
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	ds := reporter.NewSingleTargetDataSink(report)
+
+	defer func() {
+		ds.Close()
+		report.Close()
+	}()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
 	reqs := []struct {
@@ -155,8 +162,8 @@ func TestTopSQLReporter(t *testing.T) {
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		require.Greater(t, len(req.RecordListCpuTimeMs), 0)
-		require.Greater(t, req.RecordListCpuTimeMs[0], uint32(0))
+		require.Greater(t, len(req.Items), 0)
+		require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
 		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
@@ -207,6 +214,162 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
 	cPlan = collector.GetPlan(planDigest.Bytes())
 	require.Empty(t, cPlan)
+}
+
+func TestTopSQLPubSub(t *testing.T) {
+	variable.TopSQLVariable.MaxStatementCount.Store(200)
+	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	defer report.Close()
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
+
+	server, err := mockServer.NewMockPubSubServer()
+	require.NoError(t, err)
+	pubsubService := reporter.NewTopSQLPubSubService(report)
+	tipb.RegisterTopSQLPubSubServer(server.Server(), pubsubService)
+	go server.Serve()
+	defer server.Stop()
+
+	conn, err := grpc.Dial(
+		server.Address(),
+		grpc.WithBlock(),
+		grpc.WithInsecure(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 3 * time.Second,
+		}),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := tipb.NewTopSQLPubSubClient(conn)
+	stream, err := client.Subscribe(ctx, &tipb.TopSQLSubRequest{})
+	require.NoError(t, err)
+
+	reqs := []struct {
+		sql  string
+		plan string
+	}{
+		{"select * from t where a=?", "point-get"},
+		{"select * from t where a>?", "table-scan"},
+		{"insert into t values (?)", ""},
+	}
+
+	digest2sql := make(map[string]string)
+	sql2plan := make(map[string]string)
+	for _, req := range reqs {
+		sql2plan[req.sql] = req.plan
+		sqlDigest := mock.GenSQLDigest(req.sql)
+		digest2sql[string(sqlDigest.Bytes())] = req.sql
+
+		go func(sql, plan string) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					mockExecuteSQL(sql, plan)
+				}
+			}
+		}(req.sql, req.plan)
+	}
+
+	sqlMetas := make(map[string]*tipb.SQLMeta)
+	planMetas := make(map[string]string)
+	records := make(map[string]*tipb.TopSQLRecord)
+
+	for {
+		r, err := stream.Recv()
+		if err != nil {
+			break
+		}
+
+		if r.GetRecord() != nil {
+			rec := r.GetRecord()
+			if _, ok := records[string(rec.SqlDigest)]; !ok {
+				records[string(rec.SqlDigest)] = rec
+			} else {
+				record := records[string(rec.SqlDigest)]
+				if rec.PlanDigest != nil {
+					record.PlanDigest = rec.PlanDigest
+				}
+				record.Items = append(record.Items, rec.Items...)
+			}
+		} else if r.GetSqlMeta() != nil {
+			sql := r.GetSqlMeta()
+			if _, ok := sqlMetas[string(sql.SqlDigest)]; !ok {
+				sqlMetas[string(sql.SqlDigest)] = sql
+			}
+		} else if r.GetPlanMeta() != nil {
+			plan := r.GetPlanMeta()
+			if _, ok := planMetas[string(plan.PlanDigest)]; !ok {
+				planMetas[string(plan.PlanDigest)] = plan.NormalizedPlan
+			}
+		}
+	}
+
+	checkSQLPlanMap := map[string]struct{}{}
+	for i := range records {
+		record := records[i]
+		require.Greater(t, len(record.Items), 0)
+		require.Greater(t, record.Items[0].CpuTimeMs, uint32(0))
+		sqlMeta, exist := sqlMetas[string(record.SqlDigest)]
+		require.True(t, exist)
+		expectedNormalizedSQL, exist := digest2sql[string(record.SqlDigest)]
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
+
+		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
+		if expectedNormalizedPlan == "" || len(record.PlanDigest) == 0 {
+			require.Equal(t, len(record.PlanDigest), 0)
+			continue
+		}
+		normalizedPlan, exist := planMetas[string(record.PlanDigest)]
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
+		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
+	}
+	require.Equal(t, len(checkSQLPlanMap), 2)
+}
+
+func TestPubSubWhenReporterIsStopped(t *testing.T) {
+	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+
+	server, err := mockServer.NewMockPubSubServer()
+	require.NoError(t, err)
+
+	pubsubService := reporter.NewTopSQLPubSubService(report)
+	tipb.RegisterTopSQLPubSubServer(server.Server(), pubsubService)
+	go server.Serve()
+	defer server.Stop()
+
+	// stop reporter first
+	report.Close()
+
+	// try to subscribe
+	conn, err := grpc.Dial(
+		server.Address(),
+		grpc.WithBlock(),
+		grpc.WithInsecure(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 3 * time.Second,
+		}),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := tipb.NewTopSQLPubSubClient(conn)
+	stream, err := client.Subscribe(ctx, &tipb.TopSQLSubRequest{})
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+	require.Error(t, err, "reporter is closed")
 }
 
 func setTopSQLEnable(enabled bool) {
