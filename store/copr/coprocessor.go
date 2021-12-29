@@ -130,7 +130,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil {
+	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
@@ -1246,6 +1246,11 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 // GetPriority get the priority of the Action.
 func (e *rateLimitAction) GetPriority() int64 {
 	return memory.DefRateLimitPriority
+}
+
+// GetType implements ActionOnExceed
+func (e *rateLimitAction) GetType() string {
+	return "rate_limit_action"
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.

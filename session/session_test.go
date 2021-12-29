@@ -3808,6 +3808,18 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("use test")
+	tk.MustExec("create table tmp123(id int)")
+	tk.MustQuery("select * from tmp123;")
+	haveRateLimitAction := false
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetType() == "rate_limit_action" {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsTrue)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
@@ -3818,6 +3830,16 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.Se = se
 	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("0"))
+
+	haveRateLimitAction = false
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetType() == "rate_limit_action" {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsFalse)
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
