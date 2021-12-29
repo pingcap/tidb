@@ -52,6 +52,7 @@ type Builder struct {
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
+	var tblIDs []int64
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
@@ -67,96 +68,21 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropPolicy(diff.SchemaID), nil
 	case model.ActionAlterPlacementPolicy:
 		return b.applyAlterPolicy(m, diff)
-	}
-	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
-	if !ok {
-		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
-		)
-	}
-	var oldTableID, newTableID int64
-	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
-		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
-		oldTableID = diff.OldTableID
-		newTableID = diff.TableID
 	default:
-		oldTableID = diff.TableID
-		newTableID = diff.TableID
-	}
-	// handle placement rule cache
-	switch diff.Type {
-	case model.ActionCreateTable:
-		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-			return nil, errors.Trace(err)
+		roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
+		if !ok {
+			return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+			)
 		}
-	case model.ActionDropTable:
-		b.applyPlacementDelete(placement.GroupID(oldTableID))
-	case model.ActionTruncateTable:
-		b.applyPlacementDelete(placement.GroupID(oldTableID))
-		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-			return nil, errors.Trace(err)
-		}
-	case model.ActionRecoverTable:
-		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-			return nil, errors.Trace(err)
-		}
-	case model.ActionExchangeTablePartition:
-		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
-	b.copySortedTables(oldTableID, newTableID)
-
-	tblIDs := make([]int64, 0, 2)
-	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var allocs autoid.Allocators
-	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
-			diff.Type != model.ActionExchangeTablePartition &&
-			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
-			// For normal node's information schema, repaired table is existed.
-			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
-			// So here skip to reserve the allocators when repairing table.
-			diff.Type != model.ActionRepairTable &&
-			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-			diff.Type != model.ActionAlterSequence {
-			oldAllocs, _ := b.is.AllocByID(oldTableID)
-			allocs = filterAllocators(diff, oldAllocs)
-		}
-
-		tmpIDs := tblIDs
-		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
-			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
-			if !ok {
-				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
-					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
-				)
-			}
-			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
-			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
-		} else {
-			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
-		}
-
-		if oldTableID != newTableID {
-			// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
-			tblIDs = tmpIDs
-		}
-	}
-	if tableIDIsValid(newTableID) {
-		// All types except DropTableOrView.
-		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		dbInfo := b.copySchemaTables(roDBInfo.Name.L)
+		ids, err := b.defaultApplyDiff(m, diff, dbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tblIDs = ids
 	}
-	if diff.AffectedOpts != nil {
+
 		for _, opt := range diff.AffectedOpts {
 			switch diff.Type {
 			case model.ActionTruncateTablePartition:
@@ -201,6 +127,90 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, errors.Trace(err)
 			}
 			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	}
+}
+
+func (b *Builder) defaultApplyDiff(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	var oldTableID, newTableID int64
+	switch diff.Type {
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
+		newTableID = diff.TableID
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+		oldTableID = diff.TableID
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
+		oldTableID = diff.OldTableID
+		newTableID = diff.TableID
+	default:
+		oldTableID = diff.TableID
+		newTableID = diff.TableID
+	}
+	// handle placement rule cache
+	switch diff.Type {
+	case model.ActionCreateTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionDropTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+	case model.ActionTruncateTable:
+		b.applyPlacementDelete(placement.GroupID(oldTableID))
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionRecoverTable:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	case model.ActionExchangeTablePartition:
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	b.copySortedTables(oldTableID, newTableID)
+
+	tblIDs := make([]int64, 0, 2)
+	// We try to reuse the old allocator, so the cached auto ID can be reused.
+	var allocs autoid.Allocators
+	if tableIDIsValid(oldTableID) {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition &&
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable &&
+			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
+			diff.Type != model.ActionAlterSequence {
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
+		}
+
+		tmpIDs := tblIDs
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
+			if !ok {
+				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
+				)
+			}
+			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
+		} else {
+			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
+		}
+
+		if oldTableID != newTableID {
+			// Update tblIDs only when oldTableID != newTableID because applyCreateTable() also updates tblIDs.
+			tblIDs = tmpIDs
+		}
+	}
+	if tableIDIsValid(newTableID) {
+		// All types except DropTableOrView.
+		var err error
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return tblIDs, nil
