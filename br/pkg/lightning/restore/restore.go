@@ -776,7 +776,6 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	rc.dbInfos = dbInfos
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	fmt.Printf("vars: %v\n", sysVars)
 	// override by manually set vars
 	for k, v := range rc.cfg.TiDB.Vars {
 		sysVars[k] = v
