@@ -16,6 +16,7 @@ package expression
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -55,7 +56,6 @@ var cryptTests = []struct {
 }
 
 func TestSQLDecode(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	for _, tt := range cryptTests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
@@ -75,7 +75,6 @@ func TestSQLDecode(t *testing.T) {
 }
 
 func TestSQLEncode(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	for _, test := range cryptTests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
@@ -93,9 +92,10 @@ func TestSQLEncode(t *testing.T) {
 		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		if test.origin != nil {
-			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
+			enc := charset.FindEncoding(test.chs)
+			result, err := enc.Transform(nil, []byte(test.origin.(string)), charset.OpEncode)
 			require.NoError(t, err)
-			require.Equal(t, types.NewCollationStringDatum(result, test.chs), d)
+			require.Equal(t, types.NewCollationStringDatum(string(result), test.chs), d)
 		} else {
 			result := types.NewDatum(test.origin)
 			require.Equal(t, result.GetBytes(), d.GetBytes())
@@ -143,7 +143,6 @@ var aesTests = []struct {
 }
 
 func TestAESEncrypt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.AesEncrypt]
@@ -164,37 +163,10 @@ func TestAESEncrypt(t *testing.T) {
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesEncrypt)
 	testAmbiguousInput(t, ctx, ast.AesEncrypt)
-}
-
-func TestAESDecrypt(t *testing.T) {
-	t.Parallel()
-	ctx := createContext(t)
-
-	fc := funcs[ast.AesDecrypt]
-	for _, tt := range aesTests {
-		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		require.NoError(t, err)
-		args := []types.Datum{fromHex(tt.crypt)}
-		for _, param := range tt.params {
-			args = append(args, types.NewDatum(param))
-		}
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		if tt.origin == nil {
-			require.True(t, str.IsNull())
-			continue
-		}
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
-	}
-	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	require.NoError(t, err)
-	testNullInput(t, ctx, ast.AesDecrypt)
-	testAmbiguousInput(t, ctx, ast.AesDecrypt)
 
 	// Test GBK String
-	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	enc := charset.FindEncoding("gbk")
+	gbkStr, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
 	gbkTests := []struct {
 		mode   string
 		chs    string
@@ -219,18 +191,91 @@ func TestAESDecrypt(t *testing.T) {
 	}
 
 	for _, tt := range gbkTests {
+		msg := fmt.Sprintf("%v", tt)
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
+
+		args := primitiveValsToConstants(ctx, []interface{}{tt.origin})
+		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
+		f, err := fc.getFunction(ctx, args)
+
+		require.NoError(t, err, msg)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err, msg)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt), msg)
+	}
+}
+
+func TestAESDecrypt(t *testing.T) {
+	ctx := createContext(t)
+
+	fc := funcs[ast.AesDecrypt]
+	for _, tt := range aesTests {
+		msg := fmt.Sprintf("%v", tt)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err, msg)
+		args := []types.Datum{fromHex(tt.crypt)}
+		for _, param := range tt.params {
+			args = append(args, types.NewDatum(param))
+		}
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err, msg)
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err, msg)
+		if tt.origin == nil {
+			require.True(t, str.IsNull())
+			continue
+		}
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
+	}
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	testNullInput(t, ctx, ast.AesDecrypt)
+	testAmbiguousInput(t, ctx, ast.AesDecrypt)
+
+	// Test GBK String
+	enc := charset.FindEncoding("gbk")
+	r, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
+	gbkStr := string(r)
+	gbkTests := []struct {
+		mode   string
+		chs    string
+		origin interface{}
+		params []interface{}
+		crypt  string
+	}{
+		// test for ecb
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
+		// test for cbc
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []interface{}{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+	}
+
+	for _, tt := range gbkTests {
+		msg := fmt.Sprintf("%v", tt)
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err, msg)
+		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err, msg)
 		// Set charset and collate except first argument
 		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
-		require.NoError(t, err)
+		require.NoError(t, err, msg)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
+		require.NoError(t, err, msg)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
 }
 
@@ -298,7 +343,6 @@ func fromHex(str interface{}) (d types.Datum) {
 }
 
 func TestSha1Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sha1Tests := []struct {
 		chs    string
@@ -337,7 +381,6 @@ func TestSha1Hash(t *testing.T) {
 }
 
 func TestSha2Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sha2Tests := []struct {
 		chs        string
@@ -408,7 +451,6 @@ func TestSha2Hash(t *testing.T) {
 }
 
 func TestMD5Hash(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -456,7 +498,6 @@ func TestMD5Hash(t *testing.T) {
 }
 
 func TestRandomBytes(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	fc := funcs[ast.RandomBytes]
@@ -495,7 +536,6 @@ func decodeHex(str string) []byte {
 }
 
 func TestCompress(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
 	tests := []struct {
@@ -528,7 +568,6 @@ func TestCompress(t *testing.T) {
 }
 
 func TestUncompress(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
@@ -564,7 +603,6 @@ func TestUncompress(t *testing.T) {
 }
 
 func TestUncompressLength(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
@@ -595,7 +633,6 @@ func TestUncompressLength(t *testing.T) {
 }
 
 func TestPassword(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}

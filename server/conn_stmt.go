@@ -46,6 +46,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -167,6 +168,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		paramTypes  []byte
 		paramValues []byte
 	)
+	cc.initInputEncoder(ctx)
+	defer cc.inputDecoder.clean()
 	numParams := stmt.NumParams()
 	args := make([]types.Datum, numParams)
 	if numParams > 0 {
@@ -194,7 +197,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
+		err = parseExecArgs(cc.ctx.GetSessionVars().StmtCtx, args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
 		stmt.Reset()
 		if err != nil {
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
@@ -310,7 +313,8 @@ func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
 	return stmtID, fetchSize, nil
 }
 
-func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {
+func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams [][]byte,
+	nullBitmap, paramTypes, paramValues []byte, enc *inputDecoder) (err error) {
 	pos := 0
 	var (
 		tmp    interface{}
@@ -318,13 +322,16 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		n      int
 		isNull bool
 	)
+	if enc == nil {
+		enc = newInputDecoder(charset.CharsetUTF8)
+	}
 
 	for i := 0; i < len(args); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
-			args[i] = types.NewBytesDatum(boundParams[i])
+			args[i] = types.NewBytesDatum(enc.decodeInput(boundParams[i]))
 			continue
 		}
 
@@ -543,6 +550,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 
 			if !isNull {
+				v = enc.decodeInput(v)
 				tmp = string(hack.String(v))
 			} else {
 				tmp = nil

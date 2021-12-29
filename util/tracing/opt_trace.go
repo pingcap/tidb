@@ -16,17 +16,18 @@ package tracing
 
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
-	ID       int                 `json:"id"`
-	TP       string              `json:"type"`
-	Children []*LogicalPlanTrace `json:"children"`
+	ID       int
+	TP       string
+	Children []*LogicalPlanTrace
 
 	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string `json:"info"`
+	ExplainInfo string
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
-	Steps []*LogicalRuleOptimizeTracer `json:"steps"`
+	FinalLogicalPlan []FlattenLogicalPlanTrace    `json:"final"`
+	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
 	// curRuleTracer indicates the current rule Tracer during optimize by rule
 	curRuleTracer *LogicalRuleOptimizeTracer
 }
@@ -40,25 +41,26 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index in
 
 // AppendRuleTracerStepToCurrent add rule optimize step to current
 func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+	index := len(tracer.curRuleTracer.Steps)
 	tracer.curRuleTracer.Steps = append(tracer.curRuleTracer.Steps, LogicalRuleOptimizeTraceStep{
 		ID:     id,
 		TP:     tp,
 		Reason: reason,
 		Action: action,
+		Index:  index,
 	})
 }
 
-// TrackLogicalPlanAfterRuleOptimize add plan trace after optimize
-func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *LogicalPlanTrace) {
-	tracer.curRuleTracer.After = after
+// RecordFinalLogicalPlan add plan trace after logical optimize
+func (tracer *LogicalOptimizeTracer) RecordFinalLogicalPlan(final *LogicalPlanTrace) {
+	tracer.FinalLogicalPlan = toFlattenLogicalPlanTrace(final)
 }
 
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
 	Index    int                            `json:"index"`
-	Before   *LogicalPlanTrace              `json:"before"`
-	After    *LogicalPlanTrace              `json:"after"`
+	Before   []FlattenLogicalPlanTrace      `json:"before"`
 	RuleName string                         `json:"name"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
 }
@@ -67,7 +69,7 @@ type LogicalRuleOptimizeTracer struct {
 func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
 		Index:    index,
-		Before:   before,
+		Before:   toFlattenLogicalPlanTrace(before),
 		RuleName: name,
 		Steps:    make([]LogicalRuleOptimizeTraceStep, 0),
 	}
@@ -80,4 +82,68 @@ type LogicalRuleOptimizeTraceStep struct {
 	Reason string `json:"reason"`
 	ID     int    `json:"id"`
 	TP     string `json:"type"`
+	Index  int    `json:"index"`
+}
+
+// FlattenLogicalPlanTrace indicates the flatten LogicalPlanTrace
+type FlattenLogicalPlanTrace struct {
+	ID       int    `json:"id"`
+	TP       string `json:"type"`
+	Children []int  `json:"children"`
+
+	// ExplainInfo should be implemented by each implemented LogicalPlan
+	ExplainInfo string `json:"info"`
+}
+
+// toFlattenLogicalPlanTrace transform LogicalPlanTrace into FlattenLogicalPlanTrace
+func toFlattenLogicalPlanTrace(root *LogicalPlanTrace) []FlattenLogicalPlanTrace {
+	wrapper := &flattenWrapper{flatten: make([]FlattenLogicalPlanTrace, 0)}
+	flattenLogicalPlanTrace(root, wrapper)
+	return wrapper.flatten
+}
+
+type flattenWrapper struct {
+	flatten []FlattenLogicalPlanTrace
+}
+
+func flattenLogicalPlanTrace(node *LogicalPlanTrace, wrapper *flattenWrapper) {
+	flattenNode := FlattenLogicalPlanTrace{
+		ID:          node.ID,
+		TP:          node.TP,
+		ExplainInfo: node.ExplainInfo,
+		Children:    make([]int, 0),
+	}
+	if len(node.Children) < 1 {
+		wrapper.flatten = append(wrapper.flatten, flattenNode)
+		return
+	}
+	for _, child := range node.Children {
+		flattenNode.Children = append(flattenNode.Children, child.ID)
+	}
+	for _, child := range node.Children {
+		flattenLogicalPlanTrace(child, wrapper)
+	}
+	wrapper.flatten = append(wrapper.flatten, flattenNode)
+}
+
+// CETraceRecord records an expression and related cardinality estimation result.
+type CETraceRecord struct {
+	TableID   int64  `json:"-"`
+	TableName string `json:"table_name"`
+	Type      string `json:"type"`
+	Expr      string `json:"expr"`
+	RowCount  uint64 `json:"row_count"`
+}
+
+// DedupCETrace deduplicate a slice of *CETraceRecord and return the deduplicated slice
+func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
+	ret := make([]*CETraceRecord, 0, len(records))
+	exists := make(map[CETraceRecord]struct{}, len(records))
+	for _, rec := range records {
+		if _, ok := exists[*rec]; !ok {
+			ret = append(ret, rec)
+			exists[*rec] = struct{}{}
+		}
+	}
+	return ret
 }

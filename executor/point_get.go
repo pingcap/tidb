@@ -191,6 +191,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		}
 	})
 	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
 	return nil
 }
 
