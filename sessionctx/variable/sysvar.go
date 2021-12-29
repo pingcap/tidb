@@ -1331,7 +1331,7 @@ var defaultSysVars = []*SysVar{
 		v := TiDBOptOn(val)
 		if !v {
 			// Set the location to UTC to avoid time zone interference.
-			disableTime := time.Now().UTC().Format(types.TimeFormat + " UTC")
+			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
 			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
 				return err
 			}

@@ -1819,7 +1819,7 @@ func (h *Handle) getDisableColumnTrackingTime() (*time.Time, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := time.Parse(types.TimeFormat+" UTC", value)
+	t, err := time.Parse(types.UTCTimeFormat, value)
 	if err != nil {
 		return nil, err
 	}

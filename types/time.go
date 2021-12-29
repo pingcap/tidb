@@ -39,6 +39,8 @@ const (
 	TimeFormat = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
+	// UTCTimeFormat is used to parse and format gotime.
+	UTCTimeFormat = "2006-01-02 15:04:05 UTC"
 )
 
 const (
