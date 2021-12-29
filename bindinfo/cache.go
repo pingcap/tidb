@@ -103,6 +103,17 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
+// FindUsingBinding gets the using binding.
+// There is at most one binding that can be used now
+func (br *BindRecord) FindUsingBinding() *Binding {
+	for _, binding := range br.Bindings {
+		if binding.Status == Using {
+			return &binding
+		}
+	}
+	return nil
+}
+
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
 	for i := range br.Bindings {
