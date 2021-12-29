@@ -1886,15 +1886,17 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 	if cols.calculated {
 		return cols.data, nil
 	}
+	tblInfo := tbl.TableInfo
+	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
 	do := domain.GetDomain(b.ctx)
 	h := do.StatsHandle()
-	colList, err := h.GetPredicateColumns(tbl.TableInfo.ID)
+	colList, err := h.GetPredicateColumns(tblInfo.ID)
 	if err != nil {
 		return nil, err
 	}
 	if len(colList) == 0 {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
-		for _, colInfo := range tbl.TableInfo.Columns {
+		for _, colInfo := range tblInfo.Columns {
 			cols.data[colInfo.ID] = struct{}{}
 		}
 	} else {
@@ -1926,8 +1928,12 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	columnChoice model.ColumnChoice,
 	specifiedCols []*model.ColumnInfo,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
+	mustAllColumns bool,
 	warning bool,
 ) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
+	if mustAllColumns && warning && (columnChoice == model.PredicateColumns || columnChoice == model.ColumnList) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.", tbl.Schema.L, tbl.Name.L))
+	}
 	colSet2colList := func(colSet map[int64]struct{}) []*model.ColumnInfo {
 		colList := make([]*model.ColumnInfo, 0, len(colSet))
 		for _, colInfo := range tbl.TableInfo.Columns {
@@ -1941,6 +1947,9 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	case model.DefaultChoice, model.AllColumns:
 		return tbl.TableInfo.Columns, nil, nil
 	case model.PredicateColumns:
+		if mustAllColumns {
+			return tbl.TableInfo.Columns, nil, nil
+		}
 		predicate, err := b.getPredicateColumns(tbl, predicateCols)
 		if err != nil {
 			return nil, nil, err
@@ -1987,6 +1996,9 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 			colSet[colID] = struct{}{}
 		}
 		colList := colSet2colList(colSet)
+		if mustAllColumns {
+			return tbl.TableInfo.Columns, colList, nil
+		}
 		return colList, colList, nil
 	}
 	return nil, nil, nil
@@ -2051,12 +2063,16 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		return nil, err
 	}
 	var predicateCols, mustAnalyzedCols calcOnceMap
-	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, true)
+	ver := version
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
+	mustAllColumns := !statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &ver)
+	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
 		return nil, err
 	}
 	isAnalyzeTable := len(as.PartitionNames) == 0
-	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols)
+	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
 		return nil, err
 	}
@@ -2113,6 +2129,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	astColChoice model.ColumnChoice,
 	astColList []*model.ColumnInfo,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
+	mustAllColumns bool,
 ) (map[int64]V2AnalyzeOptions, map[int64][]*model.ColumnInfo, error) {
 	optionsMap := make(map[int64]V2AnalyzeOptions, len(physicalIDs))
 	colsInfoMap := make(map[int64][]*model.ColumnInfo, len(physicalIDs))
@@ -2131,7 +2148,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		tblColChoice, tblColList = mergeColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
 	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
-	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, false)
+	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2157,7 +2174,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
 			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
 			finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
-			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, false)
+			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2282,7 +2299,6 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 			continue
 		}
-		// TODO: deal with as.ColumnChoice == model.DefaultChoice
 		if as.ColumnChoice == model.PredicateColumns {
 			return nil, errors.Errorf("Only the analyze version 2 supports analyzing predicate columns")
 		}
