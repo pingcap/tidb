@@ -128,3 +128,16 @@ func Slice(s string) (b []byte) {
 	pBytes.Cap = pString.Len
 	return
 }
+
+// String converts slice to string without copy.
+// Use it at your own risk.
+func String(b []byte) (s string) {
+	if len(b) == 0 {
+		return ""
+	}
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
+}
