@@ -1,0 +1,8 @@
+5 3 test begin
+3 4 test begin
+5 5 test insert into t values(5)
+3 6 test insert into t values(6)
+5 7 test commit
+5 8 test select * from t
+3 8 test commit
+5 8 test commit

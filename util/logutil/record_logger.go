@@ -22,6 +22,7 @@ func StopRecord() {
 	RecordLogger.stopLogWorker()
 }
 
+// PutRecordOrDrop put record
 func PutRecordOrDrop(record string) {
 	select {
 	case RecordLogger.recordChan <- record:

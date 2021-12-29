@@ -16,14 +16,14 @@ package server
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/replayutil"
 	"net/http"
 	"strconv"
 
-	"github.com/pingcap/tidb/util/logutil"
-
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // SQLRecorderHandler is the handler for dumping plan replayer file.
@@ -46,6 +46,7 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 	cfg := config.GetGlobalConfig()
 	params := mux.Vars(req)
 	if status, ok := params[pRecordStatus]; ok {
+		fmt.Println()
 		if status == "on" {
 			// set replay meta TS first.
 			cfg.ReplayMetaTS, err = strconv.ParseInt(params[pStartTS], 10, 64)
@@ -62,12 +63,13 @@ func (h SQLRecorderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 		}
 		w.WriteHeader(http.StatusOK)
 		return
-	} else {
-		w.WriteHeader(http.StatusBadRequest)
 	}
+	w.WriteHeader(http.StatusBadRequest)
+
 }
 
-type SQLReplayHandler struct{
+// SQLReplayHandler Replay handler
+type SQLReplayHandler struct {
 	Store kv.Storage
 }
 
@@ -80,13 +82,12 @@ func (h SQLReplayHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	if status, ok := params[pReplayStatus]; ok {
 		if status == "on" {
-			logutil.StartReplay(params[pFileName], h.Store)
+			replayutil.StartReplay(params[pFileName], h.Store)
 		} else {
-			logutil.StopReplay()
+			replayutil.StopReplay()
 		}
 		w.WriteHeader(http.StatusOK)
 		return
-	} else {
-		w.WriteHeader(http.StatusBadRequest)
 	}
+	w.WriteHeader(http.StatusBadRequest)
 }

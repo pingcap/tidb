@@ -1,21 +1,23 @@
-package logutil
+package replayutil
 
 import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 )
 
 // RecordReplayer is used to replay sql
 var RecordReplayer *recordReplayer
+// Sessions is a map
 var Sessions map[string]session.Session
 
 // StartReplay starts replay
@@ -63,30 +65,32 @@ func (r *recordReplayer) start() {
 		default:
 		}
 		text := r.scanner.Text()
-		record := strings.SplitN(text, " ", 2)
-		if len(record) < 3 {
-			fmt.Printf("invalid sql log %v\n", record)
+		record := strings.SplitN(text, " ", 4)
+		if len(record) < 4 {
+			fmt.Printf("invalid sql log %v, len:%d\n", record, len(record))
 			continue
 		}
 		ts, _ := strconv.ParseFloat(record[1], 10)
-		if sleepTime := time.Since(start).Seconds() - ts; sleepTime > 0 {
+		if sleepTime := ts - time.Since(start).Seconds(); sleepTime > 0 {
+			fmt.Printf("sleep time:%v\n", sleepTime)
 			time.Sleep(time.Duration(sleepTime) * time.Second)
 		}
 		if s, exist := Sessions[record[0]]; !exist {
 			se, err := session.CreateSession(r.store)
+			se.GetSessionVars().CurrentDB = record[2]
 			if err != nil {
 				log.Info("init replay session fail")
 				return
 			}
 			Sessions[record[0]] = se
-			go ReplayExecuteSQL(record[2], s)
+			go replayExecuteSQL(record[3], se, record[0])
 		} else {
-			go ReplayExecuteSQL(record[2], s)
+			go replayExecuteSQL(record[3], s, record[0])
 		}
 	}
 }
 
-func ReplayExecuteSQL(sql string, s session.Session) error {
+func replayExecuteSQL(sql string, s session.Session, connection string) error {
 	ctx := context.Background()
 	stmts, err := s.Parse(ctx, sql)
 	if err != nil {
