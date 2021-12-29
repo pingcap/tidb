@@ -17,11 +17,12 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // EncodingGBKImpl is the instance of encodingGBK
-var EncodingGBKImpl = &encodingGBK{encodingBase{enc: simplifiedchinese.GBK}}
+var EncodingGBKImpl = &encodingGBK{encodingBase{enc: customGBK{}}}
 
 func init() {
 	EncodingGBKImpl.self = EncodingGBKImpl
@@ -104,4 +105,42 @@ var GBKCase = unicode.SpecialCase{
 	unicode.CaseRange{Lo: 0x01DA, Hi: 0x01DA, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x01DC, Hi: 0x01DC, Delta: [unicode.MaxCase]rune{0, 0, 0}},
 	unicode.CaseRange{Lo: 0x216A, Hi: 0x216B, Delta: [unicode.MaxCase]rune{0, 0, 0}},
+}
+
+// customGBK is a simplifiedchinese.GBK wrapper.
+type customGBK struct{}
+
+// NewDecoder returns simplifiedchinese.GBK.NewDecoder().
+func (c customGBK) NewDecoder() *encoding.Decoder {
+	return &encoding.Decoder{
+		Transformer: customGBKDecoder{
+			gbkDecoder: simplifiedchinese.GBK.NewDecoder(),
+		},
+	}
+}
+
+// NewEncoder returns simplifiedchinese.GBK.NewEncoder().
+func (c customGBK) NewEncoder() *encoding.Encoder {
+	return simplifiedchinese.GBK.NewEncoder()
+}
+
+type customGBKDecoder struct {
+	gbkDecoder *encoding.Decoder
+}
+
+// Transform special treatment for 0x80,
+// see https://github.com/pingcap/tidb/issues/30581 get details.
+func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	if len(src) == 0 {
+		return 0, 0, nil
+	}
+	if src[0] == 0x80 {
+		return 0, 0, errInvalidCharacterString
+	}
+	return c.gbkDecoder.Transform(dst, src, atEOF)
+}
+
+// Reset is same as simplifiedchinese.GBK.Reset().
+func (c customGBKDecoder) Reset() {
+	c.gbkDecoder.Reset()
 }

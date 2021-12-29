@@ -55,6 +55,7 @@ func TestEncoding(t *testing.T) {
 		{"移維緯胃萎衣謂違", "绉荤董绶?儍钀庤。璎傞仌", false},
 		{"仆仂仗仞仭仟价伉佚估", "浠嗕粋浠椾粸浠?粺浠蜂級浣氫及", false},
 		{"佝佗佇佶侈侏侘佻佩佰侑佯", "浣濅綏浣囦蕉渚堜緩渚樹交浣╀桨渚戜蒋", true},
+		{"\x80", "?", false},
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
