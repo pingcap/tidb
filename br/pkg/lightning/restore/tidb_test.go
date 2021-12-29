@@ -148,7 +148,7 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
 		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));"},
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`\xdd\xdd\xdd` TINYINT(1));"},
 	)
 
 	// renaming a table
