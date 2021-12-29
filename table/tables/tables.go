@@ -963,8 +963,8 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	defaultVals := make([]types.Datum, len(cols))
 	// rowMap's datum is decoded from value.
-	for i, col := range cols {
-		colTps[int64(i)] = &col.FieldType
+	for _, col := range cols {
+		colTps[col.ID] = &col.FieldType
 	}
 	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
