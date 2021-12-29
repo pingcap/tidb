@@ -1011,6 +1011,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		} else {
 			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		}
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return v, rowMap, nil
 }
