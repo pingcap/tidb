@@ -1429,8 +1429,9 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 // BatchGet implements the MVCCStore interface.
 func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint64) []*kvrpcpb.KvPair {
 	pairs := make([]*kvrpcpb.KvPair, 0, len(keys))
-	remain := make([][]byte, 0, len(keys))
+	var remain [][]byte
 	if reqCtx.isSnapshotIsolation() {
+		remain = make([][]byte, 0, len(keys))
 		for _, key := range keys {
 			lockPairs, err := store.CheckKeysLock(version, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks, key)
 			if err != nil {

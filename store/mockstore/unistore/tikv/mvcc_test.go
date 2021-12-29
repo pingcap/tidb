@@ -1649,12 +1649,12 @@ func TestTiKVRCRead(t *testing.T) {
 	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
 	// get
 	for k, v := range expected {
-		res, err := store.MvccStore.Get(reqCtx, []byte(k), math.MaxUint64)
+		res, err := store.MvccStore.Get(reqCtx, []byte(k), 80)
 		require.NoError(t, err)
 		require.Equal(t, res, v)
 	}
 	// batch get
-	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, math.MaxUint64)
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, 80)
 	require.Equal(t, len(pairs), 3)
 	for _, pair := range pairs {
 		v, ok := expected[string(pair.Key)]
@@ -1667,7 +1667,7 @@ func TestTiKVRCRead(t *testing.T) {
 		StartKey: []byte("t1"),
 		EndKey:   []byte("t4"),
 		Limit:    100,
-		Version:  math.MaxUint64,
+		Version:  80,
 	})
 	require.Equal(t, len(pairs), 3)
 	for _, pair := range pairs {
