@@ -2114,7 +2114,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), "select * from mysql.analyze_options where table_id = %?", physicalID)
+	stmt, err := exec.ParseWithParams(context.TODO(), "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, model.DefaultChoice, nil, err
 	}
@@ -2126,28 +2126,28 @@ func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.Table
 		return analyzeOptions, model.DefaultChoice, nil, nil
 	}
 	row := rows[0]
-	sampleNum := row.GetInt64(1)
+	sampleNum := row.GetInt64(0)
 	if sampleNum > 0 {
 		analyzeOptions[ast.AnalyzeOptNumSamples] = uint64(sampleNum)
 	}
-	sampleRate := row.GetFloat64(2)
+	sampleRate := row.GetFloat64(1)
 	if sampleRate > 0 {
 		analyzeOptions[ast.AnalyzeOptSampleRate] = math.Float64bits(sampleRate)
 	}
-	buckets := row.GetInt64(3)
+	buckets := row.GetInt64(2)
 	if buckets > 0 {
 		analyzeOptions[ast.AnalyzeOptNumBuckets] = uint64(buckets)
 	}
-	topn := row.GetInt64(4)
+	topn := row.GetInt64(3)
 	if topn >= 0 {
 		analyzeOptions[ast.AnalyzeOptNumTopN] = uint64(topn)
 	}
-	colType := row.GetEnum(5)
+	colType := row.GetEnum(4)
 	switch colType.Name {
 	case "ALL":
 		return analyzeOptions, model.AllColumns, tblInfo.Columns, nil
 	case "LIST":
-		colIDStrs := strings.Split(row.GetString(6), ",")
+		colIDStrs := strings.Split(row.GetString(5), ",")
 		colList := make([]*model.ColumnInfo, 0, len(colIDStrs))
 		for _, colIDStr := range colIDStrs {
 			colID, _ := strconv.ParseInt(colIDStr, 10, 64)
