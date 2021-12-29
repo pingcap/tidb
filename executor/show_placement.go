@@ -454,7 +454,7 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 		for _, part := range table.GetPartitionInfo().Definitions {
 			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
 			if err != nil {
-				return infosync.PlacementScheduleStateWaiting, err
+				return infosync.PlacementScheduleStatePending, err
 			}
 			state = accumulateState(state, schedule)
 			if state != infosync.PlacementScheduleStateScheduled {

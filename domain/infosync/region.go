@@ -28,8 +28,8 @@ import (
 type PlacementScheduleState int
 
 const (
-	// PlacementScheduleStateWaiting corresponds to "WAITING" from PD.
-	PlacementScheduleStateWaiting PlacementScheduleState = iota
+	// PlacementScheduleStatePending corresponds to "PENDING" from PD.
+	PlacementScheduleStatePending PlacementScheduleState = iota
 	// PlacementScheduleStateInProgress corresponds to "INPROGRESS" from PD.
 	PlacementScheduleStateInProgress
 	// PlacementScheduleStateScheduled corresponds to "REPLICATED" from PD.
@@ -42,8 +42,8 @@ func (t PlacementScheduleState) String() string {
 		return "SCHEDULED"
 	case PlacementScheduleStateInProgress:
 		return "INPROGRESS"
-	case PlacementScheduleStateWaiting:
-		return "WAITING"
+	case PlacementScheduleStatePending:
+		return "PENDING"
 	default:
 		return "WAITING"
 	}
@@ -53,22 +53,22 @@ func (t PlacementScheduleState) String() string {
 func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (PlacementScheduleState, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		return PlacementScheduleStateWaiting, err
+		return PlacementScheduleStatePending, err
 	}
 
 	if is.etcdCli == nil {
-		return PlacementScheduleStateWaiting, nil
+		return PlacementScheduleStatePending, nil
 	}
 
 	addrs := is.etcdCli.Endpoints()
 
 	if len(addrs) == 0 {
-		return PlacementScheduleStateWaiting, errors.Errorf("pd unavailable")
+		return PlacementScheduleStatePending, errors.Errorf("pd unavailable")
 	}
 
 	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
 	if err == nil && res != nil {
-		st := PlacementScheduleStateWaiting
+		st := PlacementScheduleStatePending
 		// it should not fail
 		var state string
 		_ = json.Unmarshal(res, &state)
@@ -78,9 +78,9 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		case "INPROGRESS":
 			st = PlacementScheduleStateInProgress
 		case "WAITING":
-			st = PlacementScheduleStateWaiting
+			st = PlacementScheduleStatePending
 		}
 		return st, nil
 	}
-	return PlacementScheduleStateWaiting, err
+	return PlacementScheduleStatePending, err
 }
