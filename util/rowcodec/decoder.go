@@ -256,9 +256,6 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	}
 	for i, id := range decoder.handleColIDs {
 		if col.ID == id {
-			if types.NeedRestoredData(col.Ft) {
-				return false
-			}
 			coder := codec.NewDecoder(chk, decoder.loc)
 			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
 			return err == nil
