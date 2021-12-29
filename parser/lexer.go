@@ -147,11 +147,22 @@ func (s *Scanner) AppendWarn(err error) {
 	s.warns = append(s.warns, err)
 }
 
+// convert2System convert lit from client encoding to system encoding which is utf8mb4.
+func (s *Scanner) convert2System(tok int, lit string) (int, string) {
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
+	if err != nil {
+		s.AppendWarn(err)
+	}
+
+	return tok, charset.HackString(utf8Lit)
+}
+
+// convert2Connection convert lit from client encoding to connection encoding.
 func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if mysql.IsUTF8Charset(s.client.Name()) {
 		return tok, lit
 	}
-	utf8Lit, err := s.client.Transform(nil, charset.Slice(lit), charset.OpDecodeReplace)
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
@@ -164,7 +175,7 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if s.client.Tp() != s.connection.Tp() {
 		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplace)
 	}
-	return tok, string(utf8Lit)
+	return tok, charset.HackString(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {
@@ -245,7 +256,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case quotedIdentifier, identifier:
 		tok = identifier
 		s.identifierDot = s.r.peek() == '.'
-		tok, v.ident = s.convert2Connection(tok, lit)
+		tok, v.ident = s.convert2System(tok, lit)
 	case stringLit:
 		tok, v.ident = s.convert2Connection(tok, lit)
 	}

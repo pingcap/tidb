@@ -162,8 +162,8 @@ func TestTopSQLReporter(t *testing.T) {
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		require.Greater(t, len(req.RecordListCpuTimeMs), 0)
-		require.Greater(t, req.RecordListCpuTimeMs[0], uint32(0))
+		require.Greater(t, len(req.Items), 0)
+		require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
 		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
@@ -279,7 +279,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 	sqlMetas := make(map[string]*tipb.SQLMeta)
 	planMetas := make(map[string]string)
-	records := make(map[string]*tipb.CPUTimeRecord)
+	records := make(map[string]*tipb.TopSQLRecord)
 
 	for {
 		r, err := stream.Recv()
@@ -292,12 +292,11 @@ func TestTopSQLPubSub(t *testing.T) {
 			if _, ok := records[string(rec.SqlDigest)]; !ok {
 				records[string(rec.SqlDigest)] = rec
 			} else {
-				cpu := records[string(rec.SqlDigest)]
+				record := records[string(rec.SqlDigest)]
 				if rec.PlanDigest != nil {
-					cpu.PlanDigest = rec.PlanDigest
+					record.PlanDigest = rec.PlanDigest
 				}
-				cpu.RecordListTimestampSec = append(cpu.RecordListTimestampSec, rec.RecordListTimestampSec...)
-				cpu.RecordListCpuTimeMs = append(cpu.RecordListCpuTimeMs, rec.RecordListCpuTimeMs...)
+				record.Items = append(record.Items, rec.Items...)
 			}
 		} else if r.GetSqlMeta() != nil {
 			sql := r.GetSqlMeta()
@@ -315,8 +314,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	checkSQLPlanMap := map[string]struct{}{}
 	for i := range records {
 		record := records[i]
-		require.Greater(t, len(record.RecordListCpuTimeMs), 0)
-		require.Greater(t, record.RecordListCpuTimeMs[0], uint32(0))
+		require.Greater(t, len(record.Items), 0)
+		require.Greater(t, record.Items[0].CpuTimeMs, uint32(0))
 		sqlMeta, exist := sqlMetas[string(record.SqlDigest)]
 		require.True(t, exist)
 		expectedNormalizedSQL, exist := digest2sql[string(record.SqlDigest)]
