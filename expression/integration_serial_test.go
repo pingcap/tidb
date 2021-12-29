@@ -2044,9 +2044,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select quarter("0000-00-00"), quarter("0000-00-00 00:00:00");`)
 	result.Check(testkit.Rows("0 0"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
-		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(""))
 	result = tk.MustQuery(`select quarter(0), quarter(0.0), quarter(0e1), quarter(0.00);`)
 	result.Check(testkit.Rows("0 0 0 0"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
