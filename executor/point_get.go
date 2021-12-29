@@ -588,7 +588,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
-			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
+			if col.ID == hid {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
@@ -598,15 +598,6 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		}
 	}
 	return false, nil
-}
-
-func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
