@@ -421,7 +421,7 @@ type GLCmpStringMode uint8
 
 const (
 	// Greatest/Least function compares string directly
-	GLCmpStringDirectly   GLCmpStringMode = iota
+	GLCmpStringDirectly GLCmpStringMode = iota
 	// Greatest/Least function compares string as 'yyyy-mm-dd' format
 	GLCmpStringAsDate
 	// Greatest/Least function compares string as 'yyyy-mm-dd hh:mm:ss' format
