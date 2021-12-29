@@ -1625,3 +1625,55 @@ func TestAccessCommittedLocks(t *testing.T) {
 		}
 	}
 }
+
+func TestTiKVRCRead(t *testing.T) {
+	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer close()
+
+	k1 := []byte("t1")
+	k2, v2 := []byte("t2"), []byte("v2")
+	k3, v3 := []byte("t3"), []byte("v3")
+	k4, v4 := []byte("t4"), []byte("v4")
+	MustLoad(10, 20, store, "t1:v1", "t2:v2", "t3:v3")
+	// write to be read
+	MustPrewritePut(k1, k1, []byte("v11"), 30, store)
+	MustCommit(k1, 30, 40, store)
+	// lock to be ignored
+	MustPrewritePut(k2, k2, v2, 50, store)
+	MustPrewriteDelete(k3, k3, 60, store)
+	MustPrewritePut(k4, k4, v4, 70, store)
+
+	expected := map[string][]byte{string(k1): []byte("v11"), string(k2): v2, string(k3): v3, string(k4): nil}
+
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
+	// get
+	for k, v := range expected {
+		res, err := store.MvccStore.Get(reqCtx, []byte(k), 80)
+		require.NoError(t, err)
+		require.Equal(t, res, v)
+	}
+	// batch get
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, 80)
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
+	}
+	// scan
+	pairs = store.MvccStore.Scan(reqCtx, &kvrpcpb.ScanRequest{
+		StartKey: []byte("t1"),
+		EndKey:   []byte("t4"),
+		Limit:    100,
+		Version:  80,
+	})
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
+	}
+}
