@@ -1267,6 +1267,490 @@ create table small_table_inject_pd_with_partition(
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/calcSampleRateByStorageCount"))
 }
 
+func TestSavedAnalyzeOptions(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	originalVal3 := handle.AutoAnalyzeMinCnt
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal3
+	}()
+	handle.AutoAnalyzeMinCnt = 0
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
+
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t with 1 topn, 2 buckets")
+	is := dom.InfoSchema()
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo := table.Meta()
+	tbl := h.GetTableStats(tableInfo)
+	lastVersion := tbl.Version
+	col0 := tbl.Columns[tableInfo.Columns[0].ID]
+	require.Equal(t, 2, len(col0.Buckets))
+	col1 := tbl.Columns[tableInfo.Columns[1].ID]
+	require.Equal(t, 1, len(col1.TopN.TopN))
+	require.Equal(t, 2, len(col1.Buckets))
+	col2 := tbl.Columns[tableInfo.Columns[2].ID]
+	require.Equal(t, 2, len(col2.Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "1", rs.Rows()[0][4])
+
+	// auto-analyze uses the table-level options
+	tk.MustExec("insert into t values (10,10,10)")
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
+	h.HandleAutoAnalyze(is)
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	lastVersion = tbl.Version
+	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	require.Equal(t, 2, len(col0.Buckets))
+
+	// manual analyze uses the table-level persisted options by merging the new options
+	tk.MustExec("analyze table t columns a,b with 0.9 samplerate, 3 buckets")
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	lastVersion = tbl.Version
+	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	require.Equal(t, 3, len(col0.Buckets))
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	col1 = tbl.Columns[tableInfo.Columns[1].ID]
+	require.Equal(t, 1, len(col1.TopN.TopN))
+	col2 = tbl.Columns[tableInfo.Columns[2].ID]
+	require.Less(t, col2.LastUpdateVersion, col0.LastUpdateVersion) // not updated since removed from list
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0.9", rs.Rows()[0][2])
+	require.Equal(t, "3", rs.Rows()[0][3])
+	require.Equal(t, "1", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	colIDStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+
+	// disable option persistence
+	tk.MustExec("set global tidb_persist_analyze_options = false")
+	// manual analyze will neither use the pre-persisted options nor persist new options
+	tk.MustExec("analyze table t with 2 topn")
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	col0 = tbl.Columns[tableInfo.Columns[0].ID]
+	require.NotEqual(t, 3, len(col0.Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.NotEqual(t, "2", rs.Rows()[0][4])
+}
+
+func TestSavedPartitionAnalyzeOptions(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
+
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	// analyze partition only sets options of partition
+	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
+	is := dom.InfoSchema()
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	lastVersion := p0.Version
+	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "3", rs.Rows()[0][3])
+	require.Equal(t, "1", rs.Rows()[0][4])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][3])
+	require.Equal(t, "-1", rs.Rows()[0][4])
+
+	// merge partition & table level options
+	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	require.Greater(t, p0.Version, lastVersion)
+	lastVersion = p0.Version
+	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	// check column c is not analyzed
+	require.Less(t, p0.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p0.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	require.Less(t, p1.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p1.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	colIDStrsAB := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+
+	// analyze partition only updates this partition, and set different collist
+	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	require.Equal(t, p0.Version, lastVersion)
+	require.Greater(t, p1.Version, lastVersion)
+	lastVersion = p1.Version
+	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	// only column c of p1 is re-analyzed
+	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.NotEqual(t, 1, len(p0.Columns[tableInfo.Columns[2].ID].Buckets))
+	colIDStrsABC := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10), strconv.FormatInt(tableInfo.Columns[2].ID, 10)}, ",")
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "1", rs.Rows()[0][3])
+	require.Equal(t, colIDStrsABC, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+
+	// analyze partition without options uses saved partition options
+	tk.MustExec("analyze table t partition p0")
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	require.Greater(t, p0.Version, lastVersion)
+	lastVersion = p0.Version
+	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+
+	// merge options of statement's, partition's and table's
+	tk.MustExec("analyze table t partition p0 with 3 buckets")
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	require.Greater(t, p0.Version, lastVersion)
+	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "3", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+
+	// add new partitions, use table options as default
+	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))")
+	tk.MustExec("insert into t values (21,21,21),(22,22,22),(23,23,23),(24,24,24)")
+	tk.MustExec("analyze table t partition p2")
+	is = dom.InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo = table.Meta()
+	pi = tableInfo.GetPartitionInfo()
+	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	require.Equal(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
+
+	// set analyze version back to 1, will not use persisted
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("analyze table t partition p2")
+	pi = tableInfo.GetPartitionInfo()
+	p2 = h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
+	require.NotEqual(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
+
+	// drop column
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("alter table t drop column b")
+	tk.MustExec("analyze table t")
+	colIDStrsA := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10)}, ",")
+	colIDStrsAC := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[2].ID, 10)}, ",")
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, colIDStrsA, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, colIDStrsA, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, colIDStrsAC, rs.Rows()[0][6])
+
+	// drop partition
+	tk.MustExec("alter table t drop partition p1")
+	is = dom.InfoSchema() // refresh infoschema
+	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 0, len(rs.Rows()))
+
+	// drop table
+	tk.MustExec("drop table t")
+	is = dom.InfoSchema() // refresh infoschema
+	require.Nil(t, h.GCStats(is, time.Duration(0)))
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	//require.Equal(t, len(rs.Rows()), 0) TODO
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 0, len(rs.Rows()))
+}
+
+func TestSavedPartitionAnalyzeOptionsDynamic(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(11,11,11),(12,12,12),(13,13,13),(14,14,14)")
+
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	is := dom.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	// analyze partition only sets options of partition
+	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	tbl := h.GetTableStats(tableInfo)
+	lastVersion := tbl.Version
+	// no global stats since partition stats missing
+	require.Equal(t, 0, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "3", rs.Rows()[0][3])
+	require.Equal(t, "1", rs.Rows()[0][4])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][3])
+	require.Equal(t, "-1", rs.Rows()[0][4])
+
+	// merge partition & table level options
+	tk.MustExec("analyze table t columns a,b with 0 topn, 2 buckets")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	lastVersion = tbl.Version
+	p0 := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p1 := h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	// merged global stats
+	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
+	// check column c is not analyzed
+	require.Less(t, tbl.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, tbl.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	require.Less(t, p0.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p0.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	require.Less(t, p1.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p1.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	colIDStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "0", rs.Rows()[0][2])
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "0", rs.Rows()[0][4])
+	require.Equal(t, "LIST", rs.Rows()[0][5])
+	require.Equal(t, colIDStrs, rs.Rows()[0][6])
+
+	// analyze partition only updates this partition, and set different collist
+	tk.MustExec("analyze table t partition p1 columns a,c with 1 buckets")
+	tk.MustQuery("select * from t where b > 1 and c > 1")
+	require.NoError(t, h.LoadNeededHistograms())
+	tbl = h.GetTableStats(tableInfo)
+	require.Greater(t, tbl.Version, lastVersion)
+	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
+	require.Equal(t, 1, len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
+	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
+	// check column c is analyzed, but only global stats loaded
+	require.Equal(t, 0, len(p1.Columns[tableInfo.Columns[2].ID].Buckets))
+	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "1", rs.Rows()[0][3])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+}
+
+func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options = true")
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("create table t1(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t1 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,1,2),(3,1,3),(4,1,4),(5,1,5),(6,1,6),(7,7,7),(8,8,8),(9,9,9)")
+
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+
+	tk.MustExec("analyze table t1 with 1 topn, 3 buckets")
+	tk.MustExec("analyze table t2 with 0 topn, 2 buckets")
+	tk.MustExec("analyze table t1,t2 with 2 topn")
+	is := dom.InfoSchema()
+	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.Nil(t, err)
+	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.Nil(t, err)
+	tableInfo1 := table1.Meta()
+	tableInfo2 := table2.Meta()
+	tblStats1 := h.GetTableStats(tableInfo1)
+	tblStats2 := h.GetTableStats(tableInfo2)
+	tbl1Col0 := tblStats1.Columns[tableInfo1.Columns[0].ID]
+	tbl2Col0 := tblStats2.Columns[tableInfo2.Columns[0].ID]
+	require.Equal(t, 3, len(tbl1Col0.Buckets))
+	require.Equal(t, 2, len(tbl2Col0.Buckets))
+	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
+	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo1.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "3", rs.Rows()[0][3])
+	require.Equal(t, "2", rs.Rows()[0][4])
+	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo2.ID, 10))
+	require.Equal(t, 1, len(rs.Rows()))
+	require.Equal(t, "2", rs.Rows()[0][3])
+	require.Equal(t, "2", rs.Rows()[0][4])
+}
+
 func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 	for _, val := range []model.ColumnChoice{model.ColumnList, model.PredicateColumns} {
 		func(choice model.ColumnChoice) {
