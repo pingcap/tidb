@@ -103,6 +103,7 @@ type InfoSyncer struct {
 	modifyTime       time.Time
 	labelRuleManager LabelRuleManager
 	placementManager PlacementManager
+	tiflashPlacementManager TiFlashPlacementManager
 }
 
 // ServerInfo is server static information.

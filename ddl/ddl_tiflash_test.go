@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -58,11 +59,8 @@ type tiflashDDLTestSuite struct {
 	dom          *domain.Domain
 	pdHTTPServer *httptest.Server
 	pdMockAddr   string
-	pdEnabled    bool
-	startTime    time.Time
 	tiflash      mockTiFlash
 	cluster      *unistore.Cluster
-	tiflashDelay time.Duration
 }
 
 var _ = SerialSuites(&tiflashDDLTestSuite{})
@@ -94,13 +92,16 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	)
 
 	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
 	server, addr := s.setUpMockTiFlashHTTPServer()
 	s.tiflash = mockTiFlash{
 		Addr:         "",
 		StatusAddr:   addr,
 		StatusServer: server,
 		SyncStatus:   make(map[int]mockTiFlashTableInfo),
+		GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
+		PdEnabled: true,
+		TiflashDelay: 0,
+		StartTime: time.Now(),
 	}
 
 	c.Assert(err, IsNil)
@@ -118,8 +119,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick = 60
-
-	s.tiflashDelay = 0
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -174,7 +173,7 @@ func isRuleMatch(rule placement.Rule, startKey string, endKey string, count int,
 }
 
 func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) bool {
-	for _, r := range globalTiFlashPlacementRules {
+	for _, r := range s.tiflash.GlobalTiFlashPlacementRules {
 		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
 			return true
 		}
@@ -482,7 +481,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
-	s.pdEnabled = false
+	s.tiflash.PdEnabled = false
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
@@ -491,7 +490,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 	c.Assert(tb.Meta().TiFlashReplica, IsNil)
-	s.pdEnabled = true
+	s.tiflash.PdEnabled = true
 }
 
 type mockTiFlashTableInfo struct {
@@ -515,9 +514,11 @@ type mockTiFlash struct {
 	StatusAddr   string
 	StatusServer *httptest.Server
 	SyncStatus   map[int]mockTiFlashTableInfo
+	GlobalTiFlashPlacementRules map[string]placement.Rule
+	PdEnabled    bool
+	TiflashDelay time.Duration
+	StartTime    time.Time
 }
-
-var globalTiFlashPlacementRules = make(map[string]placement.Rule)
 
 func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, string) {
 	// mock TiFlash http server
@@ -554,35 +555,114 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 	return server, statusAddr
 }
 
+
+func (tiflash *mockTiFlash) handleSetPlacementRule(rule placement.Rule) error {
+	if !tiflash.PdEnabled {
+		fmt.Printf("pd server is manually disabled, just quit\n")
+		return errors.New("pd server is manually disabled, just quit")
+	}
+
+	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
+	// Pd shall schedule TiFlash, we can mock here
+	tid := 0
+	_, err := fmt.Sscanf(rule.ID, "table-%d-r", &tid)
+	if err != nil {
+		return errors.New("Can't parse rule")
+	}
+	// Set up mock tiflash replica
+	// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
+	f := func() {
+		if z, ok := tiflash.SyncStatus[tid]; ok {
+			z.Regions = []int{1}
+			tiflash.SyncStatus[tid] = z
+		} else {
+			tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
+				Regions: []int{1},
+				Accel:   false,
+			}
+		}
+	}
+	if tiflash.TiflashDelay > 0 {
+		go func() {
+			time.Sleep(tiflash.TiflashDelay)
+			log.Warn("TiFlash replica is available after delay", zap.Duration("duration", tiflash.TiflashDelay))
+			f()
+		}()
+	} else {
+		f()
+	}
+	return nil
+}
+
+func (tiflash *mockTiFlash) handleDeletePlacementRule(ruleID string) {
+	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
+}
+func (tiflash *mockTiFlash) handleGetGroupRules() ([]placement.Rule, error) {
+	var result = make([]placement.Rule, 0)
+	for _, item := range tiflash.GlobalTiFlashPlacementRules {
+		result = append(result, item)
+	}
+	return result, nil
+}
+func (tiflash *mockTiFlash) handlePostAccelerateSchedule(endKey string) error {
+	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
+
+	table, ok := tiflash.SyncStatus[int(tableID)]
+	if ok {
+		table.Accel = true
+		tiflash.SyncStatus[int(tableID)] = table
+	} else {
+		tiflash.SyncStatus[int(tableID)] = mockTiFlashTableInfo{
+			Regions: []int{},
+			Accel:   true,
+		}
+	}
+	return nil
+}
+func (tiflash *mockTiFlash) handleGetPDRegionRecordStats(_ int64) *helper.PDRegionStats {
+	return &helper.PDRegionStats{
+		Count:            1,
+		EmptyCount:       1,
+		StorageSize:      1,
+		StorageKeys:      1,
+		StoreLeaderCount: map[uint64]int{1: 1},
+		StorePeerCount:   map[uint64]int{1: 1},
+	}
+}
+
+func (tiflash *mockTiFlash) handleGetStoresStat() *helper.StoresStat {
+	return &helper.StoresStat{
+		Count: 1,
+		Stores: []helper.StoreStat{
+			{
+				Store: helper.StoreBaseStat{
+					ID:             1,
+					Address:        "127.0.0.1:3930",
+					State:          0,
+					StateName:      "Up",
+					Version:        "4.0.0-alpha",
+					StatusAddress:  tiflash.StatusAddr,
+					GitHash:        "mock-tikv-githash",
+					StartTimestamp: tiflash.StartTime.Unix(),
+					Labels: []helper.StoreLabel{{
+						Key:   "engine",
+						Value: "tiflash",
+					}},
+				},
+			},
+		},
+	}
+}
+
 func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
 	router := mux.NewRouter()
 	server := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
-	s.pdEnabled = true
+	s.tiflash.PdEnabled = true
 	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
-			Count: 1,
-			Stores: []helper.StoreStat{
-				{
-					Store: helper.StoreBaseStat{
-						ID:             1,
-						Address:        "127.0.0.1:3930",
-						State:          0,
-						StateName:      "Up",
-						Version:        "4.0.0-alpha",
-						StatusAddress:  s.tiflash.StatusAddr,
-						GitHash:        "mock-tikv-githash",
-						StartTimestamp: s.startTime.Unix(),
-						Labels: []helper.StoreLabel{{
-							Key:   "engine",
-							Value: "tiflash",
-						}},
-					},
-				},
-			},
-		}, nil
+		return s.tiflash.handleGetStoresStat(), nil
 	}))
 	// mock PD API
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
@@ -591,26 +671,22 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
 			GitHash:        "mock-pd-githash",
-			StartTimestamp: s.startTime.Unix(),
+			StartTimestamp: s.tiflash.StartTime.Unix(),
 		}, nil
 	}))
 	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
-		// Query placement rule
-		var result = make([]placement.Rule, 0)
-		for _, item := range globalTiFlashPlacementRules {
-			result = append(result, item)
+		// GetGroupRules
+		result, err := s.tiflash.handleGetGroupRules()
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+		}else{
+			w.WriteHeader(http.StatusOK)
+			m, _ := json.Marshal(result)
+			w.Write(m)
 		}
-		w.WriteHeader(http.StatusOK)
-		m, _ := json.Marshal(result)
-		w.Write(m)
 	}) //.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
-		// Set placement rule
-		if !s.pdEnabled {
-			fmt.Printf("pd server is manually disabled, just quit\n")
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+		// SetPlacementRule
 		buf := new(bytes.Buffer)
 		_, err := buf.ReadFrom(req.Body)
 		if err != nil {
@@ -623,36 +699,11 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		globalTiFlashPlacementRules[rule.ID] = rule
-		w.WriteHeader(http.StatusOK)
-		// Pd shall schedule TiFlash, we can mock here
-		tid := 0
-		_, err = fmt.Sscanf(rule.ID, "table-%d-r", &tid)
+		err = s.tiflash.handleSetPlacementRule(rule)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		// Set up mock tiflash replica
-		// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
-		f := func() {
-			if z, ok := s.tiflash.SyncStatus[tid]; ok {
-				z.Regions = []int{1}
-				s.tiflash.SyncStatus[tid] = z
-			} else {
-				s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
-					Regions: []int{1},
-					Accel:   false,
-				}
-			}
-		}
-		if s.tiflashDelay > 0 {
-			go func() {
-				time.Sleep(s.tiflashDelay)
-				log.Warn("TiFlash replica is available after delay", zap.Duration("duration", s.tiflashDelay))
-				f()
-			}()
 		} else {
-			f()
+			w.WriteHeader(http.StatusOK)
 		}
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
@@ -660,24 +711,12 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		params := mux.Vars(req)
 		ruleID := params["ruleid"]
 		ruleID = strings.Trim(ruleID, "/")
-		delete(globalTiFlashPlacementRules, ruleID)
+		s.tiflash.handleDeletePlacementRule(ruleID)
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodDelete)
 	var mockConfig = func() (map[string]interface{}, error) {
 		configuration := map[string]interface{}{
 			"key1": "value1",
-			"key2": map[string]string{
-				"nest1": "n-value1",
-				"nest2": "n-value2",
-			},
-			"key3": map[string]interface{}{
-				"nest1": "n-value1",
-				"nest2": "n-value2",
-				"key4": map[string]string{
-					"nest3": "n-value4",
-					"nest4": "n-value5",
-				},
-			},
 		}
 		return configuration, nil
 	}
@@ -687,14 +726,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
 	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
-		return &helper.PDRegionStats{
-			Count:            1,
-			EmptyCount:       1,
-			StorageSize:      1,
-			StorageKeys:      1,
-			StoreLeaderCount: map[uint64]int{1: 1},
-			StorePeerCount:   map[uint64]int{1: 1},
-		}, nil
+		return s.tiflash.handleGetPDRegionRecordStats(0), nil
 	}))
 
 	router.HandleFunc("/pd/api/v1/regions/accelerate-schedule", func(w http.ResponseWriter, req *http.Request) {
@@ -717,19 +749,11 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
-		table, ok := s.tiflash.SyncStatus[int(tableID)]
-		if ok {
-			table.Accel = true
-			s.tiflash.SyncStatus[int(tableID)] = table
-		} else {
-			s.tiflash.SyncStatus[int(tableID)] = mockTiFlashTableInfo{
-				Regions: []int{},
-				Accel:   true,
-			}
+		if e := s.tiflash.handlePostAccelerateSchedule(endKey); e != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodPost)
 	return server, mockAddr
