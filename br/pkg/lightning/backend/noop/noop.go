@@ -174,7 +174,7 @@ func (r noopRow) Size() uint64 {
 func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows, *verification.KVChecksum) {
 }
 
-// trueStatus define a writer that do nothing.
+// Writer define a local writer that do nothing.
 type Writer struct{}
 
 func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
