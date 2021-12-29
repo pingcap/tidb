@@ -455,14 +455,14 @@ type scanRegionBackoffer struct {
 
 func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: 3,
+		attempt: 30,
 	}
 }
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 500ms * 3 could be enough for splitting remain regions in the hole.
+		// 500ms * 30 could be enough for splitting remain regions in the hole.
 		b.attempt--
 		return 500 * time.Millisecond
 	}

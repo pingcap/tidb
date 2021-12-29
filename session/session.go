@@ -313,8 +313,7 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				bindSQL := planner.GetBindSQL4PlanCache(s, preparedAst.Stmt)
-				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
+				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
 			}
 		}
 	}
@@ -412,6 +411,18 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 		}
 		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
+}
+
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+	if s.statsCollector == nil {
+		return
+	}
+	t := time.Now()
+	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	for _, col := range predicateColumns {
+		colMap[col] = t
+	}
+	s.statsCollector.UpdateColStatsUsage(colMap)
 }
 
 // StoreIndexUsage stores index usage information in idxUsageCollector.

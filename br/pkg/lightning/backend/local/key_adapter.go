@@ -23,14 +23,12 @@ import (
 
 // KeyAdapter is used to encode and decode keys.
 type KeyAdapter interface {
-	// Encode encodes key with rowID and offset. It guarantees the encoded key is in ascending order for comparison.
-	// `buf` is used to buffer data to avoid the cost of make slice.
-	// Implementations of Encode must not reuse the key for encoding.
-	Encode(buf []byte, key []byte, rowID int64, offset int64) []byte
+	// Encode encodes the key with its corresponding rowID. It appends the encoded key to dst and returns the
+	// resulting slice. The encoded key is guaranteed to be in ascending order for comparison.
+	Encode(dst []byte, key []byte, rowID int64) []byte
 
-	// Decode decodes the original key. `buf` is used to buffer data to avoid the cost of make slice.
-	// Implementations of Decode must not reuse the data for decoding.
-	Decode(buf []byte, data []byte) (key []byte, rowID int64, offset int64, err error)
+	// Decode decodes the original key to dst. It appends the encoded key to dst and returns the resulting slice.
+	Decode(dst []byte, data []byte) ([]byte, error)
 
 	// EncodedLen returns the encoded key length.
 	EncodedLen(key []byte) int
@@ -48,13 +46,12 @@ func reallocBytes(b []byte, n int) []byte {
 
 type noopKeyAdapter struct{}
 
-func (noopKeyAdapter) Encode(buf []byte, key []byte, _ int64, _ int64) []byte {
-	return append(buf[:0], key...)
+func (noopKeyAdapter) Encode(dst []byte, key []byte, _ int64) []byte {
+	return append(dst, key...)
 }
 
-func (noopKeyAdapter) Decode(buf []byte, data []byte) (key []byte, rowID int64, offset int64, err error) {
-	key = append(buf[:0], data...)
-	return
+func (noopKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+	return append(dst, data...), nil
 }
 
 func (noopKeyAdapter) EncodedLen(key []byte) int {
@@ -63,33 +60,38 @@ func (noopKeyAdapter) EncodedLen(key []byte) int {
 
 var _ KeyAdapter = noopKeyAdapter{}
 
-type duplicateKeyAdapter struct{}
+type dupDetectKeyAdapter struct{}
 
-func (duplicateKeyAdapter) Encode(buf []byte, key []byte, rowID int64, offset int64) []byte {
-	buf = codec.EncodeBytes(buf[:0], key)
-	buf = reallocBytes(buf, 16)
-	n := len(buf)
-	buf = buf[:n+16]
-	binary.BigEndian.PutUint64(buf[n:n+8], uint64(rowID))
-	binary.BigEndian.PutUint64(buf[n+8:], uint64(offset))
-	return buf
+func (dupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID int64) []byte {
+	dst = codec.EncodeBytes(dst, key)
+	dst = reallocBytes(dst, 8)
+	n := len(dst)
+	dst = dst[:n+8]
+	binary.BigEndian.PutUint64(dst[n:n+8], codec.EncodeIntToCmpUint(rowID))
+	return dst
 }
 
-func (duplicateKeyAdapter) Decode(buf []byte, data []byte) (key []byte, rowID int64, offset int64, err error) {
-	if len(data) < 16 {
-		return nil, 0, 0, errors.New("insufficient bytes to decode value")
+func (dupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+	if len(data) < 8 {
+		return nil, errors.New("insufficient bytes to decode value")
 	}
-	_, key, err = codec.DecodeBytes(data[:len(data)-16], buf)
+	_, key, err := codec.DecodeBytes(data[:len(data)-8], dst[len(dst):cap(dst)])
 	if err != nil {
-		return
+		return nil, err
 	}
-	rowID = int64(binary.BigEndian.Uint64(data[len(data)-16 : len(data)-8]))
-	offset = int64(binary.BigEndian.Uint64(data[len(data)-8:]))
-	return
+	if len(dst) == 0 {
+		return key, nil
+	}
+	if len(dst)+len(key) <= cap(dst) {
+		dst = dst[:len(dst)+len(key)]
+		return dst, nil
+	}
+	// New slice is allocated, append key to dst manually.
+	return append(dst, key...), nil
 }
 
-func (duplicateKeyAdapter) EncodedLen(key []byte) int {
-	return codec.EncodedBytesLength(len(key)) + 16
+func (dupDetectKeyAdapter) EncodedLen(key []byte) int {
+	return codec.EncodedBytesLength(len(key)) + 8
 }
 
-var _ KeyAdapter = duplicateKeyAdapter{}
+var _ KeyAdapter = dupDetectKeyAdapter{}

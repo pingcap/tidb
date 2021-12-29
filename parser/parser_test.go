@@ -2338,6 +2338,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) regions="us,3";`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
 		{`create table t (c int) followers="us,3";`, false, ""},
 		{`create table t (c int) followers=3;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) followers=0;`, false, ""},
 		{`create table t (c int) voters="us,3";`, false, ""},
 		{`create table t (c int) voters=3;`, true, "CREATE TABLE `t` (`c` INT) VOTERS = 3"},
 		{`create table t (c int) learners="us,3";`, false, ""},
@@ -2353,6 +2354,7 @@ func TestDDL(t *testing.T) {
 		{`create table t (c int) /*T![placement] regions="us,3" */;`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
 		{`create table t (c int) /*T![placement] followers=3 */;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) /*T![placement] followers=0 */;`, false, ""},
 		{`create table t (c int) /*T![placement] voters="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us' REGIONS = 'us,3'"},
 		{"create table t (c int) /*T![placement] placement policy=`x` */;", true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `x`"},
@@ -2361,6 +2363,7 @@ func TestDDL(t *testing.T) {
 		{`alter table t primary_region="us";`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
 		{`alter table t regions="us,3";`, true, "ALTER TABLE `t` REGIONS = 'us,3'"},
 		{`alter table t followers=3;`, true, "ALTER TABLE `t` FOLLOWERS = 3"},
+		{`alter table t followers=0;`, false, ""},
 		{`alter table t voters=3;`, true, "ALTER TABLE `t` VOTERS = 3"},
 		{`alter table t learners=3;`, true, "ALTER TABLE `t` LEARNERS = 3"},
 		{`alter table t schedule="even";`, true, "ALTER TABLE `t` SCHEDULE = 'even'"},
@@ -2375,6 +2378,7 @@ func TestDDL(t *testing.T) {
 		{`create database t primary_region="us";`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`create database t regions="us,3";`, true, "CREATE DATABASE `t` REGIONS = 'us,3'"},
 		{`create database t followers=3;`, true, "CREATE DATABASE `t` FOLLOWERS = 3"},
+		{`create database t followers=0;`, false, ""},
 		{`create database t voters=3;`, true, "CREATE DATABASE `t` VOTERS = 3"},
 		{`create database t learners=3;`, true, "CREATE DATABASE `t` LEARNERS = 3"},
 		{`create database t schedule="even";`, true, "CREATE DATABASE `t` SCHEDULE = 'even'"},
@@ -2390,6 +2394,7 @@ func TestDDL(t *testing.T) {
 		{`alter database t primary_region="us";`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`alter database t regions="us,3";`, true, "ALTER DATABASE `t` REGIONS = 'us,3'"},
 		{`alter database t followers=3;`, true, "ALTER DATABASE `t` FOLLOWERS = 3"},
+		{`alter database t followers=0;`, false, ""},
 		{`alter database t voters=3;`, true, "ALTER DATABASE `t` VOTERS = 3"},
 		{`alter database t learners=3;`, true, "ALTER DATABASE `t` LEARNERS = 3"},
 		{`alter database t schedule="even";`, true, "ALTER DATABASE `t` SCHEDULE = 'even'"},
@@ -3382,6 +3387,7 @@ func TestDDL(t *testing.T) {
 		{"create placement policy x primary_region='us'", true, "CREATE PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"create placement policy x region='us, 3'", false, ""},
 		{"create placement policy x followers=3", true, "CREATE PLACEMENT POLICY `x` FOLLOWERS = 3"},
+		{"create placement policy x followers=0", false, ""},
 		{"create placement policy x voters=3", true, "CREATE PLACEMENT POLICY `x` VOTERS = 3"},
 		{"create placement policy x learners=3", true, "CREATE PLACEMENT POLICY `x` LEARNERS = 3"},
 		{"create placement policy x schedule='even'", true, "CREATE PLACEMENT POLICY `x` SCHEDULE = 'even'"},
@@ -6407,18 +6413,30 @@ func TestGBKEncoding(t *testing.T) {
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
 
-	utf8SQL := "select '芢' from `玚`;"
-	sql, err = encoder.String(utf8SQL)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(sql, gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
-	require.NoError(t, err)
-
-	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
 }
 
 type gbkEncodingChecker struct {
