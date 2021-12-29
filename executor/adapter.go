@@ -481,22 +481,48 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
-	if toCheck.Schema().Len() == 0 {
+	if isNoResultExecutor(toCheck) {
 		handled = !isExplainAnalyze
 		if isPessimistic {
 			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
 		r, err := a.handleNoDelayExecutor(ctx, toCheck)
 		return handled, r, err
-	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
-		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
-		// the Projection has two expressions and two columns in the schema, but we should
-		// not return the result of the two expressions.
-		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, err
 	}
 
 	return false, nil, nil
+}
+
+func isNoResultExecutor(e Executor) bool {
+	if e.Schema().Len() == 0 {
+		return true
+	}
+	if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
+		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+		// the Projection has two expressions and two columns in the schema, but we should
+		// not return the result of the two expressions.
+		return true
+	}
+	return false
+}
+
+func isNoResultPlan(p plannercore.Plan) bool {
+	fmt.Println("in is no result plan ===", p)
+
+	if p.Schema().Len() == 0 {
+		return true
+	}
+	switch raw := p.(type) {
+	case *plannercore.LogicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	case *plannercore.PhysicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	}
+	return false
 }
 
 // getMaxExecutionTime get the max execution timeout value.
