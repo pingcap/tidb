@@ -20,7 +20,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
@@ -317,7 +317,7 @@ func Test_cpuRecords_topN(t *testing.T) {
 }
 
 func Test_normalizedSQLMap_register(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(2)
+	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedSQLMap()
 	m.register([]byte("SQL-1"), "SQL-1", true)
 	m.register([]byte("SQL-2"), "SQL-2", false)
@@ -338,7 +338,7 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 }
 
 func Test_normalizedSQLMap_take(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(999)
+	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m1 := newNormalizedSQLMap()
 	m1.register([]byte("SQL-1"), "SQL-1", true)
 	m1.register([]byte("SQL-2"), "SQL-2", false)
@@ -363,7 +363,7 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 }
 
 func Test_normalizedSQLMap_toProto(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(999)
+	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m := newNormalizedSQLMap()
 	m.register([]byte("SQL-1"), "SQL-1", true)
 	m.register([]byte("SQL-2"), "SQL-2", false)
@@ -392,7 +392,7 @@ func Test_normalizedSQLMap_toProto(t *testing.T) {
 }
 
 func Test_normalizedPlanMap_register(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(2)
+	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedPlanMap()
 	m.register([]byte("PLAN-1"), "PLAN-1")
 	m.register([]byte("PLAN-2"), "PLAN-2")
@@ -409,7 +409,7 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 }
 
 func Test_normalizedPlanMap_take(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(999)
+	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m1 := newNormalizedPlanMap()
 	m1.register([]byte("PLAN-1"), "PLAN-1")
 	m1.register([]byte("PLAN-2"), "PLAN-2")
@@ -434,7 +434,7 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 }
 
 func Test_normalizedPlanMap_toProto(t *testing.T) {
-	variable.TopSQLVariable.MaxCollect.Store(999)
+	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m := newNormalizedPlanMap()
 	m.register([]byte("PLAN-1"), "PLAN-1")
 	m.register([]byte("PLAN-2"), "PLAN-2")
