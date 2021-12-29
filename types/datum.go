@@ -964,7 +964,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindBinaryLiteral:
 		s = d.GetBinaryLiteral().ToString()
 	case KindMysqlBit:
-		// https://github.com/pingcap/tidb/issues/25037.
+		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
 		val, err := d.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
