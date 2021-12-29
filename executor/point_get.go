@@ -548,6 +548,15 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 			chk.AppendNull(i)
 			continue
 		}
+		cutPos := colID2CutPos[col.ID]
+		if len(cutVals[cutPos]) != 0 {
+			_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
 		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
 		if err != nil {
 			return err
@@ -555,20 +564,13 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		if ok {
 			continue
 		}
-		cutPos := colID2CutPos[col.ID]
-		if len(cutVals[cutPos]) == 0 {
-			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
-			if err1 != nil {
-				return err1
-			}
-			chk.AppendDatum(i, &d)
-			continue
+
+		colInfo := getColInfoByID(tblInfo, col.ID)
+		d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
+		if err1 != nil {
+			return err1
 		}
-		_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
-		if err != nil {
-			return err
-		}
+		chk.AppendDatum(i, &d)
 	}
 	return nil
 }
@@ -582,9 +584,6 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 	if col.ID == model.ExtraHandleID {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
-	}
-	if types.NeedRestoredData(col.RetType) {
-		return false, nil
 	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {

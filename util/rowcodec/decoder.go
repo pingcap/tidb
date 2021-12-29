@@ -421,9 +421,6 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	if handle == nil {
 		return false
 	}
-	if types.NeedRestoredData(col.Ft) {
-		return false
-	}
 	if col.IsPKHandle || col.ID == model.ExtraHandleID {
 		handleData := cacheBytes
 		if mysql.HasUnsignedFlag(col.Ft.Flag) {
