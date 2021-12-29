@@ -774,6 +774,12 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		}
 		close(resultCh)
 	}()
+	failpoint.Inject("testIndexHashOrderedJoinErr", func() {
+		err = errors.New("inject error with index hash join in order")
+	})
+	if err != nil {
+		return err
+	}
 	for i, numChunks := 0, task.innerResult.NumChunks(); i < numChunks; i++ {
 		for j, chk := 0, task.innerResult.GetChunk(i); j < chk.NumRows(); j++ {
 			row := chk.GetRow(j)
