@@ -89,8 +89,8 @@ func (s *testPrepareSerialSuite) TestRandomFlushPlanCache(c *C) {
 	tk2.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
 	tk2.MustExec("prepare stmt2 from 'SELECT * from t1';")
 	tk2.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
-	tk2.MustExec("prepare stmt4 from 'SELECT * from t1';")
-	tk2.MustExec("prepare stmt5 from 'SELECT * from t1 where id = 1';")
+	tk2.MustExec("prepare stmt4 from 'SELECT * from t2';")
+	tk2.MustExec("prepare stmt5 from 'SELECT * from t2 where id = 1';")
 
 	prepareNum := 5
 	execStmts := make([]string, 0, prepareNum)
