@@ -266,7 +266,7 @@ func Test_collecting_appendOthers(t *testing.T) {
 	assert.Equal(t, uint64(2), r.tsItems[1].stmtStats.ExecCount)
 }
 
-func Test_collecting_topN(t *testing.T) {
+func Test_collecting_compactToTopNAndOthers(t *testing.T) {
 	c := newCollecting()
 	c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
 	c.getOrCreateRecord([]byte("SQL-2"), []byte("PLAN-2")).appendCPUTime(1, 2)
