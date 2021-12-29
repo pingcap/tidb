@@ -55,8 +55,14 @@ import (
 //
 // normalizePlanMap: { planDigest => normalizedPlan | planDigest => normalizedPlan | ... }
 
-// keyOthers is the key to store the aggregation of all records that is out of Top N.
-const keyOthers = ""
+const (
+	// keyOthers is the key to store the aggregation of all records that is out of Top N.
+	keyOthers = ""
+
+	// maxTsItemsCapacity is a protection to avoid excessive memory usage caused by
+	// incorrect configuration. The corresponding value defaults to 60 (60 s/min).
+	maxTsItemsCapacity = 1000
+)
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
 type tsItem struct {
@@ -144,6 +150,9 @@ type record struct {
 
 func newRecord(sqlDigest, planDigest []byte) *record {
 	listCap := variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1
+	if listCap > maxTsItemsCapacity {
+		listCap = maxTsItemsCapacity
+	}
 	return &record{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
@@ -488,8 +497,8 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
-// topN returns the largest N records, other records will be packed and appended to the end.
-func (c *collecting) topN(n int) records {
+// compactToTopNAndOthers returns the largest N records, other records will be packed and appended to the end.
+func (c *collecting) compactToTopNAndOthers(n int) records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
 	rs := make(records, 0, len(c.records))

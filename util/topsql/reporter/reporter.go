@@ -169,7 +169,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 		case <-collectTicker.C:
 			tsr.takeDataFromCollectChanBuffer()
 		case <-reportTicker.C:
-			tsr.doCollectStmtStatsMaps()
+			tsr.processStmtStatsData()
 			tsr.takeDataAndSendToReportChan()
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
@@ -206,10 +206,10 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 	tsr.collecting.appendOthersCPUTime(timestamp, totalEvictedCPUTime)
 }
 
-// doCollectStmtStatsMaps collects tsr.stmtStatsBuffer into tsr.collecting.
+// processStmtStatsData collects tsr.stmtStatsBuffer into tsr.collecting.
 // All the evicted items will be summary into the others.
-func (tsr *RemoteTopSQLReporter) doCollectStmtStatsMaps() {
-	defer util.Recover("top-sql", "doCollectStmtRecords", nil, false)
+func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
+	defer util.Recover("top-sql", "processStmtStatsData", nil, false)
 
 	for timestamp, data := range tsr.stmtStatsBuffer {
 		for digest, item := range data {
@@ -267,7 +267,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			// are finished.
 			time.Sleep(time.Millisecond * 100)
 			// Get top N records from records.
-			rs := data.collected.topN(int(variable.TopSQLVariable.MaxStatementCount.Load()))
+			rs := data.collected.compactToTopNAndOthers(int(variable.TopSQLVariable.MaxStatementCount.Load()))
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),
