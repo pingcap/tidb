@@ -177,7 +177,7 @@ func DefaultConfig() *Config {
 		SessionParams:       make(map[string]interface{}),
 		OutputFileTemplate:  DefaultOutputFileTemplate,
 		PosAfterConnect:     false,
-		CollationCompatible: DefaultCollationCompatible,
+		CollationCompatible: LooseCollationCompatible,
 	}
 }
 
@@ -558,8 +558,8 @@ const (
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
 
-	DefaultCollationCompatible = "loose"
-	StrickCollationCompatible  = "strick"
+	LooseCollationCompatible  = "loose"
+	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"
 )

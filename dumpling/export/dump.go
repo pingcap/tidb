@@ -154,7 +154,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
-	if d.conf.CollationCompatible == StrickCollationCompatible {
+	if d.conf.CollationCompatible == StrictCollationCompatible {
 		//init charset and default collation map
 		d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
 		if err != nil {
@@ -349,12 +349,11 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if d.conf.CollationCompatible == StrickCollationCompatible {
-				// adjust db collation
-				createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
-				if err != nil {
-					return errors.Trace(err)
-				}
+
+			// adjust db collation
+			createDatabaseSQL, err = adjustDatabaseCollation(tctx, d.conf.CollationCompatible, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
@@ -380,14 +379,14 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 						return tctx.Err()
 					}
 				} else {
-					if d.conf.CollationCompatible == StrickCollationCompatible {
-						// adjust table collation
-						newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						meta.(*tableMeta).showCreateTable = newCreateSQL
+
+					// adjust table collation
+					newCreateSQL, err := adjustTableCollation(tctx, d.conf.CollationCompatible, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
+					if err != nil {
+						return errors.Trace(err)
 					}
+					meta.(*tableMeta).showCreateTable = newCreateSQL
+
 					task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
@@ -408,7 +407,10 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 }
 
 // adjustDatabaseCollation adjusts db collation and return new create sql and collation
-func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+func adjustDatabaseCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	if collationCompatible != StrictCollationCompatible {
+		return originSQL, nil
+	}
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		tctx.L().Warn("parse create database error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
@@ -450,7 +452,10 @@ func adjustDatabaseCollation(tctx *tcontext.Context, parser *parser.Parser, orig
 }
 
 // adjustTableCollation adjusts table collation
-func adjustTableCollation(tctx *tcontext.Context, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+func adjustTableCollation(tctx *tcontext.Context, collationCompatible string, parser *parser.Parser, originSQL string, charsetAndDefaultCollationMap map[string]string) (string, error) {
+	if collationCompatible != StrictCollationCompatible {
+		return originSQL, nil
+	}
 	stmt, err := parser.ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		tctx.L().Warn("parse create table error, maybe tidb parser doesn't support it", zap.String("originSQL", originSQL), log.ShortError(err))
