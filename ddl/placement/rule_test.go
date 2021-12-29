@@ -105,7 +105,6 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	tests = append(tests, TestCase{
 		name:     "normal object constraints",
 		input:    `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
-		replicas: 3,
 		output: []*Rule{
 			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("zone", In, "sh"),
@@ -118,39 +117,15 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal object constraints, with extra count",
+		name:     "normal object constraints, with count",
 		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		replicas: 4,
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect()),
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name:  "normal object constraints, without count",
-		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
-			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-			)),
-		},
+		err: ErrInvalidConstraintsRelicas,
 	})
 
 	tests = append(tests, TestCase{
 		name:     "zero count in object constraints",
 		input:    `{"+zone=sh,-zone=bj":0, "+zone=sh": 1}`,
-		replicas: 3,
 		err:      ErrInvalidConstraintsMapcnt,
 	})
 
@@ -185,7 +160,6 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	tests = append(tests, TestCase{
 		name:     "invalid map constraints",
 		input:    `{"nesh,-zone=bj":1, "+zone=sh": 4}`,
-		replicas: 6,
 		err:      ErrInvalidConstraintFormat,
 	})
 

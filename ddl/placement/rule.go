@@ -96,6 +96,10 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
 	if err2 == nil {
+		if replicas != 0 {
+			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
+		}
+
 		ruleCnt := 0
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
@@ -109,10 +113,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 
 		if replicas == 0 {
 			replicas = uint64(ruleCnt)
-		}
-
-		if int(replicas) < ruleCnt {
-			return rules, fmt.Errorf("%w: should be larger or equal to the number of total replicas, but REPLICAS=%d < total=%d", ErrInvalidConstraintsRelicas, replicas, ruleCnt)
 		}
 
 		for labels, cnt := range constraints2 {
