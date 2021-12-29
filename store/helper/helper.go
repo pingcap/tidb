@@ -646,6 +646,11 @@ func (xs byTableStartKey) Less(i, j int) bool {
 	return xs[i].getStartKey() < xs[j].getStartKey()
 }
 
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
+	return newTableWithKeyRange(db, table)
+}
+
 func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
 	sk, ek := tablecodec.GetTableHandleKeyRange(table.ID)
 	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
@@ -660,6 +665,11 @@ func newTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWit
 		startKey,
 		endKey,
 	}
+}
+
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
+	return newIndexWithKeyRange(db, table, index)
 }
 
 func newIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
@@ -694,7 +704,7 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 	}
 }
 
-// FilterMemDBs filter memory databases in the input schemas.
+// FilterMemDBs filters memory databases in the input schemas.
 func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
 		if util.IsMemDB(dbInfo.Name.L) {
@@ -741,7 +751,7 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 	return tables
 }
 
-// ParseRegionsTableInfos parse the tables or indices in regions according to key range.
+// ParseRegionsTableInfos parses the tables or indices in regions according to key range.
 func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
@@ -772,6 +782,11 @@ OutLoop:
 
 func bytesKeyToEncodeHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(codec.EncodeBytes(nil, key)))
+}
+
+// BytesKeyToHex converts bytes key to hex key, it is exported only for test.
+func BytesKeyToHex(key []byte) string {
+	return bytesKeyToHex(key)
 }
 
 func bytesKeyToHex(key []byte) string {
@@ -924,14 +939,20 @@ type PDRegionStats struct {
 }
 
 // GetPDRegionStats get the RegionStats by tableID.
-func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexStats bool) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	var startKey, endKey []byte
+	if noIndexStats {
+		startKey = tablecodec.GenTableRecordPrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	} else {
+		startKey = tablecodec.EncodeTablePrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	}
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
