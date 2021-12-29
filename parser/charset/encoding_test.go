@@ -56,6 +56,8 @@ func TestEncoding(t *testing.T) {
 		{"仆仂仗仞仭仟价伉佚估", "浠嗕粋浠椾粸浠?粺浠蜂級浣氫及", false},
 		{"佝佗佇佶侈侏侘佻佩佰侑佯", "浣濅綏浣囦蕉渚堜緩渚樹交浣╀桨渚戜蒋", true},
 		{"\x80", "?", false},
+		{"\x80a", "?", false},
+		{"\x80aa", "?a", false},
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
@@ -76,6 +78,8 @@ func TestEncoding(t *testing.T) {
 		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
 		{"🀁", "?", false},
 		{"valid_string_🀁", "valid_string_?", false},
+		{"€", "?", false},
+		{"€a", "?a", false},
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)

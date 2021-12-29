@@ -16,6 +16,7 @@ package charset
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -119,11 +120,6 @@ func (c customGBK) NewDecoder() *encoding.Decoder {
 	}
 }
 
-// NewEncoder returns simplifiedchinese.GBK.NewEncoder().
-func (c customGBK) NewEncoder() *encoding.Encoder {
-	return simplifiedchinese.GBK.NewEncoder()
-}
-
 type customGBKDecoder struct {
 	gbkDecoder *encoding.Decoder
 }
@@ -135,7 +131,7 @@ func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int
 		return 0, 0, nil
 	}
 	if src[0] == 0x80 {
-		return 0, 0, errInvalidCharacterString
+		return utf8.EncodeRune(dst[:], utf8.RuneError), 1, nil
 	}
 	return c.gbkDecoder.Transform(dst, src, atEOF)
 }
@@ -143,4 +139,33 @@ func (c customGBKDecoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int
 // Reset is same as simplifiedchinese.GBK.Reset().
 func (c customGBKDecoder) Reset() {
 	c.gbkDecoder.Reset()
+}
+
+type customGBKEncoder struct {
+	gbkEncoder *encoding.Encoder
+}
+
+// NewEncoder returns simplifiedchinese.gbk.
+func (c customGBK) NewEncoder() *encoding.Encoder {
+	return &encoding.Encoder{
+		Transformer: customGBKEncoder{
+			gbkEncoder: simplifiedchinese.GBK.NewEncoder(),
+		},
+	}
+}
+
+// Transform special treatment for `€`,
+// see https://github.com/pingcap/tidb/issues/30581 get details.
+func (c customGBKEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	if len(src) == utf8.RuneLen('€') {
+		if r,_ := utf8.DecodeRune(src[:]); r == '€' {
+			return 0, 0, errInvalidCharacterString
+		}
+	}
+	return c.gbkEncoder.Transform(dst, src, atEOF)
+}
+
+// Reset is same as simplifiedchinese.gbk.
+func (c customGBKEncoder) Reset() {
+	c.gbkEncoder.Reset()
 }
