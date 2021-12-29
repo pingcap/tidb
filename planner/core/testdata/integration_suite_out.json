@@ -2139,6 +2139,125 @@
         ],
         "Res": [
           "1"
+	]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexMergeWithCorrelatedColumns",
+    "Cases": [
+      {
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+        "Plan": [
+          "Sort 10000.00 root  test.t2.c1",
+          "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
+          "  └─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+          "      └─Selection 0.01 root  substring(cast(test.t1.c3, var_string(20)), 10)",
+          "        └─IndexMerge 0.01 root  ",
+          "          ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
+          "          │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+          "          ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+          "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+          "          └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
+          "            └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1",
+          "2 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;",
+        "Plan": [
+          "Sort 10000.00 root  test.t2.c1",
+          "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
+          "  └─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+          "      └─IndexMerge 0.01 root  ",
+          "        ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
+          "        │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+          "        ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+          "        │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3))), reverse(cast(test.t1.c3, var_string(20)))",
+          "          └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "2 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;",
+        "Plan": [
+          "Sort 10000.00 root  test.t2.c1",
+          "└─Projection 10000.00 root  test.t2.c1, test.t2.c2, test.t2.c3",
+          "  └─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t2.c1), NULL, 0)))",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
+          "      └─Selection 3.03 root  substring(cast(test.t1.c3, var_string(20)), 10)",
+          "        └─IndexMerge 3.78 root  ",
+          "          ├─Selection(Build) 3.33 cop[tikv]  eq(test.t1.c1, test.t2.c3)",
+          "          │ └─TableRangeScan 3333.33 cop[tikv] table:t1 range:[10,+inf], keep order:false, stats:pseudo",
+          "          ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+          "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+          "          └─Selection(Probe) 3.78 cop[tikv]  or(and(ge(test.t1.c1, 10), eq(test.t1.c1, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
+          "            └─TableRowIDScan 3338.67 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1 1 1",
+          "2 2 2"
+        ]
+      },
+      {
+        "SQL": "select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;",
+        "Plan": [
+          "Projection 10000.00 root  test.tt1.c_int",
+          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(lt(test.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(test.tt1.c_decimal), NULL, 0)))",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:true, stats:pseudo",
+          "  └─StreamAgg(Probe) 1.00 root  funcs:min(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11",
+          "    └─Projection 0.00 root  test.tt2.c_decimal, cast(isnull(test.tt2.c_decimal), decimal(20,0) BINARY)->Column#15",
+          "      └─IndexMerge 0.00 root  ",
+          "        ├─Selection(Build) 0.00 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
+          "        │ └─IndexRangeScan 1.00 cop[tikv] table:tt2, index:c_decimal(c_decimal) range:[9.060000,9.060000], keep order:false, stats:pseudo",
+          "        ├─Selection(Build) 3.32 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
+          "        │ └─IndexRangeScan 3323.33 cop[tikv] table:tt2, index:c_str(c_str) range:[-inf,\"interesting shtern\"], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.tt1.c_int, test.tt2.c_int), and(gt(test.tt1.c_datetime, test.tt2.c_datetime), eq(test.tt2.c_decimal, 9.060))), and(le(test.tt2.c_str, \"interesting shtern\"), eq(test.tt1.c_int, test.tt2.c_int)))",
+          "          └─TableRowIDScan 3.32 cop[tikv] table:tt2 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "7",
+          "8",
+          "10"
+        ]
+      },
+      {
+        "SQL": "select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;",
+        "Plan": [
+          "Projection 10000.00 root  test.tt1.c_int",
+          "└─Apply 10000.00 root  CARTESIAN inner join, other cond:or(and(gt(test.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(test.tt1.c_decimal), NULL, 0)))",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:true, stats:pseudo",
+          "  └─StreamAgg(Probe) 1.00 root  funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11",
+          "    └─Projection 0.00 root  test.tt2.c_decimal, cast(isnull(test.tt2.c_decimal), decimal(20,0) BINARY)->Column#15",
+          "      └─IndexMerge 0.00 root  ",
+          "        ├─Selection(Build) 1.00 cop[tikv]  lt(7, test.tt1.c_decimal)",
+          "        │ └─TableRangeScan 1.00 cop[tikv] table:tt2 range:[7,7], keep order:false, stats:pseudo",
+          "        ├─Selection(Build) 3.33 cop[tikv]  eq(test.tt1.c_int, test.tt2.c_int)",
+          "        │ └─IndexRangeScan 3333.33 cop[tikv] table:tt2, index:c_str(c_str) range:[\"zzzzzzzzzzzzzzzzzzz\",+inf], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.tt2.c_int, 7), lt(7, test.tt1.c_decimal)), and(ge(test.tt2.c_str, \"zzzzzzzzzzzzzzzzzzz\"), eq(test.tt1.c_int, test.tt2.c_int)))",
+          "          └─TableRowIDScan 4.33 cop[tikv] table:tt2 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "6",
+          "7",
+          "8",
+          "9"
         ]
       }
     ]
