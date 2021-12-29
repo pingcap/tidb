@@ -134,7 +134,6 @@ type Config struct {
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
 
-	// Issue Number: close #3420
 	CollationCompatible string
 }
 
