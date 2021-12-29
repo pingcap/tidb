@@ -68,6 +68,8 @@ type Encoding interface {
 	Tp() EncodingTp
 	// Peek returns the next char.
 	Peek(src []byte) []byte
+	// MbLen returns multiple byte length, if the next character is single byte, return 0.
+	MbLen(string) int
 	// IsValid checks whether the utf-8 bytes can be convert to valid string in current encoding.
 	IsValid(src []byte) bool
 	// Foreach iterates the characters in in current encoding.
