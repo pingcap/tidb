@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -117,7 +118,7 @@ func (sp *sqlCPUProfiler) startCPUProfileWorker() {
 }
 
 func (sp *sqlCPUProfiler) doCPUProfile() {
-	intervalSecond := variable.TopSQLVariable.PrecisionSeconds.Load()
+	intervalSecond := topsqlstate.GlobalState.PrecisionSeconds.Load()
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
 		// Sleep a while before retry.
@@ -272,7 +273,7 @@ func (sp *sqlCPUProfiler) hasExportProfileTask() bool {
 
 // IsEnabled return true if it is(should be) enabled. It exports for tests.
 func (sp *sqlCPUProfiler) IsEnabled() bool {
-	return variable.TopSQLEnabled() || sp.hasExportProfileTask()
+	return topsqlstate.TopSQLEnabled() || sp.hasExportProfileTask()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.
