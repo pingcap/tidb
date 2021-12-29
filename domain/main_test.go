@@ -23,7 +23,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),

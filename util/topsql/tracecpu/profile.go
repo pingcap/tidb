@@ -47,8 +47,7 @@ var GlobalSQLCPUProfiler = newSQLCPUProfiler()
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
-	// ts is a Unix time, unit is second.
-	Collect(ts uint64, stats []SQLCPUTimeRecord)
+	Collect(stats []SQLCPUTimeRecord)
 }
 
 // SQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -129,10 +128,6 @@ func (sp *sqlCPUProfiler) doCPUProfile() {
 	ns := int64(time.Second)*intervalSecond - int64(time.Now().Nanosecond())
 	time.Sleep(time.Nanosecond * time.Duration(ns))
 	pprof.StopCPUProfile()
-	task.end = time.Now().Unix()
-	if task.end < 0 {
-		task.end = 0
-	}
 	sp.taskCh <- task
 }
 
@@ -149,7 +144,7 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.handleExportProfileTask(p)
 		if c := sp.GetCollector(); c != nil {
-			c.Collect(uint64(task.end), stats)
+			c.Collect(stats)
 		}
 		sp.putTaskToBuffer(task)
 	}
@@ -157,7 +152,6 @@ func (sp *sqlCPUProfiler) startAnalyzeProfileWorker() {
 
 type profileData struct {
 	buf *bytes.Buffer
-	end int64
 }
 
 func (sp *sqlCPUProfiler) newProfileTask() *profileData {
