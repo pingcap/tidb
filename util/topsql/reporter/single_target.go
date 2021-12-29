@@ -30,6 +30,12 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
+const (
+	dialTimeout               = 5 * time.Second
+	grpcInitialWindowSize     = 1 << 30
+	grpcInitialConnWindowSize = 1 << 30
+)
+
 // SingleTargetDataSink reports data to grpc servers.
 type SingleTargetDataSink struct {
 	ctx    context.Context
@@ -207,7 +213,7 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	}()
 	go func() {
 		defer wg.Done()
-		errCh <- ds.sendBatchCPUTimeRecord(ctx, task.data.CPUTimeRecords)
+		errCh <- ds.sendBatchTopSQLRecord(ctx, task.data.DataRecords)
 	}()
 	wg.Wait()
 	close(errCh)
@@ -218,8 +224,8 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	}
 }
 
-// sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, records []tipb.CPUTimeRecord) (err error) {
+// sendBatchTopSQLRecord sends a batch of TopSQL records by stream.
+func (ds *SingleTargetDataSink) sendBatchTopSQLRecord(ctx context.Context, records []tipb.TopSQLRecord) (err error) {
 	if len(records) == 0 {
 		return nil
 	}
@@ -236,7 +242,7 @@ func (ds *SingleTargetDataSink) sendBatchCPUTimeRecord(ctx context.Context, reco
 	}()
 
 	client := tipb.NewTopSQLAgentClient(ds.conn)
-	stream, err := client.ReportCPUTimeRecords(ctx)
+	stream, err := client.ReportTopSQLRecords(ctx)
 	if err != nil {
 		return err
 	}

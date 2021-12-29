@@ -1222,8 +1222,14 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+
 	if stmtCtx.WaitLockLeaseTime > 0 {
+		if execDetail.BackoffSleep == nil {
+			execDetail.BackoffSleep = make(map[string]time.Duration)
+		}
 		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
+		execDetail.BackoffTime += stmtCtx.WaitLockLeaseTime
+		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
