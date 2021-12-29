@@ -35,27 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-type placementScheduleState int
-
-const (
-	placementScheduleStateWaiting placementScheduleState = iota
-	placementScheduleStateInProgress
-	placementScheduleStateScheduled
-)
-
-func (t placementScheduleState) String() string {
-	switch t {
-	case placementScheduleStateScheduled:
-		return "SCHEDULED"
-	case placementScheduleStateInProgress:
-		return "INPROGRESS"
-	case placementScheduleStateWaiting:
-		return "WAITING"
-	default:
-		return "WAITING"
-	}
-}
-
 type showPlacementLabelsResultBuilder struct {
 	labelKey2values map[string]interface{}
 }
@@ -266,7 +245,7 @@ func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 		return err
 	}
 
-	scheduled := make(map[int64]placementScheduleState)
+	scheduled := make(map[int64]infosync.PlacementScheduleState)
 
 	if err := e.fetchAllDBPlacements(ctx, scheduled); err != nil {
 		return err
@@ -287,7 +266,7 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	return nil
 }
 
-func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[int64]placementScheduleState) error {
+func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
@@ -316,7 +295,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	return nil
 }
 
-func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]placementScheduleState) error {
+func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 
@@ -442,44 +421,32 @@ func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings 
 	return policy.PlacementSettings, nil
 }
 
-func fetchScheduleState(ctx context.Context, scheduleState map[int64]placementScheduleState, id int64) (placementScheduleState, error) {
+func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
 	if s, ok := scheduleState[id]; ok {
 		return s, nil
 	}
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id+1))
 	schedule, err := infosync.GetReplicationState(ctx, startKey, endKey)
-	var state placementScheduleState
-	switch schedule {
-	case "\"REPLICATED\"\n":
-		state = placementScheduleStateScheduled
-	case "\"INPROGRESS\"\n":
-		state = placementScheduleStateInProgress
-	case "\"WAITING\"\n":
-		state = placementScheduleStateWaiting
-	default:
-		// mocking will fall here
-		state = placementScheduleStateInProgress
-	}
 	if err == nil && scheduleState != nil {
-		scheduleState[id] = state
+		scheduleState[id] = schedule
 	}
-	return state, err
+	return schedule, err
 }
 
-func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]placementScheduleState, part *model.PartitionDefinition) (placementScheduleState, error) {
+func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, part *model.PartitionDefinition) (infosync.PlacementScheduleState, error) {
 	return fetchScheduleState(ctx, scheduleState, part.ID)
 }
 
-func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]placementScheduleState, table *model.TableInfo) (placementScheduleState, error) {
-	state := placementScheduleStateScheduled
+func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
 
 	schedule, err := fetchScheduleState(ctx, scheduleState, table.ID)
 	if err != nil {
 		return state, err
 	}
 	state = accumulateState(state, schedule)
-	if state != placementScheduleStateScheduled {
+	if state != infosync.PlacementScheduleStateScheduled {
 		return state, nil
 	}
 
@@ -487,10 +454,10 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]placem
 		for _, part := range table.GetPartitionInfo().Definitions {
 			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
 			if err != nil {
-				return placementScheduleStateWaiting, err
+				return infosync.PlacementScheduleStateWaiting, err
 			}
 			state = accumulateState(state, schedule)
-			if state != placementScheduleStateScheduled {
+			if state != infosync.PlacementScheduleStateScheduled {
 				break
 			}
 		}
@@ -499,22 +466,22 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]placem
 	return schedule, nil
 }
 
-func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]placementScheduleState, db *model.DBInfo) (placementScheduleState, error) {
-	state := placementScheduleStateScheduled
+func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
 	for _, table := range db.Tables {
 		schedule, err := fetchTableScheduleState(ctx, scheduleState, table)
 		if err != nil {
 			return state, err
 		}
 		state = accumulateState(state, schedule)
-		if state != placementScheduleStateScheduled {
+		if state != infosync.PlacementScheduleStateScheduled {
 			break
 		}
 	}
 	return state, nil
 }
 
-func accumulateState(curr, news placementScheduleState) placementScheduleState {
+func accumulateState(curr, news infosync.PlacementScheduleState) infosync.PlacementScheduleState {
 	a, b := int(curr), int(news)
 	if a > b {
 		return news

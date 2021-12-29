@@ -1,0 +1,83 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package infosync
+
+import (
+	"context"
+	"encoding/hex"
+	"fmt"
+	"strings"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/pdapi"
+)
+
+type PlacementScheduleState int
+
+const (
+	PlacementScheduleStateWaiting PlacementScheduleState = iota
+	PlacementScheduleStateInProgress
+	PlacementScheduleStateScheduled
+)
+
+func (t PlacementScheduleState) String() string {
+	switch t {
+	case PlacementScheduleStateScheduled:
+		return "SCHEDULED"
+	case PlacementScheduleStateInProgress:
+		return "INPROGRESS"
+	case PlacementScheduleStateWaiting:
+		return "WAITING"
+	default:
+		return "WAITING"
+	}
+}
+
+// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
+func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (PlacementScheduleState, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return PlacementScheduleStateWaiting, err
+	}
+
+	if is.etcdCli == nil {
+		return PlacementScheduleStateWaiting, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return PlacementScheduleStateWaiting, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	if err == nil && res != nil {
+		res := string(res)
+		var state PlacementScheduleState
+		switch {
+		case strings.HasPrefix(res, "\"REPLICATED\""):
+			state = PlacementScheduleStateScheduled
+		case strings.HasPrefix(res, "\"INPROGRESS\""):
+			state = PlacementScheduleStateInProgress
+		case strings.HasPrefix(res, "\"WAITING\""):
+			state = PlacementScheduleStateWaiting
+		default:
+			// mocking will fall here
+			state = PlacementScheduleStateInProgress
+		}
+		return state, nil
+	}
+	return PlacementScheduleStateWaiting, err
+}
