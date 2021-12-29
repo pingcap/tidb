@@ -46,7 +46,6 @@ import (
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -60,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"github.com/pingcap/tidb/domain/infosync"
 )
 
 const (
@@ -3254,25 +3254,8 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	if d.IsTiFlashPollEnabled() && meta.TiFlashReplica != nil {
 		// Must set placement rule before the ActionAddTablePartition job is in queue.
-		tikvStore, ok := ctx.GetStore().(helper.Storage)
-		if !ok {
-			logutil.BgLogger().Error("can not get Helper")
-		} else {
-			tikvHelper := &helper.Helper{
-				Store:       tikvStore,
-				RegionCache: tikvStore.GetRegionCache(),
-			}
-			for _, p := range partInfo.Definitions {
-				logutil.BgLogger().Info("add partition for TiFlash", zap.Int64("ID", p.ID))
-				ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
-				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-					return errors.Trace(err)
-				}
-				err := tikvHelper.PostAccelerateSchedule(p.ID)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
+		if err := infosync.ConfigureTiFlashPDForPartitions(true, &partInfo.Definitions, meta.TiFlashReplica.Count, &meta.TiFlashReplica.LocationLabels); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
@@ -4749,38 +4732,19 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tblInfo := tb.Meta()
 	if d.IsTiFlashPollEnabled() {
 		// Must set placement rule before the ActionSetTiFlashReplica job is in queue.
-		tikvStore, ok := ctx.GetStore().(helper.Storage)
-		if !ok {
-			logutil.BgLogger().Error("can not get Helper")
-		}
-		tikvHelper := &helper.Helper{
-			Store:       tikvStore,
-			RegionCache: tikvStore.GetRegionCache(),
-		}
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
-			for _, p := range pi.Definitions {
-				logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("partitionID", p.ID))
-				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
-				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-					return errors.Trace(err)
-				}
+			logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
+			if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+				return errors.Trace(e)
 			}
 			// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
-			for _, p := range pi.AddingDefinitions {
-				logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("addPartitionID", p.ID))
-				ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
-				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-					return errors.Trace(err)
-				}
-				if e := tikvHelper.PostAccelerateSchedule(p.ID); e != nil {
-					return errors.Trace(err)
-				}
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+				return errors.Trace(e)
 			}
 		} else {
 			logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
-			ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
-			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-				return errors.Trace(err)
+			if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+				return errors.Trace(e)
 			}
 		}
 	}

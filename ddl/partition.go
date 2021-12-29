@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1213,22 +1212,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				}
 			}
 		}
-		tikvStore, ok := d.store.(helper.Storage)
-		if ok {
-			tikvHelper := &helper.Helper{
-				Store:       tikvStore,
-				RegionCache: tikvStore.GetRegionCache(),
-			}
-			for _, p := range newPartitions {
-				newRule := MakeNewRule(p.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
-				err := tikvHelper.SetPlacementRule(*newRule)
-				if err != nil {
-					logutil.BgLogger().Warn("SetPlacementRule fails", zap.Error(err))
-					atomic.StoreUint32(&ReschePullTiFlash, 1)
-				}
-			}
-		} else {
-			logutil.BgLogger().Warn("Set new pd rule fail while truncate partition")
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+			logutil.BgLogger().Warn("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 			atomic.StoreUint32(&ReschePullTiFlash, 1)
 		}
 	}

@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may obtain a copy of the LiceMakeNewRulense at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -40,10 +40,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -87,42 +85,6 @@ var (
 	// Set to be true, when last TiFlash pd rule fails.
 	ReschePullTiFlash = uint32(0)
 )
-
-func makeBaseRule() placement.Rule {
-	return placement.Rule{
-		GroupID:  "tiflash",
-		ID:       "",
-		Index:    0,
-		Override: true,
-		Role:     placement.Learner,
-		Count:    2,
-		Constraints: []placement.Constraint{
-			{
-				Key:    "engine",
-				Op:     placement.In,
-				Values: []string{"tiflash"},
-			},
-		},
-	}
-}
-
-// MakeNewRule creates a pd rule for TiFlash.
-func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rule {
-	ruleID := fmt.Sprintf("table-%v-r", ID)
-	startKey := tablecodec.GenTableRecordPrefix(ID)
-	endKey := tablecodec.EncodeTablePrefix(ID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	ruleNew := makeBaseRule()
-	ruleNew.ID = ruleID
-	ruleNew.StartKeyHex = startKey.String()
-	ruleNew.EndKeyHex = endKey.String()
-	ruleNew.Count = int(Count)
-	ruleNew.LocationLabels = LocationLabels
-
-	return &ruleNew
-}
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	configURL := fmt.Sprintf("%s://%s/config",
@@ -224,10 +186,10 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func updateTiFlashStores(tikvHelper *helper.Helper, pollTiFlashContext *TiFlashManagementContext) error {
+func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	// We need the up-to-date information about TiFlash stores.
 	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
-	tikvStats, err := tikvHelper.GetStoresStat()
+	tikvStats, err := infosync.GetStoresStat(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -251,18 +213,9 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		pollTiFlashContext.HandlePdCounter %= PullTiFlashPdTick
 	}()
 
-	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	if !ok {
-		return false, errors.New("Can not get Helper")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick == 0
 	if updateTiFlash {
-		if err := updateTiFlashStores(tikvHelper, pollTiFlashContext); err != nil {
+		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
 			// If we failed to get from pd, retry everytime.
 			pollTiFlashContext.UpdateTiFlashStoreCounter = 0
 			return false, errors.Trace(err)
@@ -335,7 +288,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tb.ID", tb.ID))
 
 			var stats helper.PDRegionStats
-			if err := tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
+			if err := infosync.GetPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
 				return allReplicaReady, errors.Trace(err)
 			}
 			regionCount := stats.Count
@@ -419,6 +372,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 // HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules, and add all missing rules.
 // It handles rare situation, when we fail to alter pd rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFlashReplicaStatus) error {
+	c := context.Background()
 	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
 
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
@@ -430,7 +384,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
-	allRulesArr, err := tikvHelper.GetGroupRules("tiflash")
+	allRulesArr, err := infosync.GetGroupRules(c, "tiflash")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -454,10 +408,9 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		if _, ok := allRules[ruleID]; !ok {
 			// Mostly because of a previous failure of setting pd rule.
 			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
-			newRule := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			err := tikvHelper.SetPlacementRule(*newRule)
-			if err != nil {
-				logutil.BgLogger().Warn("SetPlacementRule fails")
+			if e := infosync.ConfigureTiFlashPDForTable(tb.ID, tb.Count, &tb.LocationLabels); e != nil {
+				logutil.BgLogger().Warn("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				atomic.StoreUint32(&ReschePullTiFlash, 1)
 			}
 		}
 		// For every existing table, we do not remove their rules.
@@ -467,8 +420,8 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 	// Remove rules of non-existing table
 	for _, v := range allRules {
 		logutil.BgLogger().Info("Remove TiFlash rule", zap.String("id", v.ID))
-		if err := tikvHelper.DeletePlacementRule("tiflash", v.ID); err != nil {
-			return errors.Trace(err)
+		if err := infosync.DeletePlacementRule(c, "tiflash", v.ID); err != nil {
+			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", v.ID))
 		}
 	}
 

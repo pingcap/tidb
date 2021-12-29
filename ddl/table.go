@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	field_types "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -586,32 +585,16 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
 		// Set PD rules for TiFlash
-		tikvStore, ok := d.store.(helper.Storage)
-		if ok {
-			tikvHelper := &helper.Helper{
-				Store:       tikvStore,
-				RegionCache: tikvStore.GetRegionCache(),
-			}
-			if pi := tblInfo.GetPartitionInfo(); pi != nil {
-				for _, d := range pi.Definitions {
-					newPartRule := MakeNewRule(d.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
-					err := tikvHelper.SetPlacementRule(*newPartRule)
-					if err != nil {
-						logutil.BgLogger().Warn("Set new pd rule fail while truncate table partition", zap.Error(err), zap.Int64("tableID", tblInfo.ID), zap.Int64("partitionID", d.ID))
-						atomic.StoreUint32(&ReschePullTiFlash, 1)
-					}
-				}
-			} else {
-				newRule := MakeNewRule(newTableID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels)
-				err := tikvHelper.SetPlacementRule(*newRule)
-				if err != nil {
-					logutil.BgLogger().Warn("Set new pd rule fail while truncate table", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
-					atomic.StoreUint32(&ReschePullTiFlash, 1)
-				}
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+				logutil.BgLogger().Warn("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				atomic.StoreUint32(&ReschePullTiFlash, 1)
 			}
 		} else {
-			logutil.BgLogger().Warn("Set new pd rule fail while truncate table")
-			atomic.StoreUint32(&ReschePullTiFlash, 1)
+			if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+				logutil.BgLogger().Warn("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				atomic.StoreUint32(&ReschePullTiFlash, 1)
+			}
 		}
 	}
 

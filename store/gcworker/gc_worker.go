@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
@@ -1930,20 +1929,13 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		bundles = append(bundles, placement.NewBundle(id))
 	}
 
-	tikvStore, ok := w.store.(helper.Storage)
-	if ok {
-		for _, id := range physicalTableIDs {
-			// Delete pd rule
-			logutil.BgLogger().Info("try delete pd rule", zap.String("endKey", string(dr.EndKey)))
-			tikvHelper := &helper.Helper{
-				Store:       tikvStore,
-				RegionCache: tikvStore.GetRegionCache(),
-			}
-			ruleID := fmt.Sprintf("table-%v-r", id)
-			if err := tikvHelper.DeletePlacementRule("tiflash", ruleID); err != nil {
-				// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
-				logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
-			}
+	for _, id := range physicalTableIDs {
+		// Delete pd rule
+		logutil.BgLogger().Info("try delete TiFlash pd rule", zap.String("endKey", string(dr.EndKey)))
+		ruleID := fmt.Sprintf("table-%v-r", id)
+		if err := infosync.DeletePlacementRule(context.Background(), "tiflash", ruleID); err != nil {
+			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
+			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", ruleID))
 		}
 	}
 	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)

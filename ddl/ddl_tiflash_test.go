@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain/infosync"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -66,7 +67,7 @@ type tiflashDDLTestSuite struct {
 var _ = SerialSuites(&tiflashDDLTestSuite{})
 
 const (
-	RoundToBeAvailable               = 1
+	RoundToBeAvailable               = 2
 	RoundToBeAvailablePartitionTable = 3
 )
 
@@ -94,14 +95,14 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
 	server, addr := s.setUpMockTiFlashHTTPServer()
 	s.tiflash = mockTiFlash{
-		Addr:         "",
-		StatusAddr:   addr,
-		StatusServer: server,
-		SyncStatus:   make(map[int]mockTiFlashTableInfo),
+		Addr:                        "",
+		StatusAddr:                  addr,
+		StatusServer:                server,
+		SyncStatus:                  make(map[int]mockTiFlashTableInfo),
 		GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
-		PdEnabled: true,
-		TiflashDelay: 0,
-		StartTime: time.Now(),
+		PdEnabled:                   true,
+		TiflashDelay:                0,
+		StartTime:                   time.Now(),
 	}
 
 	c.Assert(err, IsNil)
@@ -113,6 +114,8 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
+
+	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
 
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	log.Info("Mock stat", zap.String("pd address", s.pdMockAddr), zap.Any("infosyncer", s.dom.InfoSyncer()))
@@ -403,7 +406,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
-	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
+	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
@@ -421,7 +424,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 		ddl.PullTiFlashPdTick = originValue
 	}()
 	tk.MustExec("drop table ddltiflash")
-	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
+	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
@@ -455,7 +458,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
-	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
+	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
@@ -486,7 +489,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
-	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 	c.Assert(tb.Meta().TiFlashReplica, IsNil)
@@ -510,14 +513,14 @@ func (m *mockTiFlashTableInfo) String() string {
 }
 
 type mockTiFlash struct {
-	Addr         string
-	StatusAddr   string
-	StatusServer *httptest.Server
-	SyncStatus   map[int]mockTiFlashTableInfo
+	Addr                        string
+	StatusAddr                  string
+	StatusServer                *httptest.Server
+	SyncStatus                  map[int]mockTiFlashTableInfo
 	GlobalTiFlashPlacementRules map[string]placement.Rule
-	PdEnabled    bool
-	TiflashDelay time.Duration
-	StartTime    time.Time
+	PdEnabled                   bool
+	TiflashDelay                time.Duration
+	StartTime                   time.Time
 }
 
 func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, string) {
@@ -554,7 +557,6 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 	})
 	return server, statusAddr
 }
-
 
 func (tiflash *mockTiFlash) handleSetPlacementRule(rule placement.Rule) error {
 	if !tiflash.PdEnabled {
@@ -679,7 +681,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		result, err := s.tiflash.handleGetGroupRules()
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
-		}else{
+		} else {
 			w.WriteHeader(http.StatusOK)
 			m, _ := json.Marshal(result)
 			w.Write(m)
