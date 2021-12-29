@@ -15,9 +15,9 @@
 package main
 
 import (
-	"io"
 	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -354,7 +354,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 }
 
 type testResult struct {
-	err error
+	err    error
 	output bytes.Buffer
 }
 
@@ -449,7 +449,7 @@ func numactlExist() bool {
 
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
-	return file+".test.bin"
+	return file + ".test.bin"
 }
 
 func testFileFullPath(pkg string) string {
