@@ -55,6 +55,7 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
 	c.Assert(isExist, IsTrue)
 
+	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
