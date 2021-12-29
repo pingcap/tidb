@@ -1757,8 +1757,8 @@ func TestTopSQLStatementStats(t *testing.T) {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			found++
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
-			require.True(t, item.SumExecNanoDuration > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
-			require.True(t, item.SumExecNanoDuration < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
+			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
+			require.True(t, item.SumDurationNs < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
 			if strings.HasPrefix(sqlStr, "set global") {
 				// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
 				continue

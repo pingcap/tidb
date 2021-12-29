@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/breeswish/go-litefsm"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 )
@@ -52,6 +53,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	stats := &StatementStats{
 		data:     StatementStatsMap{},
 		finished: atomic.NewBool(false),
+		cmdState: litefsm.NewStateMachine(cmdTransitions, stateInitial),
 	}
 	nowFunc = mockNow
 	defer func() {
@@ -60,21 +62,21 @@ func Test_aggregator_register_collect(t *testing.T) {
 
 	a.register(stats)
 
-	stats.OnDispatchBegin()
-	stats.OnHandleQueryBegin()
-	stats.OnHandleStmtBegin()
-	stats.OnStmtReadyToExecute([]byte("SQL-1"), nil)
-	stats.OnHandleStmtFinish()
-	stats.OnHandleQueryFinish()
-	stats.OnDispatchFinish()
+	stats.OnCmdDispatchBegin()
+	stats.OnCmdQueryBegin()
+	stats.OnCmdQueryProcessStmtBegin(0)
+	stats.OnDigestKnown([]byte("SQL-1"), nil)
+	stats.OnCmdQueryProcessStmtFinish(0)
+	stats.OnCmdQueryFinish()
+	stats.OnCmdDispatchFinish()
 
-	stats.OnDispatchBegin()
-	stats.OnHandleStmtExecuteBegin()
+	stats.OnCmdDispatchBegin()
+	stats.OnCmdStmtExecuteBegin()
 	// test for double call
-	stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
-	stats.OnStmtReadyToExecute([]byte("SQL-2"), nil)
-	stats.OnHandleStmtExecuteFinish()
-	stats.OnDispatchFinish()
+	stats.OnDigestKnown([]byte("SQL-2"), nil)
+	stats.OnDigestKnown([]byte("SQL-2"), nil)
+	stats.OnCmdStmtExecuteFinish()
+	stats.OnCmdDispatchFinish()
 
 	var records []StatementStatsRecord
 	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
@@ -84,9 +86,9 @@ func Test_aggregator_register_collect(t *testing.T) {
 	assert.NotEmpty(t, records)
 	assert.True(t, records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}] != nil)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumExecNanoDuration)
+	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {

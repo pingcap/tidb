@@ -1256,12 +1256,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	vars := cc.ctx.GetSessionVars()
+	vars.StmtStats.OnCmdDispatchBegin()
+	defer vars.StmtStats.OnCmdDispatchFinish()
 	if variable.TopSQLEnabled() {
-		vars.StmtStats.OnDispatchBegin()
-		defer func() {
-			pprof.SetGoroutineLabels(ctx)
-			vars.StmtStats.OnDispatchFinish()
-		}()
+		defer pprof.SetGoroutineLabels(ctx)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1402,12 +1400,6 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 }
 
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
-	if variable.TopSQLEnabled() {
-		vars := cc.ctx.GetSessionVars()
-		vars.StmtStats.OnUseDBBegin()
-		defer vars.StmtStats.OnUseDBFinish()
-	}
-
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
 	stmts, err := cc.ctx.Parse(ctx, "use `"+db+"`")
@@ -1795,10 +1787,8 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	vars := cc.ctx.GetSessionVars()
-	if variable.TopSQLEnabled() {
-		vars.StmtStats.OnHandleQueryBegin()
-		defer vars.StmtStats.OnHandleQueryFinish()
-	}
+	vars.StmtStats.OnCmdQueryBegin()
+	defer vars.StmtStats.OnCmdQueryFinish()
 	sc := vars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
@@ -1852,7 +1842,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session, so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		shouldBreak, err = cc.handleStmtWithRetry(ctx, stmt, parserWarns, i == len(stmts)-1)
+		shouldBreak, err = cc.handleStmtWithRetry(ctx, stmt, parserWarns, i, i == len(stmts)-1)
 		if shouldBreak {
 			break
 		}
@@ -1860,12 +1850,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	return err
 }
 
-func (cc *clientConn) handleStmtWithRetry(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
-	if variable.TopSQLEnabled() {
-		vars := cc.ctx.GetSessionVars()
-		vars.StmtStats.OnHandleStmtBegin()
-		defer vars.StmtStats.OnHandleStmtFinish()
-	}
+func (cc *clientConn) handleStmtWithRetry(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, stmtIdx int, lastStmt bool) (bool, error) {
+	vars := cc.ctx.GetSessionVars()
+	vars.StmtStats.OnCmdQueryProcessStmtBegin(stmtIdx)
+	defer vars.StmtStats.OnCmdQueryProcessStmtFinish(stmtIdx)
 
 	retryable, err := cc.handleStmt(ctx, stmt, warns, lastStmt)
 	if err != nil {
