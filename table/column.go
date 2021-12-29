@@ -169,6 +169,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
+// convertToIncorrectStringErr converts ErrInvalidCharacterString to ErrTruncatedWrongValueForField.
+// The first argument is the invalid character in bytes.
 func convertToIncorrectStringErr(err error, colName string) error {
 	inErr, ok := errors.Cause(err).(*errors.Error)
 	if !ok {
