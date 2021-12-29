@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -53,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
@@ -1540,7 +1540,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 	dbt.MustExec("create table t3 (a int, b int, unique index idx(a));")
 
 	// Enable TopSQL
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.GlobalState.Enable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})

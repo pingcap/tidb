@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -332,7 +333,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !variable.TopSQLEnabled() {
+	if a.Plan == nil || !topsqlstate.TopSQLEnabled() {
 		return ctx
 	}
 	vars := a.Ctx.GetSessionVars()
@@ -1283,7 +1284,7 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeOnDigestKnownForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() {
+	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		vars.StmtStats.OnDigestKnown(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
