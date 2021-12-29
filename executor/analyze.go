@@ -221,7 +221,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
-	if !variable.PersistAnalyzeOptions.Load() || e.OptionsMap == nil || len(e.OptionsMap) == 0 {
+	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
 	sql := new(strings.Builder)
