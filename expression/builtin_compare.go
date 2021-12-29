@@ -420,11 +420,11 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 type GLCmpStringMode uint8
 
 const (
-	// Greatest/Least function compares string directly
+	// GLCmpStringDirectly: Greatest/Least function compares string directly
 	GLCmpStringDirectly GLCmpStringMode = iota
-	// Greatest/Least function compares string as 'yyyy-mm-dd' format
+	// GLCmpStringAsDate: Greatest/Least function compares string as 'yyyy-mm-dd' format
 	GLCmpStringAsDate
-	// Greatest/Least function compares string as 'yyyy-mm-dd hh:mm:ss' format
+	// GLCmpStringAsDatetime: Greatest/Least function compares string as 'yyyy-mm-dd hh:mm:ss' format
 	GLCmpStringAsDatetime
 )
 
@@ -432,11 +432,11 @@ const (
 type GLRetTimeType uint8
 
 const (
-	// Greatest/Least function returns non temporal time
+	// GLRetNoneTemporal: Greatest/Least function returns non temporal time
 	GLRetNoneTemporal GLRetTimeType = iota
-	// Greatest/Least function returns date type, 'yyyy-mm-dd'
+	// GLRetDate: Greatest/Least function returns date type, 'yyyy-mm-dd'
 	GLRetDate
-	// Greatest/Least function returns datetime type, 'yyyy-mm-dd hh:mm:ss'
+	// GLRetDatetime: Greatest/Least function returns datetime type, 'yyyy-mm-dd hh:mm:ss'
 	GLRetDatetime
 )
 
