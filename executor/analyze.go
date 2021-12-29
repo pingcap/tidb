@@ -228,12 +228,12 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
 	idx := 0
 	for _, opts := range e.OptionsMap {
-		sampleNum, _ := opts.RawOpts[ast.AnalyzeOptNumSamples]
+		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
 		sampleRate := float64(0)
 		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
 			sampleRate = math.Float64frombits(val)
 		}
-		buckets, _ := opts.RawOpts[ast.AnalyzeOptNumBuckets]
+		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
 		topn := int64(-1)
 		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
 			topn = int64(val)
