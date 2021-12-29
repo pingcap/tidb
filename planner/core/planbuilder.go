@@ -2246,25 +2246,6 @@ func mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choi
 	return choice2, list2
 }
 
-func (b *PlanBuilder) getFinalAnalyzeColList(choice model.ColumnChoice, list []*model.ColumnInfo, predicateCols, mustAnalyzedCols *calcOnceMap, tbl *ast.TableName) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
-	fullColumns := tbl.TableInfo.Cols()
-	emptyColumns := make([]*model.ColumnInfo, 0)
-	switch choice {
-	case model.AllColumns:
-		return fullColumns, emptyColumns, nil
-	case model.ColumnList:
-		list, err := b.getFullAnalyzeColumnsInfo(list, tbl, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		return list, list, nil
-	case model.PredicateColumns: // TODO
-		return fullColumns, emptyColumns, nil
-	default:
-		return fullColumns, emptyColumns, nil
-	}
-}
-
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
