@@ -5880,3 +5880,62 @@ func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
+func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ct1, ct2")
+	tk.MustExec("create table ct1 (id int, c int)")
+	tk.MustExec("create table ct2 (id int, c int)")
+	tk.MustExec("alter table ct1 cache")
+	tk.MustExec("alter table ct2 cache")
+	tk.MustQuery("select * from ct1").Check(testkit.Rows())
+	tk.MustQuery("select * from ct2").Check(testkit.Rows())
+
+	cached := false
+	for i := 0; i < 50; i++ {
+		if tk.HasPlan("select * from ct1", "Union") {
+			if tk.HasPlan("select * from ct2", "Union") {
+				cached = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(cached, IsTrue)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into ct1 values (3, 4)")
+	tk.MustExec("insert into ct2 values (5, 6)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
+	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+}
+
+func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Set tidb_snapshot and assert tidb_read_staleness
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	_, err := tk.Exec("set @@tidb_read_staleness='-5'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_snapshot should be clear before setting tidb_read_staleness")
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+
+	// Set tidb_read_staleness and assert tidb_snapshot
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	_, err = tk.Exec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
+	tk.MustExec("set @@tidb_read_staleness = ''")
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+}

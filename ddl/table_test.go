@@ -211,7 +211,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	return tbl, nil
 }
 
-func TestTable(t *testing.T) {
+func ExportTestTable(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	ddl, err := testNewDDLAndStart(
@@ -536,7 +536,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 	return job
 }
 
-func TestRenameTables(t *testing.T) {
+func ExportTestRenameTables(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	ddl, err := testNewDDLAndStart(

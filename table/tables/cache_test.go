@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -456,7 +458,13 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_stmt_summary = 1")
 	se := tk.Session()
+
+	// This line is a hack, if auth user string is "", the statement summary is skipped,
+	// so it's added to make the later code been covered.
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+
 	tk.MustExec("drop table if exists wait_tb1")
 	tk.MustExec("create table wait_tb1(id int)")
 	tk.MustExec("alter table wait_tb1 cache")
@@ -469,6 +477,9 @@ func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {
 		}
 	}
 	require.True(t, i < 10)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("insert into wait_tb1 values(1)")
 	require.True(t, se.GetSessionVars().StmtCtx.WaitLockLeaseTime > 0)
+
+	tk.MustQuery("select DIGEST_TEXT from INFORMATION_SCHEMA.STATEMENTS_SUMMARY where MAX_BACKOFF_TIME > 0 or MAX_WAIT_TIME > 0").Check(testkit.Rows("insert into `wait_tb1` values ( ? )"))
 }
