@@ -149,13 +149,12 @@ func (s *Scanner) AppendWarn(err error) {
 
 // convert2System convert lit from client encoding to system encoding which is utf8mb4.
 func (s *Scanner) convert2System(tok int, lit string) (int, string) {
-	utf8Lit, err := s.client.Transform(nil, charset.Slice(lit), charset.OpDecodeReplace)
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
 	if err != nil {
-		s.AppendError(err)
-		s.lastErrorAsWarn()
+		s.AppendWarn(err)
 	}
 
-	return tok, charset.String(utf8Lit)
+	return tok, charset.HackString(utf8Lit)
 }
 
 // convert2Connection convert lit from client encoding to connection encoding.
@@ -163,7 +162,7 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if mysql.IsUTF8Charset(s.client.Name()) {
 		return tok, lit
 	}
-	utf8Lit, err := s.client.Transform(nil, charset.Slice(lit), charset.OpDecodeReplace)
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
@@ -176,7 +175,7 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if s.client.Tp() != s.connection.Tp() {
 		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplace)
 	}
-	return tok, charset.String(utf8Lit)
+	return tok, charset.HackString(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {

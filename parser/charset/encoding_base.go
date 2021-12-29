@@ -118,9 +118,9 @@ func generateEncodingErr(name string, invalidBytes []byte) error {
 	return errInvalidCharacterString.FastGenByArgs(name, arg)
 }
 
-// Slice converts string to slice without copy.
+// HackSlice converts string to slice without copy.
 // Use at your own risk.
-func Slice(s string) (b []byte) {
+func HackSlice(s string) (b []byte) {
 	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
 	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pBytes.Data = pString.Data
@@ -129,9 +129,9 @@ func Slice(s string) (b []byte) {
 	return
 }
 
-// String converts slice to string without copy.
+// HackString converts slice to string without copy.
 // Use it at your own risk.
-func String(b []byte) (s string) {
+func HackString(b []byte) (s string) {
 	if len(b) == 0 {
 		return ""
 	}
