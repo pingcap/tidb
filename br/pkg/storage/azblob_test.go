@@ -6,11 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
-	. "github.com/pingcap/check"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/stretchr/testify/require"
 )
 
 // use shared key to access azurite
@@ -32,12 +33,12 @@ func checkAzuriteRunning() bool {
 	return len(output) > 0
 }
 
-func (r *testStorageSuite) TestAzBlob(c *C) {
+func TestAzblob(t *testing.T) {
 	if !checkAzuriteRunning() {
-		c.Log("azurite is not running, skip test")
+		t.Log("azurite is not running, skip test")
 		return
 	} else {
-		c.Log("found port 10000 is occupied, run test")
+		t.Log("found port 10000 is occupied, run test")
 	}
 
 	ctx := context.Background()
@@ -46,47 +47,47 @@ func (r *testStorageSuite) TestAzBlob(c *C) {
 		Prefix: "a/b/",
 	}
 	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = azblobStorage.WriteFile(ctx, "key", []byte("data"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = azblobStorage.WriteFile(ctx, "key1", []byte("data1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = azblobStorage.WriteFile(ctx, "key2", []byte("data22223346757222222222289722222"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	d, err := azblobStorage.ReadFile(ctx, "key")
-	c.Assert(err, IsNil)
-	c.Assert(d, DeepEquals, []byte("data"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("data"), d)
 
 	exist, err := azblobStorage.FileExists(ctx, "key")
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsTrue)
+	require.NoError(t, err)
+	require.True(t, exist)
 
 	exist, err = azblobStorage.FileExists(ctx, "key_not_exist")
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsFalse)
+	require.NoError(t, err)
+	require.False(t, exist)
 
 	keyDelete := "key_delete"
 	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsFalse)
+	require.NoError(t, err)
+	require.False(t, exist)
 
 	err = azblobStorage.WriteFile(ctx, keyDelete, []byte("data"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsTrue)
+	require.NoError(t, err)
+	require.True(t, exist)
 
 	err = azblobStorage.DeleteFile(ctx, keyDelete)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsFalse)
+	require.NoError(t, err)
+	require.False(t, exist)
 
 	list := ""
 	var totalSize int64 = 0
@@ -95,63 +96,63 @@ func (r *testStorageSuite) TestAzBlob(c *C) {
 		totalSize += size
 		return nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(list, Equals, "keykey1key2")
-	c.Assert(totalSize, Equals, int64(42))
+	require.NoError(t, err)
+	require.Equal(t, "keykey1key2", list)
+	require.Equal(t, int64(42), totalSize)
 
 	efr, err := azblobStorage.Open(ctx, "key2")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	p := make([]byte, 10)
 	n, err := efr.Read(p)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 10)
-	c.Assert(string(p), Equals, "data222233")
+	require.NoError(t, err)
+	require.Equal(t, 10, n)
+	require.Equal(t, "data222233", string(p))
 
 	p = make([]byte, 40)
 	n, err = efr.Read(p)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 23)
-	c.Assert(string(p[:23]), Equals, "46757222222222289722222")
+	require.NoError(t, err)
+	require.Equal(t, 23, n)
+	require.Equal(t, "46757222222222289722222", string(p[:23]))
 
 	p = make([]byte, 5)
 	offs, err := efr.Seek(3, io.SeekStart)
-	c.Assert(err, IsNil)
-	c.Assert(offs, Equals, int64(3))
+	require.NoError(t, err)
+	require.Equal(t, int64(3), offs)
 
 	n, err = efr.Read(p)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 5)
-	c.Assert(string(p), Equals, "a2222")
+	require.NoError(t, err)
+	require.Equal(t, 5, n)
+	require.Equal(t, "a2222", string(p))
 
 	p = make([]byte, 5)
 	offs, err = efr.Seek(3, io.SeekCurrent)
-	c.Assert(err, IsNil)
-	c.Assert(offs, Equals, int64(11))
+	require.NoError(t, err)
+	require.Equal(t, int64(11), offs)
 
 	n, err = efr.Read(p)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 5)
-	c.Assert(string(p), Equals, "67572")
+	require.NoError(t, err)
+	require.Equal(t, 5, n)
+	require.Equal(t, "67572", string(p))
 
 	p = make([]byte, 5)
 	offs, err = efr.Seek(int64(-7), io.SeekEnd)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Note, change it to maxCnt - offs
-	c.Assert(offs, Equals, int64(26))
+	require.Equal(t, int64(26), offs)
 
 	n, err = efr.Read(p)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, 5)
-	c.Assert(string(p), Equals, "97222")
+	require.NoError(t, err)
+	require.Equal(t, 5, n)
+	require.Equal(t, "97222", string(p))
 
 	err = efr.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(azblobStorage.URI(), Equals, "azure://test/a/b/")
+	require.Equal(t, "azure://test/a/b/", azblobStorage.URI())
 }
 
-func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
+func TestNewAzblobStorage(t *testing.T) {
 	{
 		options := &backuppb.AzureBlobStorage{
 			Endpoint:    "http://127.0.0.1:1000",
@@ -161,11 +162,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey:   "cGFzc3dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*sharedKeyClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 	{
@@ -176,15 +177,15 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey:   "cGFzc3dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*sharedKeyClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "user")
-		c.Assert(b.serviceURL, Equals, "https://user.blob.core.windows.net")
+		require.True(t, ok)
+		require.Equal(t, "user", b.GetAccountName())
+		require.Equal(t, "https://user.blob.core.windows.net", b.serviceURL)
 	}
 
 	err := os.Setenv("AZURE_STORAGE_ACCOUNT", "env_user")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Unsetenv("AZURE_STORAGE_ACCOUNT")
 
 	{
@@ -195,11 +196,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey:   "cGFzc3dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*sharedKeyClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "user")
-		c.Assert(b.serviceURL, Equals, "https://user.blob.core.windows.net")
+		require.True(t, ok)
+		require.Equal(t, "user", b.GetAccountName())
+		require.Equal(t, "https://user.blob.core.windows.net", b.serviceURL)
 	}
 
 	{
@@ -209,11 +210,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey: "cGFzc3dk",
 		}
 		_, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 
 	err = os.Setenv("AZURE_STORAGE_KEY", "cGFzc3dk")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Unsetenv("AZURE_STORAGE_KEY")
 
 	{
@@ -224,23 +225,23 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey: "cGFzc2dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*sharedKeyClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "env_user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "env_user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 	err = os.Setenv("AZURE_CLIENT_ID", "321")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Unsetenv("AZURE_CLIENT_ID")
 
 	err = os.Setenv("AZURE_TENANT_ID", "321")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Unsetenv("AZURE_TENANT_ID")
 
 	err = os.Setenv("AZURE_CLIENT_SECRET", "321")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Unsetenv("AZURE_CLIENT_SECRET")
 
 	{
@@ -250,11 +251,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			Prefix:   "a/b",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*tokenClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "env_user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "env_user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 	{
@@ -265,11 +266,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey: "cGFzc2dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*tokenClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "env_user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "env_user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 	{
@@ -281,11 +282,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			SharedKey:   "cGFzc3dk",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*sharedKeyClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 	{
@@ -296,11 +297,11 @@ func (r *testStorageSuite) TestAzBlobBuilder(c *C) {
 			AccountName: "user",
 		}
 		builder, err := getAzureServiceClientBuilder(options, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		b, ok := builder.(*tokenClientBuilder)
-		c.Assert(ok, IsTrue)
-		c.Assert(b.GetAccountName(), Equals, "user")
-		c.Assert(b.serviceURL, Equals, "http://127.0.0.1:1000")
+		require.True(t, ok)
+		require.Equal(t, "user", b.GetAccountName())
+		require.Equal(t, "http://127.0.0.1:1000", b.serviceURL)
 	}
 
 }
