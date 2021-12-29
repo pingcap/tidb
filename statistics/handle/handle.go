@@ -108,6 +108,11 @@ type Handle struct {
 		sync.Mutex
 		data *statistics.QueryFeedbackMap
 	}
+	// colMap contains all the column stats usage information from collectors when we dump them to KV.
+	colMap struct {
+		sync.Mutex
+		data colStatsUsageMap
+	}
 
 	lease atomic2.Duration
 
@@ -185,6 +190,9 @@ func (h *Handle) Clear() {
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
+	h.colMap.Lock()
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -209,6 +217,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
+	handle.colMap.data = make(colStatsUsageMap)
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -1123,7 +1132,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				}
 			}
 			if result.IsIndex == 0 {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
 					return err
 				}
 			}
@@ -1790,30 +1799,39 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-type colStatsUsage struct {
+type colStatsTimeInfo struct {
 	LastUsedAt     *types.Time
 	LastAnalyzedAt *types.Time
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
-	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
+func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
+	colStatsMap := make(map[model.TableColumnID]colStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
 		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
-		var statsUsage colStatsUsage
+		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
-			t := row.GetTime(2)
+			gt, err := row.GetTime(2).GoTime(time.UTC)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 			statsUsage.LastUsedAt = &t
 		}
 		if !row.IsNull(3) {
-			t := row.GetTime(3)
+			gt, err := row.GetTime(3).GoTime(time.UTC)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
 			statsUsage.LastAnalyzedAt = &t
 		}
 		colStatsMap[tblColID] = statsUsage
