@@ -652,26 +652,10 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, re
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-			var t types.Time
 			var err error
-			if b.cmpAsDate {
-				t, err := types.ParseDate(sc, argTimeStr)
-				if err == nil {
-					t, err = t.Convert(sc, mysql.TypeDate)
-				}
-			} else {
-				t, err := types.ParseDatetime(sc, argTimeStr)
-				if err == nil {
-					t, err = t.Convert(sc, mysql.TypeDatetime)
-				}
-			}
-
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = t.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
 				dstStrings[i] = argTimeStr
@@ -749,25 +733,10 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, resul
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-			var t types.Time
 			var err error
-			if b.cmpAsDate {
-				t, err := types.ParseDate(sc, argTimeStr)
-				if err == nil {
-					t, err = t.Convert(sc, mysql.TypeDate)
-				}
-			} else {
-				t, err := types.ParseDatetime(sc, argTimeStr)
-				if err == nil {
-					t, err = t.Convert(sc, mysql.TypeDatetime)
-				}
-			}
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = t.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
 				dstStrings[i] = argTimeStr
@@ -869,12 +838,7 @@ func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		}
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var resTimeTp byte
-	if b.cmpAsDate {
-		resTimeTp = mysql.TypeDate
-	} else {
-		resTimeTp = mysql.TypeDatetime
-	}
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
 		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
@@ -915,12 +879,7 @@ func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		}
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var resTimeTp byte
-	if b.cmpAsDate {
-		resTimeTp = mysql.TypeDate
-	} else {
-		resTimeTp = mysql.TypeDatetime
-	}
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
 		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)

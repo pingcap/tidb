@@ -6958,17 +6958,30 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(time '20:00:00', 120000);").Check(testkit.Rows("20:00:00"))
 	tk.MustQuery("select greatest(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
 	tk.MustQuery("select greatest(date '1995-05-05', 19910101, 20050505, 19930303);").Check(testkit.Rows("2005-05-05"))
-}
 
-func TestIssue30174Vec(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("CREATE TABLE `t1` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,\n  `c2` blob NOT NULL,\n  PRIMARY KEY (`c2`(5)),\n  UNIQUE KEY `idx_89` (`c1`)\n);")
-	tk.MustExec("insert into t1 values('Charlie','');")
-	tk.MustExec("insert into t2 values('Charlie','Charlie','Alice');")
-	tk.MustQuery("select * from t2 where c3 in (select c2 from t1);").Check(testkit.Rows())
-	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
+	tk.MustExec("CREATE TABLE `t1` (a datetime, b date, c time)")
+	tk.MustExec("insert into t1 values(timestamp'2021-01-31 00:00:01', '2069-12-31', '20:00:01');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	// compare Time/Int/Int as string type, return string type
+	tk.MustQuery("select greatest(c, year(date'20220101'), 23) from t1;").Check(testkit.Rows("23"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(c, date'891001', 120000) from t1;").Check(testkit.Rows("20:00:01"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(c, date'101001', 120101) from t1;").Check(testkit.Rows("20:00:01"))
+	// compare Date/String/Int as Date type, return string type
+	tk.MustQuery("select greatest(b, '19990329', 120101) from t1;").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Date as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '20:00', b) from t1;").Check(testkit.Rows("2069-12-31 00:00:00"))
+	// compare Date/Date as Date type, return Date type
+	tk.MustQuery("select greatest(date '120301', b) from t1;").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Time as Time type, return Time type
+	tk.MustQuery("select greatest(c, time '2230') from t1;").Check(testkit.Rows("20:00:01"))
+	// compare DateTime/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(a, timestamp '2021-12-31 12:00:00') from t1;").Check(testkit.Rows("2021-12-31 12:00:00"))
+	// compare Time/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(c, timestamp '2069-12-31 12:00:00') from t1;").Check(testkit.Rows("2069-12-31 12:00:00"))
+	// compare Date/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
 }

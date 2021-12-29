@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"strings"
 
@@ -708,24 +709,9 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		if isNull || err != nil {
 			return "", true, err
 		}
-		var t types.Time
-		if b.cmpAsDate {
-			t, err = types.ParseDate(sc, v)
-			if err == nil {
-				t, err = t.Convert(sc, mysql.TypeDate)
-			}
-		} else {
-			t, err = types.ParseDatetime(sc, v)
-			if err == nil {
-				t, err = t.Convert(sc, mysql.TypeDatetime)
-			}
-		}
+		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, err
-			}
-		} else {
-			v = t.String()
+			return v, true, err
 		}
 		// In MySQL, if the compare result is zero, than we will try to use the string comparison result
 		if i == 0 || strings.Compare(v, strRes) > 0 {
@@ -733,6 +719,30 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes st
 		}
 	}
 	return strRes, false, nil
+}
+
+func doTimeConversionForGL(cmpAsDate bool, ctx sessionctx.Context, sc *stmtctx.StatementContext, strVal string) (string, error) {
+	var t types.Time
+	var err error
+	if cmpAsDate {
+		t, err = types.ParseDate(sc, strVal)
+		if err == nil {
+			t, err = t.Convert(sc, mysql.TypeDate)
+		}
+	} else {
+		t, err = types.ParseDatetime(sc, strVal)
+		if err == nil {
+			t, err = t.Convert(sc, mysql.TypeDatetime)
+		}
+	}
+	if err != nil {
+		if err = handleInvalidTimeError(ctx, err); err != nil {
+			return "", err
+		}
+	} else {
+		strVal = t.String()
+	}
+	return strVal, nil
 }
 
 type builtinGreatestTimeSig struct {
@@ -759,12 +769,7 @@ func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var resTimeTp byte
-	if b.cmpAsDate {
-		resTimeTp = mysql.TypeDate
-	} else {
-		resTimeTp = mysql.TypeDatetime
-	}
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	if res, err = res.Convert(sc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1005,24 +1010,9 @@ func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes strin
 		if isNull || err != nil {
 			return "", true, err
 		}
-		var t types.Time
-		if b.cmpAsDate {
-			t, err = types.ParseDate(sc, v)
-			if err == nil {
-				t, err = t.Convert(sc, mysql.TypeDate)
-			}
-		} else {
-			t, err = types.ParseDatetime(sc, v)
-			if err == nil {
-				t, err = t.Convert(sc, mysql.TypeDatetime)
-			}
-		}
+		v, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, v)
 		if err != nil {
-			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, err
-			}
-		} else {
-			v = t.String()
+			return v, true, err
 		}
 		if i == 0 || strings.Compare(v, strRes) < 0 {
 			strRes = v
@@ -1056,16 +1046,21 @@ func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bo
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
 	sc := b.ctx.GetSessionVars().StmtCtx
-	var resTimeTp byte
-	if b.cmpAsDate {
-		resTimeTp = mysql.TypeDate
-	} else {
-		resTimeTp = mysql.TypeDatetime
-	}
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	if res, err = res.Convert(sc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	return res, false, nil
+}
+
+func getAccurateTimeTypeForGLRet(cmpAsDate bool) byte {
+	var resTimeTp byte
+	if cmpAsDate {
+		resTimeTp = mysql.TypeDate
+	} else {
+		resTimeTp = mysql.TypeDatetime
+	}
+	return resTimeTp
 }
 
 type builtinLeastDurationSig struct {
