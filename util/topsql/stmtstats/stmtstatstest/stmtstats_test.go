@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/testutils"
@@ -72,7 +72,7 @@ func TestExecCount(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 
 	// Enable TopSQL
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.GlobalState.Enable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
