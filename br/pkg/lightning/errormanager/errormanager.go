@@ -15,7 +15,6 @@
 package errormanager
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -94,16 +93,16 @@ const (
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES
 	`
-	// TODO: Do table_name, index_name, key_data, row_data need to escape.
-	sqlValuesConflictErrorData = "(%d,'%s','PRIMARY','%s','%s',x'%x',x'%x',raw_key,raw_value)"
+
+	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES
 	`
-	// TODO: Do table_name, index_name, key_data, row_data need to escape.
-	sqlValuesConflictErrorIndex = "(%d,'%s','%s','%s','%s',x'%x',x'%x',x'%x',x'%x')"
+
+	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
 
 	selectConflictKeys = `
 		SELECT _tidb_rowid, raw_handle, raw_row
@@ -245,11 +244,13 @@ func (em *ErrorManager) RecordDataConflictError(
 	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')
 			}
-			fmt.Fprintf(sb, sqlValuesConflictErrorData,
+			sb.WriteString(sqlValuesConflictErrorData)
+			sqlArgs = append(sqlArgs,
 				em.taskID,
 				tableName,
 				conflictInfo.KeyData,
@@ -258,7 +259,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.RawValue,
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String())
+		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	})
 }
@@ -284,13 +285,15 @@ func (em *ErrorManager) RecordIndexConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
-		sb := &bytes.Buffer{}
+		sb := &strings.Builder{}
 		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
+		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')
 			}
-			fmt.Fprintf(sb, sqlValuesConflictErrorIndex,
+			sb.WriteString(sqlValuesConflictErrorIndex)
+			sqlArgs = append(sqlArgs,
 				em.taskID,
 				tableName,
 				indexNames[i],
@@ -302,7 +305,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				rawRows[i],
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String())
+		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	})
 }
@@ -362,10 +365,12 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 				if len(handleRows) == 0 {
 					break
 				}
-
+				if err := fn(gCtx, handleRows); err != nil {
+					return errors.Trace(err)
+				}
+				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
-				start = lastRowID + 1
 				if end-start > rowLimit {
 					mid := start + (end-start)/2
 					taskWg.Add(1)
@@ -375,10 +380,6 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 					default:
 						taskWg.Done()
 					}
-				}
-
-				if err := fn(gCtx, handleRows); err != nil {
-					return errors.Trace(err)
 				}
 				handleRows = handleRows[:0]
 			}
