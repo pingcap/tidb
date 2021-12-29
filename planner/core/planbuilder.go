@@ -1882,19 +1882,19 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceM
 	return cols.data, nil
 }
 
-func (b *PlanBuilder) getPredicateColumns(tblInfo *model.TableInfo, cols *calcOnceMap) (map[int64]struct{}, error) {
+func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
 	if cols.calculated {
 		return cols.data, nil
 	}
 	do := domain.GetDomain(b.ctx)
 	h := do.StatsHandle()
-	colList, err := h.GetPredicateColumns(tblInfo.ID)
+	colList, err := h.GetPredicateColumns(tbl.TableInfo.ID)
 	if err != nil {
 		return nil, err
 	}
 	if len(colList) == 0 {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
-		for _, colInfo := range tblInfo.Columns {
+		for _, colInfo := range tbl.TableInfo.Columns {
 			cols.data[colInfo.ID] = struct{}{}
 		}
 	} else {
@@ -1941,7 +1941,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	case model.DefaultChoice, model.AllColumns:
 		return tbl.TableInfo.Columns, nil, nil
 	case model.PredicateColumns:
-		predicate, err := b.getPredicateColumns(tbl.TableInfo, predicateCols)
+		predicate, err := b.getPredicateColumns(tbl, predicateCols)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1989,6 +1989,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 		colList := colSet2colList(colSet)
 		return colList, colList, nil
 	}
+	return nil, nil, nil
 }
 
 func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
