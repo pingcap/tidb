@@ -34,6 +34,10 @@ type encodingBase struct {
 	self Encoding
 }
 
+func (b encodingBase) MbLen(_ string) int {
+	return 0
+}
+
 func (b encodingBase) ToUpper(src string) string {
 	return strings.ToUpper(src)
 }

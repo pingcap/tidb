@@ -100,6 +100,8 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *DataSource) {
+	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
+	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo().ID
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
@@ -271,9 +273,17 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
-// The first return value is predicate columns and the second return value is histogram-needed columns.
-func CollectColumnStatsUsage(lp LogicalPlan) ([]model.TableColumnID, []model.TableColumnID) {
-	collector := newColumnStatsUsageCollector(collectPredicateColumns | collectHistNeededColumns)
+// predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
+// The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableColumnID, []model.TableColumnID) {
+	var mode uint64
+	if predicate {
+		mode |= collectPredicateColumns
+	}
+	if histNeeded {
+		mode |= collectHistNeededColumns
+	}
+	collector := newColumnStatsUsageCollector(mode)
 	collector.collectFromPlan(lp)
 	set2slice := func(set map[model.TableColumnID]struct{}) []model.TableColumnID {
 		ret := make([]model.TableColumnID, 0, len(set))
@@ -282,5 +292,12 @@ func CollectColumnStatsUsage(lp LogicalPlan) ([]model.TableColumnID, []model.Tab
 		}
 		return ret
 	}
-	return set2slice(collector.predicateCols), set2slice(collector.histNeededCols)
+	var predicateCols, histNeededCols []model.TableColumnID
+	if predicate {
+		predicateCols = set2slice(collector.predicateCols)
+	}
+	if histNeeded {
+		histNeededCols = set2slice(collector.histNeededCols)
+	}
+	return predicateCols, histNeededCols
 }
