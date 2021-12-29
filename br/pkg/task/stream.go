@@ -42,7 +42,7 @@ import (
 
 const (
 	flagStreamTaskName        = "task-name"
-	flagStreamTaskNameDefault = "ALL"
+	flagStreamTaskNameDefault = "all" // used for get status for all of tasks.
 	flagStreamStartTS         = "start-ts"
 	flagStreamEndTS           = "end-ts"
 	flagGCSafePointTTS        = "gc-ttl"

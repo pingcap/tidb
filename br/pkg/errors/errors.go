@@ -50,8 +50,8 @@ var (
 	ErrRestoreSchemaNotExists  = errors.Normalize("schema not exists", errors.RFCCodeText("BR:Restore:ErrRestoreSchemaNotExists"))
 	ErrUnsupportedSystemTable  = errors.Normalize("the system table isn't supported for restoring yet", errors.RFCCodeText("BR:Restore:ErrUnsupportedSysTable"))
 
-	// ErrStreamLogTaskExist is the error when it exists stream log task, because of supporting single task current.
-	ErrStreamLogTaskExist = errors.Normalize("it has stream task existed", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskExist"))
+	// ErrStreamLogTaskExist is the error when stream log task already exists, because of supporting single task currently.
+	ErrStreamLogTaskExist = errors.Normalize("stream task already exists", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskExist"))
 
 	// TODO maybe it belongs to PiTR.
 	ErrRestoreRTsConstrain = errors.Normalize("resolved ts constrain violation", errors.RFCCodeText("BR:Restore:ErrRestoreResolvedTsConstrain"))
