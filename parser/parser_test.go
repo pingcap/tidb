@@ -2190,6 +2190,7 @@ func TestIdentifier(t *testing.T) {
 		{`select .78'123'`, true, "SELECT 0.78 AS `123`"},
 		{"select .78`123`", true, "SELECT 0.78 AS `123`"},
 		{`select .78"123"`, true, "SELECT 0.78 AS `123`"},
+		{"select 111 as \xd6\xf7", true, "SELECT 111 AS `??`"},
 	}
 	RunTest(t, table, false)
 }
