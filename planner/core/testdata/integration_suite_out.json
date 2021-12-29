@@ -2068,14 +2068,13 @@
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
-          "      └─Selection 0.01 root  substring(cast(test.t1.c3, var_string(20)), 10)",
-          "        └─IndexMerge 0.01 root  ",
-          "          ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
-          "          │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
-          "          ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
-          "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
-          "            └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      └─IndexMerge 0.01 root  ",
+          "        ├─Selection(Build) 1.00 cop[tikv]  eq(10, test.t2.c3)",
+          "        │ └─TableRangeScan 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+          "        ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+          "        │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 0.01 cop[tikv]  or(and(eq(test.t1.c1, 10), eq(10, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3))), substring(cast(test.t1.c3, var_string(20)), 10)",
+          "          └─TableRowIDScan 9.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1 1",
@@ -2112,14 +2111,13 @@
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─StreamAgg(Probe) 1.00 root  funcs:min(test.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10",
-          "      └─Selection 3.03 root  substring(cast(test.t1.c3, var_string(20)), 10)",
-          "        └─IndexMerge 3.78 root  ",
-          "          ├─Selection(Build) 3.33 cop[tikv]  eq(test.t1.c1, test.t2.c3)",
-          "          │ └─TableRangeScan 3333.33 cop[tikv] table:t1 range:[10,+inf], keep order:false, stats:pseudo",
-          "          ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
-          "          │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 3.78 cop[tikv]  or(and(ge(test.t1.c1, 10), eq(test.t1.c1, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3)))",
-          "            └─TableRowIDScan 3338.67 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "      └─IndexMerge 3.03 root  ",
+          "        ├─Selection(Build) 3.33 cop[tikv]  eq(test.t1.c1, test.t2.c3)",
+          "        │ └─TableRangeScan 3333.33 cop[tikv] table:t1 range:[10,+inf], keep order:false, stats:pseudo",
+          "        ├─Selection(Build) 8.00 cop[tikv]  eq(1, test.t2.c3)",
+          "        │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:c2(c2) range:[1,1], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 3.03 cop[tikv]  or(and(ge(test.t1.c1, 10), eq(test.t1.c1, test.t2.c3)), and(eq(test.t1.c2, 1), eq(1, test.t2.c3))), substring(cast(test.t1.c3, var_string(20)), 10)",
+          "          └─TableRowIDScan 3338.67 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1 1",
