@@ -422,7 +422,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 type GLCmpStringMode uint8
 
 const (
-	// GLCmpStringDirectly Greatest/Least function compares string directly
+	// GLCmpStringDirectly Greatest and Least function compares string directly
 	GLCmpStringDirectly GLCmpStringMode = iota
 	// GLCmpStringAsDate Greatest/Least function compares string as 'yyyy-mm-dd' format
 	GLCmpStringAsDate
