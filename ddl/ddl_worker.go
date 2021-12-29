@@ -620,6 +620,10 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
+	// Don't sync 'alter table cache|nocache' to other tools.
+	// It's internal to the current cluster.
+	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
+		return true
 	}
 
 	return false
