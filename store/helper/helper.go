@@ -873,14 +873,20 @@ type PDRegionStats struct {
 }
 
 // GetPDRegionStats get the RegionStats by tableID.
-func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexStats bool) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	var startKey, endKey []byte
+	if noIndexStats {
+		startKey = tablecodec.GenTableRecordPrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	} else {
+		startKey = tablecodec.EncodeTablePrefix(tableID)
+		endKey = kv.Key(startKey).PrefixNext()
+	}
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 

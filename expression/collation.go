@@ -297,7 +297,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
-	enc := charset.FindEncoding(ec.Charset)
+	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
