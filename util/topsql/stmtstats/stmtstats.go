@@ -232,20 +232,20 @@ func (s *StatementStats) OnDigestKnown(sqlDigest []byte, planDigest []byte) {
 	}
 }
 
-// OnExecuteBegin implements StatementObserver.
-func (s *StatementStats) OnExecuteBegin() {
+// OnInternalQueryBegin implements StatementObserver.
+func (s *StatementStats) OnInternalQueryBegin() {
 	cmdState := s.cmdState.Current()
 	if cmdState == stateCmdQueryProcessStmtBegin || cmdState == stateCmdStmtExecuteBegin || cmdState == stateCmdStmtFetchBegin {
-		// This execution happens in a wire protocol that we are already counting the duration, so
-		// we don't do anything and simply let the wire protocol events to handle it.
+		// This execution happens in a internal protocol that we are already counting the duration, so
+		// we don't do anything and simply let the internal protocol events to handle it.
 		return
 	}
 	s.executeBeginAt = nowFunc()
 	s.resetDigests()
 }
 
-// OnExecuteFinish implements StatementObserver.
-func (s *StatementStats) OnExecuteFinish() {
+// OnInternalQueryFinish implements StatementObserver.
+func (s *StatementStats) OnInternalQueryFinish() {
 	cmdState := s.cmdState.Current()
 	if cmdState == stateCmdQueryProcessStmtBegin || cmdState == stateCmdStmtExecuteBegin || cmdState == stateCmdStmtFetchBegin {
 		return

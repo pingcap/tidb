@@ -293,10 +293,10 @@ func TestForHandleDiffCMD(t *testing.T) {
 	stats.OnCmdStmtFetchFinish([]byte("SQL-4"), nil)
 	stats.OnCmdDispatchFinish()
 
-	// test wire protocol.
-	stats.OnExecuteBegin()
+	// test internal protocol.
+	stats.OnInternalQueryBegin()
 	stats.OnDigestKnown([]byte("internal sql"), nil)
-	stats.OnExecuteFinish()
+	stats.OnInternalQueryFinish()
 
 	m := stats.Take()
 	assert.Len(t, m, 6)

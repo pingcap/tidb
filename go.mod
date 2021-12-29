@@ -10,7 +10,7 @@ require (
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/aws/aws-sdk-go v1.35.3
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
-	github.com/breeswish/go-litefsm v0.0.0-20211228123400-53ff62254a35 // indirect
+	github.com/breeswish/go-litefsm v0.0.0-20211228123400-53ff62254a35
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1

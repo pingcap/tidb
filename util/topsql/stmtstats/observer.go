@@ -39,7 +39,7 @@ type StatementObserver interface {
 	// It may be called without a MySQL protocol when this session is created in background.
 	OnDigestKnown(sqlDigest []byte, planDigest []byte)
 
-	// The following events should be called during reading from wire protocol.
-	OnExecuteBegin()
-	OnExecuteFinish()
+	// The following events should be called during reading from internal protocol.
+	OnInternalQueryBegin()
+	OnInternalQueryFinish()
 }

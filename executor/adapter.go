@@ -1283,7 +1283,7 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeOnDigestKnownForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
 		vars.StmtStats.OnDigestKnown(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
