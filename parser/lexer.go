@@ -683,31 +683,29 @@ func (mb *lazyBuf) data() string {
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	tok, pos = stringLit, s.r.pos()
 	ending := s.r.readByte()
-	foundEscape := false
+	s.buf.Reset()
 	for !s.r.eof() {
+		tPos := s.r.pos()
 		if s.r.skipRune(s.client) {
+			s.buf.WriteString(s.r.data(&tPos))
 			continue
 		}
 		ch0 := s.r.readByte()
 		if ch0 == ending {
-			if s.r.peek() == ending {
-				s.r.inc()
-				foundEscape = true
-				continue
-			}
-			str := s.r.data(&pos)
-			if foundEscape {
-				lit = s.handleEscape(str[1:len(str)-1], ending)
+			if s.r.peek() != ending {
+				lit = s.buf.String()
 				return
 			}
-			lit = str[1 : len(str)-1]
-			return
+			s.r.inc()
+			s.buf.WriteByte(ch0)
 		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
 			if s.r.eof() {
 				break
 			}
+			s.handleEscape(s.r.peek(), &s.buf)
 			s.r.inc()
-			foundEscape = true
+		} else {
+			s.buf.WriteByte(ch0)
 		}
 	}
 
@@ -716,51 +714,33 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 }
 
 // handleEscape handles the case in scanString when previous char is '\'.
-func (s *Scanner) handleEscape(str string, sep byte) string {
-	var buf bytes.Buffer
+func (s *Scanner) handleEscape(b byte, buf *bytes.Buffer) {
 	var ch0 byte
-	for i := 0; i < len(str); i++ {
-		mbLen := s.client.MbLen(str[i:])
-		if mbLen > 0 {
-			buf.WriteString(str[i : i+mbLen])
-			i += mbLen - 1
-			continue
-		}
-		if str[i] == '\\' {
-			switch str[i+1] {
-			/*
-				\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
-				\% \_ ==> preserve both char
-				other ==> remove \
-			*/
-			case 'n':
-				ch0 = '\n'
-			case '0':
-				ch0 = 0
-			case 'b':
-				ch0 = 8
-			case 'Z':
-				ch0 = 26
-			case 'r':
-				ch0 = '\r'
-			case 't':
-				ch0 = '\t'
-			case '%', '_':
-				buf.WriteByte('\\')
-				ch0 = str[i+1]
-			default:
-				ch0 = str[i+1]
-			}
-			buf.WriteByte(ch0)
-			i++
-		} else if str[i] == sep {
-			buf.WriteByte(str[i])
-			i++
-		} else {
-			buf.WriteByte(str[i])
-		}
+	/*
+		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
+		\% \_ ==> preserve both char
+		other ==> remove \
+	*/
+	switch b {
+	case 'n':
+		ch0 = '\n'
+	case '0':
+		ch0 = 0
+	case 'b':
+		ch0 = 8
+	case 'Z':
+		ch0 = 26
+	case 'r':
+		ch0 = '\r'
+	case 't':
+		ch0 = '\t'
+	case '%', '_':
+		buf.WriteByte('\\')
+		ch0 = b
+	default:
+		ch0 = b
 	}
-	return buf.String()
+	buf.WriteByte(ch0)
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
