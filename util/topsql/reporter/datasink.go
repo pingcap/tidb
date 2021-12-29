@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -85,7 +85,7 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
-			variable.TopSQLVariable.Enable.Store(true)
+			topsqlstate.GlobalState.Enable.Store(true)
 		}
 		return nil
 	}
@@ -101,7 +101,7 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	default:
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
-			variable.TopSQLVariable.Enable.Store(false)
+			topsqlstate.GlobalState.Enable.Store(false)
 		}
 	}
 }

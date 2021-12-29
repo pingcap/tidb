@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/stretchr/testify/require"
