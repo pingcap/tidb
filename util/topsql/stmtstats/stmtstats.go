@@ -29,10 +29,10 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(sqlDigest, planDigest []byte)
+	OnExecutionBegin(sqlDigest, planDigest BinaryDigest)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte)
+	OnExecutionFinished(sqlDigest, planDigest BinaryDigest)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -56,7 +56,7 @@ func CreateStatementStats() *StatementStats {
 }
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest BinaryDigest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.getOrCreate(sqlDigest, planDigest)
@@ -66,7 +66,7 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest BinaryDigest) {
 	// Count more data here.
 }
 
@@ -74,8 +74,8 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte) {
 // for the specified sqlPlanDigest and timestamp if it does not exist before.
 // getOrCreate is just a helper function, not responsible for
 // concurrency control, so getOrCreate is **not** thread-safe.
-func (s *StatementStats) getOrCreate(sqlDigest, planDigest []byte) *statementStatsItem {
-	key := sqlPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
+func (s *StatementStats) getOrCreate(sqlDigest, planDigest BinaryDigest) *statementStatsItem {
+	key := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()

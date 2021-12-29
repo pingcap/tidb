@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -1279,7 +1280,7 @@ func (a *ExecStmt) GetTextToLog() string {
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
+		sqlDigest, planDigest := a.getSQLPlanDigestForStmtStats()
 		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
@@ -1288,12 +1289,12 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
+		sqlDigest, planDigest := a.getSQLPlanDigestForStmtStats()
 		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
 	}
 }
 
-func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
+func (a *ExecStmt) getSQLPlanDigestForStmtStats() (stmtstats.BinaryDigest, stmtstats.BinaryDigest) {
 	var sqlDigest, planDigest []byte
 	vars := a.Ctx.GetSessionVars()
 	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
@@ -1302,5 +1303,5 @@ func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
 	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
 		planDigest = d.Bytes()
 	}
-	return sqlDigest, planDigest
+	return stmtstats.BinaryDigest(sqlDigest), stmtstats.BinaryDigest(planDigest)
 }
