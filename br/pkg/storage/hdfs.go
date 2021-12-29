@@ -49,6 +49,7 @@ func dfsCommand(args ...string) (*exec.Cmd, error) {
 	}
 	cmd = append(cmd, bin, "dfs")
 	cmd = append(cmd, args...)
+	//nolint:gosec
 	return exec.Command(cmd[0], cmd[1:]...), nil
 }
 

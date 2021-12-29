@@ -26,7 +26,6 @@ linters:
     - exhaustivestruct
     - exhaustive
     - godot
-    - gosec
     - errorlint
     - wrapcheck
     - gomoddirectives
@@ -81,3 +80,11 @@ linters-settings:
 
 issues:
   exclude-rules:
+    - path: br/tests/
+      linters:
+        - gosec
+        - errcheck
+    - path: _test\.go
+      linters:
+        - gosec
+    

@@ -39,7 +39,7 @@ func Test_RegisterUnregisterCollector(t *testing.T) {
 	SetupAggregator()
 	defer CloseAggregator()
 	time.Sleep(100 * time.Millisecond)
-	collector := newMockCollector(func(records []StatementStatsRecord) {})
+	collector := newMockCollector(func(data StatementStatsMap) {})
 	RegisterCollector(collector)
 	_, ok := globalAggregator.collectors.Load(collector)
 	assert.True(t, ok)
@@ -78,17 +78,17 @@ func Test_aggregator_register_collect(t *testing.T) {
 	stats.OnCmdStmtExecuteFinish()
 	stats.OnCmdDispatchFinish()
 
-	var records []StatementStatsRecord
-	a.registerCollector(newMockCollector(func(rs []StatementStatsRecord) {
-		records = append(records, rs...)
+	total := StatementStatsMap{}
+	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
+		total.Merge(data)
 	}))
 	a.aggregate()
-	assert.NotEmpty(t, records)
-	assert.True(t, records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}] != nil)
-	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(200), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
-	assert.Equal(t, uint64(1), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
-	assert.Equal(t, uint64(100), records[0].Data[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
+	assert.NotEmpty(t, total)
+	assert.True(t, total[SQLPlanDigest{SQLDigest: "SQL-1"}] != nil)
+	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(200), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(100), total[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
@@ -108,15 +108,15 @@ func Test_aggregator_run_close(t *testing.T) {
 }
 
 type mockCollector struct {
-	f func(records []StatementStatsRecord)
+	f func(data StatementStatsMap)
 }
 
-func newMockCollector(f func(records []StatementStatsRecord)) Collector {
+func newMockCollector(f func(data StatementStatsMap)) Collector {
 	return &mockCollector{f: f}
 }
 
-func (c *mockCollector) CollectStmtStatsRecords(records []StatementStatsRecord) {
-	c.f(records)
+func (c *mockCollector) CollectStmtStatsMap(data StatementStatsMap) {
+	c.f(data)
 }
 
 var mockUnixNanoTs = atomic.NewInt64(time.Now().UnixNano())
