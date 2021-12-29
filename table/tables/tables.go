@@ -963,6 +963,10 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	prefixCols := make(map[int64]struct{})
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
+	if err != nil {
+		return nil, rowMap, err
+	}
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -992,10 +996,6 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			prefixCols[col.ID] = struct{}{}
 		}
 		colTps[col.ID] = &col.FieldType
-	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
-	if err != nil {
-		return nil, rowMap, err
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
