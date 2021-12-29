@@ -134,42 +134,45 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
+
+	CollationCompatible string
 }
 
 // DefaultConfig returns the default export Config for dumpling
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
 	return &Config{
-		Databases:          nil,
-		Host:               "127.0.0.1",
-		User:               "root",
-		Port:               3306,
-		Password:           "",
-		Threads:            4,
-		Logger:             nil,
-		StatusAddr:         ":8281",
-		FileSize:           UnspecifiedSize,
-		StatementSize:      DefaultStatementSize,
-		OutputDirPath:      ".",
-		ServerInfo:         ServerInfoUnknown,
-		SortByPk:           true,
-		Tables:             nil,
-		Snapshot:           "",
-		Consistency:        consistencyTypeAuto,
-		NoViews:            true,
-		Rows:               UnspecifiedSize,
-		Where:              "",
-		FileType:           "",
-		NoHeader:           false,
-		NoSchemas:          false,
-		NoData:             false,
-		CsvNullValue:       "\\N",
-		SQL:                "",
-		TableFilter:        allFilter,
-		DumpEmptyDatabase:  true,
-		SessionParams:      make(map[string]interface{}),
-		OutputFileTemplate: DefaultOutputFileTemplate,
-		PosAfterConnect:    false,
+		Databases:           nil,
+		Host:                "127.0.0.1",
+		User:                "root",
+		Port:                3306,
+		Password:            "",
+		Threads:             4,
+		Logger:              nil,
+		StatusAddr:          ":8281",
+		FileSize:            UnspecifiedSize,
+		StatementSize:       DefaultStatementSize,
+		OutputDirPath:       ".",
+		ServerInfo:          ServerInfoUnknown,
+		SortByPk:            true,
+		Tables:              nil,
+		Snapshot:            "",
+		Consistency:         consistencyTypeAuto,
+		NoViews:             true,
+		Rows:                UnspecifiedSize,
+		Where:               "",
+		FileType:            "",
+		NoHeader:            false,
+		NoSchemas:           false,
+		NoData:              false,
+		CsvNullValue:        "\\N",
+		SQL:                 "",
+		TableFilter:         allFilter,
+		DumpEmptyDatabase:   true,
+		SessionParams:       make(map[string]interface{}),
+		OutputFileTemplate:  DefaultOutputFileTemplate,
+		PosAfterConnect:     false,
+		CollationCompatible: LooseCollationCompatible,
 	}
 }
 
@@ -549,6 +552,9 @@ const (
 	defaultDumpThreads        = 128
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
+
+	LooseCollationCompatible  = "loose"
+	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"
 )
