@@ -53,6 +53,7 @@ func SetupTopSQL() {
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+	stmtstats.RegisterCollector(remoteReporter)
 	stmtstats.SetupAggregator()
 }
 
