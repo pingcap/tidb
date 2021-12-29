@@ -1312,7 +1312,7 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 			}
 		}
 	} else if utf8.RuneCount(colValue) > idxCol.Length {
-		// Count character length by characters for other charset, they all encoding as utf8.
+		// Count character length by characters for other rune-based charsets, they are all internally encoded as UTF-8.
 		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
