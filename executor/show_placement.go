@@ -179,12 +179,12 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 	}
 
 	if placement != nil {
-		schedule, err := fetchTableScheduleState(ctx, nil, tblInfo)
+		state, err := fetchTableScheduleState(ctx, nil, tblInfo)
 		if err != nil {
 			return err
 		}
 		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
-		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String(), schedule})
+		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String(), state.String()})
 	}
 
 	return nil
@@ -284,11 +284,11 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 		}
 
 		if placement != nil {
-			schedule, err := fetchDBScheduleState(ctx, scheduleState, dbInfo)
+			state, err := fetchDBScheduleState(ctx, scheduleState, dbInfo)
 			if err != nil {
 				return err
 			}
-			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), schedule})
+			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String(), state.String()})
 		}
 	}
 

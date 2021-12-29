@@ -17,8 +17,8 @@ package infosync
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -64,20 +64,19 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 
 	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
 	if err == nil && res != nil {
-		res := string(res)
-		var state PlacementScheduleState
-		switch {
-		case strings.HasPrefix(res, "\"REPLICATED\""):
-			state = PlacementScheduleStateScheduled
-		case strings.HasPrefix(res, "\"INPROGRESS\""):
-			state = PlacementScheduleStateInProgress
-		case strings.HasPrefix(res, "\"WAITING\""):
-			state = PlacementScheduleStateWaiting
-		default:
-			// mocking will fall here
-			state = PlacementScheduleStateInProgress
+		st := PlacementScheduleStateWaiting
+		// it should not fail
+		var state string
+		_ = json.Unmarshal(res, &state)
+		switch state {
+		case "REPLICATED":
+			st = PlacementScheduleStateScheduled
+		case "INPROGRESS":
+			st = PlacementScheduleStateInProgress
+		case "WAITING":
+			st = PlacementScheduleStateWaiting
 		}
-		return state, nil
+		return st, nil
 	}
 	return PlacementScheduleStateWaiting, err
 }
