@@ -413,6 +413,18 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+	if s.statsCollector == nil {
+		return
+	}
+	t := time.Now()
+	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	for _, col := range predicateColumns {
+		colMap[col] = t
+	}
+	s.statsCollector.UpdateColStatsUsage(colMap)
+}
+
 // StoreIndexUsage stores index usage information in idxUsageCollector.
 func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
 	if s.idxUsageCollector == nil {
