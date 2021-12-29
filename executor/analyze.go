@@ -221,44 +221,37 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
-	if !variable.PersistAnalyzeOptions.Load() || e.OptionsMap == nil {
+	if !variable.PersistAnalyzeOptions.Load() || e.OptionsMap == nil || len(e.OptionsMap) == 0 {
 		return nil
 	}
-	for _, options := range e.OptionsMap {
-		err := saveAnalyzeOpts(options, e.ctx.(sqlexec.RestrictedSQLExecutor))
-		if err != nil {
-			return err
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	idx := 0
+	for _, opts := range e.OptionsMap {
+		sampleNum, _ := opts.RawOpts[ast.AnalyzeOptNumSamples]
+		sampleRate := float64(0)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
+			sampleRate = math.Float64frombits(val)
 		}
+		buckets, _ := opts.RawOpts[ast.AnalyzeOptNumBuckets]
+		topn := int64(-1)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
+			topn = int64(val)
+		}
+		colChoice := opts.ColChoice.String()
+		colIDs := make([]string, len(opts.ColumnList))
+		for i, colInfo := range opts.ColumnList {
+			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		}
+		colIDStrs := strings.Join(colIDs, ",")
+		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		if idx < len(e.OptionsMap)-1 {
+			sqlexec.MustFormatSQL(sql, ",")
+		}
+		idx += 1
 	}
-	return nil
-}
-
-func saveAnalyzeOpts(opts core.V2AnalyzeOptions, exec sqlexec.RestrictedSQLExecutor) error {
-	sampleNum := uint64(0)
-	if val, ok := opts.RawOpts[ast.AnalyzeOptNumSamples]; ok {
-		sampleNum = val
-	}
-	sampleRate := float64(0)
-	if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-		sampleRate = math.Float64frombits(val)
-	}
-	buckets := uint64(0)
-	if val, ok := opts.RawOpts[ast.AnalyzeOptNumBuckets]; ok {
-		buckets = val
-	}
-	topn := int64(-1)
-	if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-		topn = int64(val)
-	}
-	colChoice := opts.ColChoice.String()
-	colIDs := make([]string, len(opts.ColumnList))
-	for i, colInfo := range opts.ColumnList {
-		colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
-	}
-	colIDStrs := strings.Join(colIDs, ",")
-	stmt, err := exec.ParseWithParams(context.TODO(),
-		"REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES (%?,%?,%?,%?,%?,%?,%?)",
-		opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), sql.String())
 	if err != nil {
 		return err
 	}

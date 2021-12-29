@@ -1976,26 +1976,26 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	version int,
 	persistOpts bool,
 	rsOptionsMap map[int64]V2AnalyzeOptions,
-) ([]AnalyzeColumnsTask, map[int64]V2AnalyzeOptions, error) {
+) ([]AnalyzeColumnsTask, error) {
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
 	astOpts, err := parseAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	astColList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	astColsInfo, err := b.getFullAnalyzeColumnsInfo(astColList, tbl, true)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	isAnalyzeTable := len(as.PartitionNames) == 0
 	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for physicalID, opts := range optionsMap {
 		rsOptionsMap[physicalID] = opts
@@ -2038,7 +2038,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		taskSlice = append(taskSlice, newTask)
 	}
-	return taskSlice, rsOptionsMap, nil
+	return taskSlice, nil
 }
 
 func (b *PlanBuilder) genV2AnalyzeOptions(
@@ -2231,7 +2231,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			p.ColTasks, p.OptionsMap, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version, usePersistedOptions, p.OptionsMap)
+			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version, usePersistedOptions, p.OptionsMap)
 			if err != nil {
 				return nil, err
 			}

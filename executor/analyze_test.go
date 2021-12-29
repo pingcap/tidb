@@ -1283,7 +1283,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Equal(t, 2, len(col2.Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 
@@ -1313,7 +1313,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.Less(t, col2.LastUpdateVersion, col0.LastUpdateVersion) // not updated since removed from list
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0.9", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
@@ -1331,7 +1331,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	require.NotEqual(t, 3, len(col0.Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.NotEqual(t, "2", rs.Rows()[0][4])
 }
 
@@ -1377,11 +1377,11 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][3])
 	require.Equal(t, "-1", rs.Rows()[0][4])
 
@@ -1400,7 +1400,7 @@ PARTITION BY RANGE ( a ) (
 	require.Less(t, p1.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p1.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1408,14 +1408,14 @@ PARTITION BY RANGE ( a ) (
 	colIDStrsAB := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1439,15 +1439,15 @@ PARTITION BY RANGE ( a ) (
 	colIDStrsABC := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10), strconv.FormatInt(tableInfo.Columns[2].ID, 10)}, ",")
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "1", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsABC, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 
@@ -1459,10 +1459,10 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 2, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 
 	// merge options of statement's, partition's and table's
@@ -1471,7 +1471,7 @@ PARTITION BY RANGE ( a ) (
 	require.Greater(t, p0.Version, lastVersion)
 	require.Equal(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1490,14 +1490,14 @@ PARTITION BY RANGE ( a ) (
 	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
 	require.Equal(t, 2, len(p2.Columns[tableInfo.Columns[0].ID].Buckets))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p2.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1518,13 +1518,13 @@ PARTITION BY RANGE ( a ) (
 	colIDStrsA := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10)}, ",")
 	colIDStrsAC := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[2].ID, 10)}, ",")
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, colIDStrsA, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, colIDStrsA, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, colIDStrsAC, rs.Rows()[0][6])
 
 	// drop partition
@@ -1532,11 +1532,11 @@ PARTITION BY RANGE ( a ) (
 	is = dom.InfoSchema() // refresh infoschema
 	require.Nil(t, h.GCStats(is, time.Duration(0)))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 0)
+	require.Equal(t, 0, len(rs.Rows()))
 
 	// drop table
 	tk.MustExec("drop table t")
@@ -1545,7 +1545,7 @@ PARTITION BY RANGE ( a ) (
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
 	//require.Equal(t, len(rs.Rows()), 0) TODO
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 0)
+	require.Equal(t, 0, len(rs.Rows()))
 }
 
 func TestSavedPartitionAnalyzeOptionsDynamic(t *testing.T) {
@@ -1592,11 +1592,11 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 0, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "1", rs.Rows()[0][4])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][3])
 	require.Equal(t, "-1", rs.Rows()[0][4])
 
@@ -1619,7 +1619,7 @@ PARTITION BY RANGE ( a ) (
 	require.Less(t, p1.Columns[tableInfo.Columns[2].ID].LastUpdateVersion, p1.Columns[tableInfo.Columns[0].ID].LastUpdateVersion)
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1627,14 +1627,14 @@ PARTITION BY RANGE ( a ) (
 	colIDStrs := strings.Join([]string{strconv.FormatInt(tableInfo.Columns[0].ID, 10), strconv.FormatInt(tableInfo.Columns[1].ID, 10)}, ",")
 	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
 	require.Equal(t, "LIST", rs.Rows()[0][5])
 	require.Equal(t, colIDStrs, rs.Rows()[0][6])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "0", rs.Rows()[0][4])
@@ -1656,13 +1656,13 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 2, len(tbl.Columns[tableInfo.Columns[2].ID].Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p1.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "1", rs.Rows()[0][3])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(p0.PhysicalID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 }
 
@@ -1709,11 +1709,11 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	require.Equal(t, 2, len(tbl2Col0.Buckets))
 	// The columns are: table_id, sample_num, sample_rate, buckets, topn, column_choice, column_ids.
 	rs := tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo1.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][3])
 	require.Equal(t, "2", rs.Rows()[0][4])
 	rs = tk.MustQuery("select * from mysql.analyze_options where table_id=" + strconv.FormatInt(tableInfo2.ID, 10))
-	require.Equal(t, len(rs.Rows()), 1)
+	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "2", rs.Rows()[0][3])
 	require.Equal(t, "2", rs.Rows()[0][4])
 }
