@@ -104,35 +104,30 @@ func (mockConn) Close() error { return nil }
 
 type mockRows struct {
 	driver.Rows
-	cols []string
-	rows [][]driver.Value
+	start int64
+	end   int64
 }
 
 func (r *mockRows) Columns() []string {
-	return r.cols
+	return []string{"_tidb_rowid", "raw_handle", "raw_row"}
 }
 
 func (r *mockRows) Close() error { return nil }
 
 func (r *mockRows) Next(dest []driver.Value) error {
-	if len(r.rows) == 0 {
+	if r.start >= r.end {
 		return io.EOF
 	}
-	copy(dest, r.rows[0])
-	r.rows = r.rows[1:]
+	dest[0] = r.start  // _tidb_rowid
+	dest[1] = []byte{} // raw_handle
+	dest[2] = []byte{} // raw_row
+	r.start++
 	return nil
 }
 
 func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	selectRowIDQuery := "SELECT min\\(_tidb_rowid\\), max\\(_tidb_rowid\\).*"
-	if err := sqlmock.QueryMatcherRegexp.Match(selectRowIDQuery, query); err == nil {
-		return &mockRows{
-			cols: []string{"min(_tidb_rowid)", "max(_tidb_rowid)"},
-			rows: [][]driver.Value{{int64(1), c.totalRows}},
-		}, nil
-	}
-	selectHandleQuery := "SELECT _tidb_rowid, raw_handle, raw_row.*"
-	if err := sqlmock.QueryMatcherRegexp.Match(selectHandleQuery, query); err != nil {
+	expectedQuery := "SELECT _tidb_rowid, raw_handle, raw_row.*"
+	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
 		return &mockRows{}, nil
 	}
 	if len(args) != 4 {
@@ -151,11 +146,7 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 	if start+limit < end {
 		end = start + limit
 	}
-	rows := &mockRows{cols: []string{"_tidb_rowid", "raw_handle", "raw_row"}}
-	for i := start; i < end; i++ {
-		rows.rows = append(rows.rows, []driver.Value{i, []byte{}, []byte{}})
-	}
-	return rows, nil
+	return &mockRows{start: start, end: end}, nil
 }
 
 func TestResolveAllConflictKeys(t *testing.T) {

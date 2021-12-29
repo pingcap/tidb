@@ -15,9 +15,11 @@
 package errormanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 
@@ -108,12 +110,6 @@ const (
 		FROM %s.` + conflictErrorTableName + `
 		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
 		ORDER BY _tidb_rowid LIMIT ?;
-	`
-
-	selectConflictMinMaxRowID = `
-		SELECT min(_tidb_rowid), max(_tidb_rowid)
-		FROM %s.` + conflictErrorTableName + `
-		WHERE table_name = ?;
 	`
 )
 
@@ -247,13 +243,13 @@ func (em *ErrorManager) RecordDataConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
-		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+		buf := &bytes.Buffer{}
+		fmt.Fprintf(buf, insertIntoConflictErrorData, em.schemaEscaped)
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
-				sb.WriteByte(',')
+				buf.WriteByte(',')
 			}
-			fmt.Fprintf(sb, sqlValuesConflictErrorData,
+			fmt.Fprintf(buf, sqlValuesConflictErrorData,
 				em.taskID,
 				tableName,
 				conflictInfo.KeyData,
@@ -262,7 +258,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.RawValue,
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String())
+		_, err := txn.ExecContext(c, buf.String())
 		return err
 	})
 }
@@ -288,13 +284,13 @@ func (em *ErrorManager) RecordIndexConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
-		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
+		buf := &bytes.Buffer{}
+		fmt.Fprintf(buf, insertIntoConflictErrorIndex, em.schemaEscaped)
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
-				sb.WriteByte(',')
+				buf.WriteByte(',')
 			}
-			fmt.Fprintf(sb, sqlValuesConflictErrorIndex,
+			fmt.Fprintf(buf, sqlValuesConflictErrorIndex,
 				em.taskID,
 				tableName,
 				indexNames[i],
@@ -306,7 +302,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				rawRows[i],
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String())
+		_, err := txn.ExecContext(c, buf.String())
 		return err
 	})
 }
@@ -323,16 +319,6 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 		return nil
 	}
 
-	var minRowID, maxRowID int64
-	if err := em.db.QueryRowContext(ctx,
-		fmt.Sprintf(selectConflictMinMaxRowID, em.schemaEscaped), tableName).
-		Scan(&minRowID, &maxRowID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return errors.Trace(err)
-	}
-
 	const rowLimit = 1000
 	taskCh := make(chan [2]int64)
 	taskWg := &sync.WaitGroup{}
@@ -341,7 +327,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 	go func() {
 		//nolint:staticcheck
 		taskWg.Add(1)
-		taskCh <- [2]int64{minRowID, maxRowID + 1}
+		taskCh <- [2]int64{0, math.MaxInt64}
 		taskWg.Wait()
 		close(taskCh)
 	}()
