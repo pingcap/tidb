@@ -1521,7 +1521,7 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWriter) {
 	tableID := tbl.Meta().ID
 	var stats helper.PDRegionStats
-	err := h.GetPDRegionStats(tableID, &stats)
+	err := h.GetPDRegionStats(tableID, &stats, false)
 	if err != nil {
 		writeError(w, err)
 		return
