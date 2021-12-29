@@ -243,13 +243,13 @@ func (em *ErrorManager) RecordDataConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
-		buf := &bytes.Buffer{}
-		fmt.Fprintf(buf, insertIntoConflictErrorData, em.schemaEscaped)
+		sb := &strings.Builder{}
+		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
-				buf.WriteByte(',')
+				sb.WriteByte(',')
 			}
-			fmt.Fprintf(buf, sqlValuesConflictErrorData,
+			fmt.Fprintf(sb, sqlValuesConflictErrorData,
 				em.taskID,
 				tableName,
 				conflictInfo.KeyData,
@@ -258,7 +258,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.RawValue,
 			)
 		}
-		_, err := txn.ExecContext(c, buf.String())
+		_, err := txn.ExecContext(c, sb.String())
 		return err
 	})
 }
@@ -284,13 +284,13 @@ func (em *ErrorManager) RecordIndexConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
-		buf := &bytes.Buffer{}
-		fmt.Fprintf(buf, insertIntoConflictErrorIndex, em.schemaEscaped)
+		sb := &bytes.Buffer{}
+		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
-				buf.WriteByte(',')
+				sb.WriteByte(',')
 			}
-			fmt.Fprintf(buf, sqlValuesConflictErrorIndex,
+			fmt.Fprintf(sb, sqlValuesConflictErrorIndex,
 				em.taskID,
 				tableName,
 				indexNames[i],
@@ -302,7 +302,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				rawRows[i],
 			)
 		}
-		_, err := txn.ExecContext(c, buf.String())
+		_, err := txn.ExecContext(c, sb.String())
 		return err
 	})
 }
