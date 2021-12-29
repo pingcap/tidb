@@ -1076,7 +1076,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 
-    // Test exprs that cannot be pushed.
+	// Test exprs that cannot be pushed.
 	function, err := NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
@@ -1113,23 +1113,23 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
-    // Test exprs that can be pushed.
-    exprs = exprs[:0]
-    pushed = pushed[:0]
-    remained = remained[:0]
+	// Test exprs that can be pushed.
+	exprs = exprs[:0]
+	pushed = pushed[:0]
+	remained = remained[:0]
 
-    substringRelated := []string{ast.Substr, ast.Substring, ast.Mid}
-    for _, exprName := range substringRelated {
-        function, err = NewFunction(mock.NewContext(), exprName, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
-        require.NoError(t, err)
-        exprs = append(exprs, function)
-    }
+	substringRelated := []string{ast.Substr, ast.Substring, ast.Mid}
+	for _, exprName := range substringRelated {
+		function, err = NewFunction(mock.NewContext(), exprName, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
 
-    function, err = NewFunction(mock.NewContext(), ast.CharLength, types.NewFieldType(mysql.TypeString), stringColumn)
-    require.NoError(t, err)
-    exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.CharLength, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 
-    pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 }
