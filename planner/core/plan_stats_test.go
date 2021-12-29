@@ -16,8 +16,11 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/model"
@@ -162,4 +165,65 @@ func countFullStats(stats *statistics.HistColl, colID int64) int {
 		}
 	}
 	return -1
+}
+
+func (s *testPlanStatsSuite) TestPlanStatsLoadTimeout(c *C) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = 0
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Check(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	originalVal1 := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_stats_load_pseudo_timeout = %v", originalVal1))
+	}()
+
+	ctx := tk.Se.(sessionctx.Context)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	c.Assert(dom.StatsHandle().Update(is), IsNil)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	neededColumn := model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[0].ID}
+	resultCh := make(chan model.TableColumnID, 1)
+	timeout := time.Duration(1<<63 - 1)
+	dom.StatsHandle().AppendNeededColumn(neededColumn, resultCh, timeout)
+	stmt, err := s.ParseOneStmt("select * from t where c>1", "", "")
+	c.Check(err, IsNil)
+	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
+	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
+	c.Check(err, NotNil)
+	tk.MustExec("set global tidb_stats_load_pseudo_timeout=true")
+	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+	c.Check(err, IsNil)
+	switch pp := plan.(type) {
+	case *plannercore.PhysicalTableReader:
+		stats := pp.Stats().HistColl
+		c.Assert(countFullStats(stats, tableInfo.Columns[0].ID), Greater, 0)
+		c.Assert(countFullStats(stats, tableInfo.Columns[2].ID), Equals, 0)
+	default:
+		c.Error("unexpected plan:", pp)
+	}
 }

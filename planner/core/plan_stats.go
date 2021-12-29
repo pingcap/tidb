@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"strings"
 	"time"
 
@@ -31,8 +32,8 @@ import (
 type collectPredicateColumnsPoint struct{}
 
 func (c collectPredicateColumnsPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
-	RequestLoadColumnStats(plan)
-	return plan, nil
+	err := RequestLoadColumnStats(plan)
+	return plan, err
 }
 
 func (c collectPredicateColumnsPoint) name() string {
@@ -50,26 +51,28 @@ func (s syncWaitStatsLoadPoint) name() string {
 	return "sync_wait_stats_load_point"
 }
 
+const maxDuration = 1<<63 - 1
+
 // RequestLoadColumnStats send requests to stats handle
-func RequestLoadColumnStats(plan LogicalPlan) {
+func RequestLoadColumnStats(plan LogicalPlan) error {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return
+		return nil
 	}
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
 	if syncWait <= 0 {
-		return
+		return nil
 	}
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
 	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
 	if hintMaxExecutionTime == 0 {
-		hintMaxExecutionTime = mathutil.MaxInt
+		hintMaxExecutionTime = maxDuration
 	}
 	sessMaxExecutionTime := int64(plan.SCtx().GetSessionVars().MaxExecutionTime)
 	if sessMaxExecutionTime == 0 {
-		sessMaxExecutionTime = mathutil.MaxInt
+		sessMaxExecutionTime = maxDuration
 	}
 	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
-	var timeout = time.Duration(waitTime) * time.Millisecond
+	var timeout = time.Duration(waitTime)
 	_, neededColumns := CollectColumnStatsUsage(plan, false, true)
 	if config.GetGlobalConfig().Log.Level == "debug" && len(neededColumns) > 0 {
 		neededColInfos := make([]string, len(neededColumns))
@@ -81,21 +84,33 @@ func RequestLoadColumnStats(plan LogicalPlan) {
 		}
 		logutil.BgLogger().Debug("Full stats are needed:", zap.String("columns", strings.Join(neededColInfos, ",")))
 	}
-	domain.GetDomain(plan.SCtx()).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
+	err := domain.GetDomain(plan.SCtx()).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
+	if err != nil {
+		return handleTimeout(stmtCtx)
+	}
+	return nil
 }
 
 // SyncWaitStatsLoad sync-wait for stats load until timeout
 func SyncWaitStatsLoad(plan LogicalPlan) (bool, error) {
 	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.StatsLoad.Fallback {
+		return false, nil
+	}
 	success := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if success {
 		return true, nil
 	}
+	err := handleTimeout(stmtCtx)
+	return false, err
+}
+
+func handleTimeout(stmtCtx *stmtctx.StatementContext) error {
 	err := errors.New("Timeout when sync-load full stats for needed columns")
 	if variable.StatsLoadPseudoTimeout.Load() {
 		stmtCtx.AppendWarning(err)
 		stmtCtx.StatsLoad.Fallback = true
-		return false, nil
+		return nil
 	}
-	return false, err
+	return err
 }

@@ -47,18 +47,22 @@ type NeededColumnTask struct {
 }
 
 // SendLoadRequests send neededColumns requests
-func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) {
+func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []model.TableColumnID, timeout time.Duration) error {
 	missingColumns := h.genHistMissingColumns(neededColumns)
 	if len(missingColumns) <= 0 {
-		return
+		return nil
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededColumns = missingColumns
 	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(neededColumns))
 	for _, col := range missingColumns {
-		h.appendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
+		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
+		if err != nil {
+			return err
+		}
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
+	return nil
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
@@ -115,11 +119,11 @@ func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []mo
 	return missingColumns
 }
 
-// appendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
-func (h *Handle) appendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, timeout time.Duration) {
+// AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
+func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, timeout time.Duration) error {
 	toTimout := time.Now().Local().Add(timeout)
 	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, ResultCh: resultCh}
-	h.StatsLoad.NeededColumnsCh <- colTask
+	return h.writeToChanWithTimeout(h.StatsLoad.NeededColumnsCh, colTask, timeout)
 }
 
 var errExit = errors.New("Stop loading since domain is closed")
@@ -279,7 +283,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				h.writeToTimeoutCh(task)
+				h.writeToChanNonblocking(h.StatsLoad.TimeoutColumnsCh, task)
 				continue
 			}
 			return task, nil
@@ -292,7 +296,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
-				h.writeToTimeoutCh(task)
+				h.writeToChanNonblocking(h.StatsLoad.TimeoutColumnsCh, task)
 				return task0, nil
 			default:
 				if !ok {
@@ -305,15 +309,24 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	}
 }
 
-// writeToTimeoutCh writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task, since timeout task is not that critical.
-func (h *Handle) writeToTimeoutCh(task *NeededColumnTask) {
+// writeToChanNonblocking writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
+func (h *Handle) writeToChanNonblocking(taskCh chan *NeededColumnTask, task *NeededColumnTask) {
 	select {
-	case h.StatsLoad.TimeoutColumnsCh <- task:
+	case taskCh <- task:
 	default:
-		logutil.BgLogger().Debug("TimeoutCh is full, drop task:", zap.Int64("table", task.TableColumnID.TableID),
-			zap.Int64("column", task.TableColumnID.ColumnID))
 	}
+}
 
+// writeToChanWithTimeout writes a task to a channel and blocks until timeout.
+func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *NeededColumnTask, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case taskCh <- task:
+	case <-timer.C:
+		return errors.New("Channel is full and timeout writing to channel.")
+	}
+	return nil
 }
 
 // updateCachedColumn updates the column hist to global statsCache.
