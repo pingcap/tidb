@@ -51,6 +51,106 @@ type testPrepareSuite struct {
 type testPrepareSerialSuite struct {
 }
 
+func (s *testPrepareSerialSuite) TestRandomFlushPlanCache(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk2 := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int, a int, b int, key(a))")
+	tk.MustExec("create table t2(id int, a int, b int, key(a))")
+	tk.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
+	tk.MustExec("prepare stmt2 from 'SELECT * from t1';")
+	tk.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
+	tk.MustExec("prepare stmt4 from 'SELECT * from t2';")
+	tk.MustExec("prepare stmt5 from 'SELECT * from t2 where id = 1';")
+
+	tk2.MustExec("use test")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("drop table if exists t2")
+	tk2.MustExec("create table t1(id int, a int, b int, key(a))")
+	tk2.MustExec("create table t2(id int, a int, b int, key(a))")
+	tk2.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
+	tk2.MustExec("prepare stmt2 from 'SELECT * from t1';")
+	tk2.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
+	tk2.MustExec("prepare stmt4 from 'SELECT * from t1';")
+	tk2.MustExec("prepare stmt5 from 'SELECT * from t1 where id = 1';")
+
+	prepareNum := 5
+	execStmts := make([]string, 0, prepareNum)
+	for i := 1; i <= prepareNum; i++ {
+		execStmt := fmt.Sprintf("execute stmt%d", i)
+		execStmts = append(execStmts, execStmt)
+	}
+
+	rand.Seed(time.Now().Unix())
+	for i := 0; i < 10; i++ {
+		// Warm up to make sure all of the plans are in the cache.
+		for _, execStmt := range execStmts {
+			tk.MustExec(execStmt)
+			tk.MustExec(execStmt)
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+			tk2.MustExec(execStmt)
+			tk2.MustExec(execStmt)
+			tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
+
+		for j := 0; j < 10; j++ {
+			session1PC, session2PC := "1", "1"
+			// random to flush the plan cache
+			randNum := rand.Intn(10)
+			if randNum == 0 {
+				session1PC, session2PC = "0", "0"
+				if j%2 == 0 {
+					err = tk.ExecToErr("admin flush instance plan_cache;")
+				} else {
+					err = tk2.ExecToErr("admin flush instance plan_cache;")
+				}
+				c.Check(err, Equals, nil)
+			} else if randNum == 1 {
+				session1PC = "0"
+				err = tk.ExecToErr("admin flush session plan_cache;")
+				c.Check(err, Equals, nil)
+			} else if randNum == 2 {
+				session2PC = "0"
+				err = tk2.ExecToErr("admin flush session plan_cache;")
+				c.Check(err, Equals, nil)
+			}
+
+			for _, execStmt := range execStmts {
+				tk.MustExec(execStmt)
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(session1PC))
+
+				tk2.MustExec(execStmt)
+				tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(session2PC))
+			}
+		}
+
+		err = tk.ExecToErr("admin flush instance plan_cache;")
+		c.Check(err, Equals, nil)
+	}
+
+	err = tk.ExecToErr("admin flush global plan_cache;")
+	c.Check(err.Error(), Equals, "Do not support the 'admin flush global scope.'")
+}
+
 func (s *testPrepareSerialSuite) TestFlushPlanCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
