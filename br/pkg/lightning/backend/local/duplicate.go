@@ -50,7 +50,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const maxDupCollectAttemptTimes = 5
+const (
+	maxDupCollectAttemptTimes       = 5
+	defaultRecordConflictErrorBatch = 1024
+)
 
 type pendingIndexHandles struct {
 	// all 4 slices should have exactly the same length.
@@ -478,7 +481,7 @@ func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream D
 			Row:      m.decoder.DecodeRawRowDataAsStr(h, val),
 		}
 		dataConflictInfos = append(dataConflictInfos, conflictInfo)
-		if len(dataConflictInfos) >= 10240 {
+		if len(dataConflictInfos) >= defaultRecordConflictErrorBatch {
 			if err := m.errorMgr.RecordDataConflictError(ctx, m.logger, m.tableName, dataConflictInfos); err != nil {
 				return errors.Trace(err)
 			}
@@ -543,7 +546,7 @@ func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream 
 		indexHandles.append(conflictInfo, indexInfo.Name.O,
 			h, tablecodec.EncodeRowKeyWithHandle(tableID, h))
 
-		if indexHandles.Len() >= 10240 {
+		if indexHandles.Len() >= defaultRecordConflictErrorBatch {
 			if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
 				return errors.Trace(err)
 			}
