@@ -82,10 +82,6 @@ func (s *testPrepareSerialSuite) TestRandomFlushPlanCache(c *C) {
 	tk.MustExec("prepare stmt5 from 'SELECT * from t2 where id = 1';")
 
 	tk2.MustExec("use test")
-	tk2.MustExec("drop table if exists t1")
-	tk2.MustExec("drop table if exists t2")
-	tk2.MustExec("create table t1(id int, a int, b int, key(a))")
-	tk2.MustExec("create table t2(id int, a int, b int, key(a))")
 	tk2.MustExec("prepare stmt1 from 'SELECT * from t1,t2 where t1.id = t2.id';")
 	tk2.MustExec("prepare stmt2 from 'SELECT * from t1';")
 	tk2.MustExec("prepare stmt3 from 'SELECT * from t1 where id = 1';")
