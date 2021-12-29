@@ -40,7 +40,7 @@ type ActionOnExceed interface {
 	GetFallback() ActionOnExceed
 	// GetPriority get the priority of the Action.
 	GetPriority() int64
-	//GetType gets the type of the Action
+	// GetType gets the type of the Action
 	GetType() string
 }
 
