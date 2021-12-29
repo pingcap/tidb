@@ -94,32 +94,32 @@ func Test_record_append(t *testing.T) {
 	//     CPUTimeList: []
 	//   ExecCountList: []
 
-	r.setCPUTime(1, 1)
+	r.appendCPUTime(1, 1)
 	//   TimestampList: [1]
 	//     CPUTimeList: [1]
 	//   ExecCountList: [0]
 
-	r.setStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1})
 	//   TimestampList: [1]
 	//     CPUTimeList: [1]
 	//   ExecCountList: [1]
 
-	r.setCPUTime(2, 1)
+	r.appendCPUTime(2, 1)
 	//   TimestampList: [1, 2]
 	//     CPUTimeList: [1, 1]
 	//   ExecCountList: [1, 0]
 
-	r.setCPUTime(3, 1)
+	r.appendCPUTime(3, 1)
 	//   TimestampList: [1, 2, 3]
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 0, 0]
 
-	r.setStmtStatsItem(3, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(3, stmtstats.StatementStatsItem{ExecCount: 1})
 	//   TimestampList: [1, 2, 3]
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 0, 1]
 
-	r.setStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 1})
 	//   TimestampList: [1, 2, 3]
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 1, 1]
@@ -268,9 +268,9 @@ func Test_collecting_appendOthers(t *testing.T) {
 
 func Test_collecting_topN(t *testing.T) {
 	c := newCollecting()
-	c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).setCPUTime(1, 1)
-	c.getOrCreateRecord([]byte("SQL-2"), []byte("PLAN-2")).setCPUTime(1, 2)
-	c.getOrCreateRecord([]byte("SQL-3"), []byte("PLAN-3")).setCPUTime(1, 3)
+	c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
+	c.getOrCreateRecord([]byte("SQL-2"), []byte("PLAN-2")).appendCPUTime(1, 2)
+	c.getOrCreateRecord([]byte("SQL-3"), []byte("PLAN-3")).appendCPUTime(1, 3)
 	rs := c.topN(1)
 	assert.Len(t, rs, 2)
 	assert.Equal(t, []byte("SQL-3"), rs[0].sqlDigest)
@@ -283,7 +283,7 @@ func Test_collecting_topN(t *testing.T) {
 
 func Test_collecting_take(t *testing.T) {
 	c1 := newCollecting()
-	c1.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).setCPUTime(1, 1)
+	c1.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
 	c2 := c1.take()
 	assert.Empty(t, c1.records)
 	assert.Len(t, c2.records, 1)

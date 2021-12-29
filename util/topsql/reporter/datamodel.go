@@ -177,13 +177,13 @@ func (r *record) Swap(i, j int) {
 	r.tsItems.Swap(i, j)
 }
 
-// setCPUTime appends a cpuTime under a certain timestamp to record.
-// If the timestamp already exists in tsItems, then cpuTime will be replaced.
-func (r *record) setCPUTime(timestamp uint64, cpuTimeMs uint32) {
+// appendCPUTime appends a cpuTime under a certain timestamp to record.
+// If the timestamp already exists in tsItems, then cpuTime will be added.
+func (r *record) appendCPUTime(timestamp uint64, cpuTimeMs uint32) {
 	if index, ok := r.tsIndex[timestamp]; ok {
-		// For the same timestamp, we have already called setStmtStatsItem,
+		// For the same timestamp, we have already called appendStmtStatsItem,
 		// r.tsItems already exists the corresponding timestamp, and the corresponding
-		// cpuTimeMs has been set to 0, so we directly replace it.
+		// cpuTimeMs has been set to 0 (or other values, although impossible), so we add it.
 		//
 		// let timestamp = 10000, cpuTimeMs = 123
 		//
@@ -205,7 +205,7 @@ func (r *record) setCPUTime(timestamp uint64, cpuTimeMs uint32) {
 		// stmtStats.KvExecCount: [map{"?": ?}]
 		// stmtStats.DurationSum: [?]
 		//
-		r.tsItems[index].cpuTimeMs = cpuTimeMs
+		r.tsItems[index].cpuTimeMs += cpuTimeMs
 	} else {
 		// For this timestamp, we have not appended any tsItem, so append it directly.
 		// Other fields in tsItem except cpuTimeMs will be initialized to 0.
@@ -239,13 +239,14 @@ func (r *record) setCPUTime(timestamp uint64, cpuTimeMs uint32) {
 	r.totalCPUTimeMs += uint64(cpuTimeMs)
 }
 
-// setStmtStatsItem appends a stmtstats.StatementStatsItem under a certain timestamp to record.
-// If the timestamp already exists in tsItems, then stmtstats.StatementStatsItem will be replaced.
-func (r *record) setStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
+// appendStmtStatsItem appends a stmtstats.StatementStatsItem under a certain timestamp to record.
+// If the timestamp already exists in tsItems, then stmtstats.StatementStatsItem will be merged.
+func (r *record) appendStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	if index, ok := r.tsIndex[timestamp]; ok {
-		// For the same timestamp, we have already called setCPUTime,
+		// For the same timestamp, we have already called appendCPUTime,
 		// r.tsItems already exists the corresponding timestamp, and the
-		// corresponding stmtStats has been set to 0, so we directly replace it.
+		// corresponding stmtStats has been set to 0 (or other values,
+		// although impossible), so we merge it.
 		//
 		// let timestamp = 10000, execCount = 123, kvExecCount = map{"1.1.1.1:1": 123}, durationSum = 456
 		//
@@ -267,7 +268,7 @@ func (r *record) setStmtStatsItem(timestamp uint64, item stmtstats.StatementStat
 		// stmtStats.KvExecCount: [map{"1.1.1.1:1": 123}]
 		// stmtStats.DurationSum: [456]
 		//
-		r.tsItems[index].stmtStats = item
+		r.tsItems[index].stmtStats.Merge(&item)
 	} else {
 		// For this timestamp, we have not appended any tsItem, so append it directly.
 		// Other fields in tsItem except stmtStats will be initialized to 0.
@@ -474,7 +475,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 		others = newRecord(nil, nil)
 		c.records[keyOthers] = others
 	}
-	others.setCPUTime(timestamp, totalCPUTimeMs)
+	others.appendCPUTime(timestamp, totalCPUTimeMs)
 }
 
 // appendOthersStmtStatsItem appends stmtstats.StatementStatsItem to a special record named "others".
@@ -484,7 +485,7 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 		others = newRecord(nil, nil)
 		c.records[keyOthers] = others
 	}
-	others.setStmtStatsItem(timestamp, item)
+	others.appendStmtStatsItem(timestamp, item)
 }
 
 // topN returns the largest N records, other records will be packed and appended to the end.
