@@ -324,7 +324,7 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 	select {
 	case taskCh <- task:
 	case <-timer.C:
-		return errors.New("Channel is full and timeout writing to channel.")
+		return errors.New("Channel is full and timeout writing to channel")
 	}
 	return nil
 }
