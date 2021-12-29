@@ -810,6 +810,6 @@ var (
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	StatsLoadSyncWait       = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
-	StatsLoadPseudoTimeout  = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
+	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 )
