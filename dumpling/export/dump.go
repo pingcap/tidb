@@ -154,10 +154,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
-	//init charset and default collation map
-	d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
-	if err != nil {
-		return err
+	if d.conf.CollationCompatible == StrickCollationCompatible {
+		//init charset and default collation map
+		d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
+		if err != nil {
+			return err
+		}
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
@@ -347,11 +349,14 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// adjust db collation
-			createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
-			if err != nil {
-				return errors.Trace(err)
+			if d.conf.CollationCompatible == StrickCollationCompatible {
+				// adjust db collation
+				createDatabaseSQL, err = adjustDatabaseCollation(tctx, parser1, createDatabaseSQL, d.charsetAndDefaultCollationMap)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
+
 			task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
 			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 			if ctxDone {
@@ -375,12 +380,14 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 						return tctx.Err()
 					}
 				} else {
-					// adjust table collation
-					newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
-					if err != nil {
-						return errors.Trace(err)
+					if d.conf.CollationCompatible == StrickCollationCompatible {
+						// adjust table collation
+						newCreateSQL, err := adjustTableCollation(tctx, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						meta.(*tableMeta).showCreateTable = newCreateSQL
 					}
-					meta.(*tableMeta).showCreateTable = newCreateSQL
 					task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
