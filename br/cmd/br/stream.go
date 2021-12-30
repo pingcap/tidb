@@ -44,8 +44,9 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStartCommand(),
 		newStreamStopCommand(),
 		newStreamPauseCommand(),
-		newStreamResumeComamnd(),
-		newStreamStatusComamnd(),
+		newStreamResumeCommand(),
+		newStreamStatusCommand(),
+		newStreamRestoreCommand(),
 	)
 	return command
 }
@@ -94,7 +95,7 @@ func newStreamPauseCommand() *cobra.Command {
 	return command
 }
 
-func newStreamResumeComamnd() *cobra.Command {
+func newStreamResumeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "resume",
 		Short: "resume a stream task",
@@ -108,7 +109,7 @@ func newStreamResumeComamnd() *cobra.Command {
 	return command
 }
 
-func newStreamStatusComamnd() *cobra.Command {
+func newStreamStatusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "get status of a stream task",
@@ -121,6 +122,20 @@ func newStreamStatusComamnd() *cobra.Command {
 	task.DefineStreamStatusCommonFlags(command.Flags())
 	return command
 }
+
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "restore",
+		Short: "restore a stream task",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return streamCommand(command, task.StreamStatus)
+		},
+	}
+	task.DefineStreamRestoreFlags(command.Flags())
+	return command
+}
+
 
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig

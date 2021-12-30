@@ -17,6 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"sort"
 	"strings"
 
@@ -46,6 +47,7 @@ const (
 	flagStreamStartTS         = "start-ts"
 	flagStreamEndTS           = "end-ts"
 	flagGCSafePointTTS        = "gc-ttl"
+	flagStreamRestoreTS  = "restore-ts"
 )
 
 var (
@@ -54,6 +56,7 @@ var (
 	StreamPause  = "stream pause"
 	StreamResume = "stream resume"
 	StreamStatus = "stream status"
+	StreamRestore = "stream restore"
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -62,6 +65,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamPause:  RunStreamPause,
 	StreamResume: RunStreamResume,
 	StreamStatus: RunStreamStatus,
+	StreamRestore: RunStreamRestore,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -74,7 +78,8 @@ type StreamConfig struct {
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
-	SafePointTTL int64 `json:"saft-point-ttl" toml:"saft-point-ttl"`
+	SafePointTTL int64 `json:"safe-point-ttl" toml:"safe-point-ttl"`
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
@@ -86,6 +91,12 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 		"support TSO or datetime")
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
+}
+
+// DefineStreamRestoreFlags defines flags used for `stream restore`
+func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
+	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -506,7 +517,7 @@ func RunStreamStatus(
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
-			"task.RunStreamStatusRunStreamStatusRunStreamStatus",
+			"task.RunStreamStatus",
 			opentracing.ChildOf(span.Context()),
 		)
 		defer span1.Finish()
@@ -544,3 +555,67 @@ func RunStreamStatus(
 	}
 	return nil
 }
+
+// RunStreamRestore start restore job
+func RunStreamRestore(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(
+			"task.RunStreamRestore",
+			opentracing.ChildOf(span.Context()),
+		)
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	keepaliveCfg.PermitWithoutStream = true
+	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer client.Close()
+
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+		SkipCheckPath:   cfg.SkipCheckPath,
+	}
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
+	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
+	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	err = client.LoadRestoreStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// read meta by given ts.
+	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// read data file by given ts.
+	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+
+	return nil
+}
+

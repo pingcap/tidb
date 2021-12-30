@@ -1198,6 +1198,56 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
+const (
+	streamBackupMetaPrefix = "v1_backupmeta"
+)
+
+// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
+	err := rc.storage.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		if strings.HasPrefix(path, streamBackupMetaPrefix) {
+			m := &backuppb.Metadata{}
+			b, err := rc.storage.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = m.Unmarshal(b)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// TODO correct m.ResolvedTs type in proto
+			if m.ReslovedTs < int64(restoreTS) {
+				log.Debug("backup stream collect meta file", zap.String("file", path))
+				streamBackupMetaFiles = append(streamBackupMetaFiles, m)
+			} else {
+				log.Debug("backup stream ignore meta file", zap.String("file", path))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return streamBackupMetaFiles, nil
+}
+
+// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Metadata, restoreTS uint64) ([]*backuppb.DataFileInfo, error) {
+	streamBackupDataFiles := make([]*backuppb.DataFileInfo, 0)
+	for _, m := range metas {
+		// TODO m.File => m.Files
+		for _, d := range m.File {
+			if d.MinTs > restoreTS {
+				continue
+			}
+			streamBackupDataFiles = append(streamBackupDataFiles, d)
+			log.Debug("backup stream collect data file", zap.String("file", d.Path))
+		}
+	}
+	return streamBackupDataFiles, nil
+}
+
 func transferBoolToValue(enable bool) string {
 	if enable {
 		return "ON"
