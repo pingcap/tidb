@@ -881,7 +881,7 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 
 // AddGcColumnCond add the `tidb_shard(x) = xxx` to the condition
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
-// @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
+// @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
 //                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
 //                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
 //                          only relative to uk's columns.
@@ -1084,7 +1084,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 
 // NeedAddGcColumn4ShardIndex check whether to add `tidb_shard(x) = xxx`
 // @param[in] cols          the columns of shard index, such as [tidb_shard(a), a, ...]
-// @param[in] accessCond    the condtions relative to the index and arranged by the index column order.
+// @param[in] accessCond    the conditions relative to the index and arranged by the index column order.
 //                          e.g. the index is uk(tidb_shard(a), a, b) and the where clause is
 //                          `WHERE b = 1 AND a = 2 AND c = 3`, the param accessCond is {a = 2, b = 1} that is
 //                          only relative to uk's columns.
@@ -1209,7 +1209,7 @@ func NeedAddColumn4InCond(cols []*expression.Column, accessCond []expression.Exp
 	return true
 }
 
-// ExtractColumnsFromExpr get all fields from input expresion virtaulExpr
+// ExtractColumnsFromExpr get all fields from input expression virtaulExpr
 func ExtractColumnsFromExpr(virtaulExpr *expression.ScalarFunction) []*expression.Column {
 	var fields []*expression.Column
 
@@ -1233,7 +1233,7 @@ func ExtractColumnsFromExpr(virtaulExpr *expression.ScalarFunction) []*expressio
 // IsValidShardIndex Check whether the definition of shard index is valid. The form of index
 // shoulde like `index(tidb_shard(a), a, ....)`.
 // 1) the column count shoudle be >= 2
-// 2) the first column shoudle be tidb_shard(xxx)
+// 2) the first column should be tidb_shard(xxx)
 // 3) the parameter of tidb_shard shoudle be a column that is the second column of index
 // @param[in] cols        the columns of shard index, such as [tidb_shard(a), a, ...]
 // @retval - if the shard index is valid return true, otherwise return false
