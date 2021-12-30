@@ -938,7 +938,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
 		return nil, err
 	}
@@ -957,8 +957,7 @@ func getOffsetInHandle(meta *model.TableInfo, col *table.Column) (idxInHandle in
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
-	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column, value []byte) ([]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	defaultVals := make([]types.Datum, len(cols))
@@ -968,7 +967,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 	}
 	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
-		return nil, rowMap, err
+		return nil, err
 	}
 	for i, col := range cols {
 		// Skip the virtual generated column, decode it in the outer function.
@@ -996,11 +995,11 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			dtBytes := h.EncodedCol(idxInHandle)
 			_, dt, err := codec.DecodeOne(dtBytes)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			v[i] = dt
 			continue
@@ -1012,10 +1011,10 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			v[i], err = GetColDefaultValue(ctx, col, defaultVals, true)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	return v, rowMap, nil
+	return v, nil
 }
 
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.

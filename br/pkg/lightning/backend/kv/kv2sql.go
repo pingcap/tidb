@@ -53,12 +53,12 @@ func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key [
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Datum, map[int64]types.Datum, error) {
+func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Datum, error) {
 	return tables.DecodeRawRowData(t.se, t.tbl.Meta(), h, t.tbl.Cols(), value)
 }
 
 func (t *TableKVDecoder) DecodeRawRowDataAsStr(h kv.Handle, value []byte) (res string) {
-	row, _, err := t.DecodeRawRowData(h, value)
+	row, err := t.DecodeRawRowData(h, value)
 	if err == nil {
 		res, err = types.DatumsToString(row, true)
 		if err == nil {
@@ -71,7 +71,7 @@ func (t *TableKVDecoder) DecodeRawRowDataAsStr(h kv.Handle, value []byte) (res s
 // IterRawIndexKeys generates the raw index keys corresponding to the raw row,
 // and then iterate them using `fn`. The input buffer will be reused.
 func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]byte) error) error {
-	row, _, err := t.DecodeRawRowData(h, rawRow)
+	row, err := t.DecodeRawRowData(h, rawRow)
 	if err != nil {
 		return err
 	}

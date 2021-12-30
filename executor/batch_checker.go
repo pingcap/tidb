@@ -243,24 +243,15 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, _, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	oldRow, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	gIdx := 0
 	for _, col := range cols {
-		//if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
-		//	_, found := oldRowMap[col.ID]
-		//	if !found {
-		//		oldRow[col.Offset], err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
-		//		if err != nil {
-		//			return nil, err
-		//		}
-		//	}
-		//}
 		if col.IsGenerated() {
-			// only the virtual column needs fill back.
+			// Only the virtual column needs filling back.
 			if !col.GeneratedStored {
 				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {
