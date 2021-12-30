@@ -290,12 +290,7 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	ballast := newBallast(s.cfg.Performance.MaxBallastObjectSize)
-	{
-		_, info := ballast.SetSize(s.cfg.Performance.BallastObjectSize)
-		if len(info) > 0 {
-			logutil.BgLogger().Warn(info)
-		}
-	}
+	ballast.SetSize(s.cfg.Performance.BallastObjectSize)
 	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
 
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
