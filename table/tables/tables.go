@@ -1009,7 +1009,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col.ChangeStateInfo != nil {
 			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
 		} else {
-			v[i], err = GetColDefaultValue(ctx, col, defaultVals, false)
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals, true)
 		}
 		if err != nil {
 			return nil, nil, err
