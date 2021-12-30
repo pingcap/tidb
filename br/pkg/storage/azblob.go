@@ -221,37 +221,16 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		return nil, errors.Annotate(err, "Failed to create azure service client")
 	}
 
-	respIter := serviceClient.ListContainers(nil)
-	containerExist := false
-RESPITER:
-	for {
-		err := respIter.Err()
-		if err != nil {
-			return nil, errors.Annotate(err, "Failed to list azure containers")
-		}
-
-		if !respIter.NextPage(ctx) {
-			err := respIter.Err()
-			if err != nil {
-				return nil, errors.Annotate(err, "Failed to list azure containers")
-			}
-			break RESPITER
-		}
-
-		for _, container := range respIter.PageResponse().ContainerItems {
-			if *container.Name == options.Bucket {
-				containerExist = true
-				break RESPITER
-			}
-		}
-	}
-
-	respIter.PageResponse().RawResponse.Body.Close()
 	containerClient := serviceClient.NewContainerClient(options.Bucket)
-	if !containerExist {
-		_, err := containerClient.Create(ctx, nil)
-		if err != nil {
-			return nil, errors.Annotate(err, "Failed to create the container")
+	_, err = containerClient.Create(ctx, nil)
+	if err != nil {
+		var errResp *azblob.StorageError
+		if internalErr, ok := err.(*azblob.InternalError); ok && internalErr.As(&errResp) {
+			if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
+				return nil, errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
+			}
+		} else {
+			return nil, errors.Annotate(err, "Failed to create the container: error can not be parsed")
 		}
 	}
 

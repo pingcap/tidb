@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -28,18 +29,12 @@ func (b *sharedKeyAzuriteClientBuilder) GetAccountName() string {
 	return "devstoreaccount1"
 }
 
-func checkAzuriteRunning() bool {
+func TestAzblob(t *testing.T) {
 	checkStatement := fmt.Sprintf("lsof -i:%d ", 10000)
 	output, _ := exec.Command("sh", "-c", checkStatement).CombinedOutput()
-	return len(output) > 0
-}
-
-func TestAzblob(t *testing.T) {
-	if !checkAzuriteRunning() {
+	if len(output) == 0 {
 		t.Log("azurite is not running, skip test")
 		return
-	} else {
-		t.Log("found port 10000 is occupied, run test")
 	}
 
 	ctx := context.Background()
@@ -47,7 +42,14 @@ func TestAzblob(t *testing.T) {
 		Bucket: "test",
 		Prefix: "a/b/",
 	}
+
 	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, &sharedKeyAzuriteClientBuilder{})
+	if err != nil {
+		if strings.Contains(err.Error(), "connect: connection refused") {
+			t.Log("azurite is not running, skip test")
+			return
+		}
+	}
 	require.NoError(t, err)
 
 	err = azblobStorage.WriteFile(ctx, "key", []byte("data"))
