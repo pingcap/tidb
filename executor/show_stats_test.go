@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"testing"
 	"time"
 
@@ -342,6 +343,38 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+}
+
+func TestShowColumnStatsUsageWithTimeZone(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+	tk.MustExec("set @@time_zone = '+8:00'")
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b > 1")
+	require.NoError(t, h.DumpColStatsUsageToKV())
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	t1, err := time.Parse(types.TimeFormat, rows[0][4].(string))
+	require.NoError(t, err)
+
+	tk.MustExec("set @@time_zone = '+10:00'")
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	t2, err := time.Parse(types.TimeFormat, rows[0][4].(string))
+	require.NoError(t, err)
+	require.Equal(t, "2h0m0s", t2.Sub(t1).String())
+
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }
 
 func TestShowHistogramsInFlight(t *testing.T) {
