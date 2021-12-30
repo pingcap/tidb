@@ -6954,6 +6954,8 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(time '00:00:01', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2069-12-31 12:00:00"))
 	// compare Date/DateTime as DateTime type, return DateTime type
 	tk.MustQuery("select greatest(date '21000101', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2100-01-01 00:00:00"))
+	// compare JSON/JSON, return JSON type
+	tk.MustQuery("select greatest(cast('1' as JSON), cast('2' as JSON));").Check(testkit.Rows("2"))
 	//Original 30264 Issue:
 	tk.MustQuery("select greatest(time '20:00:00', 120000);").Check(testkit.Rows("20:00:00"))
 	tk.MustQuery("select greatest(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
@@ -6984,4 +6986,6 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(c, timestamp '2069-12-31 12:00:00') from t1;").Check(testkit.Rows("2069-12-31 12:00:00"))
 	// compare Date/DateTime as DateTime type, return DateTime type
 	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
+	// compare JSON/JSON, return JSON type
+	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
 }
