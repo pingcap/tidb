@@ -1804,8 +1804,34 @@ type colStatsTimeInfo struct {
 	LastAnalyzedAt *types.Time
 }
 
+// getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.
+func (h *Handle) getDisableColumnTrackingTime() (*time.Time, error) {
+	rows, fields, err := h.execRestrictedSQL(context.Background(), "SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	// The string represents the UTC time when tidb_enable_column_tracking is set to 0.
+	value, err := d.ToString()
+	if err != nil {
+		return nil, err
+	}
+	t, err := time.Parse(types.UTCTimeFormat, value)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // LoadColumnStatsUsage loads column stats usage information from disk.
 func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+	disableTime, err := h.getDisableColumnTrackingTime()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
 	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
@@ -1823,8 +1849,12 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
-			statsUsage.LastUsedAt = &t
+			// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we should ignore it because
+			// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+			if disableTime == nil || gt.After(*disableTime) {
+				t := types.NewTime(types.FromGoTime(gt.In(loc)), mysql.TypeTimestamp, types.DefaultFsp)
+				statsUsage.LastUsedAt = &t
+			}
 		}
 		if !row.IsNull(3) {
 			gt, err := row.GetTime(3).GoTime(time.UTC)
@@ -1860,6 +1890,35 @@ func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
 			continue
 		}
 		columnIDs = append(columnIDs, twoIDs...)
+	}
+	return columnIDs, nil
+}
+
+// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
+	disableTime, err := h.getDisableColumnTrackingTime()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	columnIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if row.IsNull(0) || row.IsNull(1) {
+			continue
+		}
+		colID := row.GetInt64(0)
+		gt, err := row.GetTime(1).GoTime(time.UTC)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// If `last_used_at` is before the time when `set global enable_column_tracking = 0`, we don't regard the column as predicate column because
+		// `set global enable_column_tracking = 0` indicates all the predicate columns collected before.
+		if disableTime == nil || gt.After(*disableTime) {
+			columnIDs = append(columnIDs, colID)
+		}
 	}
 	return columnIDs, nil
 }
