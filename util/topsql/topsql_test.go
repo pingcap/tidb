@@ -23,10 +23,10 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -112,8 +112,8 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 func TestTopSQLReporter(t *testing.T) {
 	server, err := mockServer.StartMockAgentServer()
 	require.NoError(t, err)
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	topsqlstate.GlobalState.MaxStatementCount.Store(200)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
@@ -217,8 +217,8 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 }
 
 func TestTopSQLPubSub(t *testing.T) {
-	variable.TopSQLVariable.MaxStatementCount.Store(200)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	topsqlstate.GlobalState.MaxStatementCount.Store(200)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
@@ -373,7 +373,7 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 }
 
 func setTopSQLEnable(enabled bool) {
-	variable.TopSQLVariable.Enable.Store(enabled)
+	topsqlstate.GlobalState.Enable.Store(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {
