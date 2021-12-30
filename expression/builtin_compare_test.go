@@ -351,6 +351,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
 			"905969664", "1990-06-16 17:22:56.005534", false, false,
 		},
+		{
+			[]interface{}{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
+			"20:00:00", "105969664", false, false,
+		},
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
