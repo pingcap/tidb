@@ -110,19 +110,19 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	for _, rule := range LearnerRules {
 		if rule.Count == 0 {
-			// empty constraints passed
-			if len(learnerConstraints) == 0 {
-				break
+			if len(rule.Constraints) > 0 {
+				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 			}
-			return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 		}
 		for _, cnst := range CommonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
+		if rule.Count > 0 {
+			Rules = append(Rules, rule)
+		}
 	}
-	Rules = append(Rules, LearnerRules...)
 
 	return &Bundle{Rules: Rules}, nil
 }
