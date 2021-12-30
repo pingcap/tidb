@@ -25,12 +25,6 @@ import (
 // globalAggregator is global *aggregator.
 var globalAggregator = newAggregator()
 
-// StatementStatsRecord is the merged StatementStatsMap with timestamp.
-type StatementStatsRecord struct {
-	Timestamp int64
-	Data      StatementStatsMap
-}
-
 // aggregator is used to collect and aggregate data from all StatementStats.
 // It is responsible for collecting data from all StatementStats, aggregating
 // them together, uploading them and regularly cleaning up the closed StatementStats.
@@ -69,22 +63,21 @@ func (m *aggregator) run() {
 // aggregate data from all associated StatementStats.
 // If StatementStats has been closed, collect will remove it from the map.
 func (m *aggregator) aggregate() {
-	r := StatementStatsRecord{
-		Timestamp: time.Now().Unix(),
-		Data:      StatementStatsMap{},
-	}
+	total := StatementStatsMap{}
 	m.statsSet.Range(func(statsR, _ interface{}) bool {
 		stats := statsR.(*StatementStats)
 		if stats.Finished() {
 			m.unregister(stats)
 		}
-		r.Data.Merge(stats.Take())
+		total.Merge(stats.Take())
 		return true
 	})
-	m.collectors.Range(func(c, _ interface{}) bool {
-		c.(Collector).CollectStmtStatsRecords([]StatementStatsRecord{r})
-		return true
-	})
+	if len(total) > 0 {
+		m.collectors.Range(func(c, _ interface{}) bool {
+			c.(Collector).CollectStmtStatsMap(total)
+			return true
+		})
+	}
 }
 
 // register binds StatementStats to aggregator.
@@ -149,8 +142,8 @@ func UnregisterCollector(collector Collector) {
 	globalAggregator.unregisterCollector(collector)
 }
 
-// Collector is used to collect StatementStatsRecord.
+// Collector is used to collect StatementStatsMap.
 type Collector interface {
-	// CollectStmtStatsRecords is used to collect list of StatementStatsRecord.
-	CollectStmtStatsRecords([]StatementStatsRecord)
+	// CollectStmtStatsMap is used to collect StatementStatsMap.
+	CollectStmtStatsMap(StatementStatsMap)
 }

@@ -293,6 +293,39 @@ func TestScanString(t *testing.T) {
 	}
 }
 
+func TestScanStringWithNoBackslashEscapesMode(t *testing.T) {
+	table := []struct {
+		raw    string
+		expect string
+	}{
+		{`' \n\tTest String'`, ` \n\tTest String`},
+		{`'\x\B'`, `\x\B`},
+		{`'\0\\''"\b\n\r\t\'`, `\0\\'"\b\n\r\t\`},
+		{`'\Z'`, `\Z`},
+		{`'\%\_'`, `\%\_`},
+		{`'hello'`, "hello"},
+		{`'"hello"'`, `"hello"`},
+		{`'""hello""'`, `""hello""`},
+		{`'hel''lo'`, "hel'lo"},
+		{`'\'hello'`, `\`},
+		{`"hello"`, "hello"},
+		{`"'hello'"`, "'hello'"},
+		{`"''hello''"`, "''hello''"},
+		{`"hel""lo"`, `hel"lo`},
+		{`"\"hello"`, `\`},
+		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+	}
+	l := NewScanner("")
+	l.SetSQLMode(mysql.ModeNoBackslashEscapes)
+	for _, v := range table {
+		l.reset(v.raw)
+		tok, pos, lit := l.scan()
+		requires.Zero(t, pos.Offset)
+		requires.Equal(t, stringLit, tok)
+		requires.Equal(t, v.expect, lit)
+	}
+}
+
 func TestIdentifier(t *testing.T) {
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
