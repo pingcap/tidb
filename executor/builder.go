@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -2216,6 +2217,9 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 }
 
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+	if task.V2Options != nil {
+		opts = task.V2Options.FilledOpts
+	}
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
@@ -2282,7 +2286,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
@@ -2320,19 +2324,20 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate
 	}
 	var statsTbl *statistics.Table
-	if tid == tblInfo.ID {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+	tid := task.TableID.GetStatisticsID()
+	if tid == task.TblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(task.TblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+		statsTbl = statsHandle.GetPartitionStats(task.TblInfo, tid)
 	}
-	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
+	approxiCount, hasPD := b.getApproximateTableCountFromStorage(sctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
 		return defaultRate
@@ -2345,7 +2350,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.Count*100) < approxiCount {
+	if float64(statsTbl.Count*5) < approxiCount {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
@@ -2359,18 +2364,49 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
-func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context, tid int64) (float64, bool) {
+func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return 0, false
 	}
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
-	err := pdHelper.GetPDRegionStats(tid, regionStats)
+	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
+	failpoint.Inject("calcSampleRateByStorageCount", func() {
+		// Force the TiDB thinking that there's PD and the count of region is small.
+		err = nil
+		regionStats.Count = 1
+		// Set a very large approximate count.
+		regionStats.StorageKeys = 1000000
+	})
 	if err != nil {
 		return 0, false
 	}
-	return float64(regionStats.StorageKeys), true
+	// If this table is not small, we directly use the count from PD,
+	// since for a small table, it's possible that it's data is in the same region with part of another large table.
+	// Thus, we use the number of the regions of the table's table KV to decide whether the table is small.
+	if regionStats.Count > 2 {
+		return float64(regionStats.StorageKeys), true
+	}
+	// Otherwise, we use count(*) to calc it's size, since it's very small, the table data can be filled in no more than 2 regions.
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "select count(*) from %n.%n", task.DBName, task.TableName)
+	if task.PartitionName != "" {
+		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
+	}
+	stmt, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(context.TODO(), sql.String())
+	if err != nil {
+		return 0, false
+	}
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return 0, false
+	}
+	// If the record set is nil, there's something wrong with the execution. The COUNT(*) would always return one row.
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return 0, false
+	}
+	return float64(rows[0].GetInt64(0)), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
@@ -2600,6 +2636,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		wg:           &sync.WaitGroup{},
 		opts:         v.Opts,
+		OptionsMap:   v.OptionsMap,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
