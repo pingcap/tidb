@@ -517,11 +517,11 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "sh",
 			Regions:       "bj,sh",
-			Followers:     5,
+			Followers:     4,
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			NewRule(Voter, 4, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "sh"),
 			)),
 			NewRule(Follower, 2, NewConstraintsDirect(

@@ -170,7 +170,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		primaryCount = uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
 	case "majority_in_primary":
 		// calculate how many replicas need to be in the primary region for quorum
-		primaryCount = uint64(math.Ceil(float64(followers+1)/2 + 1))
+		primaryCount = uint64((followers+1) / 2 + 1)
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
