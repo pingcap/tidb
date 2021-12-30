@@ -222,7 +222,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, dbInfo 
 		}
 
 		tmpIDs := tblIDs
-		if (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
