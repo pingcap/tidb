@@ -85,14 +85,12 @@ func NewCluster() (*Cluster, error) {
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
 	// choose a random available port
-	listen, _ := net.Listen("tcp", "127.0.0.1:")
-	statusPort := listen.Addr().(*net.TCPAddr).Port
-	listen.Close()
+	l1, _ := net.Listen("tcp", "127.0.0.1:")
+	statusPort := l1.Addr().(*net.TCPAddr).Port
 
 	// choose a random available port
-	listen, _ = net.Listen("tcp", "127.0.0.1:")
-	addrPort := listen.Addr().(*net.TCPAddr).Port
-	listen.Close()
+	l2, _ := net.Listen("tcp", "127.0.0.1:")
+	addrPort := l2.Addr().(*net.TCPAddr).Port
 
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
@@ -102,6 +100,9 @@ func (mock *Cluster) Start() error {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
+	// close port for next listen in NewServer
+	l1.Close()
+	l2.Close()
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
 	if err != nil {
 		return errors.Trace(err)
