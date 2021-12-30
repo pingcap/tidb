@@ -185,15 +185,6 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
-	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
-	// The default value is the smallest of the following two values: 2GB or
-	// one quarter of the total physical memory in the current system.
-	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
-	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
-	// The valid value range is `[0, max-ballast-object-size]`. A maximum value is used instead if the value want to
-	// configure is out of range. For example, if `max-ballast-object-size` is `2147483648` bytes, but the
-	// `ballast-object-size` was configured as `-1`, then `2147483648` bytes is used as the initial size of the ballast object.
-	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -491,6 +482,15 @@ type Performance struct {
 	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                int    `toml:"gogc" json:"gogc"`
 	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
+	// The default value is the smallest of the following two values: 2GB or
+	// one quarter of the total physical memory in the current system.
+	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
+	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	// The valid value range is `[0, max-ballast-object-size]`. A maximum value is used instead if the value want to
+	// configure is out of range. For example, if `max-ballast-object-size` is `2147483648` bytes, but the
+	// `ballast-object-size` was configured as `-1`, then `2147483648` bytes is used as the initial size of the ballast object.
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // PlanCache is the PlanCache section of the config.

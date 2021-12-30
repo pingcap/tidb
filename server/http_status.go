@@ -289,9 +289,9 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	ballast := newBallast(s.cfg.MaxBallastObjectSize)
+	ballast := newBallast(s.cfg.Performance.MaxBallastObjectSize)
 	{
-		_, info := ballast.SetSize(s.cfg.BallastObjectSize)
+		_, info := ballast.SetSize(s.cfg.Performance.BallastObjectSize)
 		if len(info) > 0 {
 			logutil.BgLogger().Warn(info)
 		}
