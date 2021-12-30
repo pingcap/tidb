@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -874,6 +875,9 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
 	h.sweepList()
 	h.colMap.Lock()
 	colMap := h.colMap.data
@@ -1035,6 +1039,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()

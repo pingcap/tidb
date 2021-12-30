@@ -1027,6 +1027,16 @@ type AnalyzeInfo struct {
 	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
+	V2Options     *V2AnalyzeOptions
+}
+
+// V2AnalyzeOptions is used to hold analyze options information.
+type V2AnalyzeOptions struct {
+	PhyTableID int64
+	RawOpts    map[ast.AnalyzeOptionType]uint64
+	FilledOpts map[ast.AnalyzeOptionType]uint64
+	ColChoice  model.ColumnChoice
+	ColumnList []*model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -1050,9 +1060,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
+	ColTasks   []AnalyzeColumnsTask
+	IdxTasks   []AnalyzeIndexTask
+	Opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]V2AnalyzeOptions
 }
 
 // LoadData represents a loaddata plan.
