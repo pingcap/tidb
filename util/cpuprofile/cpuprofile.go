@@ -173,7 +173,8 @@ func (p *parallelCPUProfiler) doProfiling() {
 		return
 	}
 
-	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize))}
+	capacity := (p.lastDataSize/4096 + 1) * 4096
+	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
 	err := pprof.StartCPUProfile(data.Data)
 	if err != nil {
 		data.Error = err
