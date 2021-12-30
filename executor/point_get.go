@@ -307,7 +307,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
