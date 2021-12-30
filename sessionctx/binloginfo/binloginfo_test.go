@@ -675,6 +675,14 @@ func TestAddSpecialComment(t *testing.T) {
 			"alter table t force, auto_increment = 12;",
 			"alter table t force, auto_increment = 12;",
 		},
+		{
+			"alter table t cache",
+			"alter table t cache",
+		},
+		{
+			"alter table t nocache",
+			"alter table t nocache",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
@@ -783,6 +791,32 @@ func TestTempTableBinlog(t *testing.T) {
 	tk.MustExec("drop table l_temp_table")
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)
 	require.True(t, ok)
+}
+
+func TestAlterTableCache(t *testing.T) {
+	s, clean := createBinlogSuite(t)
+	defer clean()
+
+	// Don't write binlog for 'ALTER TABLE t CACHE|NOCACHE'.
+	// Cached table is regarded as normal table.
+
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = s.client
+	tk.MustExec("drop table if exists t")
+	ddlQuery := "create table t (id int)"
+	tk.MustExec(ddlQuery)
+
+	tk.MustExec(`alter table t cache`)
+	// The latest DDL is still the previous one.
+	getLatestDDLBinlog(t, s.pump, ddlQuery)
+
+	tk.MustExec("insert into t values (?)", 666)
+	prewriteVal := getLatestBinlogPrewriteValue(t, s.pump)
+	require.Equal(t, 1, len(prewriteVal.Mutations))
+
+	tk.MustExec(`alter table t nocache`)
+	getLatestDDLBinlog(t, s.pump, ddlQuery)
 }
 
 func TestIssue28292(t *testing.T) {
