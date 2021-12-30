@@ -38,15 +38,15 @@ const (
 
 // Rule is the core placement rule struct. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID        string       `json:"group_id"`
-	ID             string       `json:"id"`
-	Index          int          `json:"index,omitempty"`
-	Override       bool         `json:"override,omitempty"`
-	StartKeyHex    string       `json:"start_key"`
-	EndKeyHex      string       `json:"end_key"`
-	Role           PeerRoleType `json:"role"`
-	Count          int          `json:"count"`
-	Constraints    Constraints  `json:"label_constraints,omitempty"`
+	GroupID     string       `json:"group_id"`
+	ID          string       `json:"id"`
+	Index       int          `json:"index,omitempty"`
+	Override    bool         `json:"override,omitempty"`
+	StartKeyHex string       `json:"start_key"`
+	EndKeyHex   string       `json:"end_key"`
+	Role        PeerRoleType `json:"role"`
+	Count       int          `json:"count"`
+	Constraints Constraints  `json:"label_constraints,omitempty"`
 }
 
 // NewRule constructs *Rule from role, count, and constraints. It is here to
