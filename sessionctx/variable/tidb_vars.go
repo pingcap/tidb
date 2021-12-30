@@ -790,7 +790,7 @@ const (
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBPersistAnalyzeOptions          = true
 	DefTiDBEnableColumnTracking           = true
-	DefTiDBStatsLoadSyncWait              = 100
+	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
 )
 
