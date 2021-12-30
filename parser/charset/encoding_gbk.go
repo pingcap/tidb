@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"bytes"
 	"strings"
 	"unicode"
 	"unicode/utf8"
