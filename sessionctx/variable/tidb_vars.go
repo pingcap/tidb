@@ -622,6 +622,8 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
+	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
 )
 
 // TiDB intentional limits
@@ -775,6 +777,7 @@ const (
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
+	DefTiDBPersistAnalyzeOptions          = true
 )
 
 // Process global variables.
@@ -803,4 +806,5 @@ var (
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
 )
