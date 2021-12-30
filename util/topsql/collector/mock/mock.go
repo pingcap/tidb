@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -49,7 +50,7 @@ func NewTopSQLCollector() *TopSQLCollector {
 }
 
 // Collect uses for testing.
-func (c *TopSQLCollector) Collect(ts uint64, stats []collector.SQLCPUTimeRecord) {
+func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -72,6 +73,9 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []collector.SQLCPUTimeRecord)
 			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
 	}
 }
+
+// CollectStmtStatsMap implements stmtstats.Collector.
+func (c *TopSQLCollector) CollectStmtStatsMap(_ stmtstats.StatementStatsMap) {}
 
 // GetSQLStatsBySQLWithRetry uses for testing.
 func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*collector.SQLCPUTimeRecord {

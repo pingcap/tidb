@@ -50,6 +50,7 @@ func SetupTopSQL() {
 	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
 
 	globalTopSQLReport = remoteReporter
+	stmtstats.RegisterCollector(remoteReporter)
 	stmtstats.SetupAggregator()
 }
 
@@ -144,7 +145,10 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
 	r := globalTopSQLReport
-	if r == nil || len(normalizedBinaryPlan) > MaxBinaryPlanSize {
+	if r == nil {
+		return
+	}
+	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return
 	}

@@ -36,8 +36,7 @@ const (
 // Collector uses to collect SQL execution cpu time.
 type Collector interface {
 	// Collect uses to collect the SQL execution cpu time.
-	// ts is a Unix time, unit is second.
-	Collect(ts uint64, stats []SQLCPUTimeRecord)
+	Collect(stats []SQLCPUTimeRecord)
 }
 
 // SQLCPUTimeRecord represents a single record of how much cpu time a sql plan consumes in one second.
@@ -119,8 +118,7 @@ func (sp *SQLCPUCollector) collectSQLCPULoop() {
 			return
 		case data = <-profileConsumer:
 		}
-		ts := data.End.Unix()
-		if data.Error != nil || ts <= 0 {
+		if data.Error != nil || data.End.Unix() <= 0 {
 			continue
 		}
 
@@ -130,7 +128,7 @@ func (sp *SQLCPUCollector) collectSQLCPULoop() {
 			continue
 		}
 		stats := sp.parseCPUProfileBySQLLabels(p)
-		sp.collector.Collect(uint64(ts), stats)
+		sp.collector.Collect(stats)
 	}
 }
 
