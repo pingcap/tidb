@@ -627,6 +627,12 @@ const (
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
 	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
+	// TiDBEnableColumnTracking enables collecting predicate columns.
+	TiDBEnableColumnTracking = "tidb_enable_column_tracking"
+	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
+	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
+	// It doesn't have cache in memory and we directly get/set the variable value from/to mysql.tidb.
+	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 )
@@ -783,6 +789,7 @@ const (
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBPersistAnalyzeOptions          = true
+	DefTiDBEnableColumnTracking           = true
 	DefTiDBStatsLoadSyncWait              = 100
 	DefTiDBStatsLoadPseudoTimeout         = false
 )
@@ -814,6 +821,7 @@ var (
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 )
