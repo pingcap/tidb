@@ -928,7 +928,7 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 	c, _ := sf.GetArgs()[0].(*expression.Column)
 	var AndOrExpr expression.Expression
 	for i, arg := range sf.GetArgs()[1:] {
-		// get every const value and calculate tidb_shar(val)
+		// get every const value and calculate tidb_shard(val)
 		con, _ := arg.(*expression.Constant)
 		conVal, err := con.Eval(chunk.Row{})
 		if err != nil {
