@@ -43,7 +43,7 @@ type Builder struct {
 	// dbInfos do not need to be copied everytime applying a diff, instead,
 	// they can be copied only once over the whole lifespan of Builder.
 	// This map will indicate which DB has been copied, so that they
-	//  don't need to be copied again.
+	// don't need to be copied again.
 	dirtyDB map[string]bool
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
