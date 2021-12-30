@@ -68,7 +68,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	child := p.children[0]
 	used := expression.GetUsedList(parentUsedCols, p.schema)
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
@@ -94,7 +94,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
 	prunedGroupByItems := make([]expression.Expression, 0)
 
@@ -256,7 +256,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 		}
 	}
 
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 	if hasBeenUsed {
 		// keep the schema of LogicalUnionAll same as its children's
 		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
@@ -304,7 +304,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
 	exprUsed := expression.GetUsedList(exprCols, ds.schema)
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
@@ -360,7 +360,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	default:
 		return nil
 	}
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
@@ -377,7 +377,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
-	prunedColumns :=make([]*expression.Column, 0)
+	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
