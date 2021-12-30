@@ -126,10 +126,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table) error {
-	if bse, ok := db.se.(glue.BulkCreateTableSession); ok {
-
-		log.Info("session supports bulk create table.", zap.Int("table size", len(tables)))
-
+	if bse, ok := db.se.(glue.BatchCreateTableSession); ok {
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)

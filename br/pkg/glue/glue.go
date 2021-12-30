@@ -11,11 +11,6 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-// interface is to bulk create table parallelly
-type BulkCreateTableSession interface {
-	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error
-}
-
 // Glue is an abstraction of TiDB function calls used in BR.
 type Glue interface {
 	GetDomain(store kv.Storage) (*domain.Domain, error)
@@ -42,6 +37,11 @@ type Session interface {
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
 	Close()
+}
+
+// BatchCreateTableSession is an interface to batch create table parallelly
+type BatchCreateTableSession interface {
+	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error
 }
 
 // Progress is an interface recording the current execution progress.

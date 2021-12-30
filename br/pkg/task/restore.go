@@ -84,9 +84,9 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
-		"batch size for ddl to create a batch of tabes")
+		"after how long a restore batch would be auto sended.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
-		"concurrency pd-relative operations like split & scatter.")
+		"batch size for ddl to create a batch of tabes once.")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)

@@ -130,7 +130,7 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
 }
 
-// CreateTable implements glue.Session.
+// CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
 	var dbName model.CIStr
@@ -159,16 +159,13 @@ func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*mo
 		}
 		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
 		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
-		//It is possible to failure when TiDB does not support model.ActionCreateTables.
-		//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob, we fall back to old way that creating table one by one
 		if err != nil {
-			log.Warn("Batch create table from tidb failure.", zap.String("Error", err.Error()))
+			//It is possible to failure when TiDB does not support model.ActionCreateTables.
+			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
+			//we fall back to old way that creating table one by one
+			log.Warn("batch create table from tidb failure", zap.Error(err))
 			return err
 		}
-
-		log.Info("BatchCreateTableWithInfo DONE",
-			zap.Stringer("DB", dbName),
-			zap.Int("table num", len(cloneTables)))
 	}
 
 	return nil

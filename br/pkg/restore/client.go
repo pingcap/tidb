@@ -519,14 +519,13 @@ func (rc *Client) GoCreateTables(
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
 		if err == nil {
-			log.Info("Bulk create tables success.")
+			defer log.Debug("all tables are created")
 			defer close(outCh)
 			return outCh
 			// fall back to old create table (sequential create table)
 		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
-			log.Info("Fall back to the old DDL way to create table.")
+			log.Info("fall back to the old DDL way to create table")
 		} else {
-			log.Error("Batch create tables failure.")
 			errCh <- err
 			defer close(outCh)
 			return outCh
@@ -609,7 +608,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := Min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := utils.MinInt(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
