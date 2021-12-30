@@ -166,6 +166,29 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// extractColumnsAndCorColumns extracts columns and correlated columns from `expr` and append them to `result`.
+func extractColumnsAndCorColumns(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *CorrelatedColumn:
+		result = append(result, &v.Column)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsAndCorColumns(result, arg)
+		}
+	}
+	return result
+}
+
+// ExtractColumnsAndCorColumnsFromExpressions extracts columns and correlated columns from expressions and append them to `result`.
+func ExtractColumnsAndCorColumnsFromExpressions(result []*Column, list []Expression) []*Column {
+	for _, expr := range list {
+		result = extractColumnsAndCorColumns(result, expr)
+	}
+	return result
+}
+
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
 func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
@@ -1122,7 +1145,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx s
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	stmtNode, err := exec.ParseWithParams(ctx, stmt, inValues...)
+	stmtNode, err := exec.ParseWithParamsInternal(ctx, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}

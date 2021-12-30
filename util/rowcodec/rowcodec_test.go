@@ -43,8 +43,6 @@ type testData struct {
 }
 
 func TestEncodeLargeSmallReuseBug(t *testing.T) {
-	t.Parallel()
-
 	// reuse one rowcodec.Encoder.
 	var encoder rowcodec.Encoder
 	colFt := types.NewFieldType(mysql.TypeString)
@@ -83,8 +81,6 @@ func TestEncodeLargeSmallReuseBug(t *testing.T) {
 }
 
 func TestDecodeRowWithHandle(t *testing.T) {
-	t.Parallel()
-
 	handleID := int64(-1)
 	handleValue := int64(10000)
 
@@ -223,8 +219,6 @@ func TestDecodeRowWithHandle(t *testing.T) {
 }
 
 func TestEncodeKindNullDatum(t *testing.T) {
-	t.Parallel()
-
 	var encoder rowcodec.Encoder
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
@@ -251,8 +245,6 @@ func TestEncodeKindNullDatum(t *testing.T) {
 }
 
 func TestDecodeDecimalFspNotMatch(t *testing.T) {
-	t.Parallel()
-
 	var encoder rowcodec.Encoder
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = time.UTC
@@ -287,8 +279,6 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 }
 
 func TestTypesNewRowCodec(t *testing.T) {
-	t.Parallel()
-
 	getJSONDatum := func(value string) types.Datum {
 		j, err := json.ParseBinaryFromString(value)
 		require.NoError(t, err)
@@ -563,8 +553,6 @@ func TestTypesNewRowCodec(t *testing.T) {
 }
 
 func TestNilAndDefault(t *testing.T) {
-	t.Parallel()
-
 	td := []testData{
 		{
 			1,
@@ -696,8 +684,6 @@ func TestNilAndDefault(t *testing.T) {
 }
 
 func TestVarintCompatibility(t *testing.T) {
-	t.Parallel()
-
 	td := []testData{
 		{
 			1,
@@ -755,8 +741,6 @@ func TestVarintCompatibility(t *testing.T) {
 }
 
 func TestCodecUtil(t *testing.T) {
-	t.Parallel()
-
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
 	for i := 0; i < 3; i++ {
@@ -807,8 +791,6 @@ func TestCodecUtil(t *testing.T) {
 }
 
 func TestOldRowCodec(t *testing.T) {
-	t.Parallel()
-
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
 	for i := 0; i < 3; i++ {
@@ -844,8 +826,6 @@ func TestOldRowCodec(t *testing.T) {
 }
 
 func Test65535Bug(t *testing.T) {
-	t.Parallel()
-
 	colIds := []int64{1}
 	tps := make([]*types.FieldType, 1)
 	tps[0] = types.NewFieldType(mysql.TypeString)

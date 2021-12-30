@@ -33,7 +33,8 @@ var (
 	newCollationEnabled int32
 
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
-	binCollatorInstance = &binCollator{}
+	binCollatorInstance              = &binCollator{}
+	binCollatorInstanceSliceWithLen1 = []Collator{binCollatorInstance}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
@@ -159,6 +160,18 @@ func GetCollator(collate string) Collator {
 // GetBinaryCollator gets the binary collator, it is often used when we want to apply binary compare.
 func GetBinaryCollator() Collator {
 	return binCollatorInstance
+}
+
+// GetBinaryCollatorSlice gets the binary collator slice with len n.
+func GetBinaryCollatorSlice(n int) []Collator {
+	if n == 1 {
+		return binCollatorInstanceSliceWithLen1
+	}
+	collators := make([]Collator, n)
+	for i := 0; i < n; i++ {
+		collators[i] = binCollatorInstance
+	}
+	return collators
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.

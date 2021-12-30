@@ -214,7 +214,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 			return col
 		}
 	}
+	return nil
+}
 
+// FindColumnInfoByID finds ColumnInfo in cols by id.
+func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
+	for _, col := range cols {
+		if col.ID == id {
+			return col
+		}
+	}
 	return nil
 }
 
@@ -654,6 +663,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// HasClusteredIndex checks whether the table has a clustered index.
+func (t *TableInfo) HasClusteredIndex() bool {
+	return t.PKIsHandle || t.IsCommonHandle
 }
 
 // IsView checks if TableInfo is a view.
@@ -1273,13 +1287,13 @@ const (
 func (s ColumnChoice) String() string {
 	switch s {
 	case AllColumns:
-		return "AllColumns"
+		return "ALL"
 	case PredicateColumns:
-		return "PredicateColumns"
+		return "PREDICATE"
 	case ColumnList:
-		return "ColumnList"
+		return "LIST"
 	default:
-		return ""
+		return "DEFAULT"
 	}
 }
 

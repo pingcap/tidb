@@ -32,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
 	"github.com/stretchr/testify/require"
@@ -95,14 +98,14 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	ts.waitUntilServerOnline()
 
 	cleanup := func() {
-		if ts.store != nil {
-			ts.store.Close()
-		}
 		if ts.domain != nil {
 			ts.domain.Close()
 		}
 		if ts.server != nil {
 			ts.server.Close()
+		}
+		if ts.store != nil {
+			require.NoError(t, ts.store.Close())
 		}
 	}
 
@@ -140,13 +143,11 @@ func TestRegression(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	if regression {
-		t.Parallel()
 		ts.runTestRegression(t, nil, "Regression")
 	}
 }
 
 func TestUint64(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -154,7 +155,6 @@ func TestUint64(t *testing.T) {
 }
 
 func TestSpecialType(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -162,7 +162,6 @@ func TestSpecialType(t *testing.T) {
 }
 
 func TestPreparedString(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -170,7 +169,6 @@ func TestPreparedString(t *testing.T) {
 }
 
 func TestPreparedTimestamp(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -178,7 +176,6 @@ func TestPreparedTimestamp(t *testing.T) {
 }
 
 func TestConcurrentUpdate(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -186,7 +183,6 @@ func TestConcurrentUpdate(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -194,7 +190,6 @@ func TestErrorCode(t *testing.T) {
 }
 
 func TestAuth(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -203,7 +198,6 @@ func TestAuth(t *testing.T) {
 }
 
 func TestIssues(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -213,14 +207,12 @@ func TestIssues(t *testing.T) {
 }
 
 func TestDBNameEscape(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestDBNameEscape(t)
 }
 
 func TestResultFieldTableIsNull(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -228,7 +220,6 @@ func TestResultFieldTableIsNull(t *testing.T) {
 }
 
 func TestStatusAPI(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -236,7 +227,6 @@ func TestStatusAPI(t *testing.T) {
 }
 
 func TestStatusPort(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -252,7 +242,6 @@ func TestStatusPort(t *testing.T) {
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -298,7 +287,6 @@ func TestStatusAPIWithTLS(t *testing.T) {
 }
 
 func TestStatusAPIWithTLSCNCheck(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -377,7 +365,6 @@ func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 }
 
 func TestMultiStatements(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -386,7 +373,6 @@ func TestMultiStatements(t *testing.T) {
 }
 
 func TestSocketForwarding(t *testing.T) {
-	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
@@ -423,7 +409,6 @@ func TestSocketForwarding(t *testing.T) {
 }
 
 func TestSocket(t *testing.T) {
-	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
@@ -463,7 +448,6 @@ func TestSocket(t *testing.T) {
 }
 
 func TestSocketAndIp(t *testing.T) {
-	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
@@ -633,7 +617,6 @@ func TestSocketAndIp(t *testing.T) {
 
 // TestOnlySocket for server configuration without network interface for mysql clients
 func TestOnlySocket(t *testing.T) {
-	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
@@ -895,7 +878,6 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 }
 
 func TestSystemTimeZone(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -912,7 +894,6 @@ func TestSystemTimeZone(t *testing.T) {
 }
 
 func TestClientWithCollation(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -920,7 +901,6 @@ func TestClientWithCollation(t *testing.T) {
 }
 
 func TestCreateTableFlen(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -994,7 +974,6 @@ func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error
 }
 
 func TestShowTablesFlen(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1026,7 +1005,6 @@ func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
 }
 
 func TestFieldList(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1109,28 +1087,24 @@ func TestFieldList(t *testing.T) {
 }
 
 func TestClientErrors(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestInfoschemaClientErrors(t)
 }
 
 func TestInitConnect(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestInitConnect(t)
 }
 
 func TestSumAvg(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 	ts.runTestSumAvg(t)
 }
 
 func TestNullFlag(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1199,7 +1173,6 @@ func TestNullFlag(t *testing.T) {
 }
 
 func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1223,7 +1196,6 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 }
 
 func TestGracefulShutdown(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1265,7 +1237,6 @@ func TestGracefulShutdown(t *testing.T) {
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
-	t.Parallel()
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
@@ -1518,6 +1489,289 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	checkFn("commit", "")
 }
 
+type mockCollector struct {
+	f func(data stmtstats.StatementStatsMap)
+}
+
+func newMockCollector(f func(data stmtstats.StatementStatsMap)) stmtstats.Collector {
+	return &mockCollector{f: f}
+}
+
+func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
+	c.f(data)
+}
+
+func TestTopSQLStatementStats(t *testing.T) {
+	// Prepare stmt stats.
+	stmtstats.SetupAggregator()
+	defer stmtstats.CloseAggregator()
+
+	// Register stmt stats collector.
+	var mu sync.Mutex
+	total := stmtstats.StatementStatsMap{}
+	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
+		mu.Lock()
+		defer mu.Unlock()
+		total.Merge(data)
+	}))
+
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		require.NoError(t, err)
+	}()
+
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("drop database if exists stmtstats")
+	dbt.MustExec("create database stmtstats")
+	dbt.MustExec("use stmtstats;")
+	dbt.MustExec("create table t (a int, b int, unique index idx(a));")
+	dbt.MustExec("create table t2 (a int, b int, unique index idx(a));")
+	dbt.MustExec("create table t3 (a int, b int, unique index idx(a));")
+
+	// Enable TopSQL
+	topsqlstate.GlobalState.Enable.Store(true)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock-agent"
+	})
+	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
+
+	const ExecCountPerSQL = 3
+
+	// Test for CRUD.
+	cases1 := []string{
+		"insert into t values (%d, sleep(0.1))",
+		"update t set a = %[1]d + 1000 where a = %[1]d and sleep(0.1);",
+		"select a from t where b = %d and sleep(0.1);",
+		"select a from t where a = %d and sleep(0.1);", // test for point-get
+		"delete from t where a = %d and sleep(0.1);",
+		"insert into t values (%d, sleep(0.1)) on duplicate key update b = b+1",
+	}
+	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	for i, ca := range cases1 {
+		sqlStr := fmt.Sprintf(ca, i)
+		_, digest := parser.NormalizeDigest(sqlStr)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+		db, err := sql.Open("mysql", ts.getDSN())
+		require.NoError(t, err)
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("use stmtstats;")
+		for n := 0; n < ExecCountPerSQL; n++ {
+			sqlStr := fmt.Sprintf(ca, n)
+			if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
+				row := dbt.MustQuery(sqlStr)
+				err := row.Close()
+				require.NoError(t, err)
+			} else {
+				dbt.MustExec(sqlStr)
+			}
+		}
+		err = db.Close()
+		require.NoError(t, err)
+	}
+
+	// Test for prepare stmt/execute stmt
+	cases2 := []struct {
+		prepare    string
+		execStmt   string
+		setSQLsGen func(idx int) []string
+		execSQL    string
+	}{
+		{
+			prepare:  "prepare stmt from 'insert into t2 values (?, sleep(?))';",
+			execStmt: "insert into t2 values (1, sleep(0.1))",
+			setSQLsGen: func(idx int) []string {
+				return []string{fmt.Sprintf("set @a=%v", idx), "set @b=0.1"}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			prepare:  "prepare stmt from 'update t2 set a = a + 1000 where a = ? and sleep(?);';",
+			execStmt: "update t2 set a = a + 1000 where a = 1 and sleep(0.1);",
+			setSQLsGen: func(idx int) []string {
+				return []string{fmt.Sprintf("set @a=%v", idx), "set @b=0.1"}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			// test for point-get
+			prepare:  "prepare stmt from 'select a, sleep(?) from t2 where a = ?';",
+			execStmt: "select a, sleep(?) from t2 where a = ?",
+			setSQLsGen: func(idx int) []string {
+				return []string{"set @a=0.1", fmt.Sprintf("set @b=%v", idx)}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			prepare:  "prepare stmt from 'select a, sleep(?) from t2 where b = ?';",
+			execStmt: "select a, sleep(?) from t2 where b = ?",
+			setSQLsGen: func(idx int) []string {
+				return []string{"set @a=0.1", fmt.Sprintf("set @b=%v", idx)}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			prepare:  "prepare stmt from 'delete from t2 where sleep(?) and a = ?';",
+			execStmt: "delete from t2 where sleep(0.1) and a = 1",
+			setSQLsGen: func(idx int) []string {
+				return []string{"set @a=0.1", fmt.Sprintf("set @b=%v", idx)}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			prepare:  "prepare stmt from 'insert into t2 values (?, sleep(?)) on duplicate key update b = b+1';",
+			execStmt: "insert into t2 values (1, sleep(0.1)) on duplicate key update b = b+1",
+			setSQLsGen: func(idx int) []string {
+				return []string{fmt.Sprintf("set @a=%v", idx), "set @b=0.1"}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+		{
+			prepare:  "prepare stmt from 'set global tidb_enable_top_sql = (? = sleep(?))';",
+			execStmt: "set global tidb_enable_top_sql = (0 = sleep(0.1))",
+			setSQLsGen: func(idx int) []string {
+				return []string{"set @a=0", "set @b=0.1"}
+			},
+			execSQL: "execute stmt using @a, @b;",
+		},
+	}
+	for _, ca := range cases2 {
+		_, digest := parser.NormalizeDigest(ca.execStmt)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.execStmt
+		db, err := sql.Open("mysql", ts.getDSN())
+		require.NoError(t, err)
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("use stmtstats;")
+		// prepare stmt
+		dbt.MustExec(ca.prepare)
+		for n := 0; n < ExecCountPerSQL; n++ {
+			setSQLs := ca.setSQLsGen(n)
+			for _, setSQL := range setSQLs {
+				dbt.MustExec(setSQL)
+			}
+			if strings.HasPrefix(strings.ToLower(ca.execStmt), "select") {
+				row := dbt.MustQuery(ca.execSQL)
+				err := row.Close()
+				require.NoError(t, err)
+			} else {
+				dbt.MustExec(ca.execSQL)
+			}
+		}
+		err = db.Close()
+		require.NoError(t, err)
+	}
+
+	// Test for prepare by db client prepare/exec interface.
+	cases3 := []struct {
+		prepare  string
+		execStmt string
+		argsGen  func(idx int) []interface{}
+	}{
+		{
+			prepare: "insert into t3 values (?, sleep(?))",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{idx, 0.1}
+			},
+		},
+		{
+			prepare: "update t3 set a = a + 1000 where a = ? and sleep(?)",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{idx, 0.1}
+			},
+		},
+		{
+			// test for point-get
+			prepare: "select a, sleep(?) from t3 where a = ?",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{0.1, idx}
+			},
+		},
+		{
+			prepare: "select a, sleep(?) from t3 where b = ?",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{0.1, idx}
+			},
+		},
+		{
+			prepare: "delete from t3 where sleep(?) and a = ?",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{0.1, idx}
+			},
+		},
+		{
+			prepare: "insert into t3 values (?, sleep(?)) on duplicate key update b = b+1",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{idx, 0.1}
+			},
+		},
+		{
+			prepare: "set global tidb_enable_1pc = (? = sleep(?))",
+			argsGen: func(idx int) []interface{} {
+				return []interface{}{0, 0.1}
+			},
+		},
+	}
+	for _, ca := range cases3 {
+		_, digest := parser.NormalizeDigest(ca.prepare)
+		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.prepare
+		db, err := sql.Open("mysql", ts.getDSN())
+		require.NoError(t, err)
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("use stmtstats;")
+		// prepare stmt
+		stmt, err := db.Prepare(ca.prepare)
+		require.NoError(t, err)
+		for n := 0; n < ExecCountPerSQL; n++ {
+			args := ca.argsGen(n)
+			if strings.HasPrefix(strings.ToLower(ca.prepare), "select") {
+				row, err := stmt.Query(args...)
+				require.NoError(t, err)
+				err = row.Close()
+				require.NoError(t, err)
+			} else {
+				_, err := stmt.Exec(args...)
+				require.NoError(t, err)
+			}
+		}
+		err = db.Close()
+		require.NoError(t, err)
+	}
+
+	// Wait for collect.
+	time.Sleep(2 * time.Second)
+
+	found := 0
+	for digest, item := range total {
+		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
+			found++
+			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
+			require.True(t, item.SumDurationNs > uint64(time.Millisecond*100*ExecCountPerSQL), sqlStr)
+			require.True(t, item.SumDurationNs < uint64(time.Millisecond*150*ExecCountPerSQL), sqlStr)
+			if strings.HasPrefix(sqlStr, "set global") {
+				// set global statement use internal SQL to change global variable, so itself doesn't have KV request.
+				continue
+			}
+			var kvSum uint64
+			for _, kvCount := range item.KvStatsItem.KvExecCount {
+				kvSum += kvCount
+			}
+			require.Equal(t, uint64(ExecCountPerSQL), kvSum)
+		}
+	}
+	require.Equal(t, len(sqlDigests), found)
+	require.Equal(t, 20, found)
+}
+
 func TestTopSQLAgent(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210702")
 
@@ -1568,7 +1822,13 @@ func TestTopSQLAgent(t *testing.T) {
 	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
-	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
+	r := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	s := reporter.NewSingleTargetDataSink(r)
+	defer func() {
+		r.Close()
+		s.Close()
+	}()
+
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts
@@ -1692,7 +1952,6 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn fu
 }
 
 func TestLocalhostClientMapping(t *testing.T) {
-	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)

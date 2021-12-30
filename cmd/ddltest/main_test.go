@@ -26,7 +26,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
 	if err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
