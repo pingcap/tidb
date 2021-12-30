@@ -31,14 +31,16 @@ func Test_tsItem_toProto(t *testing.T) {
 		timestamp: 1,
 		cpuTimeMs: 2,
 		stmtStats: stmtstats.StatementStatsItem{
-			ExecCount:   3,
-			KvStatsItem: stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
+			ExecCount:     3,
+			SumDurationNs: 50000,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 4}},
 		},
 	}
 	pb := item.toProto()
 	assert.Equal(t, uint64(1), pb.TimestampSec)
 	assert.Equal(t, uint32(2), pb.CpuTimeMs)
 	assert.Equal(t, uint64(3), pb.StmtExecCount)
+	assert.Equal(t, uint64(50000), pb.StmtDurationSumNs)
 	assert.Equal(t, uint64(4), pb.StmtKvExecCount[""])
 }
 
@@ -99,7 +101,7 @@ func Test_record_append(t *testing.T) {
 	//     CPUTimeList: [1]
 	//   ExecCountList: [0]
 
-	r.appendStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1, SumDurationNs: 10000})
 	//   TimestampList: [1]
 	//     CPUTimeList: [1]
 	//   ExecCountList: [1]
@@ -114,12 +116,12 @@ func Test_record_append(t *testing.T) {
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 0, 0]
 
-	r.appendStmtStatsItem(3, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(3, stmtstats.StatementStatsItem{ExecCount: 1, SumDurationNs: 30000})
 	//   TimestampList: [1, 2, 3]
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 0, 1]
 
-	r.appendStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 1})
+	r.appendStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 1, SumDurationNs: 20000})
 	//   TimestampList: [1, 2, 3]
 	//     CPUTimeList: [1, 1, 1]
 	//   ExecCountList: [1, 1, 1]
@@ -136,6 +138,9 @@ func Test_record_append(t *testing.T) {
 	assert.Equal(t, uint64(1), r.tsItems[0].stmtStats.ExecCount)
 	assert.Equal(t, uint64(1), r.tsItems[1].stmtStats.ExecCount)
 	assert.Equal(t, uint64(1), r.tsItems[2].stmtStats.ExecCount)
+	assert.Equal(t, uint64(10000), r.tsItems[0].stmtStats.SumDurationNs)
+	assert.Equal(t, uint64(20000), r.tsItems[1].stmtStats.SumDurationNs)
+	assert.Equal(t, uint64(30000), r.tsItems[2].stmtStats.SumDurationNs)
 }
 
 func Test_record_merge(t *testing.T) {
@@ -253,8 +258,8 @@ func Test_collecting_appendOthers(t *testing.T) {
 	c := newCollecting()
 	c.appendOthersCPUTime(1, 1)
 	c.appendOthersCPUTime(2, 2)
-	c.appendOthersStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1})
-	c.appendOthersStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 2})
+	c.appendOthersStmtStatsItem(1, stmtstats.StatementStatsItem{ExecCount: 1, SumDurationNs: 1000})
+	c.appendOthersStmtStatsItem(2, stmtstats.StatementStatsItem{ExecCount: 2, SumDurationNs: 2000})
 	r := c.records[keyOthers]
 	assert.Len(t, r.tsItems, 2)
 	assert.Len(t, r.tsIndex, 2)
@@ -264,6 +269,8 @@ func Test_collecting_appendOthers(t *testing.T) {
 	assert.Equal(t, uint32(2), r.tsItems[1].cpuTimeMs)
 	assert.Equal(t, uint64(1), r.tsItems[0].stmtStats.ExecCount)
 	assert.Equal(t, uint64(2), r.tsItems[1].stmtStats.ExecCount)
+	assert.Equal(t, uint64(1000), r.tsItems[0].stmtStats.SumDurationNs)
+	assert.Equal(t, uint64(2000), r.tsItems[1].stmtStats.SumDurationNs)
 }
 
 func Test_collecting_compactToTopNAndOthers(t *testing.T) {
