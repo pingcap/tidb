@@ -81,11 +81,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
-		// can not emit REPLICAS with an array or empty label
-		if replicas == 0 {
-			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
-		}
-
 		rules = append(rules, NewRule(role, replicas, constraints1))
 		return rules, nil
 	}
@@ -93,7 +88,10 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
 	if err2 == nil {
-		ruleCnt := 0
+		if replicas != 0 {
+			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
+		}
+
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
 				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
@@ -101,15 +99,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 				}
 				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
 			}
-			ruleCnt += cnt
-		}
-
-		if replicas == 0 {
-			replicas = uint64(ruleCnt)
-		}
-
-		if int(replicas) < ruleCnt {
-			return rules, fmt.Errorf("%w: should be larger or equal to the number of total replicas, but REPLICAS=%d < total=%d", ErrInvalidConstraintsRelicas, replicas, ruleCnt)
 		}
 
 		for labels, cnt := range constraints2 {
@@ -119,11 +108,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 			}
 
 			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
-		}
-
-		remain := int(replicas) - ruleCnt
-		if remain > 0 {
-			rules = append(rules, NewRule(role, uint64(remain), nil))
 		}
 		return rules, nil
 	}
