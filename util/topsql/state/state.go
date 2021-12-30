@@ -48,13 +48,13 @@ type State struct {
 	ReportIntervalSeconds *atomic.Int64
 }
 
-// EnabledTopSQL enable the top SQL feature.
-func EnabledTopSQL() {
+// EnableTopSQL enables the top SQL feature.
+func EnableTopSQL() {
 	GlobalState.Enable.Store(true)
 }
 
-// DisabledTopSQL disable the top SQL feature.
-func DisabledTopSQL() {
+// DisableTopSQL disables the top SQL feature.
+func DisableTopSQL() {
 	GlobalState.Enable.Store(false)
 }
 

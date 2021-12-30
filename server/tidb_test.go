@@ -1285,7 +1285,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	topsqlstate.EnabledTopSQL()
+	topsqlstate.EnableTopSQL()
 	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
 	topsql.SetupTopSQLForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)

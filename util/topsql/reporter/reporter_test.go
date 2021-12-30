@@ -90,7 +90,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*Re
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
-	topsqlstate.EnabledTopSQL()
+	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := NewSingleTargetDataSink(ts)
 	ts.Start()
@@ -386,7 +386,7 @@ func TestCollectInternal(t *testing.T) {
 func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
-	topsqlstate.EnabledTopSQL()
+	topsqlstate.EnableTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	tsr.Start()
 	defer tsr.Close()

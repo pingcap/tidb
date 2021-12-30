@@ -85,7 +85,7 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
-			topsqlstate.EnabledTopSQL()
+			topsqlstate.EnableTopSQL()
 		}
 		return nil
 	}
@@ -101,7 +101,7 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	default:
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
-			topsqlstate.DisabledTopSQL()
+			topsqlstate.DisableTopSQL()
 		}
 	}
 }

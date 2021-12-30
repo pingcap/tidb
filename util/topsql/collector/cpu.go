@@ -52,12 +52,12 @@ type SQLCPUTimeRecord struct {
 }
 
 // SQLCPUCollector uses to consume cpu profile from globalCPUProfiler, then parse the SQL CPU usage from the cpu profile data.
+// It is not thread-safe, should only be used in one goroutine.
 type SQLCPUCollector struct {
-	mu     sync.Mutex
-	stared bool
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	started bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 
 	collector  Collector
 	registered bool
@@ -72,32 +72,28 @@ func NewSQLCPUCollector(c Collector) *SQLCPUCollector {
 
 // Start uses to start to run SQLCPUCollector.
 // This will register a consumer into globalCPUProfiler, then SQLCPUCollector will receive cpu profile data per seconds.
+// WARN: this function is not thread-safe.
 func (sp *SQLCPUCollector) Start() {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
-	if sp.stared {
+	if sp.started {
 		return
 	}
-	sp.stared = true
+	sp.started = true
 	sp.ctx, sp.cancel = context.WithCancel(context.Background())
-
-	logutil.BgLogger().Info("sql cpu collector started")
 	sp.wg.Add(1)
 	go sp.collectSQLCPULoop()
+	logutil.BgLogger().Info("sql cpu collector started")
 }
 
 // Stop uses to stop the SQLCPUCollector.
+// WARN: this function is not thread-safe.
 func (sp *SQLCPUCollector) Stop() {
-	sp.mu.Lock()
-	if !sp.stared {
-		sp.mu.Unlock()
+	if !sp.started {
 		return
 	}
-	sp.stared = false
+	sp.started = false
 	if sp.cancel != nil {
 		sp.cancel()
 	}
-	sp.mu.Unlock()
 
 	sp.wg.Wait()
 	logutil.BgLogger().Info("sql cpu collector stopped")

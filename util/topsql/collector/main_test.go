@@ -42,7 +42,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
-	topsqlstate.EnabledTopSQL()
+	topsqlstate.EnableTopSQL()
 	mc := &mockCollector{
 		dataCh: make(chan []SQLCPUTimeRecord, 10),
 	}
@@ -61,12 +61,12 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
 
 	// Test after disabled, shouldn't receive any data.
-	topsqlstate.DisabledTopSQL()
+	topsqlstate.DisableTopSQL()
 	time.Sleep(cost * 2)
 	require.Equal(t, 0, len(mc.dataCh))
 
 	// Test after re-enable.
-	topsqlstate.EnabledTopSQL()
+	topsqlstate.EnableTopSQL()
 	t1 = time.Now()
 	data = <-mc.dataCh
 	require.True(t, time.Since(t1) < cost*2)
