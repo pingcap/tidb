@@ -217,6 +217,9 @@ const (
 
 	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
 	TiDBEnablePaging = "tidb_enable_paging"
+
+	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
+	TiDBReadConsistency = "tidb_read_consistency"
 )
 
 // TiDB system variable names that both in session and global scope.

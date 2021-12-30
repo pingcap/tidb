@@ -52,6 +52,7 @@ type cachedTable struct {
 	cacheData atomic.Value
 	handle    StateRemote
 	renewCh   chan func()
+	totalSize int64
 
 	mu struct {
 		sync.RWMutex
@@ -120,12 +121,13 @@ func (c *cachedTable) Init(renewCh chan func(), exec sqlexec.SQLExecutor) error 
 	return nil
 }
 
-func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, error) {
+func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, int64, error) {
 	buffer, err := newMemBuffer(store)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	var startTS uint64
+	totalSize := int64(0)
 	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
@@ -142,11 +144,14 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		defer it.Close()
 
 		for it.Valid() && it.Key().HasPrefix(prefix) {
+			key := it.Key()
 			value := it.Value()
-			err = buffer.Set(it.Key(), value)
+			err = buffer.Set(key, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			totalSize += int64(len(key))
+			totalSize += int64(len(value))
 			err = it.Next()
 			if err != nil {
 				return errors.Trace(err)
@@ -155,10 +160,10 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		return nil
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, totalSize, err
 	}
 
-	return buffer, startTS, nil
+	return buffer, startTS, totalSize, nil
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
@@ -198,7 +203,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 		return
 	}
 	if succ {
-		mb, startTS, err := c.loadDataFromOriginalTable(store, lease)
+		mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
 			return
 		}
@@ -208,12 +213,18 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 			Lease:     lease,
 			MemBuffer: mb,
 		})
+		atomic.StoreInt64(&c.totalSize, totalSize)
 	}
 	// Current status is not suitable to cache.
 }
 
+const cachedTableSizeLimit = 64 * (1 << 20)
+
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
+		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
+	}
 	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
 	return c.TableCommon.AddRecord(sctx, r, opts...)
 }
@@ -230,6 +241,10 @@ func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle StateRemote
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+	// Prevent furthur writing when the table is already too large.
+	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
+		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
+	}
 	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
