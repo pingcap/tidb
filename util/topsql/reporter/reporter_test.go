@@ -274,6 +274,13 @@ func TestCollectAndTopN(t *testing.T) {
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
+	// Digest  total
+	// "":     14ms    (others)
+	// SQL-1:  21ms
+	// SQL-2:  22ms
+	// SQL-3:  9ms
+	// SQL-4:  4ms
+	// SQL-6:  6ms
 	require.Len(t, results, 6)
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
@@ -300,6 +307,12 @@ func TestCollectAndTopN(t *testing.T) {
 	require.Equal(t, 21, getTotalCPUTime(results[1]))
 	require.Equal(t, []byte("sqlDigest2"), results[2].SqlDigest)
 	require.Equal(t, 22, getTotalCPUTime(results[2]))
+	require.Equal(t, []byte("sqlDigest3"), results[3].SqlDigest)
+	require.Equal(t, 9, getTotalCPUTime(results[3]))
+	require.Equal(t, []byte("sqlDigest4"), results[4].SqlDigest)
+	require.Equal(t, 4, getTotalCPUTime(results[4]))
+	require.Equal(t, []byte("sqlDigest6"), results[5].SqlDigest)
+	require.Equal(t, 6, getTotalCPUTime(results[5]))
 	// sleep to wait for all SQL meta received.
 	time.Sleep(50 * time.Millisecond)
 	totalMetas := agentServer.GetTotalSQLMetas()
