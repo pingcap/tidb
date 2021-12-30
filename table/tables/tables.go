@@ -1009,7 +1009,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col.ChangeStateInfo != nil {
 			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
 		} else {
-			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals, false)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -1036,7 +1036,7 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 		return idxColumnVal, false, nil
 	}
 
-	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals)
+	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals, true)
 	if err != nil {
 		return idxColumnVal, false, errors.Trace(err)
 	}
@@ -1317,7 +1317,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 				data[col.Offset] = rowMap[col.ID]
 				continue
 			}
-			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
+			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals, false)
 			if err != nil {
 				return err
 			}
@@ -1356,14 +1356,13 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 
 // GetColDefaultValue gets a column default value.
 // The defaultVals is used to avoid calculating the default value multiple times.
-func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
-	colVal types.Datum, err error) {
+func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum, handleNonPublicCol bool) (colVal types.Datum, err error) {
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
-	//if col.State != model.StatePublic {
-	//	return colVal, nil
-	//}
+	if !handleNonPublicCol && col.State != model.StatePublic {
+		return colVal, nil
+	}
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {

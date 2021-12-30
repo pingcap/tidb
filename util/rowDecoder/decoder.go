@@ -107,7 +107,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 			val, _, err = tables.GetChangingColVal(ctx, rd.cols, dCol.Col, row, rd.defaultVals)
 		} else {
 			// Get the default value of the column in the generated column expression.
-			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals, false)
 		}
 		if err != nil {
 			return nil, err
@@ -161,7 +161,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 			continue
 		}
 		// Get the default value of the column in the generated column expression.
-		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals, false)
 		if err != nil {
 			return nil, err
 		}
