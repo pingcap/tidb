@@ -263,8 +263,10 @@ RESPITER:
 	case "Hot", "hot":
 		accessTier = azblob.AccessTierHot
 	default:
-		return nil, errors.New(fmt.Sprintf("unsupported access tier: %s", options.StorageClass))
+		accessTier = azblob.AccessTier(options.StorageClass)
 	}
+
+	log.Debug("select accessTier", zap.String("accessTier", string(accessTier)))
 
 	return &AzureBlobStorage{
 		options,

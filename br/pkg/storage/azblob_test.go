@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +41,7 @@ func TestAzblob(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	options := &backup.AzureBlobStorage{
+	options := &backuppb.AzureBlobStorage{
 		Bucket: "test",
 		Prefix: "a/b/",
 	}
