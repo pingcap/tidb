@@ -26,8 +26,6 @@ import (
 )
 
 func TestMarshal(t *testing.T) {
-	t.Parallel()
-
 	dats := make([]types.Datum, 4)
 	dats[0].SetInt64(1)
 	dats[1].SetNull()
@@ -43,8 +41,6 @@ func TestMarshal(t *testing.T) {
 }
 
 func TestSimplePairIter(t *testing.T) {
-	t.Parallel()
-
 	pairs := []Pair{
 		{Key: []byte("1"), Val: []byte("a")},
 		{Key: []byte("2"), Val: []byte("b")},

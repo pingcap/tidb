@@ -1,17 +1,36 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package errormanager
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
+	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -72,21 +91,24 @@ const (
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
-		VALUES (?, ?, 'PRIMARY', ?, ?, ?, ?, raw_key, raw_value);
+		VALUES
 	`
+
+	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+		VALUES
 	`
 
-	// not sure if we really want to DISTINCT.
-	// having DISTINCT requires TiDB to introduce a HashAgg in memory but reduces response size.
+	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
+
 	selectConflictKeys = `
-		SELECT DISTINCT raw_handle, raw_row
+		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + conflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ?;
+		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
+		ORDER BY _tidb_rowid LIMIT ?;
 	`
 )
 
@@ -95,6 +117,11 @@ type ErrorManager struct {
 	taskID         int64
 	schemaEscaped  string
 	remainingError config.MaxError
+	dupResolution  config.DuplicateResolutionAlgorithm
+}
+
+func (em *ErrorManager) TypeErrorsRemain() int64 {
+	return em.remainingError.Type.Load()
 }
 
 // New creates a new error manager.
@@ -102,6 +129,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		remainingError: cfg.App.MaxError,
+		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -112,7 +140,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil {
+	if em.db == nil || (em.remainingError.Type.Load() == 0 && em.dupResolution == config.DupeResAlgNone) {
 		return nil
 	}
 
@@ -121,15 +149,21 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		Logger: log.L(),
 	}
 
-	sqls := [][2]string{
-		{"create task info schema", createSchema},
-		{"create syntax error table", createSyntaxErrorTable},
-		{"create type error table", createTypeErrorTable},
-		{"create conflict error table", createConflictErrorTable},
+	sqls := make([][2]string, 0)
+	sqls = append(sqls, [2]string{"create task info schema", createSchema})
+	if em.remainingError.Syntax.Load() > 0 {
+		sqls = append(sqls, [2]string{"create syntax error table", createSyntaxErrorTable})
+	}
+	if em.remainingError.Type.Load() > 0 {
+		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
+	}
+	if em.dupResolution != config.DupeResAlgNone && em.remainingError.Conflict.Load() > 0 {
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 
 	for _, sql := range sqls {
-		err := exec.Exec(ctx, sql[0], fmt.Sprintf(sql[1], em.schemaEscaped))
+		// trim spaces for unit test pattern matching
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
 		if err != nil {
 			return err
 		}
@@ -149,6 +183,11 @@ func (em *ErrorManager) RecordTypeError(
 	rowText string,
 	encodeErr error,
 ) error {
+	// elide the encode error if needed.
+	if em.remainingError.Type.Dec() < 0 {
+		return encodeErr
+	}
+
 	if em.db != nil {
 		errMsg := encodeErr.Error()
 		logger = logger.With(
@@ -174,11 +213,6 @@ func (em *ErrorManager) RecordTypeError(
 			return multierr.Append(encodeErr, err)
 		}
 	}
-
-	// elide the encode error if needed.
-	if em.remainingError.Type.Dec() < 0 {
-		return encodeErr
-	}
 	return nil
 }
 
@@ -198,6 +232,9 @@ func (em *ErrorManager) RecordDataConflictError(
 	if em.db == nil {
 		return nil
 	}
+	if len(conflictInfos) == 0 {
+		return nil
+	}
 
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -205,13 +242,15 @@ func (em *ErrorManager) RecordDataConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
-		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorData, em.schemaEscaped))
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
-		for _, conflictInfo := range conflictInfos {
-			_, err = stmt.ExecContext(c,
+		sb := &strings.Builder{}
+		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+		var sqlArgs []interface{}
+		for i, conflictInfo := range conflictInfos {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(sqlValuesConflictErrorData)
+			sqlArgs = append(sqlArgs,
 				em.taskID,
 				tableName,
 				conflictInfo.KeyData,
@@ -219,11 +258,9 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.RawKey,
 				conflictInfo.RawValue,
 			)
-			if err != nil {
-				return err
-			}
 		}
-		return nil
+		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		return err
 	})
 }
 
@@ -238,6 +275,9 @@ func (em *ErrorManager) RecordIndexConflictError(
 	if em.db == nil {
 		return nil
 	}
+	if len(conflictInfos) == 0 {
+		return nil
+	}
 
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -245,13 +285,15 @@ func (em *ErrorManager) RecordIndexConflictError(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
-		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorIndex, em.schemaEscaped))
-		if err != nil {
-			return err
-		}
-		defer stmt.Close()
+		sb := &strings.Builder{}
+		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
+		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
-			_, err = stmt.ExecContext(c,
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString(sqlValuesConflictErrorIndex)
+			sqlArgs = append(sqlArgs,
 				em.taskID,
 				tableName,
 				indexNames[i],
@@ -262,38 +304,87 @@ func (em *ErrorManager) RecordIndexConflictError(
 				rawHandles[i],
 				rawRows[i],
 			)
-			if err != nil {
-				return err
-			}
 		}
-		return nil
+		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		return err
 	})
 }
 
-// GetConflictKeys obtains all (distinct) conflicting rows (handle and their
-// values) from the current error report.
-func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string) ([][2][]byte, error) {
+// ResolveAllConflictKeys query all conflicting rows (handle and their
+// values) from the current error report and resolve them concurrently.
+func (em *ErrorManager) ResolveAllConflictKeys(
+	ctx context.Context,
+	tableName string,
+	pool *utils.WorkerPool,
+	fn func(ctx context.Context, handleRows [][2][]byte) error,
+) error {
 	if em.db == nil {
-		return nil, nil
+		return nil
 	}
-	rows, err := em.db.QueryContext(
-		ctx,
-		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
-		em.taskID,
-		tableName,
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer rows.Close()
 
-	var handleRows [][2][]byte
-	for rows.Next() {
-		var handleRow [2][]byte
-		if err := rows.Scan(&handleRow[0], &handleRow[1]); err != nil {
-			return nil, errors.Trace(err)
-		}
-		handleRows = append(handleRows, handleRow)
+	const rowLimit = 1000
+	taskCh := make(chan [2]int64)
+	taskWg := &sync.WaitGroup{}
+	g, gCtx := errgroup.WithContext(ctx)
+
+	go func() {
+		//nolint:staticcheck
+		taskWg.Add(1)
+		taskCh <- [2]int64{0, math.MaxInt64}
+		taskWg.Wait()
+		close(taskCh)
+	}()
+
+	for t := range taskCh {
+		start, end := t[0], t[1]
+		pool.ApplyOnErrorGroup(g, func() error {
+			defer taskWg.Done()
+
+			var handleRows [][2][]byte
+			for start < end {
+				rows, err := em.db.QueryContext(
+					gCtx, fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+					tableName, start, end, rowLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				var lastRowID int64
+				for rows.Next() {
+					var handleRow [2][]byte
+					if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+						return errors.Trace(err)
+					}
+					handleRows = append(handleRows, handleRow)
+				}
+				if err := rows.Err(); err != nil {
+					return errors.Trace(err)
+				}
+				if err := rows.Close(); err != nil {
+					return errors.Trace(err)
+				}
+				if len(handleRows) == 0 {
+					break
+				}
+				if err := fn(gCtx, handleRows); err != nil {
+					return errors.Trace(err)
+				}
+				start = lastRowID + 1
+				// If the remaining tasks cannot be processed at once, split the task
+				// into two subtasks and send one of them to the other idle worker if possible.
+				if end-start > rowLimit {
+					mid := start + (end-start)/2
+					taskWg.Add(1)
+					select {
+					case taskCh <- [2]int64{mid, end}:
+						end = mid
+					default:
+						taskWg.Done()
+					}
+				}
+				handleRows = handleRows[:0]
+			}
+			return nil
+		})
 	}
-	return handleRows, errors.Trace(rows.Err())
+	return errors.Trace(g.Wait())
 }

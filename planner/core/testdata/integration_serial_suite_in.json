@@ -30,6 +30,25 @@
 
   },
   {
+    "name": "TestRegardNULLAsPoint",
+    "cases": [
+      "select * from tuk where a<=>null and b=1",
+      "select * from tik where a<=>null and b=1",
+      "select * from tuk where a<=>null and b>0 and b<2",
+      "select * from tik where a<=>null and b>0 and b<2",
+      "select * from tuk where a<=>null and b>=1 and b<2",
+      "select * from tik where a<=>null and b>=1 and b<2",
+      "select * from tuk where a<=>null and b=1 and c=1",
+      "select * from tik where a<=>null and b=1 and c=1",
+      "select * from tuk where a=1 and b<=>null and c=1",
+      "select * from tik where a=1 and b<=>null and c=1",
+      "select * from tuk where a<=>null and b<=>null and c=1",
+      "select * from tik where a<=>null and b<=>null and c=1",
+      "select * from tuk where a<=>null and b<=>null and c<=>null",
+      "select * from tik where a<=>null and b<=>null and c<=>null"
+    ]
+  },
+  {
     "name": "TestPushDownToTiFlashWithKeepOrder",
     "cases": [
       "explain format = 'brief' select max(a) from t",
@@ -385,7 +404,8 @@
       "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_0,id) from ts group by id",
       "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts",
       "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts group by col_1",
-      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0>10 order by id<10) from ts group by col_1"
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0>10 order by id<10) from ts group by col_1",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by col_0<=>null) from ts"
     ]
   },
   {

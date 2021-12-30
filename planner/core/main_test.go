@@ -24,14 +24,17 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
+var testDataMap = make(testdata.BookKeeper, 2)
+var indexMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	flag.Parse()
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
+	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
+	indexMergeSuiteData = testDataMap["index_merge_suite"]
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),

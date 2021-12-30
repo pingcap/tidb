@@ -202,7 +202,9 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 }
 
 func (l *Lightning) RunServer() error {
+	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
+	l.serverLock.Unlock()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
 		zap.Stringer("address", l.serverAddr),
@@ -214,7 +216,7 @@ func (l *Lightning) RunServer() error {
 			return err
 		}
 		err = l.run(context.Background(), task, nil)
-		if err != nil {
+		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
@@ -272,10 +274,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		if taskCfg.TiDB.Security == nil {
 			return
 		}
-		taskCfg.TiDB.Security.CAPath = ""
-		if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-			log.L().Warn("failed to deregister TLS config", log.ShortError(err))
-		}
+		taskCfg.TiDB.Security.DeregisterMySQL()
 	}()
 
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
@@ -295,6 +294,19 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
 		return errors.Annotate(err, "create storage failed")
+	}
+
+	// return expectedErr means at least meet one file
+	expectedErr := errors.New("Stop Iter")
+	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+		// return an error when meet the first regular file to break the walk loop
+		return expectedErr
+	})
+	if !errors.ErrorEqual(walkErr, expectedErr) {
+		if walkErr == nil {
+			return errors.Errorf("data-source-dir '%s' doesn't exist or contains no files", taskCfg.Mydumper.SourceDir)
+		}
+		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed", taskCfg.Mydumper.SourceDir)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
@@ -416,12 +428,13 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 		Current   *int64  `json:"current"`
 		QueuedIDs []int64 `json:"queue"`
 	}
-
+	l.serverLock.Lock()
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
 	} else {
 		response.QueuedIDs = []int64{}
 	}
+	l.serverLock.Unlock()
 
 	l.cancelLock.Lock()
 	if l.cancel != nil && l.curTask != nil {
@@ -463,7 +476,8 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 
 func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-
+	l.serverLock.Lock()
+	defer l.serverLock.Unlock()
 	if l.taskCfgs == nil {
 		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
 		// Without the server mode this pointer is default to be nil.
@@ -775,7 +789,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
 	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
 		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
+		engineID, err := strconv.Atoi(engine[index+1:]) // nolint:gosec
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

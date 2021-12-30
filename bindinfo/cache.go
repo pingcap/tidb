@@ -103,9 +103,21 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
+// FindUsingBinding gets the using binding.
+// There is at most one binding that can be used now
+func (br *BindRecord) FindUsingBinding() *Binding {
+	for _, binding := range br.Bindings {
+		if binding.Status == Using {
+			return &binding
+		}
+	}
+	return nil
+}
+
 // FindBinding find bindings in BindRecord.
 func (br *BindRecord) FindBinding(hint string) *Binding {
-	for _, binding := range br.Bindings {
+	for i := range br.Bindings {
+		binding := br.Bindings[i]
 		if binding.ID == hint {
 			return &binding
 		}
@@ -160,7 +172,8 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.shallowCopy()
-	for _, rbind := range rBindRecord.Bindings {
+	for i := range rBindRecord.Bindings {
+		rbind := rBindRecord.Bindings[i]
 		found := false
 		for j, lbind := range lBindRecord.Bindings {
 			if lbind.isSame(&rbind) {
@@ -184,7 +197,8 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
 	}
 	result := br.shallowCopy()
-	for _, deletedBind := range deleted.Bindings {
+	for j := range deleted.Bindings {
+		deletedBind := deleted.Bindings[j]
 		for i, bind := range result.Bindings {
 			if bind.isSame(&deletedBind) {
 				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)

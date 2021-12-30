@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -17,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
@@ -83,6 +85,21 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
 	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(table))
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return oneRow[1], nil
+}
+
+// ShowCreatePlacementPolicy constructs the create policy SQL for a specified table
+// returns (createPoilicySQL, error)
+func ShowCreatePlacementPolicy(db *sql.Conn, policy string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`", escapeString(policy))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", query)
@@ -234,7 +251,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 			}
 		}
 	default:
-		queryTemplate := "SHOW TABLE STATUS FROM `%s`"
+		const queryTemplate = "SHOW TABLE STATUS FROM `%s`"
 		selectedTableType := make(map[TableType]struct{})
 		for _, tableType = range tableTypes {
 			selectedTableType[tableType] = struct{}{}
@@ -275,6 +292,25 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		}
 	}
 	return dbTables, nil
+}
+
+func ListAllPlacementPolicyNames(db *sql.Conn) ([]string, error) {
+	var policyList []string
+	var policy string
+	const query = "select distinct policy_name from information_schema.placement_rules where policy_name is not null;"
+	rows, err := db.QueryContext(context.Background(), query)
+	if err != nil {
+		return policyList, errors.Annotatef(err, "sql: %s", query)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		err := rows.Scan(&policy)
+		if err != nil {
+			return policyList, errors.Trace(err)
+		}
+		policyList = append(policyList, policy)
+	}
+	return policyList, errors.Annotatef(rows.Err(), "sql: %s", query)
 }
 
 // SelectVersion gets the version information from the database server
@@ -351,7 +387,7 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasI
 // SelectTiDBRowID checks whether this table has _tidb_rowid column
 func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
-	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
+	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 1", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
@@ -629,7 +665,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 
 // GetPdAddrs gets PD address from TiDB
 func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
+	const query = "SELECT * FROM information_schema.cluster_info where type = 'pd';"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -640,7 +676,7 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 
 // GetTiDBDDLIDs gets DDL IDs from TiDB
 func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.tidb_servers_info;"
+	const query = "SELECT * FROM information_schema.tidb_servers_info;"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -649,18 +685,66 @@ func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	return ddlIDs, errors.Annotatef(err, "sql: %s", query)
 }
 
+// getTiDBConfig gets tidb config from TiDB server
+// @@tidb_config details doc https://docs.pingcap.com/tidb/stable/system-variables#tidb_config
+// this variable exists at least from v2.0.0, so this works in most existing tidb instances
+func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
+	const query = "SELECT @@tidb_config;"
+	var (
+		tidbConfig      dbconfig.Config
+		tidbConfigBytes []byte
+	)
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&tidbConfigBytes)
+	if err != nil {
+		return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+	}
+	err = json.Unmarshal(tidbConfigBytes, &tidbConfig)
+	return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+}
+
 // CheckTiDBWithTiKV use sql to check whether current TiDB has TiKV
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
+	conn, err := db.Conn(context.Background())
+	if err == nil {
+		defer conn.Close()
+		tidbConfig, err := getTiDBConfig(conn)
+		if err == nil {
+			return tidbConfig.Store == "tikv", nil
+		}
+	}
 	var count int
-	query := "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
+	const query = "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
 	row := db.QueryRow(query)
-	err := row.Scan(&count)
+	err = row.Scan(&count)
 	if err != nil {
 		// still return true here. Because sometimes users may not have privileges for MySQL.TiDB database
 		// In most production cases TiDB has TiKV
 		return true, errors.Annotatef(err, "sql: %s", query)
 	}
 	return count > 0, nil
+}
+
+// CheckIfSeqExists use sql to check whether sequence exists
+func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+	var count int
+	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&count)
+	if err != nil {
+		return false, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	return count > 0, nil
+}
+
+// CheckTiDBEnableTableLock use sql variable to check whether current TiDB has TiKV
+func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
+	tidbConfig, err := getTiDBConfig(db)
+	if err != nil {
+		return false, err
+	}
+	return tidbConfig.EnableTableLock, nil
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
@@ -1315,4 +1399,44 @@ func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
 		return nil
 	})
 	return regionsInfo, err
+}
+
+// GetCharsetAndDefaultCollation gets charset and default collation map.
+func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[string]string, error) {
+	charsetAndDefaultCollation := make(map[string]string)
+	query := "SHOW CHARACTER SET"
+
+	// Show an example.
+	/*
+		mysql> SHOW CHARACTER SET;
+		+----------+---------------------------------+---------------------+--------+
+		| Charset  | Description                     | Default collation   | Maxlen |
+		+----------+---------------------------------+---------------------+--------+
+		| armscii8 | ARMSCII-8 Armenian              | armscii8_general_ci |      1 |
+		| ascii    | US ASCII                        | ascii_general_ci    |      1 |
+		| big5     | Big5 Traditional Chinese        | big5_chinese_ci     |      2 |
+		| binary   | Binary pseudo charset           | binary              |      1 |
+		| cp1250   | Windows Central European        | cp1250_general_ci   |      1 |
+		| cp1251   | Windows Cyrillic                | cp1251_general_ci   |      1 |
+		+----------+---------------------------------+---------------------+--------+
+	*/
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var charset, description, collation string
+		var maxlen int
+		if scanErr := rows.Scan(&charset, &description, &collation, &maxlen); scanErr != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+		charsetAndDefaultCollation[strings.ToLower(charset)] = collation
+	}
+	if err = rows.Close(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", query)
+	}
+	return charsetAndDefaultCollation, err
 }

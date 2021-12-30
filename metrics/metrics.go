@@ -139,7 +139,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCJobFailureCounter)
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
-	prometheus.MustRegister(GCUnsafeDestroyRangeFailuresCounterVec)
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
@@ -157,6 +156,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLIgnoredCounter)
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
+	prometheus.MustRegister(PDApiExecutionHistogram)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

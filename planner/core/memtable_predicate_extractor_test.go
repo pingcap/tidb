@@ -1058,7 +1058,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		skipRequest                  bool
 		startTime, endTime           int64
 		regionIDs, storeIDs, peerIDs []uint64
-		isLearners, isLeaders        []uint64
+		isLearners, isLeaders        []bool
 		hotRegionTypes               set.StringSet
 	}{
 		// Test full data, it will not call Extract() and executor(retriver) will panic and remind user to add conditions to save network IO.
@@ -1071,114 +1071,180 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			sql: "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10::10'",
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<='2019-10-11 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-11 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<='2019-10-11 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			endTime:        timestamp(c, "2019-10-11 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>'2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
-			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>'2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10") + 1,
+			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:         "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-12 10:10:10' and update_time<'2019-10-11 10:10:10'",
-			startTime:   timestamp(c, "2019-10-12 10:10:10"),
-			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
-			skipRequest: true,
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-12 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:      timestamp(c, "2019-10-12 10:10:10"),
+			endTime:        timestamp(c, "2019-10-11 10:10:10") - 1,
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
+			skipRequest:    true,
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10'",
-			startTime: timestamp(c, "2019-10-12 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10'",
+			startTime:      timestamp(c, "2019-10-12 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10' and update_time='2019-10-13 10:10:10'",
-			startTime: timestamp(c, "2019-10-13 10:10:10"),
-			endTime:   timestamp(c, "2019-10-13 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime:      timestamp(c, "2019-10-13 10:10:10"),
+			endTime:        timestamp(c, "2019-10-13 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:         "select * from information_schema.tidb_hot_regions_history where update_time<='2019-10-10 10:10:10' and update_time='2019-10-13 10:10:10'",
-			startTime:   timestamp(c, "2019-10-13 10:10:10"),
-			endTime:     timestamp(c, "2019-10-10 10:10:10"),
-			skipRequest: true,
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time<='2019-10-10 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime:      timestamp(c, "2019-10-13 10:10:10"),
+			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
+			skipRequest:    true,
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10' and update_time<='2019-10-13 10:10:10'",
-			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+			sql:            "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10' and update_time<='2019-10-13 10:10:10'",
+			startTime:      timestamp(c, "2019-10-10 10:10:10"),
+			endTime:        timestamp(c, "2019-10-10 10:10:10"),
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 
 		// Test `region_id`, `store_id`, `peer_id` columns.
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100",
-			regionIDs: []uint64{100},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id=100",
+			regionIDs:      []uint64{100},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id",
-			regionIDs: []uint64{100},
+			sql:            "select * from information_schema.tidb_hot_regions_history where 100=region_id",
+			regionIDs:      []uint64{100},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101",
-			regionIDs: []uint64{100, 101},
+			sql:            "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101",
+			regionIDs:      []uint64{100, 101},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101 or region_id=102 or 103 = region_id",
-			regionIDs: []uint64{100, 101, 102, 103},
+			sql:            "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101 or region_id=102 or 103 = region_id",
+			regionIDs:      []uint64{100, 101, 102, 103},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where (region_id=100 or region_id=101) and (store_id=200 or store_id=201)",
-			regionIDs: []uint64{100, 101},
-			storeIDs:  []uint64{200, 201},
+			sql:            "select * from information_schema.tidb_hot_regions_history where (region_id=100 or region_id=101) and (store_id=200 or store_id=201)",
+			regionIDs:      []uint64{100, 101},
+			storeIDs:       []uint64{200, 201},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101)",
-			regionIDs: []uint64{100, 101},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101)",
+			regionIDs:      []uint64{100, 101},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id=200",
-			regionIDs: []uint64{100, 101},
-			storeIDs:  []uint64{200},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id=200",
+			regionIDs:      []uint64{100, 101},
+			storeIDs:       []uint64{200},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id in (200, 201)",
-			regionIDs: []uint64{100, 101},
-			storeIDs:  []uint64{200, 201},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id in (200, 201)",
+			regionIDs:      []uint64{100, 101},
+			storeIDs:       []uint64{200, 201},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id in (200, 201)",
-			regionIDs: []uint64{100},
-			storeIDs:  []uint64{200, 201},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id in (200, 201)",
+			regionIDs:      []uint64{100},
+			storeIDs:       []uint64{200, 201},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id=200",
-			regionIDs: []uint64{100},
-			storeIDs:  []uint64{200},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id=200",
+			regionIDs:      []uint64{100},
+			storeIDs:       []uint64{200},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id=101",
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101)",
-			regionIDs: []uint64{100},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101)",
+			regionIDs:      []uint64{100},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (200,201)",
-			regionIDs: []uint64{100},
-			storeIDs:  []uint64{200},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (200,201)",
+			regionIDs:      []uint64{100},
+			storeIDs:       []uint64{200},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (101,102)",
@@ -1193,52 +1259,61 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			skipRequest: true,
 		},
 		{
-			sql: `select * from information_schema.tidb_hot_regions_history 
-								where region_id=100 and region_id in (100,101) 
+			sql: `select * from information_schema.tidb_hot_regions_history
+								where region_id=100 and region_id in (100,101)
 								and store_id=200 and store_id in (201,202)`,
 			skipRequest: true,
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100,101) and region_id in (101,102)",
-			regionIDs: []uint64{101},
+			sql:            "select * from information_schema.tidb_hot_regions_history where region_id in (100,101) and region_id in (101,102)",
+			regionIDs:      []uint64{101},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql: `select * from information_schema.tidb_hot_regions_history 
-							where region_id in (100,101) 
-							and region_id in (101,102) 
-							and store_id in (200,201) 
+			sql: `select * from information_schema.tidb_hot_regions_history
+							where region_id in (100,101)
+							and region_id in (101,102)
+							and store_id in (200,201)
 							and store_id in (201,202)`,
-			regionIDs: []uint64{101},
-			storeIDs:  []uint64{201},
+			regionIDs:      []uint64{101},
+			storeIDs:       []uint64{201},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql: `select * from information_schema.tidb_hot_regions_history 
-							where region_id in (100,101) 
-							and region_id in (101,102) 
-							and store_id in (200,201) 
+			sql: `select * from information_schema.tidb_hot_regions_history
+							where region_id in (100,101)
+							and region_id in (101,102)
+							and store_id in (200,201)
 							and store_id in (201,202)
 							and peer_id in (3000,3001)
 							and peer_id in (3001,3002)`,
-			regionIDs: []uint64{101},
-			storeIDs:  []uint64{201},
-			peerIDs:   []uint64{3001},
+			regionIDs:      []uint64{101},
+			storeIDs:       []uint64{201},
+			peerIDs:        []uint64{3001},
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql: `select * from information_schema.tidb_hot_regions_history 
-							where region_id in (100,101) 
-							and region_id in (100,102) 
-							and region_id in (102,103) 
+			sql: `select * from information_schema.tidb_hot_regions_history
+							where region_id in (100,101)
+							and region_id in (100,102)
+							and region_id in (102,103)
 							and region_id in (103,104)`,
 			skipRequest: true,
 		},
 		// Test `type` column.
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where type='read'",
-			hotRegionTypes: set.NewStringSet("read"),
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where type in('read')",
-			hotRegionTypes: set.NewStringSet("read"),
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead),
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where type='read' and type='write'",
@@ -1246,11 +1321,11 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where type in ('read', 'write')",
-			hotRegionTypes: set.NewStringSet("read", "write"),
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where type='read' and type in ('read', 'write')",
-			hotRegionTypes: set.NewStringSet("read"),
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead),
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where type in ('read') and type in ('write')",
@@ -1258,33 +1333,45 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		// Test `is_learner`, `is_leaeder` columns.
 		{
-			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=1",
-			isLearners: []uint64{1},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner=1",
+			isLearners:     []bool{true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:       "select * from information_schema.tidb_hot_regions_history where is_leader=0",
-			isLeaders: []uint64{0},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_leader=0",
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=true",
-			isLearners: []uint64{1},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner=true",
+			isLearners:     []bool{true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(0,1)",
-			isLearners: []uint64{0, 1},
+			isLearners: []bool{false, true},
+			isLeaders:  []bool{false, true},
 		},
 		{
-			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(true,false)",
-			isLearners: []uint64{0, 1},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner in(true,false)",
+			isLearners:     []bool{false, true},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4)",
-			isLearners: []uint64{3, 4},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4)",
+			isLearners:     []bool{false},
+			isLeaders:      []bool{false, true},
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
-			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4) and is_leader in(0,1,true,false,3,4)",
-			isLearners: []uint64{3, 4},
-			isLeaders:  []uint64{0, 1, 3, 4},
+			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4) and is_leader in(0,1,true,false,3,4)",
+			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
+			isLearners:     []bool{false},
+			isLeaders:      []bool{false, true},
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=1 and is_learner=0",
@@ -1322,7 +1409,6 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		if ca.hotRegionTypes.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.HotRegionTypes, DeepEquals, ca.hotRegionTypes, Commentf("SQL: %v", ca.sql))
 		}
-		// ues length to avoid case uint64{} != uint64(nil)
 		if len(ca.regionIDs) > 0 {
 			c.Assert(hotRegionsHistoryExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
 		}
@@ -1331,6 +1417,138 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		}
 		if len(ca.peerIDs) > 0 {
 			c.Assert(hotRegionsHistoryExtractor.PeerIDs, DeepEquals, ca.peerIDs, Commentf("SQL: %v", ca.sql))
+		}
+	}
+}
+
+func (s *extractorSuite) TestTikvRegionPeersExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	var cases = []struct {
+		sql                 string
+		regionIDs, storeIDs []uint64
+		skipRequest         bool
+	}{
+		// Test `region_id`, `store_id` columns.
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id=100",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where 100=region_id",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where 100=region_id or region_id=101",
+			regionIDs: []uint64{100, 101},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where 100=region_id or region_id=101 or region_id=102 or 103 = region_id",
+			regionIDs: []uint64{100, 101, 102, 103},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where (region_id=100 or region_id=101) and (store_id=200 or store_id=201)",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id in (100, 101)",
+			regionIDs: []uint64{100, 101},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id in (100, 101) and store_id=200",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id in (100, 101) and store_id in (200, 201)",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id=100 and store_id in (200, 201)",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id=100 and store_id=200",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:         "select * from information_schema.tikv_region_peers where region_id=100 and region_id=101",
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id=100 and region_id in (100,101)",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (200,201)",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:         "select * from information_schema.tikv_region_peers where region_id=100 and region_id in (101,102)",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tikv_region_peers where region_id=100 and region_id in (101,102) and store_id=200 and store_id in (200,201)",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tikv_region_peers where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (201,202)",
+			skipRequest: true,
+		},
+		{
+			sql: `select * from information_schema.tikv_region_peers 
+								where region_id=100 and region_id in (100,101) 
+								and store_id=200 and store_id in (201,202)`,
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tikv_region_peers where region_id in (100,101) and region_id in (101,102)",
+			regionIDs: []uint64{101},
+		},
+		{
+			sql: `select * from information_schema.tikv_region_peers 
+							where region_id in (100,101) 
+							and region_id in (101,102) 
+							and store_id in (200,201) 
+							and store_id in (201,202)`,
+			regionIDs: []uint64{101},
+			storeIDs:  []uint64{201},
+		},
+		{
+			sql: `select * from information_schema.tikv_region_peers 
+							where region_id in (100,101) 
+							and region_id in (100,102) 
+							and region_id in (102,103) 
+							and region_id in (103,104)`,
+			skipRequest: true,
+		},
+		// Test columns that is not extracted by TikvRegionPeersExtractor
+		{
+			sql: `select * from information_schema.tikv_region_peers 
+							where peer_id=100 
+							and is_learner=0 
+							and is_leader=1 
+							and status='NORMAL' 
+							and down_seconds=1000`,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil)
+
+		tikvRegionPeersExtractor := logicalMemTable.Extractor.(*plannercore.TikvRegionPeersExtractor)
+		if len(ca.regionIDs) > 0 {
+			c.Assert(tikvRegionPeersExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.storeIDs) > 0 {
+			c.Assert(tikvRegionPeersExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
 		}
 	}
 }
