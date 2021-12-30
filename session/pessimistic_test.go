@@ -1164,11 +1164,11 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 
@@ -1180,9 +1180,9 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 }

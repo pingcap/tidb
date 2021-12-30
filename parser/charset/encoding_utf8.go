@@ -67,6 +67,14 @@ func (e *encodingUTF8) Peek(src []byte) []byte {
 	return src[:nextLen]
 }
 
+func (e *encodingUTF8) MbLen(bs string) int {
+	_, size := utf8.DecodeRuneInString(bs)
+	if size <= 1 {
+		return 0
+	}
+	return size
+}
+
 // IsValid implements Encoding interface.
 func (e *encodingUTF8) IsValid(src []byte) bool {
 	if utf8.Valid(src) {
