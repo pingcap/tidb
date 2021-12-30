@@ -91,10 +91,14 @@ func (s *utilSuite) TestToDSN(c *C) {
 			"tidb_distsql_scan_concurrency": "1",
 		},
 	}
+<<<<<<< HEAD
 	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency=1")
 
 	param.Host = "::1"
 	c.Assert(param.ToDSN(), Equals, "root:123456@tcp([::1]:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency=1")
+=======
+	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'")
+>>>>>>> d5d836cc3... lightning: output a clearer exit message (#28492)
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {
