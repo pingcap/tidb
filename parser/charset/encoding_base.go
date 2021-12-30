@@ -26,7 +26,8 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
+// ErrInvalidCharacterString returns when the string is invalid in the specific charset.
+var ErrInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 // encodingBase defines some generic functions.
 type encodingBase struct {
@@ -115,7 +116,7 @@ func beginWithReplacementChar(dst []byte) bool {
 // generateEncodingErr generates an invalid string in charset error.
 func generateEncodingErr(name string, invalidBytes []byte) error {
 	arg := fmt.Sprintf("%X", invalidBytes)
-	return errInvalidCharacterString.FastGenByArgs(name, arg)
+	return ErrInvalidCharacterString.FastGenByArgs(name, arg)
 }
 
 // HackSlice converts string to slice without copy.

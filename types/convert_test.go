@@ -397,6 +397,83 @@ func TestConvertToString(t *testing.T) {
 	}
 }
 
+func TestConvertToStringWithCheck(t *testing.T) {
+	nhUTF8 := "你好"
+	nhUTF8MB4 := "你好👋"
+	nhUTF8Invalid := "你好" + string([]byte{0x81})
+	type SC = *stmtctx.StatementContext
+	tests := []struct {
+		input      string
+		outputChs  string
+		setStmtCtx func(ctx *stmtctx.StatementContext)
+		output     string
+	}{
+		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8},
+		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8MB4},
+		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8},
+		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8MB4},
+		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8Invalid},
+		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, ""},
+		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = false }, ""},
+		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = true }, nhUTF8Invalid},
+		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = false }, ""},
+		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = true }, nhUTF8MB4},
+	}
+	for _, tt := range tests {
+		ft := NewFieldType(mysql.TypeVarchar)
+		ft.Flen = 255
+		ft.Charset = tt.outputChs
+		inputDatum := NewStringDatum(tt.input)
+		sc := new(stmtctx.StatementContext)
+		tt.setStmtCtx(sc)
+		outputDatum, err := inputDatum.ConvertTo(sc, ft)
+		if len(tt.output) == 0 {
+			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
+		} else {
+			require.NoError(t, err, tt)
+			require.Equal(t, tt.output, outputDatum.GetString(), tt)
+		}
+	}
+}
+
+func TestConvertToBinaryString(t *testing.T) {
+	nhUTF8 := "你好"
+	nhGBK := string([]byte{0xC4, 0xE3, 0xBA, 0xC3}) // "你好" in GBK
+	nhUTF8Invalid := "你好" + string([]byte{0x81})
+	nhGBKInvalid := nhGBK + string([]byte{0x81})
+	tests := []struct {
+		input         string
+		inputCollate  string
+		outputCharset string
+		output        string
+	}{
+		{nhUTF8, "utf8_bin", "utf8", nhUTF8},
+		{nhUTF8, "utf8mb4_bin", "utf8mb4", nhUTF8},
+		{nhUTF8, "gbk_bin", "utf8", nhUTF8},
+		{nhUTF8, "gbk_bin", "gbk", nhUTF8},
+		{nhUTF8, "binary", "utf8mb4", nhUTF8},
+		{nhGBK, "binary", "gbk", nhUTF8},
+		{nhUTF8, "utf8_bin", "binary", nhUTF8},
+		{nhUTF8, "gbk_bin", "binary", nhGBK},
+		{nhUTF8Invalid, "utf8_bin", "utf8", ""},
+		{nhGBKInvalid, "gbk_bin", "gbk", ""},
+	}
+	for _, tt := range tests {
+		ft := NewFieldType(mysql.TypeVarchar)
+		ft.Flen = 255
+		ft.Charset = tt.outputCharset
+		inputDatum := NewCollationStringDatum(tt.input, tt.inputCollate)
+		sc := new(stmtctx.StatementContext)
+		outputDatum, err := inputDatum.ConvertTo(sc, ft)
+		if len(tt.output) == 0 {
+			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
+		} else {
+			require.NoError(t, err, tt)
+			require.Equal(t, tt.output, outputDatum.GetString(), tt)
+		}
+	}
+}
+
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
