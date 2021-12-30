@@ -122,7 +122,6 @@ func makeDatums(i interface{}) []types.Datum {
 }
 
 func TestIsNullFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
@@ -139,7 +138,6 @@ func TestIsNullFunc(t *testing.T) {
 }
 
 func TestLock(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums(nil, 1)))
@@ -157,7 +155,6 @@ func TestLock(t *testing.T) {
 }
 
 func TestDisplayName(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, "=", GetDisplayName(ast.EQ))
 	require.Equal(t, "<=>", GetDisplayName(ast.NullEQ))
 	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
@@ -191,3 +188,11 @@ var (
 	// MySQL varchar.
 	varcharCon = &Constant{RetType: &types.FieldType{Tp: mysql.TypeVarchar, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}}
 )
+
+func getInt8Con() Expression {
+	return int8Con.Clone()
+}
+
+func getVarcharCon() Expression {
+	return varcharCon.Clone()
+}

@@ -50,14 +50,14 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20211122024046-03abd340988f
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
+	github.com/pingcap/sysutil v0.0.0-20211208032423-041a72e5860d
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20211116093845-e9b045a0bdf8
+	github.com/pingcap/tipb v0.0.0-20211227115224-a06a85f9d2a5
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
-	github.com/shirou/gopsutil v3.21.2+incompatible
+	github.com/shirou/gopsutil v3.21.3+incompatible
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/soheilhy/cmux v0.1.4
@@ -65,7 +65,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211118154139-b11da6307c6f
+	github.com/tikv/client-go/v2 v2.0.0-rc.0.20211223062159-300275dee63e
 	github.com/tikv/pd v1.1.0-beta.0.20211118054146-02848d2660ee
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -79,12 +79,12 @@ require (
 	go.uber.org/goleak v1.1.12
 	go.uber.org/multierr v1.7.0
 	go.uber.org/zap v1.19.1
-	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
+	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f
 	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210831042530-f4d43177bf5e
+	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e
 	golang.org/x/text v0.3.7
-	golang.org/x/tools v0.1.5
+	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.54.0
 	google.golang.org/grpc v1.40.0
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect

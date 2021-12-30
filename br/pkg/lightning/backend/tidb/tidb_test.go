@@ -73,7 +73,6 @@ func (s *mysqlSuite) TearDownTest(t *testing.T) {
 }
 
 func TestWriteRowsReplaceOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -132,7 +131,6 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 }
 
 func TestWriteRowsIgnoreOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -179,7 +177,6 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 }
 
 func TestWriteRowsErrorOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -245,7 +242,7 @@ func testStrictMode(t *testing.T) {
 		types.NewStringDatum("\xff\xff\xff\xff"),
 	}, 1, []int{0, -1, -1}, "5.csv", 0)
 	require.Error(t, err)
-	require.Regexp(t, `.*incorrect utf8 value .* for column s0`, err.Error())
+	require.Regexp(t, `incorrect utf8 value .* for column s0$`, err.Error())
 
 	// oepn a new encode because column count changed.
 	encoder, err = bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
@@ -255,11 +252,10 @@ func testStrictMode(t *testing.T) {
 		types.NewStringDatum("非 ASCII 字符串"),
 	}, 1, []int{0, 1, -1}, "6.csv", 0)
 	require.Error(t, err)
-	require.Regexp(t, ".*incorrect ascii value .* for column s1", err.Error())
+	require.Regexp(t, "incorrect ascii value .* for column s1$", err.Error())
 }
 
 func TestFetchRemoteTableModels_3_x(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -294,7 +290,6 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_0(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -332,7 +327,6 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -370,7 +364,6 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -410,7 +403,6 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 }
 
 func TestWriteRowsErrorNoRetry(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -436,7 +428,6 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -503,7 +494,6 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 }
 
 func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -608,7 +598,6 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 }
 
 func TestEncodeRowForRecord(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 
 	// for a correct row, the will encode a correct result

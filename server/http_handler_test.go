@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
 	"testing"
@@ -35,10 +36,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -72,7 +75,6 @@ func createBasicHTTPHandlerTestSuite() *basicHTTPHandlerTestSuite {
 }
 
 func TestRegionIndexRange(t *testing.T) {
-	t.Parallel()
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
@@ -143,7 +145,6 @@ func TestRegionIndexRange(t *testing.T) {
 }
 
 func TestRegionCommonHandleRange(t *testing.T) {
-	t.Parallel()
 	sTableID := int64(3)
 	indexValues := []types.Datum{
 		types.NewIntDatum(100),
@@ -179,7 +180,6 @@ func TestRegionCommonHandleRange(t *testing.T) {
 }
 
 func TestRegionIndexRangeWithEndNoLimit(t *testing.T) {
-	t.Parallel()
 	sTableID := int64(15)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
 	endKey := []byte("z_aaaaafdfd")
@@ -197,7 +197,6 @@ func TestRegionIndexRangeWithEndNoLimit(t *testing.T) {
 }
 
 func TestRegionIndexRangeWithStartNoLimit(t *testing.T) {
-	t.Parallel()
 	eTableID := int64(9)
 	startKey := []byte("m_aaaaafdfd")
 	endKey := tablecodec.GenTableRecordPrefix(eTableID)
@@ -215,7 +214,6 @@ func TestRegionIndexRangeWithStartNoLimit(t *testing.T) {
 }
 
 func TestRegionsAPI(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -238,7 +236,6 @@ func TestRegionsAPI(t *testing.T) {
 }
 
 func TestRegionsAPIForClusterIndex(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -274,7 +271,6 @@ func TestRegionsAPIForClusterIndex(t *testing.T) {
 }
 
 func TestRangesAPI(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -314,7 +310,6 @@ func (ts *basicHTTPHandlerTestSuite) regionContainsTable(t *testing.T, regionID 
 }
 
 func TestListTableRegions(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -341,7 +336,6 @@ func TestListTableRegions(t *testing.T) {
 }
 
 func TestListTableRanges(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -367,7 +361,6 @@ func TestListTableRanges(t *testing.T) {
 }
 
 func TestGetRegionByIDWithError(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -378,7 +371,6 @@ func TestGetRegionByIDWithError(t *testing.T) {
 }
 
 func TestBinlogRecover(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -459,7 +451,6 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/%s.sock", t.Name())
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
@@ -558,7 +549,6 @@ func decodeKeyMvcc(closer io.ReadCloser, t *testing.T, valid bool) {
 }
 
 func TestGetTableMVCC(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -657,7 +647,6 @@ func TestGetTableMVCC(t *testing.T) {
 }
 
 func TestGetMVCCNotFound(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -675,7 +664,6 @@ func TestGetMVCCNotFound(t *testing.T) {
 }
 
 func TestDecodeColumnValue(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -742,7 +730,6 @@ func TestDecodeColumnValue(t *testing.T) {
 }
 
 func TestGetIndexMVCC(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -821,7 +808,6 @@ func TestGetIndexMVCC(t *testing.T) {
 }
 
 func TestGetSettings(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -843,7 +829,6 @@ func TestGetSettings(t *testing.T) {
 }
 
 func TestGetSchema(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -891,7 +876,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&lt)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Greater(t, len(lt), 0)
+	require.Greater(t, len(lt), 2)
 
 	resp, err = ts.fetchStatus("/schema/abc")
 	require.NoError(t, err)
@@ -959,7 +944,6 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -996,7 +980,6 @@ func dummyRecord() *deadlockhistory.DeadlockRecord {
 }
 
 func TestPprof(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1016,7 +999,6 @@ func TestPprof(t *testing.T) {
 }
 
 func TestHotRegionInfo(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1027,7 +1009,6 @@ func TestHotRegionInfo(t *testing.T) {
 }
 
 func TestDebugZip(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1041,7 +1022,6 @@ func TestDebugZip(t *testing.T) {
 }
 
 func TestCheckCN(t *testing.T) {
-	t.Parallel()
 	s := &Server{cfg: &config.Config{Security: config.Security{ClusterVerifyCN: []string{"a ", "b", "c"}}}}
 	tlsConfig := &tls.Config{}
 	s.setCNChecker(tlsConfig)
@@ -1055,7 +1035,6 @@ func TestCheckCN(t *testing.T) {
 }
 
 func TestDDLHookHandler(t *testing.T) {
-	t.Parallel()
 	ts := createBasicHTTPHandlerTestSuite()
 
 	ts.startServer(t)
@@ -1082,4 +1061,46 @@ func TestDDLHookHandler(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "\"success!\"", string(body))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestWriteDBTablesData(t *testing.T) {
+	// No table in a schema.
+	info := infoschema.MockInfoSchema([]*model.TableInfo{})
+	rc := httptest.NewRecorder()
+	tbs := info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 0, len(tbs))
+	writeDBTablesData(rc, tbs)
+	var ti []*model.TableInfo
+	decoder := json.NewDecoder(rc.Body)
+	err := decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(ti))
+
+	// One table in a schema.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 1, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+
+	// Two tables in a schema.
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	rc = httptest.NewRecorder()
+	tbs = info.SchemaTables(model.NewCIStr("test"))
+	require.Equal(t, 2, len(tbs))
+	writeDBTablesData(rc, tbs)
+	decoder = json.NewDecoder(rc.Body)
+	err = decoder.Decode(&ti)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(ti))
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
 }

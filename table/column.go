@@ -170,7 +170,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) error {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str []byte, i int) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	var strval strings.Builder
 	for j := 0; j < 6; j++ {
@@ -192,6 +192,12 @@ func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str 
 	return err
 }
 
+// handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
+// Currently only called from CastValue.
+// returns:
+//   value (possibly adjusted)
+//   boolean; true if break error/warning handling in CastValue and return what was returned from this
+//   error
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	tm := casted.GetMysqlTime()
@@ -241,6 +247,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
 			sc.AppendWarning(innerErr)
 		}
+		return types.NewDatum(zeroV), true, nil
+	} else if tmIsInvalid && col.Tp == mysql.TypeTimestamp {
+		// Prevent from being stored! Invalid timestamp!
+		if mode.HasStrictMode() {
+			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		}
+		// no strict mode, truncate to 0000-00-00 00:00:00
+		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
@@ -314,46 +328,57 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
-	if v := makeStringValidator(ctx, col); v != nil {
-		str := casted.GetString()
-		strategy := charset.TruncateStrategyReplace
-		if val.Collation() == charset.CollationBin {
-			strategy = charset.TruncateStrategyTrim
-		}
-		if newStr, invalidPos := v.Truncate(str, strategy); invalidPos >= 0 {
-			casted = types.NewStringDatum(newStr)
-			err = handleWrongCharsetValue(ctx, col, str, invalidPos)
-		}
-	}
+	err = validateStringDatum(ctx, &val, &casted, col)
 	if forceIgnoreTruncate {
 		err = nil
 	}
 	return casted, err
 }
 
-func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
-	switch col.Charset {
-	case charset.CharsetASCII:
-		if ctx.GetSessionVars().SkipASCIICheck {
-			return nil
-		}
-		return charset.StringValidatorASCII{}
-	case charset.CharsetUTF8:
-		if ctx.GetSessionVars().SkipUTF8Check {
-			return nil
-		}
-		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
-		return charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
-	case charset.CharsetUTF8MB4:
-		if ctx.GetSessionVars().SkipUTF8Check {
-			return nil
-		}
-		return charset.StringValidatorUTF8{IsUTF8MB4: true}
-	case charset.CharsetLatin1, charset.CharsetBinary:
+func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
+	// Only strings are need to validate.
+	if !types.IsString(col.Tp) {
 		return nil
-	default:
-		return charset.StringValidatorOther{Charset: col.Charset}
 	}
+	fromBinary := origin.Kind() == types.KindBinaryLiteral ||
+		(origin.Kind() == types.KindString && origin.Collation() == charset.CollationBin)
+	toBinary := types.IsTypeBlob(col.Tp) || col.Charset == charset.CharsetBin
+	if fromBinary && toBinary {
+		return nil
+	}
+	enc := charset.FindEncoding(col.Charset)
+	// Skip utf8 check if possible.
+	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
+		return nil
+	}
+	// Skip ascii check if possible.
+	if enc.Tp() == charset.EncodingTpASCII && ctx.GetSessionVars().SkipASCIICheck {
+		return nil
+	}
+	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
+		// Use a strict mode implementation. 4 bytes characters are invalid.
+		enc = charset.EncodingUTF8MB3StrictImpl
+	}
+	if fromBinary {
+		src := casted.GetBytes()
+		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
+		if err != nil {
+			casted.SetBytesAsString(encBytes, col.Collate, 0)
+			nSrc := charset.CountValidBytesDecode(enc, src)
+			return handleWrongCharsetValue(ctx, col, src, nSrc)
+		}
+		casted.SetBytesAsString(encBytes, col.Collate, 0)
+		return nil
+	}
+	// Check if the string is valid in the given column charset.
+	str := casted.GetBytes()
+	if !enc.IsValid(str) {
+		replace, _ := enc.Transform(nil, str, charset.OpReplace)
+		casted.SetBytesAsString(replace, col.Collate, 0)
+		nSrc := charset.CountValidBytes(enc, str)
+		return handleWrongCharsetValue(ctx, col, str, nSrc)
+	}
+	return nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.

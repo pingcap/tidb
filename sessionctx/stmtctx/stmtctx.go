@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
@@ -77,6 +77,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
+	NoZeroDate             bool
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
@@ -154,6 +155,9 @@ type StatementContext struct {
 		normalized string
 		digest     *parser.Digest
 	}
+	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
+	// If the binding is not used by the stmt, the value is empty
+	BindSQL string
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            *parser.Digest
@@ -202,6 +206,15 @@ type StatementContext struct {
 	// CE Trace is currently a submodule of the optimizer trace and is controlled by a separated option.
 	EnableOptimizerCETrace bool
 	OptimizerCETrace       []*tracing.CETraceRecord
+
+	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
+	WaitLockLeaseTime time.Duration
+
+	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
+	// executions of the kv layer during the current execution of the statement.
+	// Its life cycle is limited to this execution, and a new KvExecCounter is
+	// always created during each statement execution.
+	KvExecCounter *stmtstats.KvExecCounter
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -287,25 +300,18 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
 func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+	normalized, digest := sc.SQLDigest()
+	planDigest := sc.planDigest
 	return func(req *tikvrpc.Request) {
 		if req == nil {
 			return
 		}
-		req.ResourceGroupTag = sc.GetResourceGroupTagByLabel(
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-}
-
-// GetResourceGroupTagByLabel gets the resource group of the statement based on the label.
-func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupTagLabel) []byte {
-	if sc == nil {
-		return nil
-	}
-	normalized, sqlDigest := sc.SQLDigest()
-	if len(normalized) == 0 {
-		return nil
-	}
-	return resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

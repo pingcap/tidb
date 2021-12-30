@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -85,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -191,6 +193,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -715,6 +718,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+			return err
 		}
 		if len(newAuth) > 0 {
 			resp.Auth = newAuth
@@ -858,16 +862,24 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	if err != nil {
 		return nil, err
 	}
-	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: host})
-	failpoint.Inject("FakeUser", func(val failpoint.Value) {
-		userplugin = val.(string)
-	})
+	// Find the identity of the user based on username and peer host.
+	identity, err := cc.ctx.MatchIdentity(cc.user, host)
 	if err != nil {
-		// This happens if the account doesn't exist
+		return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	}
+	// Get the plugin for the identity.
+	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
 	}
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		userplugin = val.(string)
+	})
 	if userplugin == mysql.AuthSocket {
+		if !cc.isUnixSocket {
+			return nil, errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
 		resp.AuthPlugin = mysql.AuthSocket
 		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
 		if err != nil {
@@ -953,6 +965,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
 	cc.rsEncoder = newResultEncoder(chs)
+}
+
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1235,7 +1256,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
@@ -1355,11 +1376,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
-	msg := []byte("Uptime: 0  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000")
+	var err error
+	var uptime int64 = 0
+	info := serverInfo{}
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+	} else {
+		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
+	}
+	msg := []byte(fmt.Sprintf("Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
+		uptime))
 	data := cc.alloc.AllocWithLen(4, len(msg))
 	data = append(data, msg...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
@@ -2181,10 +2212,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	// if fetchedRows is not enough, getting data from recordSet.
+	// NOTE: chunk should not be allocated from the allocator
+	// the allocator will reset every statement
+	// but it maybe stored in the result set among statements
+	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
+	// Here server.tidbResultSet implements Next method.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
-		// Here server.tidbResultSet implements Next method.
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}

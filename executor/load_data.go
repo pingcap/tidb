@@ -419,9 +419,9 @@ func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 	return inQuoter
 }
 
-// indexOfTerminator return index of terminator, if not, return -1.
+// IndexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
+func (e *LoadDataInfo) IndexOfTerminator(bs []byte, inQuoter bool) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -459,13 +459,10 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 		}
 	}
 	atFieldStart := true
-	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			if !isInQuoter {
-				inQuoter = true
-			}
+			inQuoter = !inQuoter
 			atFieldStart = false
 			continue
 		}
@@ -525,7 +522,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[curStartIdx:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[curStartIdx:], inquotor)
+			endIdx = e.IndexOfTerminator(curData[curStartIdx:], inquotor)
 		}
 	}
 	if endIdx == -1 {
@@ -539,7 +536,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 		if ignore {
 			endIdx = strings.Index(string(hack.String(curData[startingLen:])), e.LinesInfo.Terminated)
 		} else {
-			endIdx = e.indexOfTerminator(curData[startingLen:], inquotor)
+			endIdx = e.IndexOfTerminator(curData[startingLen:], inquotor)
 		}
 		if endIdx != -1 {
 			nextDataIdx := startingLen + endIdx + terminatedLen
@@ -560,7 +557,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte, ignore bool) ([]byte, [
 	if ignore {
 		endIdx = strings.Index(string(hack.String(prevData[startingLen:])), e.LinesInfo.Terminated)
 	} else {
-		endIdx = e.indexOfTerminator(prevData[startingLen:], inquotor)
+		endIdx = e.IndexOfTerminator(prevData[startingLen:], inquotor)
 	}
 	if endIdx >= prevLen {
 		return prevData[startingLen : startingLen+endIdx], curData[nextDataIdx:], true

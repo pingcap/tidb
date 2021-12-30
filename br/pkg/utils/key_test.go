@@ -10,8 +10,6 @@ import (
 )
 
 func TestParseKey(t *testing.T) {
-	t.Parallel()
-
 	// test rawKey
 	testRawKey := []struct {
 		rawKey string
@@ -89,13 +87,11 @@ func TestParseKey(t *testing.T) {
 	for _, tt := range testNotSupportKey {
 		_, err := ParseKey("notSupport", tt.any)
 		require.Error(t, err)
-		require.Regexp(t, "unknown format.*", err.Error())
+		require.Regexp(t, "^unknown format", err.Error())
 	}
 }
 
 func TestCompareEndKey(t *testing.T) {
-	t.Parallel()
-
 	// test endKey
 	testCase := []struct {
 		key1 []byte
