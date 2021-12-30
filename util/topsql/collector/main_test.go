@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/collector/mock"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -35,6 +36,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
+	topsqlstate.EnabledTopSQL()
 	mc := mock.NewTopSQLCollector()
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()

@@ -85,35 +85,24 @@ type RemoteTopSQLReporter struct {
 func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
-		ctx:                     ctx,
-		cancel:                  cancel,
-		collectCPUTimeChan:      make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
-		collectStmtStatsChan:    make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
-		reportCollectedDataChan: make(chan collectedData, 1),
-		collecting:              newCollecting(),
-		normalizedSQLMap:        newNormalizedSQLMap(),
-		normalizedPlanMap:       newNormalizedPlanMap(),
-		stmtStatsBuffer:         map[uint64]stmtstats.StatementStatsMap{},
-		decodePlan:              decodePlan,
+		DefaultDataSinkRegisterer: NewDefaultDataSinkRegisterer(ctx),
+		ctx:                       ctx,
+		cancel:                    cancel,
+		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
+		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
+		reportCollectedDataChan:   make(chan collectedData, 1),
+		collecting:                newCollecting(),
+		normalizedSQLMap:          newNormalizedSQLMap(),
+		normalizedPlanMap:         newNormalizedPlanMap(),
+		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
+		decodePlan:                decodePlan,
 	}
 	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
-	tsr.DefaultDataSinkRegisterer = NewDefaultDataSinkRegisterer(ctx, tsr)
 
+	tsr.sqlCPUCollector.Start()
 	go tsr.collectWorker()
 	go tsr.reportWorker()
 	return tsr
-}
-
-// Enable implemented Controller interface.
-func (tsr *RemoteTopSQLReporter) Enable() {
-	tsr.sqlCPUCollector.Start()
-	topsqlstate.GlobalState.Enable.Store(true)
-}
-
-// Disable implemented Controller interface.
-func (tsr *RemoteTopSQLReporter) Disable() {
-	tsr.sqlCPUCollector.Stop()
-	topsqlstate.GlobalState.Enable.Store(false)
 }
 
 // Collect implements tracecpu.Collector.

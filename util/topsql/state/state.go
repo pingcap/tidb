@@ -48,15 +48,17 @@ type State struct {
 	ReportIntervalSeconds *atomic.Int64
 }
 
+// EnabledTopSQL enable the top SQL feature.
+func EnabledTopSQL() {
+	GlobalState.Enable.Store(true)
+}
+
+// DisabledTopSQL disable the top SQL feature.
+func DisabledTopSQL() {
+	GlobalState.Enable.Store(false)
+}
+
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
 	return GlobalState.Enable.Load()
-}
-
-// Controller is the interface uses to control the top SQL feature.
-type Controller interface {
-	// Enable the top SQL feature.
-	Enable()
-	// Disable the top SQL feature.
-	Disable()
 }

@@ -59,17 +59,15 @@ var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 // DefaultDataSinkRegisterer implements DataSinkRegisterer.
 type DefaultDataSinkRegisterer struct {
 	sync.Mutex
-	ctx             context.Context
-	dataSinks       map[DataSink]struct{}
-	stateController topsqlstate.Controller
+	ctx       context.Context
+	dataSinks map[DataSink]struct{}
 }
 
 // NewDefaultDataSinkRegisterer creates a new DefaultDataSinkRegisterer which implements DataSinkRegisterer.
-func NewDefaultDataSinkRegisterer(ctx context.Context, stateController topsqlstate.Controller) DefaultDataSinkRegisterer {
+func NewDefaultDataSinkRegisterer(ctx context.Context) DefaultDataSinkRegisterer {
 	return DefaultDataSinkRegisterer{
-		ctx:             ctx,
-		dataSinks:       make(map[DataSink]struct{}, 10),
-		stateController: stateController,
+		ctx:       ctx,
+		dataSinks: make(map[DataSink]struct{}, 10),
 	}
 }
 
@@ -87,7 +85,7 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
-			r.stateController.Enable()
+			topsqlstate.EnabledTopSQL()
 		}
 		return nil
 	}
@@ -103,7 +101,7 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	default:
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
-			r.stateController.Disable()
+			topsqlstate.DisabledTopSQL()
 		}
 	}
 }

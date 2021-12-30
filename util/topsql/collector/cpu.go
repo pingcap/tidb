@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -58,7 +59,8 @@ type SQLCPUCollector struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	collector Collector
+	collector  Collector
+	registered bool
 }
 
 // NewSQLCPUCollector create a SQLCPUCollector.
@@ -103,19 +105,28 @@ func (sp *SQLCPUCollector) Stop() {
 
 func (sp *SQLCPUCollector) collectSQLCPULoop() {
 	profileConsumer := make(cpuprofile.ProfileConsumer, 1)
-	cpuprofile.Register(profileConsumer)
-
 	defer func() {
 		util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 		sp.wg.Done()
-		cpuprofile.Unregister(profileConsumer)
+		sp.doUnregister(profileConsumer)
 	}()
 
+	if topsqlstate.TopSQLEnabled() {
+		sp.doRegister(profileConsumer)
+	}
+	ticker := time.NewTicker(time.Second)
 	for {
 		var data *cpuprofile.ProfileData
 		select {
 		case <-sp.ctx.Done():
 			return
+		case <-ticker.C:
+			if topsqlstate.TopSQLEnabled() {
+				sp.doRegister(profileConsumer)
+			} else {
+				sp.doUnregister(profileConsumer)
+			}
+			continue
 		case data = <-profileConsumer:
 		}
 		if data.Error != nil || data.End.Unix() <= 0 {
@@ -130,6 +141,22 @@ func (sp *SQLCPUCollector) collectSQLCPULoop() {
 		stats := sp.parseCPUProfileBySQLLabels(p)
 		sp.collector.Collect(stats)
 	}
+}
+
+func (sp *SQLCPUCollector) doRegister(profileConsumer cpuprofile.ProfileConsumer) {
+	if sp.registered {
+		return
+	}
+	sp.registered = true
+	cpuprofile.Register(profileConsumer)
+}
+
+func (sp *SQLCPUCollector) doUnregister(profileConsumer cpuprofile.ProfileConsumer) {
+	if !sp.registered {
+		return
+	}
+	sp.registered = false
+	cpuprofile.Unregister(profileConsumer)
 }
 
 // parseCPUProfileBySQLLabels uses to aggregate the cpu-profile sample data by sql_digest and plan_digest labels,

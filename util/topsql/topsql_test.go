@@ -39,6 +39,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
+	topsqlstate.EnabledTopSQL()
 	mc := mock.NewTopSQLCollector()
 	topsql.SetupTopSQLForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
@@ -95,6 +96,7 @@ func TestTopSQLReporter(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
 
+	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := reporter.NewSingleTargetDataSink(report)
 	topsql.SetupTopSQLForTest(report)
@@ -205,6 +207,7 @@ func TestTopSQLPubSub(t *testing.T) {
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
+	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	defer report.Close()
 	topsql.SetupTopSQLForTest(report)
@@ -321,6 +324,7 @@ func TestTopSQLPubSub(t *testing.T) {
 }
 
 func TestPubSubWhenReporterIsStopped(t *testing.T) {
+	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 
 	server, err := mockServer.NewMockPubSubServer()

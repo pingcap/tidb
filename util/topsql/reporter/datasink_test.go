@@ -19,13 +19,12 @@ import (
 	"testing"
 	"time"
 
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestDefaultDataSinkRegisterer(t *testing.T) {
 	var err error
-	r := NewDefaultDataSinkRegisterer(context.Background(), &mockStateController{})
+	r := NewDefaultDataSinkRegisterer(context.Background())
 	m1 := newMockDataSink2()
 	m2 := newMockDataSink2()
 	err = r.Register(m1)
@@ -56,16 +55,4 @@ func (m *mockDataSink2) TrySend(data *ReportData, deadline time.Time) error {
 
 func (m *mockDataSink2) OnReporterClosing() {
 	m.closed = true
-}
-
-type mockStateController struct{}
-
-// Enable implemented Controller interface.
-func (m *mockStateController) Enable() {
-	topsqlstate.GlobalState.Enable.Store(true)
-}
-
-// Disable implemented Controller interface.
-func (m *mockStateController) Disable() {
-	topsqlstate.GlobalState.Enable.Store(false)
 }
