@@ -92,8 +92,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
-		// TODO make this configurable in the following PRs
-		if distance >= 0 && distance <= (1500*time.Millisecond) {
+		if distance >= 0 && distance <= leaseDuration/2 {
 			c.renewCh <- c.renewLease(ts, RenewReadLease, data, leaseDuration)
 		}
 		return data.MemBuffer

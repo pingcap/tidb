@@ -320,7 +320,8 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	for i := 0; i < 50; i++ {
+	cacheUsed = false
+	for i := 0; i < 100; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if tk2.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true

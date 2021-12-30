@@ -1247,11 +1247,12 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
 		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
+		val, err := strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
-			break
+			return errors.Trace(err)
 		}
-		variable.TableCacheLease.Store(val)
+		TableCacheLease.Store(val)
+		return nil
 	}},
 	// variable for top SQL feature.
 	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(topsqlstate.DefTiDBTopSQLEnable), Type: TypeBool, Hidden: true, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
