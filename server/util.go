@@ -298,7 +298,7 @@ type inputDecoder struct {
 
 func newInputDecoder(chs string) *inputDecoder {
 	return &inputDecoder{
-		encoding: charset.FindEncoding(chs),
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 		buffer:   nil,
 	}
 }
@@ -336,7 +336,7 @@ type resultEncoder struct {
 func newResultEncoder(chs string) *resultEncoder {
 	return &resultEncoder{
 		chsName:  chs,
-		encoding: charset.FindEncoding(chs),
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 		buffer:   nil,
 		isBinary: chs == charset.CharsetBinary,
 		isNull:   len(chs) == 0,
@@ -353,7 +353,7 @@ func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
-	d.dataEncoding = charset.FindEncoding(chs)
+	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 

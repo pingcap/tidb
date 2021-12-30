@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/testutils"
@@ -39,12 +39,10 @@ func TestExecCount(t *testing.T) {
 	// Register stmt stats collector.
 	var mu sync.Mutex
 	total := stmtstats.StatementStatsMap{}
-	stmtstats.RegisterCollector(newMockCollector(func(rs []stmtstats.StatementStatsRecord) {
+	stmtstats.RegisterCollector(newMockCollector(func(data stmtstats.StatementStatsMap) {
 		mu.Lock()
 		defer mu.Unlock()
-		for _, r := range rs {
-			total.Merge(r.Data)
-		}
+		total.Merge(data)
 	}))
 
 	// Create mock store.
@@ -74,7 +72,7 @@ func TestExecCount(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 
 	// Enable TopSQL
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.GlobalState.Enable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
@@ -138,13 +136,13 @@ func TestExecCount(t *testing.T) {
 }
 
 type mockCollector struct {
-	f func(records []stmtstats.StatementStatsRecord)
+	f func(data stmtstats.StatementStatsMap)
 }
 
-func newMockCollector(f func(records []stmtstats.StatementStatsRecord)) stmtstats.Collector {
+func newMockCollector(f func(data stmtstats.StatementStatsMap)) stmtstats.Collector {
 	return &mockCollector{f: f}
 }
 
-func (c *mockCollector) CollectStmtStatsRecords(records []stmtstats.StatementStatsRecord) {
-	c.f(records)
+func (c *mockCollector) CollectStmtStatsMap(data stmtstats.StatementStatsMap) {
+	c.f(data)
 }
