@@ -191,7 +191,7 @@ func (d *Datum) GetBinaryStringEncoded() string {
 		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
 		return d.GetString()
 	}
-	enc := charset.FindEncoding(coll.CharsetName)
+	enc := charset.FindEncodingTakeUTF8AsNoop(coll.CharsetName)
 	replace, _ := enc.Transform(nil, d.GetBytes(), charset.OpEncodeNoErr)
 	return string(hack.String(replace))
 }
