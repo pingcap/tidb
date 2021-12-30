@@ -111,6 +111,8 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
 	}
 
 	if dsn.Vars != nil {
