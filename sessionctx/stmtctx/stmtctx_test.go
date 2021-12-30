@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -89,4 +90,55 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		got := tt.in.PushDownFlags()
 		require.Equal(t, tt.out, got)
 	}
+}
+
+func TestWeakConsistencyRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	lastWeakConsistency := func(tk *testkit.TestKit) bool {
+		return tk.Session().GetSessionVars().StmtCtx.WeakConsistency
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
+	// strict
+	tk.MustExec("insert into t values(1, 1, 1)")
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("prepare s from 'select * from t'")
+	tk.MustExec("prepare u from 'update t set c1 = id + 1'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 1 1"))
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("execute u")
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("admin check table t")
+	require.False(t, lastWeakConsistency(tk))
+	// weak
+	tk.MustExec("set tidb_read_consistency = weak")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2", "2 2 2"))
+	require.True(t, lastWeakConsistency(tk))
+	tk.MustQuery("execute s").Check(testkit.Rows("1 1 2", "2 2 2"))
+	require.True(t, lastWeakConsistency(tk))
+	tk.MustExec("execute u")
+	require.False(t, lastWeakConsistency(tk))
+	// non-read-only queries should be strict
+	tk.MustExec("admin check table t")
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("update t set c = c + 1 where id = 2")
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("delete from t where id = 2")
+	require.False(t, lastWeakConsistency(tk))
+	// in-transaction queries should be strict
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2"))
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustQuery("execute s").Check(testkit.Rows("1 1 2"))
+	require.False(t, lastWeakConsistency(tk))
+	tk.MustExec("rollback")
 }

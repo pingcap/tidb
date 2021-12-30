@@ -20,21 +20,21 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
-	variable.TopSQLVariable.Enable.Store(false)
+	topsqlstate.GlobalState.Enable.Store(false)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock"
 	})
-	variable.TopSQLVariable.PrecisionSeconds.Store(1)
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
 	opts := []goleak.Option{
@@ -52,7 +52,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	err := tracecpu.StartCPUProfile(buf)
 	require.NoError(t, err)
 	// enable top sql.
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.GlobalState.Enable.Store(true)
 	err = tracecpu.StopCPUProfile()
 	require.NoError(t, err)
 	_, err = profile.Parse(buf)

@@ -58,6 +58,8 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -1368,6 +1370,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
@@ -4206,10 +4209,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						if r := recover(); r != nil {
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
+					_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
+						err := cachedTable.UpdateLockForRead(ctx, store, startTS)
+						if err != nil {
+							log.Warn("Update Lock Info Error", zap.Error(err))
+						}
+						return nil, nil
+					})
+					terror.Log(err)
 				}()
 			}
 		}
@@ -4236,6 +4243,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	return result, nil
 }
+
+var sf singleflight.Group
 
 func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {
 	const defaultSummaryDuration = 30 * time.Minute
@@ -4347,6 +4356,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TiFlashSystemTableExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
+		case infoschema.TableTiKVRegionPeers:
+			p.Extractor = &TikvRegionPeersExtractor{}
 		}
 	}
 	return p, nil

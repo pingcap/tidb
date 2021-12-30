@@ -82,7 +82,8 @@ const (
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
 	// See: https://github.com/tikv/tikv/blob/e030a0aae9622f3774df89c62f21b2171a72a69e/etc/config-template.toml#L360
-	regionMaxKeyCount      = 1_440_000
+	// lower the max-key-count to avoid tikv trigger region auto split
+	regionMaxKeyCount      = 1_280_000
 	defaultRegionSplitSize = 96 * units.MiB
 
 	propRangeIndex = "tikv.range_index"
@@ -149,9 +150,9 @@ type local struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	errorMgr           *errormanager.ErrorManager
-}
 
-var bufferPool = membuf.NewPool(1024, manual.Allocator{})
+	bufferPool *membuf.Pool
+}
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
@@ -243,6 +244,8 @@ func NewLocalBackend(
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
+
+		bufferPool: membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 	}
 	local.conns = common.NewGRPCConns()
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
@@ -422,6 +425,7 @@ func (local *local) Close() {
 		engine.unlock()
 	}
 	local.conns.Close()
+	local.bufferPool.Destroy()
 
 	if local.duplicateDB != nil {
 		// Check whether there are duplicates.
@@ -557,7 +561,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if local.duplicateDetection {
-		keyAdapter = duplicateKeyAdapter{}
+		keyAdapter = dupDetectKeyAdapter{}
 	}
 	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
@@ -622,7 +626,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		engine.sstIngester = dbSSTIngester{e: engine}
 		keyAdapter := KeyAdapter(noopKeyAdapter{})
 		if local.duplicateDetection {
-			keyAdapter = duplicateKeyAdapter{}
+			keyAdapter = dupDetectKeyAdapter{}
 		}
 		engine.keyAdapter = keyAdapter
 		if err = engine.loadEngineMeta(); err != nil {
@@ -710,7 +714,7 @@ func (local *local) WriteToTiKV(
 	begin := time.Now()
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
-	iter := newKVIter(ctx, engine, opt)
+	iter := engine.newKVIter(ctx, opt)
 	defer iter.Close()
 
 	stats := rangeStats{}
@@ -775,14 +779,19 @@ func (local *local) WriteToTiKV(
 		requests = append(requests, req)
 	}
 
-	bytesBuf := bufferPool.NewBuffer()
+	bytesBuf := local.bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
 	pairs := make([]*sst.Pair, 0, local.batchWriteKVPairs)
 	count := 0
 	size := int64(0)
 	totalCount := int64(0)
 	firstLoop := true
-	regionMaxSize := regionSplitSize * 4 / 3
+	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
+	// because the range-properties is not 100% accurate
+	regionMaxSize := regionSplitSize
+	if regionSplitSize <= defaultRegionSplitSize {
+		regionMaxSize = regionSplitSize * 4 / 3
+	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
@@ -944,7 +953,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 }
 
 func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
-	iter := newKVIter(ctx, engine, &pebble.IterOptions{})
+	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1005,7 +1014,7 @@ func (local *local) writeAndIngestByRange(
 		UpperBound: end,
 	}
 
-	iter := newKVIter(ctxt, engine, ito)
+	iter := engine.newKVIter(ctxt, ito)
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
@@ -1658,14 +1667,14 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize)
+	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,
-		kvBuffer:           bufferPool.NewBuffer(),
+		kvBuffer:           kvBuffer,
 		isKVSorted:         cfg.IsKVSorted,
 		isWriteBatchSorted: true,
 	}
