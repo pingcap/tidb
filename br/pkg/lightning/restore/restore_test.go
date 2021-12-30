@@ -1178,7 +1178,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	c.Assert(chunkPending-chunkPendingBase, Equals, float64(7))
-	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending)
+	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending-chunkPendingBase)
 
 	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	c.Assert(engineFinished-engineFinishedBase, Equals, float64(8))
