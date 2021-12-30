@@ -500,6 +500,27 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	return false, nil, nil
 }
 
+func isNoResultPlan(p plannercore.Plan) bool {
+	if p.Schema().Len() == 0 {
+		return true
+	}
+
+	// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+	// the Projection has two expressions and two columns in the schema, but we should
+	// not return the result of the two expressions.
+	switch raw := p.(type) {
+	case *plannercore.LogicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	case *plannercore.PhysicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	}
+	return false
+}
+
 // getMaxExecutionTime get the max execution timeout value.
 func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
 	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
