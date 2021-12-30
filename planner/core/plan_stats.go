@@ -21,6 +21,8 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -28,8 +30,21 @@ import (
 type collectPredicateColumnsPoint struct{}
 
 func (c collectPredicateColumnsPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
-	err := RequestLoadColumnStats(plan)
-	return plan, err
+	if plan.SCtx().GetSessionVars().InRestrictedSQL {
+		return plan, nil
+	}
+	predicateNeeded := variable.EnableColumnTracking.Load()
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
+	histNeeded := syncWait > 0
+	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
+	if len(predicateColumns) > 0 {
+		plan.SCtx().UpdateColStatsUsage(predicateColumns)
+	}
+	if len(histNeededColumns) > 0 {
+		err := RequestLoadColumnStats(plan.SCtx(), histNeededColumns, syncWait)
+		return plan, err
+	}
+	return plan, nil
 }
 
 func (c collectPredicateColumnsPoint) name() string {
@@ -50,27 +65,19 @@ func (s syncWaitStatsLoadPoint) name() string {
 const maxDuration = 1<<63 - 1
 
 // RequestLoadColumnStats send requests to stats handle
-func RequestLoadColumnStats(plan LogicalPlan) error {
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return nil
-	}
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
-	if syncWait <= 0 {
-		return nil
-	}
-	stmtCtx := plan.SCtx().GetSessionVars().StmtCtx
+func RequestLoadColumnStats(ctx sessionctx.Context, neededColumns []model.TableColumnID, syncWait int64) error {
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
-	if hintMaxExecutionTime == 0 {
+	if hintMaxExecutionTime <= 0 {
 		hintMaxExecutionTime = maxDuration
 	}
-	sessMaxExecutionTime := int64(plan.SCtx().GetSessionVars().MaxExecutionTime)
-	if sessMaxExecutionTime == 0 {
+	sessMaxExecutionTime := int64(ctx.GetSessionVars().MaxExecutionTime)
+	if sessMaxExecutionTime <= 0 {
 		sessMaxExecutionTime = maxDuration
 	}
 	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
 	var timeout = time.Duration(waitTime)
-	_, neededColumns := CollectColumnStatsUsage(plan, false, true)
-	err := domain.GetDomain(plan.SCtx()).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
+	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
 	if err != nil {
 		return handleTimeout(stmtCtx)
 	}
