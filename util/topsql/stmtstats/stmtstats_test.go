@@ -190,6 +190,7 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
 		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond)
 	}
+	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond)
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)

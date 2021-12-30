@@ -68,11 +68,16 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
 func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
+	ns := execDuration.Nanoseconds()
+	if ns < 0 {
+		return
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
-	item.SumDurationNs += uint64(execDuration.Nanoseconds())
+	item.SumDurationNs += uint64(ns)
 	// Count more data here.
 }
 
