@@ -173,7 +173,7 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 
 	// It is definitely valid if `client` is the same with `connection`, so just transform if they are not the same.
 	if s.client.Tp() != s.connection.Tp() {
-		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplace)
+		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplaceNoErr)
 	}
 	return tok, charset.HackString(utf8Lit)
 }

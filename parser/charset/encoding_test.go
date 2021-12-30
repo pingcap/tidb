@@ -49,6 +49,7 @@ func TestEncoding(t *testing.T) {
 	}{
 		{"一二三", "涓?簩涓?", false}, // MySQL reports '涓?簩涓'.
 		{"一二三123", "涓?簩涓?23", false},
+		{"测试", "娴嬭瘯", true},
 		{"案1案2", "妗?妗?", false},
 		{"焊䏷菡釬", "鐒婁彿鑿￠嚞", true},
 		{"鞍杏以伊位依", "闉嶆潖浠ヤ紛浣嶄緷", true},
@@ -144,7 +145,7 @@ func TestEncodingValidate(t *testing.T) {
 		}
 		strBytes := []byte(tc.str)
 		require.Equal(t, tc.ok, enc.IsValid(strBytes), msg)
-		replace, _ := enc.Transform(nil, strBytes, charset.OpReplace)
+		replace, _ := enc.Transform(nil, strBytes, charset.OpReplaceNoErr)
 		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }
