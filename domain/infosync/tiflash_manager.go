@@ -3,17 +3,24 @@ package infosync
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
+	"net/url"
+	"path"
+	"strconv"
+	"sync"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"net/url"
-	"path"
-	"sync"
+	"go.uber.org/zap"
 )
 
 // TiFlashPlacementManager manages placement settings for TiFlash
@@ -90,13 +97,15 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
 	input := map[string]string{
-		"start_key": url.QueryEscape(string(startKey)),
-		"end_key":   url.QueryEscape(string(endKey)),
+		"start_key": hex.EncodeToString(startKey),
+		"end_key":   hex.EncodeToString(endKey),
 	}
 	j, err := json.Marshal(input)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	buf := bytes.NewBuffer(j)
-
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "regions", "accelerate-schedule"), "POST", buf)
+	res, err := doRequest(ctx, m.addrs, "/pd/api/v1/regions/accelerate-schedule", "POST", buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -188,4 +197,138 @@ func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rul
 	ruleNew.LocationLabels = LocationLabels
 
 	return &ruleNew
+}
+
+type MockTiFlashTableInfo struct {
+	Regions []int
+	Accel   bool
+}
+
+func (m *MockTiFlashTableInfo) String() string {
+	regionStr := ""
+	for _, s := range m.Regions {
+		regionStr = regionStr + strconv.Itoa(s) + "\n"
+	}
+	if regionStr == "" {
+		regionStr = "\n"
+	}
+	return fmt.Sprintf("%v\n%v", len(m.Regions), regionStr)
+}
+
+// MockTiFlash mocks a TiFlash, with necessary Pd support.
+type MockTiFlash struct {
+	StatusAddr                  string
+	StatusServer                *httptest.Server
+	SyncStatus                  map[int]MockTiFlashTableInfo
+	GlobalTiFlashPlacementRules map[string]placement.Rule
+	PdEnabled                   bool
+	TiflashDelay                time.Duration
+	StartTime                   time.Time
+}
+
+// HandleSetPlacementRule is mock function for SetPlacementRule
+func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.Rule) error {
+	if !tiflash.PdEnabled {
+		fmt.Printf("pd server is manually disabled, just quit\n")
+		return errors.New("pd server is manually disabled, just quit")
+	}
+
+	tiflash.GlobalTiFlashPlacementRules[rule.ID] = rule
+	// Pd shall schedule TiFlash, we can mock here
+	tid := 0
+	_, err := fmt.Sscanf(rule.ID, "table-%d-r", &tid)
+	if err != nil {
+		return errors.New("Can't parse rule")
+	}
+	// Set up mock tiflash replica
+	// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
+	f := func() {
+		if z, ok := tiflash.SyncStatus[tid]; ok {
+			z.Regions = []int{1}
+			tiflash.SyncStatus[tid] = z
+		} else {
+			tiflash.SyncStatus[tid] = MockTiFlashTableInfo{
+				Regions: []int{1},
+				Accel:   false,
+			}
+		}
+	}
+	if tiflash.TiflashDelay > 0 {
+		go func() {
+			time.Sleep(tiflash.TiflashDelay)
+			logutil.BgLogger().Warn("TiFlash replica is available after delay", zap.Duration("duration", tiflash.TiflashDelay))
+			f()
+		}()
+	} else {
+		f()
+	}
+	return nil
+}
+
+// HandleDeletePlacementRule is ock function for DeletePlacementRule
+func (tiflash *MockTiFlash) HandleDeletePlacementRule(ruleID string) {
+	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
+}
+
+// HandleGetGroupRules is mock function for GetGroupRules
+func (tiflash *MockTiFlash) HandleGetGroupRules() ([]placement.Rule, error) {
+	var result = make([]placement.Rule, 0)
+	for _, item := range tiflash.GlobalTiFlashPlacementRules {
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule
+func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
+	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
+
+	table, ok := tiflash.SyncStatus[int(tableID)]
+	if ok {
+		table.Accel = true
+		tiflash.SyncStatus[int(tableID)] = table
+	} else {
+		tiflash.SyncStatus[int(tableID)] = MockTiFlashTableInfo{
+			Regions: []int{},
+			Accel:   true,
+		}
+	}
+	return nil
+}
+
+// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats
+func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) *helper.PDRegionStats {
+	return &helper.PDRegionStats{
+		Count:            1,
+		EmptyCount:       1,
+		StorageSize:      1,
+		StorageKeys:      1,
+		StoreLeaderCount: map[uint64]int{1: 1},
+		StorePeerCount:   map[uint64]int{1: 1},
+	}
+}
+
+// HandleGetStoresStat is mock function for GetStoresStat
+func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
+	return &helper.StoresStat{
+		Count: 1,
+		Stores: []helper.StoreStat{
+			{
+				Store: helper.StoreBaseStat{
+					ID:             1,
+					Address:        "127.0.0.1:3930",
+					State:          0,
+					StateName:      "Up",
+					Version:        "4.0.0-alpha",
+					StatusAddress:  tiflash.StatusAddr,
+					GitHash:        "mock-tikv-githash",
+					StartTimestamp: tiflash.StartTime.Unix(),
+					Labels: []helper.StoreLabel{{
+						Key:   "engine",
+						Value: "tiflash",
+					}},
+				},
+			},
+		},
+	}
 }
