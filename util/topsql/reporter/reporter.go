@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/zap"
@@ -157,7 +157,7 @@ func (tsr *RemoteTopSQLReporter) Close() {
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
-	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
+	currentReportInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
 	collectTicker := time.NewTicker(time.Second)
 	defer collectTicker.Stop()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
@@ -172,7 +172,7 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			tsr.processStmtStatsData()
 			tsr.takeDataAndSendToReportChan()
 			// Update `reportTicker` if report interval changed.
-			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
+			if newInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
 				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
 			}
@@ -188,7 +188,7 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 	// Get top N cpuRecords of each round cpuRecords. Collect the top N to tsr.collecting
 	// for each round. SQL meta will not be evicted, since the evicted SQL can be appeared
 	// on other components (TiKV) TopN DataRecords.
-	top, evicted := data.topN(int(variable.TopSQLVariable.MaxStatementCount.Load()))
+	top, evicted := data.topN(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
 	for _, r := range top {
 		tsr.collecting.getOrCreateRecord(r.SQLDigest, r.PlanDigest).appendCPUTime(timestamp, r.CPUTimeMs)
 	}
@@ -267,7 +267,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			// are finished.
 			time.Sleep(time.Millisecond * 100)
 			// Get top N records from records.
-			rs := data.collected.compactToTopNAndOthers(int(variable.TopSQLVariable.MaxStatementCount.Load()))
+			rs := data.collected.compactToTopNAndOthers(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),
@@ -290,7 +290,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
-			interval := time.Duration(variable.TopSQLVariable.ReportIntervalSeconds.Load()) * time.Second
+			interval := time.Duration(topsqlstate.GlobalState.ReportIntervalSeconds.Load()) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}
