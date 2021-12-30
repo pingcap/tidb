@@ -464,6 +464,7 @@ func (local *local) Close() {
 		engine.unlock()
 	}
 	local.importClientFactory.Close()
+	local.bufferPool.Destroy()
 
 	if local.duplicateDB != nil {
 		// Check if there are duplicates that are not collected.
@@ -948,7 +949,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	curKey := fullRange.start
 
 	sizeProps.iter(func(p *rangeProperty) bool {
-		if bytes.Compare(p.Key, fullRange.start) <= 0 {
+		if bytes.Compare(p.Key, curKey) <= 0 {
 			return true
 		}
 		if bytes.Compare(p.Key, fullRange.end) > 0 {
@@ -956,7 +957,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 		}
 		curSize += p.Size
 		curKeys += p.Keys
-		if bytes.Compare(p.Key, curKey) > 0 && (int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit) {
+		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
 			ranges = append(ranges, Range{start: curKey, end: p.Key})
 			curKey = p.Key
 			curSize = 0

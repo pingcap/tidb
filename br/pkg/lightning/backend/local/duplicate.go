@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -350,7 +351,11 @@ func getDupDetectClient(
 		StartKey: keyRange.StartKey,
 		EndKey:   keyRange.EndKey,
 	}
-	return importClient.DuplicateDetect(ctx, req)
+	cli, err := importClient.DuplicateDetect(ctx, req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return cli, nil
 }
 
 // NewRemoteDupKVStream creates a new RemoteDupKVStream.
@@ -634,7 +639,7 @@ func (m *DuplicateManager) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter KeyAd
 	var newTasks []dupTask
 	for _, task := range tasks {
 		// FIXME: Do not hardcode sizeLimit and keysLimit.
-		subTasks, err := m.splitLocalDupTaskByKeys(task, dupDB, keyAdapter, 32<<20, 1<<20)
+		subTasks, err := m.splitLocalDupTaskByKeys(task, dupDB, keyAdapter, 32*units.MiB, 1*units.MiB)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
