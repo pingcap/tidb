@@ -221,32 +221,52 @@ func TestCollectAndTopN(t *testing.T) {
 	records := []tracecpu.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-2:  2ms
+	// SQL-3:  3ms
+	// Others: 1ms
 	collectAndWait(tsr, 1, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 3, 3),
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-1:  1ms
+	// SQL-3:  3ms
 	collectAndWait(tsr, 2, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 4, 1),
-		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 3, 1),
 	}
+	// SQL-1:  10ms
+	// SQL-4:  4ms
+	// Others: 1ms
 	collectAndWait(tsr, 3, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 5, 1),
-		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 5, 5),
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 2, 20),
 	}
+	// SQL-2:  20ms
+	// SQL-1:  1ms
+	// Others: 9ms
 	collectAndWait(tsr, 4, records)
 
 	// Test for time jump back.
 	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 6, 1),
+		newSQLCPUTimeRecord(tsr, 6, 6),
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-6:  6ms
+	// SQL-3:  3ms
+	// Others: 3ms
 	collectAndWait(tsr, 0, records)
 
 	// Wait agent server collect finish.
@@ -254,7 +274,7 @@ func TestCollectAndTopN(t *testing.T) {
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
-	require.Len(t, results, 3)
+	require.Len(t, results, 6)
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
@@ -266,19 +286,20 @@ func TestCollectAndTopN(t *testing.T) {
 		return int(total)
 	}
 	require.Nil(t, results[0].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[0]))
+	require.Equal(t, []byte(nil), results[0].SqlDigest)
+	require.Equal(t, 14, getTotalCPUTime(results[0]))
 	require.Equal(t, uint64(0), results[0].Items[0].TimestampSec)
 	require.Equal(t, uint64(1), results[0].Items[1].TimestampSec)
 	require.Equal(t, uint64(3), results[0].Items[2].TimestampSec)
 	require.Equal(t, uint64(4), results[0].Items[3].TimestampSec)
-	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
-	require.Equal(t, uint32(2), results[0].Items[1].CpuTimeMs)
+	require.Equal(t, uint32(3), results[0].Items[0].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[1].CpuTimeMs)
 	require.Equal(t, uint32(1), results[0].Items[2].CpuTimeMs)
-	require.Equal(t, uint32(1), results[0].Items[3].CpuTimeMs)
+	require.Equal(t, uint32(9), results[0].Items[3].CpuTimeMs)
 	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[1]))
-	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
-	require.Equal(t, 3, getTotalCPUTime(results[2]))
+	require.Equal(t, 21, getTotalCPUTime(results[1]))
+	require.Equal(t, []byte("sqlDigest2"), results[2].SqlDigest)
+	require.Equal(t, 22, getTotalCPUTime(results[2]))
 	// sleep to wait for all SQL meta received.
 	time.Sleep(50 * time.Millisecond)
 	totalMetas := agentServer.GetTotalSQLMetas()

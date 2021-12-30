@@ -496,29 +496,17 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
-// compactToTopNAndOthers returns the largest N records, other records will be packed and appended to the end.
-func (c *collecting) compactToTopNAndOthers(n int) records {
+// getReportRecords returns all records, others record will be packed and appended to the end.
+func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	// Fetch TopN records.
-	var evicted records
-	rs, evicted = rs.topN(n)
-	if others != nil {
+	if others != nil && others.totalCPUTimeMs > 0 {
 		// Sort the records by timestamp to fix the affect of time jump backward.
 		sort.Sort(others)
-	} else {
-		others = newRecord(nil, nil)
-	}
-	for _, evict := range evicted {
-		e := evict // Avoid implicit memory aliasing in for loop.
-		others.merge(&e)
-	}
-	if others.totalCPUTimeMs > 0 {
-		// append others which summarize all evicted item's cpu-time.
 		rs = append(rs, *others)
 	}
 	return rs

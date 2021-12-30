@@ -266,8 +266,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			// that `data` contains. So we wait for a little while to ensure that writes
 			// are finished.
 			time.Sleep(time.Millisecond * 100)
-			// Get top N records from records.
-			rs := data.collected.compactToTopNAndOthers(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
+			rs := data.collected.getReportRecords()
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),

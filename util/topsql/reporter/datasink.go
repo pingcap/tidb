@@ -43,7 +43,7 @@ type DataSinkRegisterer interface {
 
 // ReportData contains data that reporter sends to the agent.
 type ReportData struct {
-	// DataRecords contains the compactToTopNAndOthers records []tipb.TopSQLRecord and the `others`
+	// DataRecords contains the getReportRecords records []tipb.TopSQLRecord and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
 	SQLMetas    []tipb.SQLMeta
