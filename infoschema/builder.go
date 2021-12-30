@@ -208,7 +208,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, dbInfo 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable || diff.Type != model.ActionRenameTables) &&
+		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
 			diff.Type != model.ActionExchangeTablePartition &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
@@ -222,7 +222,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, dbInfo 
 		}
 
 		tmpIDs := tblIDs
-		if (diff.Type != model.ActionRenameTable || diff.Type != model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+		if (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
