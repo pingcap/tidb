@@ -1733,6 +1733,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
+		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
+			if s.LockInfo == nil {
+				sc.WeakConsistency = isWeakConsistencyRead(ctx, execStmt)
+			}
+		}
 	}
 	// execute missed stmtID uses empty sql
 	sc.OriginalSQL = s.Text()
@@ -1808,6 +1813,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
+		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -1923,4 +1929,10 @@ func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot k
 	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
 		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
+}
+
+func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
+		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
 }
