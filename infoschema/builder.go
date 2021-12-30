@@ -171,7 +171,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
 	var oldTableID, newTableID int64
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
@@ -234,7 +234,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
 			tmpIDs = b.applyDropTable(oldDBInfo, oldTableID, tmpIDs)
 		} else {
 			tmpIDs = b.applyDropTable(dbInfo, oldTableID, tmpIDs)
@@ -356,7 +356,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -373,7 +373,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
@@ -627,10 +627,11 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	}
 }
 
-// copySchemaTables creates a new schemaTables instance when a table in the database has changed.
+// getSchemaAndCopyIfNecessary creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
-// Note: please make sure the dbName is in lowercase.
-func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
+// And it will only copy the changed database once in the lifespan of the Builder.
+// NOTE: please make sure the dbName is in lowercase.
+func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 	if !b.dirtyDB[dbName] {
 		b.dirtyDB[dbName] = true
 		oldSchemaTables := b.is.schemaMap[dbName]
