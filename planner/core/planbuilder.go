@@ -1816,40 +1816,20 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
-func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
-	columnIDs := make(map[int64]struct{}, len(tbl.TableInfo.Columns))
-	for _, colName := range specifiedColumns {
-		colInfo := model.FindColumnInfo(tbl.TableInfo.Columns, colName.L)
-		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tbl.TableInfo.Name.O)
-		}
-		columnIDs[colInfo.ID] = struct{}{}
-	}
-	colList := make([]*model.ColumnInfo, 0, len(columnIDs))
-	for _, col := range tbl.TableInfo.Columns {
-		if _, ok := columnIDs[col.ID]; ok {
-			colList = append(colList, col)
-		}
-	}
-	return colList, nil
+type calcOnceMap struct {
+	data       map[int64]struct{}
+	calculated bool
 }
 
-// getFullAnalyzeColumnsInfo returns the columns whose stats need to be collected.
-// 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
-// 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
-// 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl *ast.TableName, warning bool) ([]*model.ColumnInfo, error) {
+// getMustAnalyzedColumns puts the columns whose statistics must be collected into `cols` if `cols` has not been calculated.
+func (b *PlanBuilder) getMustAnalyzedColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
+	if cols.calculated {
+		return cols.data, nil
+	}
 	tblInfo := tbl.TableInfo
-	if len(columns) == 0 {
-		return tblInfo.Columns, nil
-	}
-	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	for _, colInfo := range columns {
-		columnIDs[colInfo.ID] = struct{}{}
-	}
-	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
+	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
 	if len(tblInfo.Indices) > 0 {
-		// add indexed columns
+		// Add indexed columns.
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
 		if err != nil {
@@ -1862,10 +1842,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl
 			}
 			for _, idxCol := range idx.Columns {
 				colInfo := tblInfo.Columns[idxCol.Offset]
-				if _, ok := columnIDs[colInfo.ID]; !ok {
-					columnIDs[colInfo.ID] = struct{}{}
-					missingCols[colInfo.ID] = struct{}{}
-				}
+				cols.data[colInfo.ID] = struct{}{}
 				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
 					virtualExprs = append(virtualExprs, expr)
 				}
@@ -1876,10 +1853,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl
 			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
 			virtualExprs = virtualExprs[:0]
 			for _, col := range relatedCols {
-				if _, ok := columnIDs[col.ID]; !ok {
-					columnIDs[col.ID] = struct{}{}
-					missingCols[col.ID] = struct{}{}
-				}
+				cols.data[col.ID] = struct{}{}
 				if col.VirtualExpr != nil {
 					virtualExprs = append(virtualExprs, col.VirtualExpr)
 				}
@@ -1889,13 +1863,10 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl
 	}
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
-		if _, ok := columnIDs[pkCol.ID]; !ok {
-			columnIDs[pkCol.ID] = struct{}{}
-			missingCols[pkCol.ID] = struct{}{}
-		}
+		cols.data[pkCol.ID] = struct{}{}
 	}
 	if b.ctx.GetSessionVars().EnableExtendedStats {
-		// add the columns related to extended stats
+		// Add the columns related to extended stats.
 		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
 		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
 		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
@@ -1904,30 +1875,133 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(columns []*model.ColumnInfo, tbl
 			return nil, err
 		}
 		for _, colID := range extendedStatsColIDs {
-			if _, ok := columnIDs[colID]; !ok {
-				columnIDs[colID] = struct{}{}
-				missingCols[colID] = struct{}{}
-			}
+			cols.data[colID] = struct{}{}
 		}
 	}
-	if len(missingCols) > 0 {
-		missingNames := make([]string, 0, len(missingCols))
-		for _, col := range tblInfo.Columns {
-			if _, ok := missingCols[col.ID]; ok {
-				missingNames = append(missingNames, col.Name.O)
+	cols.calculated = true
+	return cols.data, nil
+}
+
+func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap) (map[int64]struct{}, error) {
+	if cols.calculated {
+		return cols.data, nil
+	}
+	tblInfo := tbl.TableInfo
+	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
+	do := domain.GetDomain(b.ctx)
+	h := do.StatsHandle()
+	colList, err := h.GetPredicateColumns(tblInfo.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(colList) == 0 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
+		for _, colInfo := range tblInfo.Columns {
+			cols.data[colInfo.ID] = struct{}{}
+		}
+	} else {
+		for _, id := range colList {
+			cols.data[id] = struct{}{}
+		}
+	}
+	cols.calculated = true
+	return cols.data, nil
+}
+
+func getAnalyzeColumnList(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+	colList := make([]*model.ColumnInfo, 0, len(specifiedColumns))
+	for _, colName := range specifiedColumns {
+		colInfo := model.FindColumnInfo(tbl.TableInfo.Columns, colName.L)
+		if colInfo == nil {
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tbl.TableInfo.Name.O)
+		}
+		colList = append(colList, colInfo)
+	}
+	return colList, nil
+}
+
+// getFullAnalyzeColumnsInfo decides which columns need to be analyzed.
+// The first return value is the columns which need to be analyzed and the second return value is the columns which need to
+// be record in mysql.analyze_options(only for the case of analyze table t columns c1, .., cn).
+func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
+	tbl *ast.TableName,
+	columnChoice model.ColumnChoice,
+	specifiedCols []*model.ColumnInfo,
+	predicateCols, mustAnalyzedCols *calcOnceMap,
+	mustAllColumns bool,
+	warning bool,
+) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
+	if mustAllColumns && warning && (columnChoice == model.PredicateColumns || columnChoice == model.ColumnList) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.", tbl.Schema.L, tbl.Name.L))
+	}
+	colSet2colList := func(colSet map[int64]struct{}) []*model.ColumnInfo {
+		colList := make([]*model.ColumnInfo, 0, len(colSet))
+		for _, colInfo := range tbl.TableInfo.Columns {
+			if _, ok := colSet[colInfo.ID]; ok {
+				colList = append(colList, colInfo)
 			}
+		}
+		return colList
+	}
+	switch columnChoice {
+	case model.DefaultChoice, model.AllColumns:
+		return tbl.TableInfo.Columns, nil, nil
+	case model.PredicateColumns:
+		if mustAllColumns {
+			return tbl.TableInfo.Columns, nil, nil
+		}
+		predicate, err := b.getPredicateColumns(tbl, predicateCols)
+		if err != nil {
+			return nil, nil, err
+		}
+		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+		if err != nil {
+			return nil, nil, err
+		}
+		colSet := make(map[int64]struct{}, len(predicate)+len(mustAnalyzed))
+		for colID := range predicate {
+			colSet[colID] = struct{}{}
+		}
+		for colID := range mustAnalyzed {
+			colSet[colID] = struct{}{}
+		}
+		return colSet2colList(colSet), nil, nil
+	case model.ColumnList:
+		colSet := make(map[int64]struct{}, len(specifiedCols))
+		for _, colInfo := range specifiedCols {
+			colSet[colInfo.ID] = struct{}{}
+		}
+		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
+		if err != nil {
+			return nil, nil, err
 		}
 		if warning {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+			missing := make(map[int64]struct{}, len(mustAnalyzed))
+			for colID := range mustAnalyzed {
+				if _, ok := colSet[colID]; !ok {
+					missing[colID] = struct{}{}
+				}
+			}
+			if len(missing) > 0 {
+				missingNames := make([]string, 0, len(missing))
+				for _, col := range tbl.TableInfo.Columns {
+					if _, ok := missing[col.ID]; ok {
+						missingNames = append(missingNames, col.Name.O)
+					}
+				}
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+			}
 		}
-	}
-	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
-	for _, col := range tblInfo.Columns {
-		if _, ok := columnIDs[col.ID]; ok {
-			columnsInfo = append(columnsInfo, col)
+		for colID := range mustAnalyzed {
+			colSet[colID] = struct{}{}
 		}
+		colList := colSet2colList(colSet)
+		if mustAllColumns {
+			return tbl.TableInfo.Columns, colList, nil
+		}
+		return colList, colList, nil
 	}
-	return columnsInfo, nil
+	return nil, nil, nil
 }
 
 func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
@@ -1988,12 +2062,17 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if err != nil {
 		return nil, err
 	}
-	astColsInfo, err := b.getFullAnalyzeColumnsInfo(astColList, tbl, true)
+	var predicateCols, mustAnalyzedCols calcOnceMap
+	ver := version
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
+	mustAllColumns := !statsHandle.CheckAnalyzeVersion(tbl.TableInfo, physicalIDs, &ver)
+	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
 		return nil, err
 	}
 	isAnalyzeTable := len(as.PartitionNames) == 0
-	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList)
+	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
 		return nil, err
 	}
@@ -2049,6 +2128,8 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 	astOpts map[ast.AnalyzeOptionType]uint64,
 	astColChoice model.ColumnChoice,
 	astColList []*model.ColumnInfo,
+	predicateCols, mustAnalyzedCols *calcOnceMap,
+	mustAllColumns bool,
 ) (map[int64]V2AnalyzeOptions, map[int64][]*model.ColumnInfo, error) {
 	optionsMap := make(map[int64]V2AnalyzeOptions, len(physicalIDs))
 	colsInfoMap := make(map[int64][]*model.ColumnInfo, len(physicalIDs))
@@ -2067,7 +2148,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		tblColChoice, tblColList = mergeColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
 	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
-	tblColsInfo, tblColList, err := b.getFinalAnalyzeColList(tblColChoice, tblColList, tbl)
+	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2093,7 +2174,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
 			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
 			finalColChoice, mergedColList := mergeColumnList(astColChoice, astColList, savedColChoice, savedColList)
-			finalColsInfo, finalColList, err := b.getFinalAnalyzeColList(finalColChoice, mergedColList, tbl)
+			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2183,25 +2264,6 @@ func mergeColumnList(choice1 model.ColumnChoice, list1 []*model.ColumnInfo, choi
 	return choice2, list2
 }
 
-func (b *PlanBuilder) getFinalAnalyzeColList(choice model.ColumnChoice, list []*model.ColumnInfo, tbl *ast.TableName) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
-	fullColumns := tbl.TableInfo.Cols()
-	emptyColumns := make([]*model.ColumnInfo, 0)
-	switch choice {
-	case model.AllColumns:
-		return fullColumns, emptyColumns, nil
-	case model.ColumnList:
-		list, err := b.getFullAnalyzeColumnsInfo(list, tbl, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		return list, list, nil
-	case model.PredicateColumns: // TODO
-		return fullColumns, emptyColumns, nil
-	default:
-		return fullColumns, emptyColumns, nil
-	}
-}
-
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
@@ -2237,7 +2299,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 			continue
 		}
-		if len(as.ColumnNames) > 0 {
+		if as.ColumnChoice == model.PredicateColumns {
+			return nil, errors.Errorf("Only the analyze version 2 supports analyzing predicate columns")
+		}
+		if as.ColumnChoice == model.ColumnList {
 			return nil, errors.Errorf("Only the analyze version 2 supports analyzing the specified columns")
 		}
 		for _, idx := range idxInfo {
