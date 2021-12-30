@@ -104,22 +104,25 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	Rules = append(Rules, FollowerRules...)
 
-	if learnerCount > 0 {
-		LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
+	LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
+	}
+	for _, rule := range LearnerRules {
+		if rule.Count == 0 {
+			// empty constraints passed
+			if len(learnerConstraints) == 0 {
+				break
+			}
+			return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 		}
-		for _, rule := range LearnerRules {
-			for _, cnst := range CommonConstraints {
-				if err := rule.Constraints.Add(cnst); err != nil {
-					return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
-				}
+		for _, cnst := range CommonConstraints {
+			if err := rule.Constraints.Add(cnst); err != nil {
+				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
-		Rules = append(Rules, LearnerRules...)
-	} else if learnerConstraints != "" {
-		return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 	}
+	Rules = append(Rules, LearnerRules...)
 
 	return &Bundle{Rules: Rules}, nil
 }
