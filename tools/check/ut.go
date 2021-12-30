@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -344,13 +345,20 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
 		start := time.Now()
-		if err := n.runTestCase(t.pkg, t.test, t.old); err != nil {
-			fmt.Println("run test case error", t.pkg, t.test, t.old, time.Since(start), err)
+		res := n.runTestCase(t.pkg, t.test, t.old)
+		if res.err != nil {
+			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
+			io.Copy(os.Stderr, &res.output)
 		}
 	}
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) error {
+type testResult struct {
+	err    error
+	output bytes.Buffer
+}
+
+func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	exe := "./" + testFileName(pkg)
 	var cmd *exec.Cmd
 	if n.numactl {
@@ -359,12 +367,13 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) error {
 		cmd = n.testCommand(exe, fn, old)
 	}
 	cmd.Dir = path.Join(workDir, pkg)
-	_, err := cmd.CombinedOutput()
-	if err != nil {
-		// fmt.Println("run test case error", pkg, fn, string(output))
-		return err
+	// Combine the test case output, so the run result for failed cases can be displayed.
+	cmd.Stdout = &res.output
+	cmd.Stderr = &res.output
+	if err := cmd.Run(); err != nil {
+		res.err = withTrace(err)
 	}
-	return nil
+	return res
 }
 
 func (n *numa) testCommandWithNumaCtl(exe string, fn string, old bool) *exec.Cmd {
@@ -415,6 +424,8 @@ func buildTestBinary(pkg string) error {
 	// go test -c
 	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	cmd.Dir = path.Join(workDir, pkg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	return withTrace(err)
 }
@@ -438,7 +449,7 @@ func numactlExist() bool {
 
 func testFileName(pkg string) string {
 	_, file := path.Split(pkg)
-	return file+".test.bin"
+	return file + ".test.bin"
 }
 
 func testFileFullPath(pkg string) string {
