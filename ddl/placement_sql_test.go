@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
@@ -471,4 +472,108 @@ func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
 	tk.MustGetErrCode("alter table t voters=2;", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t partition p1 placement policy=\"placement_x\";", mysql.ErrUnsupportedDDLOperation)
+}
+
+func (s *testDBSuite6) TestPlacementTiflashCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop table if exists tp")
+
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy if exists p1")
+
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	defer tk.MustExec("drop table if exists tp")
+	tk.MustExec("alter table tp set tiflash replica 1")
+
+	err = tk.ExecToErr("alter table tp placement policy p1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2'")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tp partition p0 primary_region='r2' regions='r2'")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) placement policy p1 ,
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) primary_region='r2' regions='r2' PARTITION BY RANGE (id) (
+	   PARTITION p0 VALUES LESS THAN (100),
+	   PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r2\" REGIONS=\"r2\" */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
+
+	tk.MustExec("drop table tp")
+	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100)  primary_region='r3' regions='r3',
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	err = tk.ExecToErr("alter table tp set tiflash replica 1")
+	c.Assert(ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err), IsTrue)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PRIMARY_REGION=\"r3\" REGIONS=\"r3\" */,\n" +
+		" PARTITION `p1` VALUES LESS THAN (1000))"))
 }

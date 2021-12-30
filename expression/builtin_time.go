@@ -4856,7 +4856,7 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 	}
 
 	tz := ctx.GetSessionVars().Location()
-	t, err := val.GoTime(tz)
+	t, err := val.AdjustedGoTime(tz)
 	if err != nil {
 		return 0, false, nil
 	}
@@ -7201,11 +7201,21 @@ func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 //   2. If t2 < t, we will use t2 as the result,
 //      and with it, a read request won't fail because it's bigger than the latest SafeTS.
 func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
-	if minSafeTime.Before(minTime) {
-		return minTime
-	} else if minSafeTime.After(maxTime) {
-		return maxTime
+	if minSafeTime.Before(minTime) || minSafeTime.After(maxTime) {
+		logutil.BgLogger().Warn("calAppropriateTime",
+			zap.Time("minTime", minTime),
+			zap.Time("maxTime", maxTime),
+			zap.Time("minSafeTime", minSafeTime))
+		if minSafeTime.Before(minTime) {
+			return minTime
+		} else if minSafeTime.After(maxTime) {
+			return maxTime
+		}
 	}
+	logutil.BgLogger().Debug("calAppropriateTime",
+		zap.Time("minTime", minTime),
+		zap.Time("maxTime", maxTime),
+		zap.Time("minSafeTime", minSafeTime))
 	return minSafeTime
 }
 

@@ -16,6 +16,7 @@ package statistics_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
@@ -65,10 +66,10 @@ func TestTraceCE(t *testing.T) {
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	stmtCtx := sctx.GetSessionVars().StmtCtx
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	p := parser.New()
 	for i, expr := range in {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
 		sql := "explain select * from t where " + expr
 		stmtCtx.EnableOptimizerCETrace = true
 		stmtCtx.OptimizerCETrace = nil
@@ -77,10 +78,27 @@ func TestTraceCE(t *testing.T) {
 		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, stmt, is)
 		require.NoError(t, err)
 
+		traceResult := sctx.GetSessionVars().StmtCtx.OptimizerCETrace
+		// Ignore the TableID field because this field is unexported when marshalling to JSON.
+		for _, rec := range traceResult {
+			rec.TableID = 0
+		}
+
 		testdata.OnRecord(func() {
 			out[i].Expr = expr
-			out[i].Trace = sctx.GetSessionVars().StmtCtx.OptimizerCETrace
+			out[i].Trace = traceResult
 		})
-		require.ElementsMatch(t, sctx.GetSessionVars().StmtCtx.OptimizerCETrace, out[i].Trace)
+		// Assert using the result in the stmtCtx
+		require.ElementsMatch(t, traceResult, out[i].Trace)
+
+		sql = "trace plan target='estimation' select * from t where " + expr
+		result := tk.MustQuery(sql)
+		require.Len(t, result.Rows(), 1)
+		resultStr := result.Rows()[0][0].(string)
+		var resultJSON []*tracing.CETraceRecord
+		err = json.Unmarshal([]byte(resultStr), &resultJSON)
+		require.NoError(t, err)
+		// Assert using the result of trace plan SQL
+		require.ElementsMatch(t, resultJSON, out[i].Trace)
 	}
 }

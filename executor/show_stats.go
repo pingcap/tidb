@@ -443,6 +443,10 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 	})
 }
 
+func (e *ShowExec) fetchShowHistogramsInFlight() {
+	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
+}
+
 func (e *ShowExec) fetchShowAnalyzeStatus() {
 	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
@@ -455,7 +459,7 @@ func (e *ShowExec) fetchShowAnalyzeStatus() {
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	do := domain.GetDomain(e.ctx)
 	h := do.StatsHandle()
-	colStatsMap, err := h.LoadColumnStatsUsage()
+	colStatsMap, err := h.LoadColumnStatsUsage(e.ctx.GetSessionVars().Location())
 	if err != nil {
 		return err
 	}
@@ -496,9 +500,10 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
-			}
+			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID
+			// rather than partition ID. Hence appendTableForColumnStatsUsage needs to be called for both partition and global in both dynamic
+			// and static pruning mode.
+			appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
 			if pi != nil {
 				for i := range pi.Definitions {
 					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])

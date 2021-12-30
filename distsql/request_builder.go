@@ -33,8 +33,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -291,7 +293,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
 	}
 	return builder
@@ -382,7 +384,7 @@ func tablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics
 		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the range here.
 		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}}
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, Collators: collate.GetBinaryCollatorSlice(1)}
 		feedbackRanges = append(feedbackRanges, r)
 
 		if !ran.HighExclude {
@@ -465,6 +467,7 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 			LowVal:     ranges[idx].LowVal,
 			LowExclude: ranges[idx].LowExclude,
 			HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
+			Collators:  ranges[idx].Collators,
 		})
 	}
 	if !(ranges[idx].HighVal[0].GetUint64() == math.MaxInt64+1 && ranges[idx].HighExclude) {
@@ -472,6 +475,7 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 			LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
 			HighVal:     ranges[idx].HighVal,
 			HighExclude: ranges[idx].HighExclude,
+			Collators:   ranges[idx].Collators,
 		})
 	}
 	if idx < len(ranges) {
@@ -585,7 +589,7 @@ func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementCont
 			return nil, err
 		}
 		feedbackRanges = append(feedbackRanges, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
 	}
 	feedbackRanges, ok := fb.Hist.SplitRange(sc, feedbackRanges, true)
 	if !ok {
@@ -624,7 +628,7 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 			return nil, err
 		}
 		rans = append(rans, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true})
+			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
 	}
 	krs := make([]kv.KeyRange, 0, len(rans))
 	for _, ran := range rans {

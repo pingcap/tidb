@@ -143,6 +143,48 @@ func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk.MustGetErrCode("create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default '0000-00-00 00');", errno.ErrInvalidDefault)
 	tk.MustGetErrCode("create table test_zero_date(a timestamp default 0);", errno.ErrInvalidDefault)
+	defer tk.MustExec(`drop table if exists test_zero_date`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows("0000-00-00 00:00:00 0"))
+	tk.MustExec(`update test_zero_date set a = '2001-01-01 11:11:11' where a = 0`)
+	tk.MustExec(`replace into test_zero_date values (0)`)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustExec(`update test_zero_date set a = 0 where a = '2001-01-01 11:11:11'`)
+	tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustGetErrCode(`insert into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`replace into test_zero_date values (0)`, errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode(`update test_zero_date set a = 0 where a = 0`, errno.ErrTruncatedWrongValue)
+	tk.MustExec(`delete from test_zero_date where a = 0`)
+	tk.MustQuery(`select a, unix_timestamp(a) from test_zero_date`).Check(testkit.Rows())
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("set session sql_mode=''")
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustExec(`alter table test_zero_date modify a date`)
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec("create table test_zero_date (a timestamp default 0)")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
+	tk.MustExec("set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
+	tk.MustExec(`drop table test_zero_date`)
+	tk.MustGetErrCode("create table test_zero_date (a timestamp default 0)", errno.ErrInvalidDefault)
+	tk.MustExec(`create table test_zero_date (a int)`)
+	tk.MustExec(`insert into test_zero_date values (0)`)
+	tk.MustGetErrCode(`alter table test_zero_date modify a date`, errno.ErrTruncatedWrongValue)
 }
 
 func (s *testIntegrationSuite2) TestInvalidDefault(c *C) {
@@ -3619,6 +3661,22 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		// Unexpected, test fail.
 		c.Fail()
 	}
+}
+
+// See https://github.com/pingcap/tidb/issues/29327
+func (s *testIntegrationSuite3) TestEnumDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE `t1` (   `a` enum('','a','b') NOT NULL DEFAULT 'b ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` enum('','a','b') COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'b'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
 }
 
 func (s *testIntegrationSuite3) TestIssue29326(c *C) {

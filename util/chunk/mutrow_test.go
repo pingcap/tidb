@@ -27,8 +27,6 @@ import (
 )
 
 func TestMutRow(t *testing.T) {
-	t.Parallel()
-
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	sc := new(stmtctx.StatementContext)
@@ -91,6 +89,27 @@ func TestMutRow(t *testing.T) {
 	require.Equal(t, mutRow.c.columns[0].data, chk.columns[0].data)
 }
 
+func TestIssue29947(t *testing.T) {
+	mutRow := MutRowFromTypes(allTypes)
+	nilDatum := types.NewDatum(nil)
+
+	dataBefore := make([][]byte, 0, len(mutRow.c.columns))
+	elemBufBefore := make([][]byte, 0, len(mutRow.c.columns))
+	for _, col := range mutRow.c.columns {
+		dataBefore = append(dataBefore, col.data)
+		elemBufBefore = append(elemBufBefore, col.elemBuf)
+	}
+	for i, col := range mutRow.c.columns {
+		mutRow.SetDatum(i, nilDatum)
+		require.Equal(t, col.IsNull(0), true)
+		for _, off := range col.offsets {
+			require.Equal(t, off, int64(0))
+		}
+		require.Equal(t, col.data, dataBefore[i])
+		require.Equal(t, col.elemBuf, elemBufBefore[i])
+	}
+}
+
 func BenchmarkMutRowSetRow(b *testing.B) {
 	b.ReportAllocs()
 	rowChk := newChunk(8, 0)
@@ -148,8 +167,6 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 }
 
 func TestMutRowShallowCopyPartialRow(t *testing.T) {
-	t.Parallel()
-
 	colTypes := make([]*types.FieldType, 0, 3)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
