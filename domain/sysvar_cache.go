@@ -241,6 +241,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBPersistAnalyzeOptions:
+		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
