@@ -78,91 +78,101 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 		dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 		switch diff.Type {
-		case model.ActionTruncateTablePartition:
-			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			for _, opt := range diff.AffectedOpts {
-				// Reduce the impact on DML when executing partition DDL. eg.
-				// While session 1 performs the DML operation associated with partition 1,
-				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
-				tblIDs = append(tblIDs, opt.OldTableID)
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
+		case model.ActionTruncateTablePartition, model.ActionTruncateTable:
+			tblIDs, err = b.applyTruncateTableOrPartition(m, diff, dbInfo)
 		case model.ActionDropTable, model.ActionDropTablePartition:
-			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			for _, opt := range diff.AffectedOpts {
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-			}
-		case model.ActionTruncateTable:
-			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			for _, opt := range diff.AffectedOpts {
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
+			tblIDs, err = b.applyDropTableOrParition(m, diff, dbInfo)
 		case model.ActionRecoverTable:
-			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			for _, opt := range diff.AffectedOpts {
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
+			tblIDs, err = b.applyRecoverTable(m, diff, dbInfo)
 		default:
-			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			tblIDs, err = b.applyDefaultAction(m, diff, dbInfo)
+		}
+	}
+	return tblIDs, err
+}
 
-			typ := diff.Type
-			switch diff.Type {
-			case model.ActionRenameTables:
-				typ = model.ActionRenameTable
-			}
+func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff, dbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-			for _, opt := range diff.AffectedOpts {
-				var err error
-				affectedDiff := &model.SchemaDiff{
-					Version:     diff.Version,
-					Type:        typ,
-					SchemaID:    opt.SchemaID,
-					TableID:     opt.TableID,
-					OldSchemaID: opt.OldSchemaID,
-					OldTableID:  opt.OldTableID,
-				}
-				affectedIDs, err := b.ApplyDiff(m, affectedDiff)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				tblIDs = append(tblIDs, affectedIDs...)
-			}
+	for _, opt := range diff.AffectedOpts {
+		if diff.Type == model.ActionTruncateTablePartition {
+			// Reduce the impact on DML when executing partition DDL. eg.
+			// While session 1 performs the DML operation associated with partition 1,
+			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
+			tblIDs = append(tblIDs, opt.OldTableID)
+		}
+		b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+		err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return tblIDs, nil
 }
 
-func (b *Builder) defaultApplyDiff(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff, dbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff, dbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tblIDs, nil
+}
+
+func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff, dbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	typ := diff.Type
+	switch diff.Type {
+	case model.ActionRenameTables:
+		typ = model.ActionRenameTable
+	}
+
+	for _, opt := range diff.AffectedOpts {
+		var err error
+		affectedDiff := &model.SchemaDiff{
+			Version:     diff.Version,
+			Type:        typ,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+	}
+
+	return tblIDs, nil
+}
+
+func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
 	var oldTableID, newTableID int64
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
