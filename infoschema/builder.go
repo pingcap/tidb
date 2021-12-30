@@ -53,6 +53,7 @@ type Builder struct {
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	var tblIDs []int64
+	var err error
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
@@ -76,16 +77,14 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			)
 		}
 		dbInfo := b.copySchemaTables(roDBInfo.Name.L)
-		ids, err := b.defaultApplyDiff(m, diff, dbInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblIDs = ids
-	}
+		switch diff.Type {
+		case model.ActionTruncateTablePartition:
+			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 
-		for _, opt := range diff.AffectedOpts {
-			switch diff.Type {
-			case model.ActionTruncateTablePartition:
+			for _, opt := range diff.AffectedOpts {
 				// Reduce the impact on DML when executing partition DDL. eg.
 				// While session 1 performs the DML operation associated with partition 1,
 				// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
@@ -95,40 +94,72 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				continue
-			case model.ActionDropTable, model.ActionDropTablePartition:
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				continue
-			case model.ActionTruncateTable:
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
-			case model.ActionRecoverTable:
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
 			}
-			var err error
-			affectedDiff := &model.SchemaDiff{
-				Version:     diff.Version,
-				Type:        diff.Type,
-				SchemaID:    opt.SchemaID,
-				TableID:     opt.TableID,
-				OldSchemaID: opt.OldSchemaID,
-				OldTableID:  opt.OldTableID,
-			}
-			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+		case model.ActionDropTable, model.ActionDropTablePartition:
+			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			tblIDs = append(tblIDs, affectedIDs...)
+
+			for _, opt := range diff.AffectedOpts {
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+			}
+		case model.ActionTruncateTable:
+			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			for _, opt := range diff.AffectedOpts {
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		case model.ActionRecoverTable:
+			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			for _, opt := range diff.AffectedOpts {
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		default:
+			tblIDs, err = b.defaultApplyDiff(m, diff, dbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			typ := diff.Type
+			switch diff.Type {
+			case model.ActionRenameTables:
+				typ = model.ActionRenameTable
+			}
+
+			for _, opt := range diff.AffectedOpts {
+				var err error
+				affectedDiff := &model.SchemaDiff{
+					Version:     diff.Version,
+					Type:        typ,
+					SchemaID:    opt.SchemaID,
+					TableID:     opt.TableID,
+					OldSchemaID: opt.OldSchemaID,
+					OldTableID:  opt.OldTableID,
+				}
+				affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				tblIDs = append(tblIDs, affectedIDs...)
+			}
 		}
 	}
+	return tblIDs, nil
 }
 
 func (b *Builder) defaultApplyDiff(m *meta.Meta, diff *model.SchemaDiff, dbInfo *model.DBInfo) ([]int64, error) {
@@ -187,7 +218,7 @@ func (b *Builder) defaultApplyDiff(m *meta.Meta, diff *model.SchemaDiff, dbInfo 
 		}
 
 		tmpIDs := tblIDs
-		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
+		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
