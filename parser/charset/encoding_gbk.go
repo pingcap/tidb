@@ -157,10 +157,8 @@ func (c customGBK) NewEncoder() *encoding.Encoder {
 // Transform special treatment for `€`,
 // see https://github.com/pingcap/tidb/issues/30581 get details.
 func (c customGBKEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
-	if len(src) == utf8.RuneLen('€') {
-		if r,_ := utf8.DecodeRune(src[:]); r == '€' {
-			return 0, 0, errInvalidCharacterString
-		}
+	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' */) {
+		return 0, 0, errInvalidCharacterString
 	}
 	return c.gbkEncoder.Transform(dst, src, atEOF)
 }
