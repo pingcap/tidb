@@ -168,14 +168,14 @@ func (s *localSuite) TestRangeProperties(c *C) {
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
 		for i := 0; i < p.count; i++ {
-			_ = collector.Add(pebble.InternalKey{UserKey: p.key}, v)
+			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: pebble.InternalKeyKindSet}, v)
 		}
 	}
 
 	userProperties := make(map[string]string, 1)
 	_ = collector.Finish(userProperties)
 
-	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]))
+	props, err := decodeRangeProperties(hack.Slice(userProperties[propRangeIndex]), noopKeyAdapter{})
 	c.Assert(err, IsNil)
 
 	// Smallest key in props.
@@ -302,7 +302,7 @@ func (s *localSuite) TestRangePropertiesWithPebble(c *C) {
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
 			err = wb.Set(key, value[:valueLen], writeOpt)
 			c.Assert(err, IsNil)
-			err = collector.Add(pebble.InternalKey{UserKey: key}, value[:valueLen])
+			err = collector.Add(pebble.InternalKey{UserKey: key, Trailer: pebble.InternalKeyKindSet}, value[:valueLen])
 			c.Assert(err, IsNil)
 		}
 		c.Assert(wb.Commit(writeOpt), IsNil)
@@ -900,8 +900,7 @@ func (e mockGrpcErr) Error() string {
 
 type mockImportClient struct {
 	sst.ImportSSTClient
-	stores             []*metapb.Store
-	curStore           *metapb.Store
+	store              *metapb.Store
 	err                error
 	retry              int
 	cnt                int
@@ -916,32 +915,31 @@ func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest,
 		return nil, c.err
 	}
 
-	if !c.multiIngestCheckFn(c.curStore) {
+	if !c.multiIngestCheckFn(c.store) {
 		return nil, mockGrpcErr{}
 	}
 	return nil, nil
 }
 
-type testMultiIngestSuite struct {
-	local *local
-	pdCli *mockPdClient
+type mockImportClientFactory struct {
+	stores         []*metapb.Store
+	createClientFn func(store *metapb.Store) sst.ImportSSTClient
 }
 
-func (s *testMultiIngestSuite) SetUpSuite(c *C) {
-	local := &local{
-		pdCtl: &pdutil.PdController{},
+func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+	for _, store := range f.stores {
+		if store.Id == storeID {
+			return f.createClientFn(store), nil
+		}
 	}
-	pdCli := &mockPdClient{}
-	local.pdCtl.SetPDClient(pdCli)
-	s.local = local
-	s.pdCli = pdCli
+	return nil, errors.New("store not found")
 }
+
+func (f *mockImportClientFactory) Close() {}
+
+type testMultiIngestSuite struct{}
 
 func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
-	defer func() {
-		getImportClientFn = getImportClient
-	}()
-
 	allStores := []*metapb.Store{
 		{
 			Id:    1,
@@ -1191,30 +1189,29 @@ func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
 		}
 
 		importCli := &mockImportClient{
-			stores:             allStores,
 			cnt:                0,
 			retry:              testCase.retry,
 			err:                testCase.err,
 			multiIngestCheckFn: testCase.multiIngestSupport,
 		}
-		s.pdCli.stores = stores
+		pdCtl := &pdutil.PdController{}
+		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
-		getImportClientFn = func(local *local, ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-			for _, store := range importCli.stores {
-				if store.Id == storeID {
-					importCli.curStore = store
-					break
-				}
-			}
-			return importCli, nil
+		local := &local{
+			pdCtl: pdCtl,
+			importClientFactory: &mockImportClientFactory{
+				stores: allStores,
+				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+					importCli.store = store
+					return importCli
+				},
+			},
 		}
-		s.local.supportMultiIngest = false
-
-		err := s.local.checkMultiIngestSupport(context.Background())
+		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {
 			c.Assert(err, ErrorMatches, testCase.retErr)
 		} else {
-			c.Assert(s.local.supportMultiIngest, Equals, testCase.supportMutliIngest)
+			c.Assert(local.supportMultiIngest, Equals, testCase.supportMutliIngest)
 		}
 	}
 }
