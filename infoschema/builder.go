@@ -150,7 +150,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff, dbInf
 		var err error
 		affectedDiff := &model.SchemaDiff{
 			Version:     diff.Version,
-			Type:        typ,
+			Type:        diff.Type,
 			SchemaID:    opt.SchemaID,
 			TableID:     opt.TableID,
 			OldSchemaID: opt.OldSchemaID,
