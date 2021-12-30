@@ -190,6 +190,9 @@ type Config struct {
 	// one quarter of the total physical memory in the current system.
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	// The valid value range is `[0, max-ballast-object-size]`. A maximum value is used instead if the value want to
+	// configure is out of range. For example, if `max-ballast-object-size` is `2147483648` bytes, but the
+	// `ballast-object-size` was configured as `-1`, then `2147483648` bytes is used as the initial size of the ballast object.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
