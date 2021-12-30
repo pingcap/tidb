@@ -1361,9 +1361,9 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
-	if col.State != model.StatePublic {
-		return colVal, nil
-	}
+	//if col.State != model.StatePublic {
+	//	return colVal, nil
+	//}
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {
