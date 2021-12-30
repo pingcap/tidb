@@ -216,6 +216,9 @@ type StatementContext struct {
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
 
+	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
+	WeakConsistency bool
+
 	StatsLoad struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration

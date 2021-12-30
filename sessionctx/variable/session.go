@@ -433,6 +433,30 @@ const (
 	oneShotUse
 )
 
+// ReadConsistencyLevel is the level of read consistency.
+type ReadConsistencyLevel string
+
+const (
+	// ReadConsistencyStrict means read by strict consistency, default value.
+	ReadConsistencyStrict ReadConsistencyLevel = "strict"
+	// ReadConsistencyWeak means read can be weak consistency.
+	ReadConsistencyWeak ReadConsistencyLevel = "weak"
+)
+
+// IsWeak returns true only if it's a weak-consistency read.
+func (r ReadConsistencyLevel) IsWeak() bool {
+	return r == ReadConsistencyWeak
+}
+
+func validateReadConsistencyLevel(val string) error {
+	switch v := ReadConsistencyLevel(strings.ToLower(val)); v {
+	case ReadConsistencyStrict, ReadConsistencyWeak:
+		return nil
+	default:
+		return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+	}
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -980,6 +1004,9 @@ type SessionVars struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	StmtStats *stmtstats.StatementStats
+
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64

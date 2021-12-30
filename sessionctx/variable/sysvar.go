@@ -1349,6 +1349,15 @@ var defaultSysVars = []*SysVar{
 		EnableColumnTracking.Store(v)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBReadConsistency, Value: string(ReadConsistencyStrict), Type: TypeStr, Hidden: true,
+		Validation: func(_ *SessionVars, normalized string, _ string, _ ScopeFlag) (string, error) {
+			return normalized, validateReadConsistencyLevel(normalized)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.ReadConsistency = ReadConsistencyLevel(val)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		SetSession: func(s *SessionVars, val string) error {
 			s.StatsLoadSyncWait = tidbOptInt64(val, DefTiDBStatsLoadSyncWait)
