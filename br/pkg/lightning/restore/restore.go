@@ -1337,7 +1337,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
-func (rc *Controller) restoreTables(ctx context.Context) error {
+func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
@@ -1366,16 +1366,21 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	finishSchedulers := func() {}
 	// if one lightning failed abnormally, and can't determine whether it needs to switch back,
 	// we do not do switch back automatically
-	cleanupFunc := func() {}
 	switchBack := false
-	taskFinished := false
+	cleanup := false
+	postProgress := func() error { return nil }
 	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
 
 		logTask.Info("removing PD leader&region schedulers")
 
 		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		finishSchedulers = func() {
 			if restoreFn != nil {
+				taskFinished := finalErr == nil
 				// use context.Background to make sure this restore function can still be executed even if ctx is canceled
 				restoreCtx := context.Background()
 				needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
@@ -1385,39 +1390,17 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 				}
 				switchBack = needSwitchBack
 				if needSwitchBack {
+					logTask.Info("add back PD leader&region schedulers")
 					if restoreE := restoreFn(restoreCtx); restoreE != nil {
 						logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 					}
-
-					logTask.Info("add back PD leader&region schedulers")
-					// clean up task metas
-					if needCleanup {
-						logTask.Info("cleanup task metas")
-						if cleanupErr := rc.taskMgr.Cleanup(restoreCtx); cleanupErr != nil {
-							logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
-						}
-						// cleanup table meta and schema db if needed.
-						cleanupFunc = func() {
-							if e := rc.taskMgr.CleanupAllMetas(restoreCtx); err != nil {
-								logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(e))
-							}
-						}
-					}
 				}
+				cleanup = needCleanup
 			}
 
 			rc.taskMgr.Close()
 		}
-
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
-	defer func() {
-		if switchBack {
-			cleanupFunc()
-		}
-	}()
 
 	type task struct {
 		tr *TableRestore
@@ -1437,16 +1420,30 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 
 	periodicActions, cancelFunc := rc.buildRunPeriodicActionAndCancelFunc(ctx, stopPeriodicActions)
 	go periodicActions()
-	finishFuncCalled := false
-	defer func() {
-		if !finishFuncCalled {
-			finishSchedulers()
-			cancelFunc(switchBack)
-			finishFuncCalled = true
-		}
-	}()
 
 	defer close(stopPeriodicActions)
+
+	defer func() {
+		finishSchedulers()
+		cancelFunc(switchBack)
+
+		if err := postProgress(); err != nil {
+			logTask.End(zap.ErrorLevel, err)
+			finalErr = err
+			return
+		}
+		// clean up task metas
+		if cleanup {
+			logTask.Info("cleanup task metas")
+			if cleanupErr := rc.taskMgr.Cleanup(context.Background()); cleanupErr != nil {
+				logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
+			}
+			// cleanup table meta and schema db if needed.
+			if err := rc.taskMgr.CleanupAllMetas(context.Background()); err != nil {
+				logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(err))
+			}
+		}
+	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
@@ -1515,32 +1512,26 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	default:
 	}
 
-	// stop periodic tasks for restore table such as pd schedulers and switch-mode tasks.
-	// this can help make cluster switching back to normal state more quickly.
-	// finishSchedulers()
-	// cancelFunc(switchBack)
-	// finishFuncCalled = true
-	taskFinished = true
-
-	close(postProcessTaskChan)
-	// otherwise, we should run all tasks in the post-process task chan
-	for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for task := range postProcessTaskChan {
-				metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
-				// force all the remain post-process tasks to be executed
-				_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
-				restoreErr.Set(err)
-			}
-		}()
+	postProgress = func() error {
+		close(postProcessTaskChan)
+		// otherwise, we should run all tasks in the post-process task chan
+		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for task := range postProcessTaskChan {
+					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
+					// force all the remain post-process tasks to be executed
+					_, err = task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					restoreErr.Set(err)
+				}
+			}()
+		}
+		wg.Wait()
+		return restoreErr.Get()
 	}
-	wg.Wait()
 
-	err = restoreErr.Get()
-	logTask.End(zap.ErrorLevel, err)
-	return err
+	return nil
 }
 
 func (tr *TableRestore) restoreTable(
