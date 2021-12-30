@@ -581,7 +581,7 @@ func TestBinToUUID(t *testing.T) {
 func TestTidbShard(t *testing.T) {
 	ctx := createContext(t)
 
-	fc := funcs[ast.TidbShard]
+	fc := funcs[ast.TiDBShard]
 
 	// tidb_shar(-1) == 81, ......
 	args := makeDatums([]int{-1, 0, 1, 9999999999999999})

@@ -707,7 +707,7 @@ func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
 		return false
 	}
 
-	if f.FuncName.L != ast.TidbShard {
+	if f.FuncName.L != ast.TiDBShard {
 		return false
 	}
 

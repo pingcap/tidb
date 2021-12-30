@@ -925,11 +925,11 @@ func AddGcColumn4InCond(sctx sessionctx.Context,
 	andType := types.NewFieldType(mysql.TypeTiny)
 
 	sf := accessesCond[1].(*expression.ScalarFunction)
-	c, _ := sf.GetArgs()[0].(*expression.Column)
+	c := sf.GetArgs()[0].(*expression.Column)
 	var AndOrExpr expression.Expression
 	for i, arg := range sf.GetArgs()[1:] {
 		// get every const value and calculate tidb_shard(val)
-		con, _ := arg.(*expression.Constant)
+		con := arg.(*expression.Constant)
 		conVal, err := con.Eval(chunk.Row{})
 		if err != nil {
 			return accessesCond, err
