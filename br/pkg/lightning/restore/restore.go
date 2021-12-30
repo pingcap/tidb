@@ -1426,6 +1426,8 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	periodicActions, cancelFunc := rc.buildRunPeriodicActionAndCancelFunc(ctx, stopPeriodicActions)
 	go periodicActions()
 
+	defer close(stopPeriodicActions)
+
 	defer func() {
 		finishSchedulers()
 		cancelFunc(switchBack)
@@ -1447,8 +1449,6 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			}
 		}
 	}()
-
-	defer close(stopPeriodicActions)
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
