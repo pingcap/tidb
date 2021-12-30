@@ -65,6 +65,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	DefStatsLoadConcurrencyLimit = 1
+	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
+	DefMaxOfStatsLoadConcurrencyLimit = 128
+	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
+	DefStatsLoadQueueSizeLimit = 1
+	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
+	DefMaxOfStatsLoadQueueSizeLimit = 100000
 )
 
 // Valid config maps
@@ -708,8 +716,8 @@ var defaultConf = Config{
 		GOGC:                 100,
 		EnforceMPP:           false,
 		PlanReplayerGCLease:  "10m",
-		StatsLoadConcurrency: 20,
-		StatsLoadQueueSize:   10000,
+		StatsLoadConcurrency: 5,
+		StatsLoadQueueSize:   1000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1003,6 +1011,14 @@ func (c *Config) Valid() error {
 	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
+	}
+
+	// check stats load config
+	if c.Performance.StatsLoadConcurrency < DefStatsLoadConcurrencyLimit || c.Performance.StatsLoadConcurrency > DefMaxOfStatsLoadConcurrencyLimit {
+		return fmt.Errorf("stats-load-concurrency should be [%d, %d]", DefStatsLoadConcurrencyLimit, DefMaxOfStatsLoadConcurrencyLimit)
+	}
+	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
+		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
 	// test log level
