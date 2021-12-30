@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
@@ -120,12 +121,6 @@ var defaultSysVars = []*SysVar{
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
-		// It's GetGlobal func will only be called when "set timestamp = default".
-		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
-		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
-		return DefTimestamp, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
@@ -543,7 +538,7 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolToOnOff(DefTiDBEnableIndexMerge), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
@@ -1251,50 +1246,50 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// variable for top SQL feature.
-	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(DefTiDBTopSQLEnable), Type: TypeBool, Hidden: true, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(TopSQLVariable.Enable.Load()), nil
+	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(topsqlstate.DefTiDBTopSQLEnable), Type: TypeBool, Hidden: true, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(topsqlstate.GlobalState.Enable.Load()), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
-		TopSQLVariable.Enable.Store(TiDBOptOn(s))
+		topsqlstate.GlobalState.Enable.Store(TiDBOptOn(s))
 		return nil
 	}, GlobalConfigName: GlobalConfigEnableTopSQL},
-	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatInt(TopSQLVariable.PrecisionSeconds.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(topsqlstate.DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(topsqlstate.GlobalState.PrecisionSeconds.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err
 		}
-		TopSQLVariable.PrecisionSeconds.Store(val)
+		topsqlstate.GlobalState.PrecisionSeconds.Store(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxStatementCount, Value: strconv.Itoa(DefTiDBTopSQLMaxStatementCount), Type: TypeInt, Hidden: true, MinValue: 0, MaxValue: 5000, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatInt(TopSQLVariable.MaxStatementCount.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxStatementCount, Value: strconv.Itoa(topsqlstate.DefTiDBTopSQLMaxStatementCount), Type: TypeInt, Hidden: true, MinValue: 0, MaxValue: 5000, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(topsqlstate.GlobalState.MaxStatementCount.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err
 		}
-		TopSQLVariable.MaxStatementCount.Store(val)
+		topsqlstate.GlobalState.MaxStatementCount.Store(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxCollect, Value: strconv.Itoa(DefTiDBTopSQLMaxCollect), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatInt(TopSQLVariable.MaxCollect.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBTopSQLMaxCollect, Value: strconv.Itoa(topsqlstate.DefTiDBTopSQLMaxCollect), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(topsqlstate.GlobalState.MaxCollect.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err
 		}
-		TopSQLVariable.MaxCollect.Store(val)
+		topsqlstate.GlobalState.MaxCollect.Store(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTopSQLReportIntervalSeconds, Value: strconv.Itoa(DefTiDBTopSQLReportIntervalSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 1 * 60 * 60, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatInt(TopSQLVariable.ReportIntervalSeconds.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBTopSQLReportIntervalSeconds, Value: strconv.Itoa(topsqlstate.DefTiDBTopSQLReportIntervalSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 1 * 60 * 60, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatInt(topsqlstate.GlobalState.ReportIntervalSeconds.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err
 		}
-		TopSQLVariable.ReportIntervalSeconds.Store(val)
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
@@ -1329,6 +1324,29 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePaging = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBPersistAnalyzeOptions, Value: BoolToOnOff(DefTiDBPersistAnalyzeOptions), skipInit: true, Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(PersistAnalyzeOptions.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			PersistAnalyzeOptions.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), skipInit: true, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableColumnTracking.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		v := TiDBOptOn(val)
+		if !v {
+			// Set the location to UTC to avoid time zone interference.
+			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
+			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
+				return err
+			}
+		}
+		EnableColumnTracking.Store(v)
 		return nil
 	}},
 }
