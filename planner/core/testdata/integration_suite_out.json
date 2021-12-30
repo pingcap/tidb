@@ -2057,6 +2057,93 @@
     ]
   },
   {
+    "Name": "TestIssue30200",
+    "Cases": [
+      {
+        "SQL": "select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';",
+        "Plan": [
+          "Projection 15.99 root  1->Column#5",
+          "└─Selection 15.99 root  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(from_base64(to_base64(test.t1.c1)), \"ab\")))",
+          "  └─IndexMerge 19.99 root  ",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;",
+        "Plan": [
+          "Projection 17.99 root  1->Column#5",
+          "└─Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
+          "  └─IndexMerge 19.99 root  ",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(tt1) */ 1 from tt1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c3)) = '10';",
+        "Plan": [
+          "Projection 15.99 root  1->Column#6",
+          "└─Selection 15.99 root  or(eq(test.tt1.c1, \"de\"), and(eq(test.tt1.c2, \"10\"), eq(from_base64(to_base64(test.tt1.c3)), \"10\")))",
+          "  └─IndexMerge 19.99 root  ",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt1, index:idx_0(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt1, index:idx_1(c2, c3) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 19.99 cop[tikv] table:tt1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt2.pk in (1, 53330) and to_base64(left(pk, 5));",
+        "Plan": [
+          "Projection 2.40 root  1->Column#3",
+          "└─Selection 2.40 root  or(eq(test.tt2.c1, -3896405), and(in(test.tt2.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(test.tt2.pk, var_string(20)), 5)), double BINARY))))",
+          "  └─IndexMerge 3.00 root  ",
+          "    ├─IndexRangeScan(Build) 1.00 cop[tikv] table:tt2, index:c1(c1) range:[-3896405,-3896405], keep order:false, stats:pseudo",
+          "    ├─TableRangeScan(Build) 2.00 cop[tikv] table:tt2 range:[1,1], [53330,53330], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tt2 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';",
+        "Plan": [
+          "Projection 5098.44 root  1->Column#5",
+          "└─Selection 2825.66 root  or(lt(test.tt3.c1, -10), and(lt(test.tt3.c2, 10), eq(reverse(cast(test.tt3.c3, var_string(20))), \"2\")))",
+          "  └─IndexMerge 5542.21 root  ",
+          "    ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tt3, index:c1(c1) range:[-inf,-10), keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:tt3, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:tt3 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select 1 from t1 where c1 = 'de' or c2 = '10' and from_base64(to_base64(c1)) = 'ab';",
+        "Plan": [
+          "Projection 8000.00 root  1->Column#5",
+          "└─Selection 8000.00 root  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(from_base64(to_base64(test.t1.c1)), \"ab\")))",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+	]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexMergeWithCorrelatedColumns",
     "Cases": [
       {
