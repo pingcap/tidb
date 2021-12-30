@@ -1004,7 +1004,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
 		fromBinary := d.Collation() == charset.CollationBin
-		toBinary := target.Collate == charset.CollationBin
+		toBinary := target.Charset == charset.CharsetBin
 		if fromBinary && toBinary {
 			s = d.GetString()
 		} else if fromBinary {
