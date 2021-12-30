@@ -87,14 +87,15 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
 
-	if followerCount == 0 {
-		followerCount = 2
-	}
 	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 	}
 	for _, rule := range FollowerRules {
+		// give a default of 2 followers
+		if rule.Count == 0 {
+			rule.Count = 2
+		}
 		for _, cnst := range CommonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
@@ -103,21 +104,24 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	Rules = append(Rules, FollowerRules...)
 
-	if learnerCount > 0 {
-		LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
-		}
-		for _, rule := range LearnerRules {
-			for _, cnst := range CommonConstraints {
-				if err := rule.Constraints.Add(cnst); err != nil {
-					return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
-				}
+	LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
+	}
+	for _, rule := range LearnerRules {
+		if rule.Count == 0 {
+			if len(rule.Constraints) > 0 {
+				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 			}
 		}
-		Rules = append(Rules, LearnerRules...)
-	} else if learnerConstraints != "" {
-		return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
+		for _, cnst := range CommonConstraints {
+			if err := rule.Constraints.Add(cnst); err != nil {
+				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
+			}
+		}
+		if rule.Count > 0 {
+			Rules = append(Rules, rule)
+		}
 	}
 
 	return &Bundle{Rules: Rules}, nil
