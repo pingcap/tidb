@@ -501,6 +501,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
+		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -815,6 +816,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
+		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
