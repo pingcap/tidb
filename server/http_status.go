@@ -114,14 +114,14 @@ type Ballast struct {
 	ballast     []byte
 	ballastLock sync.Mutex
 
-	maxSize          int
-	maxSizeThreshold int
+	maxSize              int
+	autoMaxSizeThreshold int
 }
 
 func newBallast(maxSize int) *Ballast {
 	var b Ballast
-	b.maxSizeThreshold = 1024 * 1024 * 1024 * 2
-	b.maxSize = b.maxSizeThreshold
+	b.autoMaxSizeThreshold = 1024 * 1024 * 1024 * 2
+	b.maxSize = b.autoMaxSizeThreshold
 	if maxSize > 0 {
 		b.maxSize = maxSize
 	} else {

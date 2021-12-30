@@ -49,7 +49,7 @@ func TestBallast(t *testing.T) {
 			nowSz, info = b.SetSize(-1)
 			require.True(t, len(info) > 0)
 			require.True(t, nowSz > 0)
-			require.True(t, nowSz <= b.maxSizeThreshold)
+			require.True(t, nowSz <= b.autoMaxSizeThreshold)
 		}
 	}
 }
