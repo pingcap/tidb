@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 )
 
-var defProfileDuration = time.Second
+// DefProfileDuration exports for testing.
+var DefProfileDuration = time.Second
 
 // globalCPUProfiler is the global CPU profiler.
 var globalCPUProfiler = newParallelCPUProfiler()
@@ -38,8 +39,6 @@ type ProfileConsumer = chan *ProfileData
 // ProfileData contains the cpu profile data between the start and end time, usually the interval between start and end is about 1 second.
 type ProfileData struct {
 	Data  *bytes.Buffer
-	Begin time.Time
-	End   time.Time
 	Error error
 }
 
@@ -153,7 +152,7 @@ func (p *parallelCPUProfiler) unregister(ch ProfileConsumer) {
 }
 
 func (p *parallelCPUProfiler) profilingLoop() {
-	checkTicker := time.NewTicker(defProfileDuration)
+	checkTicker := time.NewTicker(DefProfileDuration)
 	defer func() {
 		checkTicker.Stop()
 		p.wg.Done()
@@ -163,10 +162,9 @@ func (p *parallelCPUProfiler) profilingLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-p.notifyRegister:
-			p.doProfiling()
 		case <-checkTicker.C:
-			p.doProfiling()
 		}
+		p.doProfiling()
 	}
 }
 
@@ -175,7 +173,7 @@ func (p *parallelCPUProfiler) doProfiling() {
 		return
 	}
 
-	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize)), Begin: time.Now()}
+	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, p.lastDataSize))}
 	err := pprof.StartCPUProfile(data.Data)
 	if err != nil {
 		data.Error = err
@@ -187,7 +185,7 @@ func (p *parallelCPUProfiler) doProfiling() {
 	// wait 1 second
 	select {
 	case <-p.ctx.Done():
-	case <-time.After(defProfileDuration):
+	case <-time.After(DefProfileDuration):
 	}
 
 	pprof.StopCPUProfile()
@@ -203,7 +201,6 @@ func (p *parallelCPUProfiler) consumersCount() int {
 }
 
 func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
-	data.End = time.Now()
 	p.Lock()
 	for c := range p.cs {
 		select {

@@ -103,44 +103,47 @@ func (sp *SQLCPUCollector) Stop() {
 	logutil.BgLogger().Info("sql cpu collector stopped")
 }
 
+var defCollectTickerInterval = time.Second
+
 func (sp *SQLCPUCollector) collectSQLCPULoop() {
 	profileConsumer := make(cpuprofile.ProfileConsumer, 1)
+	ticker := time.NewTicker(defCollectTickerInterval)
 	defer func() {
 		util.Recover("top-sql", "startAnalyzeProfileWorker", nil, false)
 		sp.wg.Done()
 		sp.doUnregister(profileConsumer)
+		ticker.Stop()
 	}()
 
-	if topsqlstate.TopSQLEnabled() {
-		sp.doRegister(profileConsumer)
-	}
-	ticker := time.NewTicker(time.Second)
 	for {
-		var data *cpuprofile.ProfileData
+		if topsqlstate.TopSQLEnabled() {
+			sp.doRegister(profileConsumer)
+		} else {
+			sp.doUnregister(profileConsumer)
+		}
+
 		select {
 		case <-sp.ctx.Done():
 			return
 		case <-ticker.C:
-			if topsqlstate.TopSQLEnabled() {
-				sp.doRegister(profileConsumer)
-			} else {
-				sp.doUnregister(profileConsumer)
-			}
-			continue
-		case data = <-profileConsumer:
+		case data := <-profileConsumer:
+			sp.handleProfileData(data)
 		}
-		if data.Error != nil || data.End.Unix() <= 0 {
-			continue
-		}
-
-		p, err := profile.ParseData(data.Data.Bytes())
-		if err != nil {
-			logutil.BgLogger().Error("parse profile error", zap.Error(err))
-			continue
-		}
-		stats := sp.parseCPUProfileBySQLLabels(p)
-		sp.collector.Collect(stats)
 	}
+}
+
+func (sp *SQLCPUCollector) handleProfileData(data *cpuprofile.ProfileData) {
+	if data.Error != nil {
+		return
+	}
+
+	p, err := profile.ParseData(data.Data.Bytes())
+	if err != nil {
+		logutil.BgLogger().Error("parse profile error", zap.Error(err))
+		return
+	}
+	stats := sp.parseCPUProfileBySQLLabels(p)
+	sp.collector.Collect(stats)
 }
 
 func (sp *SQLCPUCollector) doRegister(profileConsumer cpuprofile.ProfileConsumer) {

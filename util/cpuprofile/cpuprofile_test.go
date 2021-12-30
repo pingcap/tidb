@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/util/cpuprofile/testutil"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -35,7 +36,7 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	// To speed up testing
-	defProfileDuration = time.Millisecond * 200
+	DefProfileDuration = time.Millisecond * 200
 	goleak.VerifyTestMain(m)
 }
 
@@ -174,7 +175,7 @@ func TestGetCPUProfile(t *testing.T) {
 	// test parallel get CPU profile.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
+	testutil.MockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
 	var wg sync.WaitGroup
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
@@ -239,32 +240,4 @@ func TestProfileHTTPHandler(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "profile duration exceeds server's WriteTimeout\n", string(body))
 	require.NoError(t, resp.Body.Close())
-}
-
-func mockCPULoad(ctx context.Context, labels ...string) {
-	lvs := []string{}
-	for _, label := range labels {
-		lvs = append(lvs, label)
-		lvs = append(lvs, label+"-value")
-		// start goroutine with only 1 label.
-		go mockCPULoadByGoroutineWithLabel(ctx, label, label+"-value")
-	}
-	// start goroutine with all labels.
-	go mockCPULoadByGoroutineWithLabel(ctx, lvs...)
-}
-
-func mockCPULoadByGoroutineWithLabel(ctx context.Context, labels ...string) {
-	ctx = pprof.WithLabels(ctx, pprof.Labels(labels...))
-	pprof.SetGoroutineLabels(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		sum := 0
-		for i := 0; i < 1000000; i++ {
-			sum = sum + i*2
-		}
-	}
 }

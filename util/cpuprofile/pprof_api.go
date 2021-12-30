@@ -27,7 +27,6 @@ import (
 	"github.com/google/pprof/profile"
 	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -63,22 +62,20 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-const (
-	labelSQLDigest  = "sql_digest"
-	labelPlanDigest = "plan_digest"
-)
-
 // Collector is a cpu profile collector, it collect cpu profile data from globalCPUProfiler.
 type Collector struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	started   atomic.Bool
+	started   bool
 	firstRead chan struct{}
 	wg        sync.WaitGroup
 
-	dataCh   ProfileConsumer
-	profiles []*ProfileData
-	writer   io.Writer
+	dataCh ProfileConsumer
+	writer io.Writer
+
+	// Following fields uses to store the result data of collected.
+	result *profile.Profile
+	err    error
 }
 
 // NewCollector returns a new NewCollector.
@@ -95,10 +92,12 @@ func NewCollector() *Collector {
 // StartCPUProfile is a substitute for the `pprof.StartCPUProfile` function.
 // You should use this function instead of `pprof.StartCPUProfile`.
 // Otherwise you may fail, or affect the TopSQL feature and pprof profile HTTP API .
+// WARN: this function is not thread-safe.
 func (pc *Collector) StartCPUProfile(w io.Writer) error {
-	if !pc.started.CAS(false, true) {
+	if pc.started {
 		return errors.New("Collector already started")
 	}
+	pc.started = true
 	pc.writer = w
 	pc.wg.Add(1)
 	go goutil.WithRecovery(pc.readProfileData, nil)
@@ -106,18 +105,23 @@ func (pc *Collector) StartCPUProfile(w io.Writer) error {
 }
 
 // StopCPUProfile is a substitute for the `pprof.StopCPUProfile` function.
+// WARN: this function is not thread-safe.
 func (pc *Collector) StopCPUProfile() error {
-	if !pc.started.Load() {
+	if !pc.started {
 		return nil
 	}
 
 	// wait for reading least 1 profile data.
-	<-pc.firstRead
+	select {
+	case <-pc.firstRead:
+	case <-time.After(DefProfileDuration * 2):
+	}
+
 	pc.cancel()
 	pc.wg.Wait()
 
 	data, err := pc.buildProfileData()
-	if err != nil {
+	if err != nil || data == nil {
 		return err
 	}
 	return data.Write(pc.writer)
@@ -132,47 +136,58 @@ func (pc *Collector) readProfileData() {
 		pc.wg.Done()
 	}()
 
-	pc.profiles = []*ProfileData{}
+	pc.result, pc.err = nil, nil
+	firstRead := true
 	for {
 		select {
 		case <-pc.ctx.Done():
 			return
 		case data := <-pc.dataCh:
-			pc.profiles = append(pc.profiles, data)
-			if len(pc.profiles) == 1 {
+			pc.err = pc.handleProfileData(data)
+			if pc.err != nil {
+				return
+			}
+			if firstRead {
+				firstRead = false
 				close(pc.firstRead)
 			}
 		}
 	}
 }
 
+func (pc *Collector) handleProfileData(data *ProfileData) error {
+	if data.Error != nil {
+		return data.Error
+	}
+	pd, err := profile.ParseData(data.Data.Bytes())
+	if err != nil {
+		return err
+	}
+	if pc.result == nil {
+		pc.result = pd
+		return nil
+	}
+	pc.result, err = profile.Merge([]*profile.Profile{pc.result, pd})
+	return err
+}
+
 func (pc *Collector) buildProfileData() (*profile.Profile, error) {
-	ds := make([]*profile.Profile, 0, len(pc.profiles))
-	for _, data := range pc.profiles {
-		if data.Error != nil {
-			return nil, data.Error
-		}
-		pd, err := profile.ParseData(data.Data.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		ds = append(ds, pd)
+	if pc.err != nil || pc.result == nil {
+		return nil, pc.err
 	}
 
-	profileData, err := profile.Merge(ds)
-	if err != nil {
-		return nil, err
-	}
-	pc.removeLabel(profileData)
-	return profileData, nil
+	pc.removeLabel(pc.result)
+	return pc.result, nil
 }
+
+const labelSQL = "sql"
 
 // removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
 // Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
 func (pc *Collector) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
-			if k == labelSQLDigest || k == labelPlanDigest {
+			if k != labelSQL {
 				delete(s.Label, k)
 			}
 		}

@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package collector_test
+package collector
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/util/cpuprofile"
+	"github.com/pingcap/tidb/util/cpuprofile/testutil"
 	"github.com/pingcap/tidb/util/testbridge"
-	"github.com/pingcap/tidb/util/topsql/collector"
-	"github.com/pingcap/tidb/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -32,20 +33,52 @@ func TestMain(m *testing.M) {
 }
 
 func TestPProfCPUProfile(t *testing.T) {
+	// short the interval to speed up the test.
+	interval := time.Millisecond * 100
+	defCollectTickerInterval = interval
+	cpuprofile.DefProfileDuration = interval
+
 	err := cpuprofile.StartCPUProfiler()
 	require.NoError(t, err)
 	defer cpuprofile.StopCPUProfiler()
 
 	topsqlstate.EnabledTopSQL()
-	mc := mock.NewTopSQLCollector()
-	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	mc := &mockCollector{
+		dataCh: make(chan []SQLCPUTimeRecord, 10),
+	}
+	sqlCPUCollector := NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
+	defer sqlCPUCollector.Stop()
 
-	mc.WaitCollectCnt(1)
-	require.True(t, mc.CollectCnt() >= 1)
-	sqlCPUCollector.Stop()
-	sqlCPUCollector.Start()
-	mc.WaitCollectCnt(2)
-	require.True(t, mc.CollectCnt() >= 2)
-	sqlCPUCollector.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testutil.MockCPULoad(ctx, "sql", "sql_digest", "plan_digest")
+
+	t1 := time.Now()
+	data := <-mc.dataCh
+	cost := time.Since(t1)
+	require.True(t, len(data) > 0)
+	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+
+	// Test after disabled, shouldn't receive any data.
+	topsqlstate.DisabledTopSQL()
+	time.Sleep(cost * 2)
+	require.Equal(t, 0, len(mc.dataCh))
+
+	// Test after re-enable.
+	topsqlstate.EnabledTopSQL()
+	t1 = time.Now()
+	data = <-mc.dataCh
+	require.True(t, time.Since(t1) < cost*2)
+	require.True(t, len(data) > 0)
+	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+}
+
+type mockCollector struct {
+	dataCh chan []SQLCPUTimeRecord
+}
+
+// Collect implements the Collector interface.
+func (c *mockCollector) Collect(records []SQLCPUTimeRecord) {
+	c.dataCh <- records
 }
