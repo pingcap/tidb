@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -411,6 +412,18 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 		}
 		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
+}
+
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+	if s.statsCollector == nil {
+		return
+	}
+	t := time.Now()
+	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	for _, col := range predicateColumns {
+		colMap[col] = t
+	}
+	s.statsCollector.UpdateColStatsUsage(colMap)
 }
 
 // StoreIndexUsage stores index usage information in idxUsageCollector.
@@ -1377,7 +1390,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
-		if variable.TopSQLEnabled() {
+		if topsqlstate.TopSQLEnabled() {
 			//  Restore the goroutine label by using the original ctx after execution is finished.
 			pprof.SetGoroutineLabels(ctx)
 		}
@@ -1517,7 +1530,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
@@ -1541,7 +1554,7 @@ func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	var execOption sqlexec.ExecOption
@@ -1651,7 +1664,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 

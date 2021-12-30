@@ -625,6 +625,8 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
+	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
 )
 
 // TiDB intentional limits
@@ -768,11 +770,6 @@ const (
 	DefTiDBTrackAggregateMemoryUsage      = true
 	DefTiDBEnableExchangePartition        = false
 	DefCTEMaxRecursionDepth               = 1000
-	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLPrecisionSeconds         = 1
-	DefTiDBTopSQLMaxStatementCount        = 200
-	DefTiDBTopSQLMaxCollect               = 5000
-	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBTSOClientBatchMaxWaitTime      = 0.0 // 0ms
@@ -784,6 +781,7 @@ const (
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBTableCacheLease                = 3 // 3s
+	DefTiDBPersistAnalyzeOptions          = true
 )
 
 // Process global variables.
@@ -808,35 +806,10 @@ var (
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: Off}
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
-	TopSQLVariable                        = TopSQL{
-		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
-		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
-		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
-		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
-		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
-	}
-	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
-	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
-	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
-	TableCacheLease         = atomic.NewInt64(DefTiDBTableCacheLease)
+	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
 )
-
-// TopSQL is the variable for control top sql feature.
-type TopSQL struct {
-	// Enable top-sql or not.
-	Enable *atomic.Bool
-	// The refresh interval of top-sql.
-	PrecisionSeconds *atomic.Int64
-	// The maximum number of statements kept in memory.
-	MaxStatementCount *atomic.Int64
-	// The maximum capacity of the collect map.
-	MaxCollect *atomic.Int64
-	// The report data interval of top-sql.
-	ReportIntervalSeconds *atomic.Int64
-}
-
-// TopSQLEnabled uses to check whether enabled the top SQL feature.
-func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load()
-}
