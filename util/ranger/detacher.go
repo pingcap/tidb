@@ -1070,7 +1070,7 @@ func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.E
 	newConditions = append(newConditions, conditions...)
 	newConditions = removeAccessConditions(newConditions, accesses)
 
-	// add Gc condtion for accesses and return new condition to newAccesses
+	// add Gc condition for accesses and return new condition to newAccesses
 	newAccesses, err := AddGcColumnCond(sctx, cols, accesses, columnValues)
 	if err != nil {
 		return conditions, err
