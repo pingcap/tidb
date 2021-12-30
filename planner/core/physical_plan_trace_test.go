@@ -17,12 +17,13 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/tracing"
-	"strings"
 )
 
 func (s *testPlanSuite) TestPhysicalOptimizeWithTraceEnabled(c *C) {
@@ -47,9 +48,7 @@ func (s *testPlanSuite) TestPhysicalOptimizeWithTraceEnabled(c *C) {
 	c.Assert(err, IsNil)
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
 	c.Assert(otrace, NotNil)
-	logicalList := make([]string, 0)
-	physicalList := make([]string, 0)
-	preorderTraversal(otrace.Root, &logicalList, &physicalList)
+	logicalList, physicalList := getList(otrace)
 	c.Assert(checkList(logicalList, []string{"Projection_3", "Selection_2", "DataSource_1"}), IsTrue)
 	c.Assert(checkList(physicalList, []string{"Projection_4", "Selection_5"}), IsTrue)
 }
@@ -66,12 +65,12 @@ func checkList(d []string, s []string) bool {
 	return true
 }
 
-func preorderTraversal(node *tracing.PhysicalOptimizeTraceInfo, ll *[]string, pl *[]string) {
-	*ll = append(*ll, fmt.Sprintf("%v_%v", node.TP, node.ID))
-	for _, c := range node.Candidates {
-		*pl = append(*pl, fmt.Sprintf("%v", c.Name))
-		for _, u := range c.Children {
-			preorderTraversal(u, ll, pl)
-		}
+func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
+	for _, info := range otrace.State {
+		ll = append(ll, fmt.Sprintf("%v_%v", info.TP, info.ID))
 	}
+	for _, info := range otrace.Mapping {
+		pl = append(pl, info...)
+	}
+	return ll, pl
 }

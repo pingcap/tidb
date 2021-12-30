@@ -14,6 +14,8 @@
 
 package tracing
 
+import "fmt"
+
 // LogicalPlanTrace indicates for the LogicalPlan trace information
 type LogicalPlanTrace struct {
 	ID       int                 `json:"id"`
@@ -127,14 +129,10 @@ type PhysicalPlanList []string
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
-	Root    *PhysicalOptimizeTraceInfo
-	Current *PhysicalOptimizeTraceInfo
+	State   map[string]*PhysicalOptimizeTraceInfo
 	Mapping map[string]PhysicalPlanList
 }
 
-func (t *PhysicalOptimizeTracer) AppendPhysicalOptimizeToCurrent(candidateInfo *TaskInfo, info *PhysicalOptimizeTraceInfo) *PhysicalOptimizeTraceInfo {
-	candidateInfo.Children = append(candidateInfo.Children, info)
-	tmpInfo := t.Current
-	t.Current = info
-	return tmpInfo
+func CodecState(tp string, id int, prop string) string {
+	return fmt.Sprintf("%v_%v_%v", tp, id, prop)
 }
