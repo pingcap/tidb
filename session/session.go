@@ -2206,6 +2206,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
 		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+		if s.GetSessionVars().StmtCtx.WeakConsistency {
+			s.txn.SetOption(kv.IsolationLevel, kv.RC)
+		}
 	}
 	return &s.txn, nil
 }
@@ -2895,7 +2898,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	return nil
 }
 
-// PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// PrepareTxnCtx begins a transaction, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	s.currentCtx = ctx
