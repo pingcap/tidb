@@ -520,14 +520,14 @@ func (rc *Client) GoCreateTables(
 
 		if err == nil {
 			defer log.Debug("all tables are created")
-			defer close(outCh)
+			close(outCh)
 			return outCh
 			// fall back to old create table (sequential create table)
 		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
 			log.Info("fall back to the old DDL way to create table")
 		} else {
 			errCh <- err
-			defer close(outCh)
+			close(outCh)
 			return outCh
 		}
 	}
