@@ -435,6 +435,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.preCheckRequirements,
+		rc.initCheckpoint,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.cleanCheckpoints,
@@ -774,14 +775,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		if err = rc.DataCheck(ctx); err != nil {
-			return errors.Trace(err)
-		}
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
 	}
+	rc.sysVars = sysVars
 
+	return nil
+}
+
+// initCheckpoint initializes all tables' checkpoint data
+func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	// Load new checkpoints
-	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
+	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -793,20 +800,8 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
-	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
-	rc.sysVars = sysVars
-
 	// Estimate the number of chunks for progress reporting
-	err = rc.estimateChunkCountIntoMetrics(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return rc.estimateChunkCountIntoMetrics(ctx)
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -1871,6 +1866,10 @@ func (rc *Controller) isTiDBBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	if err := rc.DataCheck(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if rc.cfg.App.CheckRequirements {
 		if err := rc.ClusterIsAvailable(ctx); err != nil {
 			return errors.Trace(err)
