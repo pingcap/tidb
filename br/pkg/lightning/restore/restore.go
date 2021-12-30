@@ -379,14 +379,17 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
 			schema:       cfg.App.MetaSchemaName,
 			needChecksum: cfg.PostRestore.Checksum != config.OpLevelOff,
 		}
+	case isSSTImport:
+		metaBuilder = singleMgrBuilder{}
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
@@ -432,6 +435,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.setGlobalVariables,
 		rc.restoreSchema,
 		rc.preCheckRequirements,
+		rc.initCheckpoint,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.cleanCheckpoints,
@@ -771,14 +775,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		if err = rc.DataCheck(ctx); err != nil {
-			return errors.Trace(err)
-		}
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
 	}
+	rc.sysVars = sysVars
 
+	return nil
+}
+
+// initCheckpoint initializes all tables' checkpoint data
+func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	// Load new checkpoints
-	err = rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos)
+	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -790,20 +800,8 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
 	go rc.listenCheckpointUpdates()
 
-	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	// override by manually set vars
-	for k, v := range rc.cfg.TiDB.Vars {
-		sysVars[k] = v
-	}
-	rc.sysVars = sysVars
-
 	// Estimate the number of chunks for progress reporting
-	err = rc.estimateChunkCountIntoMetrics(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	return rc.estimateChunkCountIntoMetrics(ctx)
 }
 
 // verifyCheckpoint check whether previous task checkpoint is compatible with task config
@@ -1812,7 +1810,10 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 		return nil
 	}
 	// set new collation flag base on tidb config
-	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	enabled, err := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
+	if err != nil {
+		return err
+	}
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
@@ -1865,6 +1866,10 @@ func (rc *Controller) isTiDBBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	if err := rc.DataCheck(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if rc.cfg.App.CheckRequirements {
 		if err := rc.ClusterIsAvailable(ctx); err != nil {
 			return errors.Trace(err)
@@ -1926,8 +1931,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			rc.taskMgr.CleanupTask(ctx)
 		}
-		return errors.Errorf("tidb-lightning check failed."+
-			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
+		return errors.Errorf("tidb-lightning pre-check failed: %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }
@@ -1968,11 +1972,6 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
-	err = rc.checkCSVHeader(ctx, rc.dbMetas)
-	if err != nil {
-		return err
-	}
-
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -1983,6 +1982,14 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	} else {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
+
+	if err := rc.checkTableEmpty(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
+		return err
+	}
+
 	return nil
 }
 
