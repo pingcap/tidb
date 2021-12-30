@@ -104,13 +104,13 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 	return tsr
 }
 
-// Enable implemented StateController interface.
+// Enable implemented Controller interface.
 func (tsr *RemoteTopSQLReporter) Enable() {
 	tsr.sqlCPUCollector.Start()
 	topsqlstate.GlobalState.Enable.Store(true)
 }
 
-// Disable implemented StateController interface.
+// Disable implemented Controller interface.
 func (tsr *RemoteTopSQLReporter) Disable() {
 	tsr.sqlCPUCollector.Stop()
 	topsqlstate.GlobalState.Enable.Store(false)

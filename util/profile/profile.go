@@ -70,7 +70,7 @@ func (c *Collector) profileToDatums(p *profile.Profile) ([][]types.Datum, error)
 // cpuProfileGraph returns the CPU profile flamegraph which is organized by tree form
 func (c *Collector) cpuProfileGraph() ([][]types.Datum, error) {
 	buffer := &bytes.Buffer{}
-	pc := cpuprofile.NewPprofAPICollector()
+	pc := cpuprofile.NewCollector()
 	err := pc.StartCPUProfile(buffer)
 	if err != nil {
 		return nil, err

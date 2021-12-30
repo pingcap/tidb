@@ -61,11 +61,11 @@ type DefaultDataSinkRegisterer struct {
 	sync.Mutex
 	ctx             context.Context
 	dataSinks       map[DataSink]struct{}
-	stateController topsqlstate.StateController
+	stateController topsqlstate.Controller
 }
 
 // NewDefaultDataSinkRegisterer creates a new DefaultDataSinkRegisterer which implements DataSinkRegisterer.
-func NewDefaultDataSinkRegisterer(ctx context.Context, stateController topsqlstate.StateController) DefaultDataSinkRegisterer {
+func NewDefaultDataSinkRegisterer(ctx context.Context, stateController topsqlstate.Controller) DefaultDataSinkRegisterer {
 	return DefaultDataSinkRegisterer{
 		ctx:             ctx,
 		dataSinks:       make(map[DataSink]struct{}, 10),

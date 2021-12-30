@@ -53,8 +53,8 @@ func TopSQLEnabled() bool {
 	return GlobalState.Enable.Load()
 }
 
-// StateController is the interface uses to control the top SQL feature.
-type StateController interface {
+// Controller is the interface uses to control the top SQL feature.
+type Controller interface {
 	// Enable the top SQL feature.
 	Enable()
 	// Disable the top SQL feature.

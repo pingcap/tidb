@@ -60,12 +60,12 @@ func (m *mockDataSink2) OnReporterClosing() {
 
 type mockStateController struct{}
 
-// Enable implemented StateController interface.
-func (_ *mockStateController) Enable() {
+// Enable implemented Controller interface.
+func (m *mockStateController) Enable() {
 	topsqlstate.GlobalState.Enable.Store(true)
 }
 
-// Disable implemented StateController interface.
+// Disable implemented Controller interface.
 func (m *mockStateController) Disable() {
 	topsqlstate.GlobalState.Enable.Store(false)
 }

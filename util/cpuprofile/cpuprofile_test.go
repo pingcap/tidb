@@ -149,7 +149,7 @@ func TestParallelCPUProfiler(t *testing.T) {
 }
 
 func getCPUProfile(d time.Duration, w io.Writer) error {
-	pc := NewPprofAPICollector()
+	pc := NewCollector()
 	err := pc.StartCPUProfile(w)
 	if err != nil {
 		return err
