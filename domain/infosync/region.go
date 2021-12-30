@@ -45,7 +45,7 @@ func (t PlacementScheduleState) String() string {
 	case PlacementScheduleStatePending:
 		return "PENDING"
 	default:
-		return "WAITING"
+		return "PENDING"
 	}
 }
 
@@ -77,7 +77,7 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 			st = PlacementScheduleStateScheduled
 		case "INPROGRESS":
 			st = PlacementScheduleStateInProgress
-		case "WAITING":
+		case "PENDING":
 			st = PlacementScheduleStatePending
 		}
 		return st, nil
