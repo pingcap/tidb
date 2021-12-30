@@ -695,11 +695,11 @@ func TestFormatAndAddTiDBSpecificComment(t *testing.T) {
 		},
 		{
 			"alter table t cache",
-			"alter table t cache",
+			"ALTER TABLE `t` CACHE;",
 		},
 		{
 			"alter table t nocache",
-			"alter table t nocache",
+			"ALTER TABLE `t` NOCACHE;",
 		},
 	}
 	for _, ca := range testCase {
