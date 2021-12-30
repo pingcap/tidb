@@ -101,13 +101,13 @@ addr = "127.0.0.1:8287"
 #on-duplicate = "replace"
 # Whether to detect and resolve duplicate records (unique key conflict) when the backend is 'local'.
 # Current supports three resolution algorithms:
-#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
-#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
 #    inconsistent data in the target TiDB.
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
 #    state in the target TiDB.
-#duplicate-resolution = 'record'
+#duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = '96MiB'
@@ -165,6 +165,22 @@ no-schema = false
 #  - binary:  do not try to decode the schema files
 # note that the *data* files are always parsed as binary regardless of schema encoding.
 #character-set = "auto"
+
+# Specifies the character set of the source data file. Lightning converts the source file from the specified character set to UTF-8 encoding when importing.
+# Currently, this configuration only specifies the character set of the CSV files with the following options supported:
+# - utf8mb4: Indicates that the source data file uses UTF-8 encoding.
+# - GB18030: Indicates that the source data file uses the GB-18030 encoding.
+# - GBK: The source data file uses GBK encoding (GBK encoding is an extension of the GB-2312 character set, also known as Code Page 936).
+# - binary: Indicates that Lightning does not convert the encoding (by default).
+# If left blank, the default value "binary" is used, that is to say, Lightning does not convert the encoding.
+# Note that Lightning does not predict about the character set of the source data file and only converts the source file and import the data based on this configuration.
+# If the value of this configuration is not the same as the actual encoding of the source data file, a failed import, data loss or data disorder might appear.
+data-character-set = "binary"
+# Specifies the replacement character in case of incompatible characters during the character set conversion of the source data file.
+# This configuration must not be duplicated with field separators, quote definers, and line breaks.
+# The default value is "\uFFFD", which is the "error" Rune or Unicode replacement character in UTF-8 encoding.
+# Changing the default value might result in potential degradation of parsing performance for the source data file.
+data-invalid-char-replace = "\uFFFD"
 
 # make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
 # different objects. Currently only affects [[routes]].

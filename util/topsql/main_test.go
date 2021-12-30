@@ -18,21 +18,21 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	// set up
-	variable.TopSQLVariable.Enable.Store(true)
+	topsqlstate.GlobalState.Enable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock"
 	})
-	variable.TopSQLVariable.PrecisionSeconds.Store(1)
+	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
 	opts := []goleak.Option{

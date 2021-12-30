@@ -50,7 +50,8 @@ type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
 	criticalFailedCount int
-	failedMsg           []string
+	normalMsgs          []string // only used in unit test now
+	criticalMsgs        []string
 	t                   table.Writer
 }
 
@@ -64,16 +65,12 @@ func NewSimpleTemplate() Template {
 		{Name: "Passed", WidthMax: 6},
 	})
 	return &SimpleTemplate{
-		0,
-		0,
-		0,
-		make([]string, 0),
-		t,
+		t: t,
 	}
 }
 
 func (c *SimpleTemplate) FailedMsg() string {
-	return strings.Join(c.failedMsg, ";\n")
+	return strings.Join(c.criticalMsgs, ";\n")
 }
 
 func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
@@ -86,7 +83,11 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 			c.warnFailedCount++
 		}
 	}
-	c.failedMsg = append(c.failedMsg, msg)
+	if !passed && t == Critical {
+		c.criticalMsgs = append(c.criticalMsgs, msg)
+	} else {
+		c.normalMsgs = append(c.normalMsgs, msg)
+	}
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()
 }

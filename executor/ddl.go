@@ -185,7 +185,18 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
+		if x.OrReplace && x.IfNotExists {
+			err = ddl.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+			break
+		}
 		err = e.executeCreatePlacementPolicy(x)
+		if x.OrReplace && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyExists) {
+			alterStmt := &ast.AlterPlacementPolicyStmt{
+				PolicyName:       x.PolicyName,
+				PlacementOptions: x.PlacementOptions,
+			}
+			err = e.executeAlterPlacementPolicy(alterStmt)
+		}
 	case *ast.DropPlacementPolicyStmt:
 		err = e.executeDropPlacementPolicy(x)
 	case *ast.AlterPlacementPolicyStmt:
@@ -495,7 +506,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			stmt, err := exec.ParseWithParamsInternal(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			if err != nil {
 				return err
 			}
@@ -610,6 +621,10 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return err
 	}
 
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
+		return err
+	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
@@ -622,6 +637,40 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
+}
+
+// recoverTablePlacement is used when recover/flashback table.
+// It will replace the placement policy of table with the direct options because the original policy may be deleted
+func recoverTablePlacement(snapshotMeta *meta.Meta, tblInfo *model.TableInfo) (*model.TableInfo, error) {
+	if ref := tblInfo.PlacementPolicyRef; ref != nil {
+		policy, err := snapshotMeta.GetPolicy(ref.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tblInfo.PlacementPolicyRef = nil
+		tblInfo.DirectPlacementOpts = policy.PlacementSettings
+	}
+
+	if tblInfo.Partition != nil {
+		for idx := range tblInfo.Partition.Definitions {
+			def := &tblInfo.Partition.Definitions[idx]
+			ref := def.PlacementPolicyRef
+			if ref == nil {
+				continue
+			}
+
+			policy, err := snapshotMeta.GetPolicy(ref.ID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			def.PlacementPolicyRef = nil
+			def.DirectPlacementOpts = policy.PlacementSettings
+		}
+	}
+
+	return tblInfo, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
@@ -661,42 +710,15 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
-	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+	getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
+		snapMeta, err := dom.GetSnapshotMeta(StartTS)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
-
-		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
-		if err != nil {
-			return false, err
-		}
-		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
-		if err != nil {
-			if meta.ErrDBNotExists.Equal(err) {
-				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-				// then can't find the table from the snapshot info-schema. Should just ignore error here,
-				// see more in TestParallelDropSchemaAndDropTable.
-				continue
-			}
-			return false, err
-		}
-		if tbl == nil {
-			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-			// then can't find the table from the snapshot info-schema. Should just ignore error here,
-			// see more in TestParallelDropSchemaAndDropTable.
-			continue
-		}
-		finish, err := fn(job, tbl)
-		if err != nil || finish {
-			return finish, err
-		}
+		tbl, err := snapMeta.GetTable(SchemaID, TableID)
+		return tbl, err
 	}
-	return false, nil
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
 }
 
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
@@ -776,6 +798,11 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if err != nil {
 		return err
 	}
+
+	if tblInfo, err = recoverTablePlacement(m, tblInfo); err != nil {
+		return err
+	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,

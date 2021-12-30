@@ -191,7 +191,7 @@ func NewDuplicateManager(local *local, ts uint64, opts *kv.SessionOptions) (*Dup
 		regionConcurrency: local.tcpConcurrency,
 		splitCli:          local.splitCli,
 		tikvCli:           local.tikvCli,
-		keyAdapter:        duplicateKeyAdapter{},
+		keyAdapter:        dupDetectKeyAdapter{},
 		ts:                ts,
 		connPool:          common.NewGRPCConns(),
 		// TODO: not sure what is the correct concurrency value.
@@ -494,7 +494,8 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				defer iter.Close()
 
 				for iter.First(); iter.Valid(); iter.Next() {
-					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
+					hasDataConflict = true
+					rawKey, err := manager.keyAdapter.Decode(nil, iter.Key())
 					if err != nil {
 						return err
 					}
@@ -525,7 +526,6 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					return err
 				}
 				dataConflictInfos = dataConflictInfos[:0]
-				hasDataConflict = true
 				return nil
 			}(); err != nil {
 				return false, errors.Trace(err)
@@ -569,7 +569,8 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				defer iter.Close()
 
 				for iter.First(); iter.Valid(); iter.Next() {
-					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
+					hasDataConflict = true
+					rawKey, err := manager.keyAdapter.Decode(nil, iter.Key())
 					if err != nil {
 						indexLogger.Error(
 							"[detect-dupe] decode key error when query handle for duplicate index",

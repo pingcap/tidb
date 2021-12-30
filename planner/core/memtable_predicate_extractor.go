@@ -541,6 +541,24 @@ func (helper extractHelper) convertToTime(t int64) time.Time {
 	return time.Unix(0, t)
 }
 
+func (helper extractHelper) convertToBoolSlice(uint64Slice []uint64) []bool {
+	if len(uint64Slice) == 0 {
+		return []bool{false, true}
+	}
+	var res []bool
+	// use to keep res unique
+	b := make(map[bool]struct{}, 2)
+	for _, l := range uint64Slice {
+		tmpBool := (l == 1)
+		_, ok := b[tmpBool]
+		if !ok {
+			b[tmpBool] = struct{}{}
+			res = append(res, tmpBool)
+		}
+	}
+	return res
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -697,6 +715,13 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	return s
 }
 
+const (
+	// HotRegionTypeRead hot read region.
+	HotRegionTypeRead = "read"
+	// HotRegionTypeWrite hot write region.
+	HotRegionTypeWrite = "write"
+)
+
 // HotRegionsHistoryTableExtractor is used to extract some predicates of `tidb_hot_regions_history`
 type HotRegionsHistoryTableExtractor struct {
 	extractHelper
@@ -723,8 +748,8 @@ type HotRegionsHistoryTableExtractor struct {
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE is_learner=1
 	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1) -> request all
-	IsLearners []uint64
-	IsLeaders  []uint64
+	IsLearners []bool
+	IsLeaders  []bool
 
 	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
 	// e.g:
@@ -741,7 +766,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `region_id/store_id/peer_id` columns.
+	// Extract the `region_id/store_id/peer_id` columns
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
@@ -751,25 +776,34 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the is_learner/is_leader columns.
+	// Extract the is_learner/is_leader columns
 	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
 	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
-	e.IsLearners, e.IsLeaders = e.parseUint64(isLearners), e.parseUint64(isLeaders)
+	isLearnersUint64, isLeadersUint64 := e.parseUint64(isLearners), e.parseUint64(isLeaders)
 	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
 	if e.SkipRequest {
 		return nil
 	}
+	// uint64 slice to unique bool slice
+	e.IsLearners = e.convertToBoolSlice(isLearnersUint64)
+	e.IsLeaders = e.convertToBoolSlice(isLeadersUint64)
 
-	// Extract the `type` column.
+	// Extract the `type` column
 	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
 	e.SkipRequest = typeSkipRequest
 	if e.SkipRequest {
 		return nil
 	}
+	// Divide read-write into two requests because of time range overlap,
+	// PD use [type,time] as key of hot regions.
+	if e.HotRegionTypes.Count() == 0 {
+		e.HotRegionTypes.Insert(HotRegionTypeRead)
+		e.HotRegionTypes.Insert(HotRegionTypeWrite)
+	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
-	// The time unit for search hot regions is millisecond.
+	// The time unit for search hot regions is millisecond
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
 	e.StartTime = startTime
@@ -808,10 +842,10 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
 	}
 	if len(e.IsLearners) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLearners)))
+		r.WriteString(fmt.Sprintf("learner_roles:[%s], ", extractStringFromBoolSlice(e.IsLearners)))
 	}
 	if len(e.IsLeaders) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLeaders)))
+		r.WriteString(fmt.Sprintf("leader_roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
@@ -1380,4 +1414,57 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return ""
 	}
 	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+}
+
+// TikvRegionPeersExtractor is used to extract some predicates of cluster table.
+type TikvRegionPeersExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	// RegionIDs/StoreIDs represents all region/store ids we should filter in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tikv_region_peers WHERE region_id=1
+	// 2. SELECT * FROM tikv_region_peers WHERE table_id in (11, 22)
+	RegionIDs []uint64
+	StoreIDs  []uint64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `region_id/store_id` columns.
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
+
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	return remained
+}
+
+func (e *TikvRegionPeersExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.RegionIDs) > 0 {
+		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+	}
+	if len(e.StoreIDs) > 0 {
+		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }

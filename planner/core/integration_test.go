@@ -235,6 +235,28 @@ func (s *testIntegrationSuite) TestIssue24571(c *C) {
 	tk.MustExec("update (select 1 as a) as t, test.t set test.t.a=1;")
 }
 
+func (s *testIntegrationSuite) TestBuildUpdateListResolver(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// For issue https://github.com/pingcap/tidb/issues/24567
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(b int)")
+	tk.MustGetErrCode("update (select 1 as a) as t set a=1", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("update (select 1 as a) as t, t1 set a=1", mysql.ErrNonUpdatableTable)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+
+	// For issue https://github.com/pingcap/tidb/issues/30031
+	tk.MustExec("create table t(a int default -1, c int as (a+10) stored)")
+	tk.MustExec("insert into t(a) values(1)")
+	tk.MustExec("update test.t, (select 1 as b) as t set test.t.a=default")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-1 9"))
+	tk.MustExec("drop table if exists t")
+}
+
 func (s *testIntegrationSuite) TestIssue22828(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -363,7 +385,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	_, err := tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. Please check tiflash replica or ensure the query is readonly.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
@@ -2181,6 +2203,10 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 					partition p1 values less than(11),
 					partition p2 values less than(16));`)
 	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	tk.MustExec("set @@tidb_enable_index_merge = off")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_index_merge = on")
+	}()
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -2238,17 +2264,17 @@ func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
 	}
 	err := tk.ExecToErr("select * from t for update")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 
 	err = tk.ExecToErr("insert into t select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 }
 
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
@@ -3289,7 +3315,7 @@ func (s *testIntegrationSuite) TestCreateViewIsolationRead(c *C) {
 	tk.MustExec("set session tidb_isolation_read_engines='tiflash,tidb';")
 	// No error for CreateView.
 	tk.MustExec("create view v0 (a, avg_b) as select a, avg(b) from t group by a;")
-	tk.MustGetErrMsg("select * from v0;", "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash,tidb'). Available values are 'tikv'.")
+	tk.MustGetErrMsg("select * from v0;", "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.")
 	tk.MustExec("set session tidb_isolation_read_engines='tikv,tiflash,tidb';")
 	tk.MustQuery("select * from v0;").Check(testkit.Rows())
 }
@@ -4311,6 +4337,18 @@ func (s *testIntegrationSuite) TestCreateViewWithWindowFunc(c *C) {
 	rows.Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue29834(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MC21814;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+}
+
 func (s *testIntegrationSuite) TestIssue29221(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4395,6 +4433,24 @@ func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk.MustExec("create table t(a timestamp, b datetime);")
 	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue29503(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.RecordQPSbyDB = true
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	err := tk.ExecToErr("create binding for select 1 using select 1;")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("create binding for select a from t using select a from t;")
+	c.Assert(err, Equals, nil)
+	res := tk.MustQuery("show session bindings;")
+	c.Assert(len(res.Rows()), Equals, 2)
 }
 
 func (s *testIntegrationSuite) TestHeuristicIndexSelection(c *C) {
@@ -4552,10 +4608,48 @@ func (s *testIntegrationSuite) TestIssue27242(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists UK_MU16407")
 	tk.MustExec("CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3));")
+	defer tk.MustExec("DROP TABLE UK_MU16407")
 	tk.MustExec(`insert into UK_MU16407 values("1985-08-31 18:03:27");`)
-	err := tk.ExecToErr(`SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, ".*Incorrect timestamp value.*")
+	tk.MustExec(`SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';`)
+}
+
+func verifyTimestampOutOfRange(tk *testkit.TestKit) {
+	tk.MustQuery(`select * from t28424 where t != "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t < "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t <= "2038-1-19 3:14:08"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t >= "2038-1-19 3:14:08"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t > "2038-1-19 3:14:08"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t != "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t < "1970-1-1 0:0:0"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t <= "1970-1-1 0:0:0"`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t28424 where t >= "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+	tk.MustQuery(`select * from t28424 where t > "1970-1-1 0:0:0"`).Sort().Check(testkit.Rows("1970-01-01 00:00:01]\n[2038-01-19 03:14:07"))
+}
+
+func (s *testIntegrationSuite) TestIssue28424(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t28424, dt28242")
+
+	tk.MustExec(`set time_zone='+00:00'`)
+	tk.MustExec(`drop table if exists t28424,dt28424`)
+	tk.MustExec(`create table t28424 (t timestamp)`)
+	defer tk.MustExec("DROP TABLE t28424")
+	tk.MustExec(`insert into t28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01")`)
+
+	verifyTimestampOutOfRange(tk)
+	tk.MustExec(`alter table t28424 add unique index (t)`)
+	verifyTimestampOutOfRange(tk)
+	tk.MustExec(`create table dt28424 (dt datetime)`)
+	defer tk.MustExec("DROP TABLE dt28424")
+	tk.MustExec(`insert into dt28424 values ("2038-01-19 03:14:07"), ("1970-01-01 00:00:01")`)
+	tk.MustExec(`insert into dt28424 values ("1969-12-31 23:59:59"), ("1970-01-01 00:00:00"), ("2038-03-19 03:14:08")`)
+	tk.MustQuery(`select * from t28424 right join dt28424 on t28424.t = dt28424.dt`).Sort().Check(testkit.Rows(
+		"1970-01-01 00:00:01 1970-01-01 00:00:01]\n" +
+			"[2038-01-19 03:14:07 2038-01-19 03:14:07]\n" +
+			"[<nil> 1969-12-31 23:59:59]\n" +
+			"[<nil> 1970-01-01 00:00:00]\n" +
+			"[<nil> 2038-03-19 03:14:08"))
 }
 
 func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
@@ -4624,8 +4718,9 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan []string
+		SQL     string
+		Plan    []string
+		Warning []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
@@ -4635,11 +4730,37 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
+
+		comment := Commentf("case:%v sql:%s", i, tt)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				c.Assert(warning.Level, Equals, stmtctx.WarnLevelWarning, comment)
+				c.Assert(warning.Err.Error(), Equals, output[i].Warning[j], comment)
+			}
+		}
 	}
 }
 
 func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t27797")
 	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
@@ -4666,6 +4787,35 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue27949(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27949")
+	tk.MustExec("create table t27949 (a int, b int, key(b))")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("IndexLookUp 10.00 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t27949, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("TableReader 10.00 root  data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@sql_select_limit=100")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("Limit 10.00 root  offset:0, count:100",
+		"└─TableReader 10.00 root  data:Limit",
+		"  └─Limit 10.00 cop[tikv]  offset:0, count:100",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+	tk.MustExec("create binding for select * from t  using select * from t use index(idx_a);")
+	tk.MustExec("select * from t;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select * from t';")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestIssue28154(c *C) {
@@ -4731,4 +4881,304 @@ func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestRegardNULLAsPoint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tpk")
+	tk.MustExec(`create table tuk (a int, b int, c int, unique key (a, b, c))`)
+	tk.MustExec(`create table tik (a int, b int, c int, key (a, b, c))`)
+	for _, va := range []string{"NULL", "1"} {
+		for _, vb := range []string{"NULL", "1"} {
+			for _, vc := range []string{"NULL", "1"} {
+				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
+				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
+				if va == "1" && vb == "1" && vc == "1" {
+					continue
+				}
+				// duplicated NULL rows
+				tk.MustExec(fmt.Sprintf(`insert into tuk values (%v, %v, %v)`, va, vb, vc))
+				tk.MustExec(fmt.Sprintf(`insert into tik values (%v, %v, %v)`, va, vb, vc))
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL          string
+		PlanEnabled  []string
+		PlanDisabled []string
+		Result       []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			tk.MustExec(`set @@session.tidb_regard_null_as_point=true`)
+			output[i].PlanEnabled = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+
+			tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+			output[i].PlanDisabled = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustExec(`set @@session.tidb_regard_null_as_point=true`)
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].PlanEnabled...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+
+		tk.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].PlanDisabled...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssues29711(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tbl_29711")
+	tk.MustExec("CREATE TABLE `tbl_29711` (" +
+		"`col_250` text COLLATE utf8_unicode_ci NOT NULL," +
+		"`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie'," +
+		"PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);")
+	tk.MustQuery("explain format=brief " +
+		"select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;").
+		Check(testkit.Rows(
+			"TopN 6.00 root  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"└─IndexLookUp 6.00 root  ",
+			"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:tbl_29711, index:PRIMARY(col_251, col_250) range:[\"Bob\",\"Bob\"], [\"Charlie\",\"Charlie\"], [\"David\",\"David\"], keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 6.00 cop[tikv]  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"    └─TableRowIDScan 30.00 cop[tikv] table:tbl_29711 keep order:false, stats:pseudo",
+		))
+
+	tk.MustExec("drop table if exists t29711")
+	tk.MustExec("CREATE TABLE `t29711` (" +
+		"`a` varchar(10) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) DEFAULT NULL," +
+		"KEY `ia` (`a`(2)))")
+	tk.MustQuery("explain format=brief select * from t29711 use index (ia) order by a limit 10;").
+		Check(testkit.Rows(
+			"TopN 10.00 root  test.t29711.a, offset:0, count:10",
+			"└─IndexLookUp 10.00 root  ",
+			"  ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t29711, index:ia(a) keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
+			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
+		))
+}
+
+func (s *testIntegrationSuite) TestIssue27313(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
+	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
+	// no warning indicates that idx2 is not pruned by idx1.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue30094(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t30094;`)
+	tk.MustExec(`create table t30094(a varchar(10));`)
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  cast(test.t30094.a, float BINARY), cast(test.t30094.a, var_string(5))",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format = 'brief' select * from t30094 where  concat(a,'1') = _binary 0xe59388e59388e59388 collate binary and concat(a,'1') = _binary 0xe598bfe598bfe598bf collate binary;`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  eq(concat(test.t30094.a, \"1\"), \"0xe59388e59388e59388\"), eq(concat(test.t30094.a, \"1\"), \"0xe598bfe598bfe598bf\")",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t30094 keep order:false, stats:pseudo",
+	))
+}
+
+func (s *testIntegrationSuite) TestIssue30200(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), key(c1), key(c2), c3 varchar(100));")
+	tk.MustExec("insert into t1 values('ab', '10', '10');")
+
+	// lpad has not been pushed to TiKV or TiFlash.
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Selection 15.99 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c1, 10, \"a\")), 10)))",
+		"└─IndexMerge 19.99 root  ",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows("1"))
+
+	// `left` has not been pushed to TiKV, but it has been pushed to TiFlash.
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows(
+		"Selection 0.04 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(left(test.t1.c1, 10)), 10)))",
+		"└─IndexMerge 19.99 root  ",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c1(c1) range:[\"ab\",\"ab\"], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c2(c2) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;").Check(testkit.Rows("1"))
+
+	// If no hint, we cannot use index merge if filter cannot be pushed to any storage.
+	oriIndexMergeSwitcher := tk.MustQuery("select @@tidb_enable_index_merge;").Rows()[0][0].(string)
+	tk.MustExec("set tidb_enable_index_merge = on;")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set tidb_enable_index_merge = %s;", oriIndexMergeSwitcher))
+	}()
+	tk.MustQuery("explain format=brief select * from t1 where c1 = 'ab' or c2 = '10' and char_length(lpad(c1, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Selection 8000.00 root  or(eq(test.t1.c1, \"ab\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c1, 10, \"a\")), 10)))",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 varchar(100), c3 varchar(100), c4 varchar(100), key idx_0(c1), key idx_1(c2, c3));")
+	tk.MustExec("insert into t1 values('ab', '10', '10', '10');")
+	// c3 is part of idx_1, so it will be put in partial_path's IndexFilters instead of TableFilters.
+	// But it still cannot be pushed to TiKV.
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c3, 10, 'a')) = 10;").Check(testkit.Rows(
+		"Projection_4 15.99 root  1->Column#6",
+		"└─Selection_5 15.99 root  or(eq(test.t1.c1, \"de\"), and(eq(test.t1.c2, \"10\"), eq(char_length(lpad(test.t1.c3, 10, \"a\")), 10)))",
+		"  └─IndexMerge_9 19.99 root  ",
+		"    ├─IndexRangeScan_6(Build) 10.00 cop[tikv] table:t1, index:idx_0(c1) range:[\"de\",\"de\"], keep order:false, stats:pseudo",
+		"    ├─IndexRangeScan_7(Build) 10.00 cop[tikv] table:t1, index:idx_1(c2, c3) range:[\"10\",\"10\"], keep order:false, stats:pseudo",
+		"    └─TableRowIDScan_8(Probe) 19.99 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and char_length(lpad(c3, 10, 'a')) = 10;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 int , pk int, primary key( pk ) , unique key( c1));")
+	tk.MustExec("insert into t1 values(-3896405, -1), (-2, 1), (-1, -2);")
+	// to_base64(left(pk, 5)) is in partial_path's TableFilters. But it cannot be pushed to TiKV. So it should be executed in TiDB.
+	tk.MustQuery("explain select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows(
+		"Selection_5 2.40 root  or(eq(test.t1.c1, -3896405), and(in(test.t1.pk, 1, 53330), istrue_with_null(cast(to_base64(left(cast(test.t1.pk, var_string(20)), 5)), double BINARY))))",
+		"└─IndexMerge_9 3.00 root  ",
+		"  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c1(c1) range:[-3896405,-3896405], keep order:false, stats:pseudo",
+		"  ├─TableRangeScan_7(Build) 2.00 cop[tikv] table:t1 range:[1,1], [53330,53330], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 3.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge( t1 ) */ * from t1 where t1.c1 in (-3896405) or t1.pk in (1, 53330) and to_base64(left(pk, 5));").Check(testkit.Rows("-3896405 -1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int as (c1 + c2), key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1(c1, c2) values(1, 1);")
+	tk.MustQuery("explain format=brief select /*+ use_index_merge(t1) */ * from t1 where c1 < -10 or c2 < 10 and reverse(c3) = '2';").Check(testkit.Rows(
+		"Selection 2825.66 root  or(lt(test.t1.c1, -10), and(lt(test.t1.c2, 10), eq(reverse(cast(test.t1.c3, var_string(20))), \"2\")))",
+		"└─IndexMerge 5542.21 root  ",
+		"  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, index:c1(c1) range:[-inf,-10), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c1 < -10 or c2 < 10 and reverse(c3) = '2';").Check(testkit.Rows("1 1 2"))
+}
+
+func (s *testIntegrationSuite) TestIssue29705(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	origin := tk.MustQuery("SELECT @@session.tidb_partition_prune_mode")
+	originStr := origin.Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec("set @@session.tidb_partition_prune_mode = '" + originStr + "'")
+	}()
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int) partition by hash(id) partitions 4;")
+	tk.MustExec("insert into t values(1);")
+	result := tk.MustQuery("SELECT COUNT(1) FROM ( SELECT COUNT(1) FROM t b GROUP BY id) a;")
+	result.Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
+	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
+
+}
+
+func (s *testIntegrationSuite) TestIssue30804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	// minimal reproduction of https://github.com/pingcap/tidb/issues/30804
+	tk.MustExec("select avg(0) over w from t1 window w as (order by (select 1))")
+	// named window cannot be used in subquery
+	err := tk.ExecToErr("select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b)")
+	c.Assert(core.ErrWindowNoSuchWindow.Equal(err), IsTrue)
+	tk.MustExec("select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b)")
+}
+
+func (s *testIntegrationSuite) TestIndexMergeWarning(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg := "Warning 1105 IndexMerge is inapplicable or disabled. No available filter or available index."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 int, key(c1), key(c2))")
+	tk.MustExec("select /*+ use_index_merge(t1), no_index_merge() */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Got no_index_merge hint or tidb_enable_index_merge is off."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create temporary table t1(c1 int, c2 int, key(c1), key(c2))")
+	tk.MustExec("select /*+ use_index_merge(t1) */ * from t1 where c1 < 1 or c2 < 1")
+	warningMsg = "Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."
+	tk.MustQuery("show warnings").Check(testkit.Rows(warningMsg))
+}
+
+func (s *testIntegrationSuite) TestIndexMergeWithCorrelatedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));")
+	tk.MustExec("insert into t1 values(1, 1, 1);")
+	tk.MustExec("insert into t1 values(2, 2, 2);")
+	tk.MustExec("create table t2(c1 int, c2 int, c3 int);")
+	tk.MustExec("insert into t2 values(1, 1, 1);")
+	tk.MustExec("insert into t2 values(2, 2, 2);")
+
+	tk.MustExec("drop table if exists tt1, tt2;")
+	tk.MustExec("create table tt1  (c_int int, c_str varchar(40), c_datetime datetime, c_decimal decimal(12, 6), primary key(c_int), key(c_int), key(c_str), unique key(c_decimal), key(c_datetime));")
+	tk.MustExec("create table tt2  like tt1 ;")
+	tk.MustExec(`insert into tt1 (c_int, c_str, c_datetime, c_decimal) values (6, 'sharp payne', '2020-06-07 10:40:39', 6.117000) ,
+			    (7, 'objective kare', '2020-02-05 18:47:26', 1.053000) ,
+			    (8, 'thirsty pasteur', '2020-01-02 13:06:56', 2.506000) ,
+			    (9, 'blissful wilbur', '2020-06-04 11:34:04', 9.144000) ,
+			    (10, 'reverent mclean', '2020-02-12 07:36:26', 7.751000) ;`)
+	tk.MustExec(`insert into tt2 (c_int, c_str, c_datetime, c_decimal) values (6, 'beautiful joliot', '2020-01-16 01:44:37', 5.627000) ,
+			    (7, 'hopeful blackburn', '2020-05-23 21:44:20', 7.890000) ,
+			    (8, 'ecstatic davinci', '2020-02-01 12:27:17', 5.648000) ,
+			    (9, 'hopeful lewin', '2020-05-05 05:58:25', 7.288000) ,
+			    (10, 'sharp jennings', '2020-01-28 04:35:03', 9.758000) ;`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain format=brief " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+
 }

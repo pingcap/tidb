@@ -22,5 +22,5 @@ import (
 
 func TestGetVersion(t *testing.T) {
 	g := Glue{}
-	require.Regexp(t, "BR(.|\n)*Release Version(.|\n)*Git Commit Hash(.|\n)*", g.GetVersion())
+	require.Regexp(t, "^BR(.|\n)*Release Version(.|\n)*Git Commit Hash(.|\n)*$", g.GetVersion())
 }

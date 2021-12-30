@@ -91,10 +91,10 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	}
 	filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		// Filter logs from TiDB and PD.
-		return NewFilterCore(core, "github.com/tikv/pd/")
+		return NewFilterCore(core, "github.com/pingcap/tidb/br/")
 	})
-
-	if len(cfg.File) > 0 {
+	// "-" is a special config for log to stdout.
+	if len(cfg.File) > 0 && cfg.File != "-" {
 		logCfg.File = pclog.FileLogConfig{
 			Filename:   cfg.File,
 			MaxSize:    cfg.FileMaxSize,

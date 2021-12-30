@@ -18,8 +18,6 @@ import (
 )
 
 func TestWriteDatabaseMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -36,12 +34,30 @@ func TestWriteDatabaseMeta(t *testing.T) {
 
 	bytes, err := ioutil.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
+	require.Equal(t, "/*!40101 SET NAMES binary*/;\n/*T![placement] SET PLACEMENT_CHECKS = 0*/;\nCREATE DATABASE `test`;\n", string(bytes))
+}
+
+func TestWritePolicyMeta(t *testing.T) {
+	dir := t.TempDir()
+	config := defaultConfigForTest(t)
+	config.OutputDirPath = dir
+
+	writer, clean := createTestWriter(config, t)
+	defer clean()
+
+	err := writer.WritePolicyMeta("testpolicy", "create placement policy `y` followers=2")
+	require.NoError(t, err)
+
+	p := path.Join(dir, "testpolicy-placement-policy-create.sql")
+	_, err = os.Stat(p)
+	require.NoError(t, err)
+
+	bytes, err := ioutil.ReadFile(p)
+	require.NoError(t, err)
+	require.Equal(t, "/*!40101 SET NAMES binary*/;\n/*T![placement] SET PLACEMENT_CHECKS = 0*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
 }
 
 func TestWriteTableMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 
 	config := defaultConfigForTest(t)
@@ -57,12 +73,10 @@ func TestWriteTableMeta(t *testing.T) {
 	require.NoError(t, err)
 	bytes, err := ioutil.ReadFile(p)
 	require.NoError(t, err)
-	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
+	require.Equal(t, "/*!40101 SET NAMES binary*/;\n/*T![placement] SET PLACEMENT_CHECKS = 0*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 }
 
 func TestWriteViewMeta(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -70,7 +84,7 @@ func TestWriteViewMeta(t *testing.T) {
 	writer, clean := createTestWriter(config, t)
 	defer clean()
 
-	specCmt := "/*!40101 SET NAMES binary*/;\n"
+	specCmt := "/*!40101 SET NAMES binary*/;\n/*T![placement] SET PLACEMENT_CHECKS = 0*/;\n"
 	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
 	createViewSQL := "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n"
 	err := writer.WriteViewMeta("test", "v", createTableSQL, createViewSQL)
@@ -92,8 +106,6 @@ func TestWriteViewMeta(t *testing.T) {
 }
 
 func TestWriteTableData(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -133,8 +145,6 @@ func TestWriteTableData(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSize(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -185,8 +195,6 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 }
 
 func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
@@ -238,8 +246,6 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 }
 
 func TestWriteTableDataWithStatementSize(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir

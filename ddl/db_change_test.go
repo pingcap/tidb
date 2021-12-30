@@ -411,7 +411,9 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		se.PrepareTxnCtx(ctx)
+		if err = se.PrepareTxnCtx(ctx); err != nil {
+			return err
+		}
 		sctx := se.(sessionctx.Context)
 		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
 			return errors.Trace(err)
@@ -1060,6 +1062,54 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnWithData(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN c int;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[0][2], Equals, "3")
+		c.Assert(rs[0].Close(), IsNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, 33.3, 44, 55)")
+		c.Assert(err, IsNil)
+		rs, err = s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[1][2], Equals, "33")
+		c.Assert(rs[0].Close(), IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[0][2], Equals, "3")
+		c.Assert(rs[0].Close(), IsNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, null, 44, 55)")
+		c.Assert(err, NotNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, 33.3, 44, 55)")
+		c.Assert(err, IsNil)
+		rs, err = s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[1][2], Equals, "33")
+		c.Assert(rs[0].Close(), IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn(c *C) {
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
 	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
@@ -1335,12 +1385,15 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
 	if len(s.preSQL) != 0 {
 		_, err := s.se.Execute(context.Background(), s.preSQL)
 		c.Assert(err, IsNil)
 	}
+	_, err = s.se.Execute(context.Background(), "insert into t values(1, 2, 3.1234, 4, 5)")
+	c.Assert(err, IsNil)
+
 	defer func() {
 		_, err := s.se.Execute(context.Background(), "drop table t")
 		c.Assert(err, IsNil)
@@ -1819,6 +1872,8 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1848,6 +1903,11 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1880,6 +1940,8 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1932,6 +1994,11 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return

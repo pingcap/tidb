@@ -18,15 +18,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestBuildTasks(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -154,7 +155,6 @@ func TestBuildTasks(t *testing.T) {
 }
 
 func TestSplitRegionRanges(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -217,7 +217,6 @@ func TestSplitRegionRanges(t *testing.T) {
 }
 
 func TestRebuild(t *testing.T) {
-	t.Parallel()
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -287,5 +286,173 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 		r := ranges[i]
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
+	}
+}
+
+func TestBuildPagingTasks(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging = true
+	flashReq := &kv.Request{}
+	flashReq.StoreType = kv.TiFlash
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
+	require.True(t, tasks[0].paging)
+	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
+}
+
+func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
+	coprRange := coprocessor.KeyRange{}
+	coprRange.Start = r.StartKey
+	coprRange.End = r.EndKey
+	return &coprRange
+}
+
+func toRange(r *KeyRanges) []kv.KeyRange {
+	ranges := make([]kv.KeyRange, 0, r.Len())
+	if r.first != nil {
+		ranges = append(ranges, *r.first)
+	}
+	ranges = append(ranges, r.mid...)
+	if r.last != nil {
+		ranges = append(ranges, *r.last)
+	}
+	return ranges
+}
+
+func TestCalculateRetry(t *testing.T) {
+	worker := copIteratorWorker{}
+
+	// split in one range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "c")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("e", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
+	}
+
+	// across ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "f")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "f")
+	}
+
+	// exhaust the ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		retry := worker.calculateRetry(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+
+	// nil range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, false)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		retry := worker.calculateRetry(NewKeyRanges(ranges), nil, true)
+		rangeEqual(t, toRange(retry), "a", "c", "e", "g")
+	}
+}
+
+func TestCalculateRemain(t *testing.T) {
+	worker := copIteratorWorker{}
+
+	// split in one range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "b")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(remain), "b", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("f", "g")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "f")
+	}
+
+	// across ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "f")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		rangeEqual(t, toRange(remain), "f", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("b", "g")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		rangeEqual(t, toRange(remain), "a", "b")
+	}
+
+	// exhaust the ranges
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), false)
+		require.Equal(t, remain.Len(), 0)
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		split := buildKeyRanges("a", "g")[0]
+		remain := worker.calculateRemain(NewKeyRanges(ranges), toCopRange(split), true)
+		require.Equal(t, remain.Len(), 0)
+	}
+
+	// nil range
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, false)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
+	}
+	{
+		ranges := buildKeyRanges("a", "c", "e", "g")
+		remain := worker.calculateRemain(NewKeyRanges(ranges), nil, true)
+		rangeEqual(t, toRange(remain), "a", "c", "e", "g")
 	}
 }

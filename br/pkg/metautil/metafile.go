@@ -548,9 +548,9 @@ func (writer *MetaWriter) StartWriteMetasAsync(ctx context.Context, op AppendOp)
 	writer.wg.Add(1)
 	go func() {
 		defer func() {
-			writer.wg.Done()
-			// close errCh after metaCh closed
 			close(writer.errCh)
+			// close errCh before metaCh closed
+			writer.wg.Done()
 		}()
 		for {
 			select {

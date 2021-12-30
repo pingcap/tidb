@@ -76,7 +76,11 @@ const (
 	ActionAddCheckConstraint            ActionType = 43
 	ActionDropCheckConstraint           ActionType = 44
 	ActionAlterCheckConstraint          ActionType = 45
-	ActionAlterTableAlterPartition      ActionType = 46
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48
 	ActionAlterTableAttributes          ActionType = 49
@@ -84,11 +88,12 @@ const (
 	ActionCreatePlacementPolicy         ActionType = 51
 	ActionAlterPlacementPolicy          ActionType = 52
 	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPolicy     ActionType = 54
+	ActionAlterTablePartitionPlacement  ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	ActionAlterTableStatsOptions        ActionType = 58
+	ActionAlterNoCacheTable             ActionType = 59
 )
 
 var actionMap = map[ActionType]string{
@@ -106,6 +111,7 @@ var actionMap = map[ActionType]string{
 	ActionModifyColumn:                  "modify column",
 	ActionRebaseAutoID:                  "rebase auto_increment ID",
 	ActionRenameTable:                   "rename table",
+	ActionRenameTables:                  "rename tables",
 	ActionSetDefaultValue:               "set default value",
 	ActionShardRowID:                    "shard row ID",
 	ActionModifyTableComment:            "modify table comment",
@@ -137,16 +143,22 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionAlterTableAlterPartition:      "alter partition",
 	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
+	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
 	ActionCreatePlacementPolicy:         "create placement policy",
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
-	ActionAlterCacheTable:               "alter cache table",
+	ActionAlterTablePlacement:           "alter table placement",
+	ActionAlterCacheTable:               "alter table cache",
+	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
 // String return current ddl action in string
@@ -163,6 +175,9 @@ type HistoryInfo struct {
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
 	FinishedTS    uint64
+
+	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
+	MultipleTableInfos []*TableInfo
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
@@ -184,6 +199,7 @@ func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
 	h.DBInfo = nil
 	h.TableInfo = nil
+	h.MultipleTableInfos = nil
 }
 
 // DDLReorgMeta is meta info of DDL reorganization.
@@ -195,6 +211,7 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location      *time.Location                   `json:"time_location"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -264,6 +281,16 @@ func (job *Job) FinishTableJob(jobState JobState, schemaState SchemaState, ver i
 	job.State = jobState
 	job.SchemaState = schemaState
 	job.BinlogInfo.AddTableInfo(ver, tblInfo)
+}
+
+// FinishMultipleTableJob is called when a job is finished.
+// It updates the job's state information and adds tblInfos to the binlog.
+func (job *Job) FinishMultipleTableJob(jobState JobState, schemaState SchemaState, ver int64, tblInfos []*TableInfo) {
+	job.State = jobState
+	job.SchemaState = schemaState
+	job.BinlogInfo.SchemaVersion = ver
+	job.BinlogInfo.MultipleTableInfos = tblInfos
+	job.BinlogInfo.TableInfo = tblInfos[len(tblInfos)-1]
 }
 
 // FinishDBJob is called when a job is finished.

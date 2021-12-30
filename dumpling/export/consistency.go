@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -40,7 +41,7 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 			conf: conf,
 		}, nil
 	case consistencyTypeSnapshot:
-		if conf.ServerInfo.ServerType != ServerTypeTiDB {
+		if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
 			return nil, errors.New("snapshot consistency is not supported for this server")
 		}
 		return &ConsistencyNone{}, nil
@@ -78,13 +79,13 @@ func (c *ConsistencyNone) PingContext(_ context.Context) error {
 
 // ConsistencyFlushTableWithReadLock uses FlushTableWithReadLock before the dump
 type ConsistencyFlushTableWithReadLock struct {
-	serverType ServerType
+	serverType version.ServerType
 	conn       *sql.Conn
 }
 
 // Setup implements ConsistencyController.Setup
 func (c *ConsistencyFlushTableWithReadLock) Setup(tctx *tcontext.Context) error {
-	if c.serverType == ServerTypeTiDB {
+	if c.serverType == version.ServerTypeTiDB {
 		return errors.New("'flush table with read lock' cannot be used to ensure the consistency in TiDB")
 	}
 	return FlushTableWithReadLock(tctx, c.conn)
@@ -118,7 +119,7 @@ type ConsistencyLockDumpingTables struct {
 
 // Setup implements ConsistencyController.Setup
 func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
-	if c.conf.ServerInfo.ServerType == ServerTypeTiDB {
+	if c.conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		if enableTableLock, err := CheckTiDBEnableTableLock(c.conn); err != nil || !enableTableLock {
 			if err != nil {
 				return err
