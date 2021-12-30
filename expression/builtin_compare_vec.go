@@ -651,14 +651,10 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
 				dstStrings[i] = argTimeStr
@@ -736,14 +732,10 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
 				dstStrings[i] = argTimeStr
@@ -814,3 +806,152 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func (b *builtinGreatestTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) > 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		argTimes := buf.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) < 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
+			}
+		}
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] > resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] < resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+>>>>>>> a8ce4af9f... expression: Fix incorrect behavior of greatest/least when mixed temporal type with others (#31037)
