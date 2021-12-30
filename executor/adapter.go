@@ -1296,7 +1296,8 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	if vars := a.Ctx.GetSessionVars(); topsqlstate.TopSQLEnabled() && vars.StmtStats != nil {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }
 
