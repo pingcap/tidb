@@ -561,7 +561,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if local.duplicateDetection {
-		keyAdapter = duplicateKeyAdapter{}
+		keyAdapter = dupDetectKeyAdapter{}
 	}
 	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
@@ -626,7 +626,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		engine.sstIngester = dbSSTIngester{e: engine}
 		keyAdapter := KeyAdapter(noopKeyAdapter{})
 		if local.duplicateDetection {
-			keyAdapter = duplicateKeyAdapter{}
+			keyAdapter = dupDetectKeyAdapter{}
 		}
 		engine.keyAdapter = keyAdapter
 		if err = engine.loadEngineMeta(); err != nil {
@@ -714,7 +714,7 @@ func (local *local) WriteToTiKV(
 	begin := time.Now()
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
-	iter := newKVIter(ctx, engine, opt)
+	iter := engine.newKVIter(ctx, opt)
 	defer iter.Close()
 
 	stats := rangeStats{}
@@ -953,7 +953,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 }
 
 func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
-	iter := newKVIter(ctx, engine, &pebble.IterOptions{})
+	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1014,7 +1014,7 @@ func (local *local) writeAndIngestByRange(
 		UpperBound: end,
 	}
 
-	iter := newKVIter(ctxt, engine, ito)
+	iter := engine.newKVIter(ctxt, ito)
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()

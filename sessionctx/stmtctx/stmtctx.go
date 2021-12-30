@@ -77,6 +77,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
+	NoZeroDate             bool
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
@@ -214,6 +215,9 @@ type StatementContext struct {
 	// Its life cycle is limited to this execution, and a new KvExecCounter is
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
+
+	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
+	WeakConsistency bool
 }
 
 // StmtHints are SessionVars related sql hints.

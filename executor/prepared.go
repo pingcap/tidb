@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -196,14 +196,23 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 
+	var (
+		normalizedSQL4PC, normalizedSQL4PCHash string
+		selectStmtNode                         ast.StmtNode
+	)
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
 		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
+		selectStmtNode, normalizedSQL4PC, normalizedSQL4PCHash, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		if err != nil || selectStmtNode == nil {
+			normalizedSQL4PC = ""
+			normalizedSQL4PCHash = ""
+		}
 	}
 
 	// We try to build the real statement of preparedStmt.
@@ -220,7 +229,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if p.Schema().Len() > 0 {
+	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
+	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
+	// Usually, p.Schema().Len() == 0 means no result. A special case is the 'do' statement, it looks like 'select' but discard the result.
+	if !isNoResultPlan(p) {
 		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
@@ -231,12 +243,14 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:         prepared,
-		VisitInfos:          destBuilder.GetVisitInfo(),
-		NormalizedSQL:       normalizedSQL,
-		SQLDigest:           digest,
-		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		PreparedAst:          prepared,
+		VisitInfos:           destBuilder.GetVisitInfo(),
+		NormalizedSQL:        normalizedSQL,
+		SQLDigest:            digest,
+		ForUpdateRead:        destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator:  ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:     normalizedSQL4PC,
+		NormalizedSQL4PCHash: normalizedSQL4PCHash,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }

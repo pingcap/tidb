@@ -91,6 +91,8 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
 	}
 
 	if dsn.Vars != nil {
@@ -349,7 +351,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -359,9 +361,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id
