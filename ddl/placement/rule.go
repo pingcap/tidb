@@ -47,18 +47,15 @@ type Rule struct {
 	Role           PeerRoleType `json:"role"`
 	Count          int          `json:"count"`
 	Constraints    Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels []string     `json:"location_labels,omitempty"`
-	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
 func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
 	return &Rule{
-		Role:           role,
-		Count:          int(replicas),
-		Constraints:    cnst,
-		LocationLabels: []string{"region", "zone", "rack", "host"},
+		Role:        role,
+		Count:       int(replicas),
+		Constraints: cnst,
 	}
 }
 
@@ -135,8 +132,7 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.
-// Note that it is a shallow copy: LocationLabels and Constraints
-// is not cloned.
+// Note that it is a shallow copy: Constraints is not cloned.
 func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
