@@ -93,6 +93,8 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*Re
 	topsqlstate.EnabledTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := NewSingleTargetDataSink(ts)
+	ts.Start()
+	ds.Start()
 	return ts, ds
 }
 
@@ -386,6 +388,7 @@ func TestMultipleDataSinks(t *testing.T) {
 
 	topsqlstate.EnabledTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Start()
 	defer tsr.Close()
 
 	var chs []chan *ReportData

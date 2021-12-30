@@ -49,6 +49,9 @@ func NewTopSQLCollector() *TopSQLCollector {
 	}
 }
 
+// Start implements TopSQLReporter interface.
+func (c *TopSQLCollector) Start() {}
+
 // Collect uses for testing.
 func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()

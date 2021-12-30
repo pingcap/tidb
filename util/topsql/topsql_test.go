@@ -98,7 +98,9 @@ func TestTopSQLReporter(t *testing.T) {
 
 	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 	ds := reporter.NewSingleTargetDataSink(report)
+	ds.Start()
 	topsql.SetupTopSQLForTest(report)
 
 	defer func() {
@@ -209,6 +211,7 @@ func TestTopSQLPubSub(t *testing.T) {
 
 	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 	defer report.Close()
 	topsql.SetupTopSQLForTest(report)
 
@@ -326,6 +329,7 @@ func TestTopSQLPubSub(t *testing.T) {
 func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	topsqlstate.EnabledTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	report.Start()
 
 	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)

@@ -44,13 +44,18 @@ var (
 	singleTargetDataSink *reporter.SingleTargetDataSink
 )
 
+func init() {
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = remoteReporter
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+}
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+	globalTopSQLReport.Start()
+	singleTargetDataSink.Start()
 
-	globalTopSQLReport = remoteReporter
-	stmtstats.RegisterCollector(remoteReporter)
+	stmtstats.RegisterCollector(globalTopSQLReport)
 	stmtstats.SetupAggregator()
 }
 
@@ -69,12 +74,8 @@ func RegisterPubSubServer(s *grpc.Server) {
 
 // Close uses to close and release the top sql resource.
 func Close() {
-	if singleTargetDataSink != nil {
-		singleTargetDataSink.Close()
-	}
-	if globalTopSQLReport != nil {
-		globalTopSQLReport.Close()
-	}
+	singleTargetDataSink.Close()
+	globalTopSQLReport.Close()
 	stmtstats.CloseAggregator()
 }
 
@@ -132,26 +133,18 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	r := globalTopSQLReport
-	if r == nil {
-		return
-	}
 	if len(normalizedSQL) > MaxSQLTextSize {
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
 
-	r.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
+	globalTopSQLReport.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
-	r := globalTopSQLReport
-	if r == nil {
-		return
-	}
 	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return
 	}
 
-	r.RegisterPlan(planDigest, normalizedBinaryPlan)
+	globalTopSQLReport.RegisterPlan(planDigest, normalizedBinaryPlan)
 }

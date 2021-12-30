@@ -39,6 +39,9 @@ type TopSQLReporter interface {
 	collector.Collector
 	stmtstats.Collector
 
+	// Start uses to start the reporter.
+	Start()
+
 	// RegisterSQL registers a normalizedSQL with SQLDigest.
 	//
 	// Note that the normalized SQL string can be of >1M long.
@@ -98,11 +101,14 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		decodePlan:                decodePlan,
 	}
 	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
+	return tsr
+}
 
+// Start implements the TopSQLReporter interface.
+func (tsr *RemoteTopSQLReporter) Start() {
 	tsr.sqlCPUCollector.Start()
 	go tsr.collectWorker()
 	go tsr.reportWorker()
-	return tsr
 }
 
 // Collect implements tracecpu.Collector.
