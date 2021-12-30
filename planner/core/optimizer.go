@@ -44,9 +44,6 @@ import (
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error)
 
-// GetBindSQL4PlanCache get the bindSQL for the ast.StmtNode
-var GetBindSQL4PlanCache func(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindSQL string)
-
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
@@ -260,6 +257,9 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+	// TODO: move it to the logic of sync load hist-needed columns.
+	predicateColumns, _ := CollectColumnStatsUsage(logic, true, false)
+	sctx.UpdateColStatsUsage(predicateColumns)
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain

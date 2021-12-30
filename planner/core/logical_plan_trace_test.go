@@ -129,6 +129,33 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 			},
 		},
 		{
+			sql:            "select * from t as t1 where t1.a < (select sum(t2.a) from t as t2 where t2.b = t1.b);",
+			flags:          []uint64{flagDecorrelate, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "decorrelate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "MaxOneRow_7 removed from plan tree",
+					assertReason: "",
+				},
+				{
+					assertAction: "Selection_4 removed from plan tree",
+					assertReason: "Selection_4's conditions have been pushed into Apply_8",
+				},
+				{
+					assertAction: "Apply_8 simplified into Join_8",
+					assertReason: "Join_8 hasn't any corelated column, thus the inner plan is non-correlated",
+				},
+				{
+					assertAction: "Aggregation_5 pulled up as Join_8's parent, and Join_8's join type becomes left outer join",
+					assertReason: "Aggregation_5's functions haven't any group by items and Join_8's join type isn't inner join or left outer join, and hasn't any conditions",
+				},
+				{
+					assertAction: "Projection_6 is moved as Aggregation_5's parent",
+					assertReason: "Join_8's join type is left outer join, not semi join",
+				},
+			},
+		},
+		{
 			sql:            "select * from t as t1 join t as t2 on t1.a = t2.a where t1.a < 1;",
 			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "predicate_push_down",
