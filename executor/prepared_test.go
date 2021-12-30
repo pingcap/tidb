@@ -1406,3 +1406,22 @@ func TestPreparePC4Binding(t *testing.T) {
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
+
+func TestIssue31141(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true) // requires plan cache enable
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+
+	// No panic here.
+	tk.MustExec("prepare stmt1 from 'do 1'")
+
+	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+	tk.MustExec("prepare stmt1 from 'do 1'")
+}
