@@ -189,7 +189,10 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 
 	// tblInfo do not include added partitions, so we should add them first
 	tblInfo = tblInfo.Clone()
-	tblInfo.Partition.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	p := *tblInfo.Partition
+	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
+	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	tblInfo.Partition = &p
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
