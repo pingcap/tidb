@@ -39,7 +39,7 @@ import (
 
 // Builder builds a new InfoSchema.
 type Builder struct {
-	is      *infoSchema
+	is *infoSchema
 	// dbInfos do not need to be copied everytime applying a diff, instead,
 	// they can be copied only once over the whole lifespan of Builder.
 	// This map will indicate which DB has been copied, so that they
