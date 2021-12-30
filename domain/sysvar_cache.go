@@ -250,6 +250,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.TableCacheLease.Store(val)
 	case variable.TiDBPersistAnalyzeOptions:
 		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBEnableColumnTracking:
+		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
