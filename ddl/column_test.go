@@ -1191,6 +1191,13 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"decimal(2,1)", "int", nil},
 		{"decimal", "int", nil},
 		{"decimal(2,1)", "bigint", nil},
+		{"int", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
+		{"varchar(10) character set gbk", "int", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
+		{"varchar(10) character set gbk", "varchar(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk", "char(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set utf8", "char(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set utf8", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set gbk", "varchar(10) character set gbk", nil},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)

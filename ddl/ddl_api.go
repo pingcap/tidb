@@ -3926,6 +3926,10 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+	// TODO, after fully test, we could delete it
+	if err != nil && to.Charset == charset.CharsetGBK || origin.Charset == charset.CharsetGBK {
+		return err
+	}
 	// column type change can handle the charset change between these two types in the process of the reorg.
 	if err != nil && errUnsupportedModifyCharset.Equal(err) && canReorg {
 		return nil
