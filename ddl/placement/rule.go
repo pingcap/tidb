@@ -95,7 +95,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
 		}
 
-		ruleCnt := 0
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
 				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
@@ -103,7 +102,6 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 				}
 				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
 			}
-			ruleCnt += cnt
 		}
 
 		for labels, cnt := range constraints2 {
