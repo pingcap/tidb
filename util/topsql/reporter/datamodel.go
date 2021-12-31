@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
@@ -49,7 +49,7 @@ import (
 //     - records: { sqlPlanDigest => record | sqlPlanDigest => record | ... }
 //     - evicted: { sqlPlanDigest | sqlPlanDigest | ... }
 //
-// cpuRecords: [ tracecpu.SQLCPUTimeRecord | tracecpu.SQLCPUTimeRecord | ... ]
+// cpuRecords: [ collector.SQLCPUTimeRecord | collector.SQLCPUTimeRecord | ... ]
 //
 // normalizeSQLMap: { sqlDigest => normalizedSQL | sqlDigest => normalizedSQL | ... }
 //
@@ -536,8 +536,8 @@ func (c *collecting) take() *collecting {
 	return r
 }
 
-// cpuRecords is a sortable list of tracecpu.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
-type cpuRecords []tracecpu.SQLCPUTimeRecord
+// cpuRecords is a sortable list of collector.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
+type cpuRecords []collector.SQLCPUTimeRecord
 
 func (rs cpuRecords) Len() int {
 	return len(rs)

@@ -5794,8 +5794,9 @@ func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName
 			colName, tblInfo.Name)
 	}
 	// We only support dropping column with single-value none Primary Key index covered now.
-	if !isColumnCanDropWithIndex(multiSchemaChange, colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
+	err := isColumnCanDropWithIndex(multiSchemaChange, colName.L, tblInfo.Indices)
+	if err != nil {
+		return err
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
