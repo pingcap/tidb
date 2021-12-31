@@ -158,7 +158,7 @@ func (s *kvSuite) TestDecode(c *C) {
 		Key: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 		Val: []byte{0x8, 0x2, 0x8, 0x2},
 	}
-	h, err := decoder.DecodeHandleFromTable(p.Key)
+	h, err := decoder.DecodeHandleFromRowKey(p.Key)
 	c.Assert(err, IsNil)
 	c.Assert(p.Val, NotNil)
 	rows, _, err := decoder.DecodeRawRowData(h, p.Val)
@@ -215,7 +215,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 		Timestamp: 1234567890,
 	})
 	c.Assert(err, IsNil)
-	h1, err := decoder.DecodeHandleFromTable(data.pairs[0].Key)
+	h1, err := decoder.DecodeHandleFromRowKey(data.pairs[0].Key)
 	c.Assert(err, IsNil)
 	h2, err := decoder.DecodeHandleFromIndex(tbl.Indices()[0].Meta(), data.pairs[1].Key, data.pairs[1].Val)
 	c.Assert(err, IsNil)

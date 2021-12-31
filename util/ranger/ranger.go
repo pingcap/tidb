@@ -122,6 +122,11 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 				}
 				casted.SetMysqlEnum(upperEnum, tp.Collate)
 			}
+		} else if terror.ErrorEqual(err, charset.ErrInvalidCharacterString) {
+			// The invalid string can be produced by changing datum's underlying bytes directly.
+			// For example, newBuildFromPatternLike calculates the end point by adding 1 to bytes.
+			// We need to skip these invalid strings.
+			return point, nil
 		} else {
 			return point, errors.Trace(err)
 		}

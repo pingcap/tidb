@@ -147,11 +147,22 @@ func (s *Scanner) AppendWarn(err error) {
 	s.warns = append(s.warns, err)
 }
 
+// convert2System convert lit from client encoding to system encoding which is utf8mb4.
+func (s *Scanner) convert2System(tok int, lit string) (int, string) {
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
+	if err != nil {
+		s.AppendWarn(err)
+	}
+
+	return tok, charset.HackString(utf8Lit)
+}
+
+// convert2Connection convert lit from client encoding to connection encoding.
 func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 	if mysql.IsUTF8Charset(s.client.Name()) {
 		return tok, lit
 	}
-	utf8Lit, err := s.client.Transform(nil, charset.Slice(lit), charset.OpDecodeReplace)
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
 	if err != nil {
 		s.AppendError(err)
 		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
@@ -162,9 +173,9 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 
 	// It is definitely valid if `client` is the same with `connection`, so just transform if they are not the same.
 	if s.client.Tp() != s.connection.Tp() {
-		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplace)
+		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplaceNoErr)
 	}
-	return tok, string(utf8Lit)
+	return tok, charset.HackString(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {
@@ -245,7 +256,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case quotedIdentifier, identifier:
 		tok = identifier
 		s.identifierDot = s.r.peek() == '.'
-		tok, v.ident = s.convert2Connection(tok, lit)
+		tok, v.ident = s.convert2System(tok, lit)
 	case stringLit:
 		tok, v.ident = s.convert2Connection(tok, lit)
 	}
@@ -672,31 +683,29 @@ func (mb *lazyBuf) data() string {
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	tok, pos = stringLit, s.r.pos()
 	ending := s.r.readByte()
-	foundEscape := false
+	s.buf.Reset()
 	for !s.r.eof() {
+		tPos := s.r.pos()
 		if s.r.skipRune(s.client) {
+			s.buf.WriteString(s.r.data(&tPos))
 			continue
 		}
 		ch0 := s.r.readByte()
 		if ch0 == ending {
-			if s.r.peek() == ending {
-				s.r.inc()
-				foundEscape = true
-				continue
-			}
-			str := s.r.data(&pos)
-			if foundEscape {
-				lit = s.handleEscape(str[1:len(str)-1], ending)
+			if s.r.peek() != ending {
+				lit = s.buf.String()
 				return
 			}
-			lit = str[1 : len(str)-1]
-			return
+			s.r.inc()
+			s.buf.WriteByte(ch0)
 		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
 			if s.r.eof() {
 				break
 			}
+			s.handleEscape(s.r.peek(), &s.buf)
 			s.r.inc()
-			foundEscape = true
+		} else {
+			s.buf.WriteByte(ch0)
 		}
 	}
 
@@ -705,51 +714,33 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 }
 
 // handleEscape handles the case in scanString when previous char is '\'.
-func (s *Scanner) handleEscape(str string, sep byte) string {
-	var buf bytes.Buffer
+func (s *Scanner) handleEscape(b byte, buf *bytes.Buffer) {
 	var ch0 byte
-	for i := 0; i < len(str); i++ {
-		mbLen := s.client.MbLen(str[i:])
-		if mbLen > 0 {
-			buf.WriteString(str[i : i+mbLen])
-			i += mbLen - 1
-			continue
-		}
-		if str[i] == '\\' {
-			switch str[i+1] {
-			/*
-				\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
-				\% \_ ==> preserve both char
-				other ==> remove \
-			*/
-			case 'n':
-				ch0 = '\n'
-			case '0':
-				ch0 = 0
-			case 'b':
-				ch0 = 8
-			case 'Z':
-				ch0 = 26
-			case 'r':
-				ch0 = '\r'
-			case 't':
-				ch0 = '\t'
-			case '%', '_':
-				buf.WriteByte('\\')
-				ch0 = str[i+1]
-			default:
-				ch0 = str[i+1]
-			}
-			buf.WriteByte(ch0)
-			i++
-		} else if str[i] == sep {
-			buf.WriteByte(str[i])
-			i++
-		} else {
-			buf.WriteByte(str[i])
-		}
+	/*
+		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
+		\% \_ ==> preserve both char
+		other ==> remove \
+	*/
+	switch b {
+	case 'n':
+		ch0 = '\n'
+	case '0':
+		ch0 = 0
+	case 'b':
+		ch0 = 8
+	case 'Z':
+		ch0 = 26
+	case 'r':
+		ch0 = '\r'
+	case 't':
+		ch0 = '\t'
+	case '%', '_':
+		buf.WriteByte('\\')
+		ch0 = b
+	default:
+		ch0 = b
 	}
-	return buf.String()
+	buf.WriteByte(ch0)
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
