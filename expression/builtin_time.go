@@ -3357,6 +3357,8 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 		if dateEvalTp == types.ETString {
 			bf.tp.Tp = mysql.TypeString
+			bf.tp.Flen = mysql.MaxDatetimeFullWidth
+			bf.tp.Decimal = -1
 			types.SetBinChsClnFlag(bf.tp)
 		}
 
@@ -4150,6 +4152,8 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 		if dateEvalTp == types.ETString {
 			bf.tp.Tp = mysql.TypeString
+			bf.tp.Flen = mysql.MaxDatetimeFullWidth
+			bf.tp.Decimal = -1
 			types.SetBinChsClnFlag(bf.tp)
 		}
 
