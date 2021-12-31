@@ -738,7 +738,6 @@ func TestViewColumns(t *testing.T) {
 }
 
 func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

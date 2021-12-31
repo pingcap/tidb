@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 
@@ -313,8 +314,7 @@ func (s *session) cleanRetryInfo() {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				bindSQL := planner.GetBindSQL4PlanCache(s, preparedAst.Stmt)
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion, bindSQL)
+				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
 			}
 		}
 	}
@@ -412,6 +412,18 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 		}
 		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
+}
+
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+	if s.statsCollector == nil {
+		return
+	}
+	t := time.Now()
+	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	for _, col := range predicateColumns {
+		colMap[col] = t
+	}
+	s.statsCollector.UpdateColStatsUsage(colMap)
 }
 
 // StoreIndexUsage stores index usage information in idxUsageCollector.
@@ -1378,7 +1390,7 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
-		if variable.TopSQLEnabled() {
+		if topsqlstate.TopSQLEnabled() {
 			//  Restore the goroutine label by using the original ctx after execution is finished.
 			pprof.SetGoroutineLabels(ctx)
 		}
@@ -1518,7 +1530,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
@@ -1542,7 +1554,7 @@ func (s *session) ParseWithParamsInternal(ctx context.Context, sql string, args 
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	var execOption sqlexec.ExecOption
@@ -1652,7 +1664,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 
@@ -2130,7 +2142,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: is,
 	}
-	if err = sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider); err != nil {
+
+	txnManager := sessiontxn.GetTxnManager(s)
+	if err = txnManager.SetContextProvider(txnCtxProvider); err != nil {
 		return nil, err
 	}
 
@@ -2143,9 +2157,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	defer s.txn.onStmtEnd()
 
 	if ok {
-		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
 	}
-	return s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -2192,6 +2206,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
 		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+		if s.GetSessionVars().StmtCtx.WeakConsistency {
+			s.txn.SetOption(kv.IsolationLevel, kv.RC)
+		}
 	}
 	return &s.txn, nil
 }
@@ -2690,6 +2707,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
+	// start sub workers for concurrent stats loading
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < int(concurrency); i++ {
+		subSe, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		subCtxs[i] = subSe
+	}
+	dom.StartLoadStatsSubWorkers(subCtxs)
+
 	dom.PlanReplayerLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
@@ -2881,7 +2910,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	return nil
 }
 
-// PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
+// PrepareTxnCtx begins a transaction, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	s.currentCtx = ctx

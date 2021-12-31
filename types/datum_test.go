@@ -216,6 +216,7 @@ func TestToJSON(t *testing.T) {
 		{NewStringDatum("{}"), `{}`, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), `"2011-11-10 11:11:11.111111"`, true},
 		{NewStringDatum(`{"a": "9223372036854775809"}`), `{"a": "9223372036854775809"}`, true},
+		{NewBinaryLiteralDatum([]byte{0x81}), ``, false},
 
 		// can not parse JSON from this string, so error occurs.
 		{NewStringDatum("hello, 世界"), "", false},
