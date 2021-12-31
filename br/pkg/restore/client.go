@@ -54,6 +54,7 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
+const minBatchDdlSize = 1
 
 // Client sends requests to restore files.
 type Client struct {
@@ -514,7 +515,7 @@ func (rc *Client) GoCreateTables(
 
 	var err error
 
-	if rc.batchDdlSize > 1 {
+	if rc.batchDdlSize > minBatchDdlSize {
 
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
 
@@ -524,7 +525,7 @@ func (rc *Client) GoCreateTables(
 			return outCh
 			// fall back to old create table (sequential create table)
 		} else if errors.Cause(err).(*terror.Error).Code() == errno.ErrInvalidDDLJob {
-			log.Info("fall back to the old DDL way to create table")
+			log.Info("fall back to the sequential create table")
 		} else {
 			errCh <- err
 			close(outCh)
