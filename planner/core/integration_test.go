@@ -5182,3 +5182,29 @@ func (s *testIntegrationSuite) TestIndexMergeWithCorrelatedColumns(c *C) {
 	}
 
 }
+
+func (s *testIntegrationSuite) TestIssue20510(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE t1 (a int PRIMARY KEY, b int)")
+	tk.MustExec("CREATE TABLE t2 (a int PRIMARY KEY, b int)")
+	tk.MustExec("INSERT INTO t1 VALUES (1,1), (2,1), (3,1), (4,2)")
+	tk.MustExec("INSERT INTO t2 VALUES (1,2), (2,2)")
+
+	tk.MustQuery("explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));").Check(testkit.Rows(
+		"Selection 8000.00 root  not(plus(0, and(eq(test.t1.a, 30), eq(test.t2.b, 1))))",
+		"└─MergeJoin 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(istrue_with_null(plus(0, and(eq(test.t2.a, 30), eq(test.t2.b, 1)))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"))
+	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));").Check(testkit.Rows(
+		"1 1 1 2",
+		"2 1 2 2",
+		"3 1 <nil> <nil>",
+		"4 2 <nil> <nil>",
+	))
+}
