@@ -164,6 +164,10 @@ type mockTiFlashPlacementManager struct {
 	tiflash *MockTiFlash
 }
 
+type mockAddrTiFlashPlacementManager struct {
+	TiFlashPDPlacementManager
+	sync.Mutex
+}
 func makeBaseRule() placement.Rule {
 	return placement.Rule{
 		GroupID:  "tiflash",

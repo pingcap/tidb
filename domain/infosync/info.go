@@ -259,17 +259,18 @@ func initPlacementManager(addrs []string) PlacementManager {
 
 func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	if len(addrs) == 0 {
-		m := mockTiFlashPlacementManager{}
-		m.tiflash = &MockTiFlash{
-				StatusAddr:                  "",
-				StatusServer:                nil,
-				SyncStatus:                  make(map[int]MockTiFlashTableInfo),
-				GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
-				PdEnabled:                   true,
-				TiflashDelay:                0,
-				StartTime:                   time.Now(),
-			}
-		return &m
+		//m := mockTiFlashPlacementManager{}
+		//m.tiflash = &MockTiFlash{
+		//		StatusAddr:                  "",
+		//		StatusServer:                nil,
+		//		SyncStatus:                  make(map[int]MockTiFlashTableInfo),
+		//		GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
+		//		PdEnabled:                   true,
+		//		TiflashDelay:                0,
+		//		StartTime:                   time.Now(),
+		//	}
+		//return &m
+		return &mockAddrTiFlashPlacementManager{}
 	}
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
