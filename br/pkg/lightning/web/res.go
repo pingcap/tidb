@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build dev
 // +build dev
 
 package web
@@ -20,4 +21,4 @@ import (
 	"net/http"
 )
 
-var Res http.FileSystem = http.Dir("web/dist")
+var Res http.FileSystem = http.Dir("br/web/dist")

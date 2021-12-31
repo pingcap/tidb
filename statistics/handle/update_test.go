@@ -25,17 +25,19 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -149,7 +151,7 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
 	// Test IncreaseFactor.
-	count, err := stats1.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
+	count, err := stats1.ColumnEqualRowCount(testKit.Se, types.NewIntDatum(1), tableInfo1.Columns[0].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(rowCount1*2))
 
@@ -584,6 +586,44 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
 
+func (s *testSerialStatsSuite) TestAutoAnalyzeOutOfSpecifiedTime(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	t := time.Now().Add(-1 * time.Minute)
+	h, m := t.Hour(), t.Minute()
+	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
+	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
+	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	// to pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("alter table t add index ia(a)")
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
 func (s *testSerialStatsSuite) TestIssue25700(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -900,6 +940,7 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 				LowExclude:  t.exclude[i],
 				HighVal:     []types.Datum{types.NewIntDatum(t.points[i+1])},
 				HighExclude: t.exclude[i+1],
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			})
 		}
 		ranges, _ = h.SplitRange(nil, ranges, false)
@@ -1424,6 +1465,9 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait =0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
@@ -1471,9 +1515,6 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		tbl    *statistics.Table
 		ratio  float64
 		limit  time.Duration
-		start  string
-		end    string
-		now    string
 		result bool
 		reason string
 	}{
@@ -1482,20 +1523,14 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: true,
 			reason: "table unanalyzed",
 		},
-		// table was never analyzed but has not reach the limit
+		// table was never analyzed but has not reached the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
 			limit:  time.Hour,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
@@ -1504,76 +1539,52 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
-		// table was already analyzed and but modify count is small
+		// table was already analyzed but modify count is small
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: false,
 			reason: "",
 		},
-		// table was already analyzed and but not within time period
+		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:02 +0800",
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed and but not within time period
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:  0,
-			ratio:  0.3,
-			start:  "22:00 +0800",
-			end:    "06:00 +0800",
-			now:    "10:00 +0800",
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed and within time period
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:  0,
-			ratio:  0.3,
-			start:  "00:00 +0800",
-			end:    "00:01 +0800",
-			now:    "00:00 +0800",
 			result: true,
 			reason: "too many modifications",
 		},
-		// table was already analyzed and within time period
+		// table was already analyzed
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "22:00 +0800",
-			end:    "06:00 +0800",
-			now:    "23:00 +0800",
+			result: true,
+			reason: "too many modifications",
+		},
+		// table was already analyzed
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			result: true,
+			reason: "too many modifications",
+		},
+		// table was already analyzed
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
-		start, err := time.ParseInLocation(variable.FullDayTimeFormat, test.start, time.UTC)
-		c.Assert(err, IsNil)
-		end, err := time.ParseInLocation(variable.FullDayTimeFormat, test.end, time.UTC)
-		c.Assert(err, IsNil)
-		now, err := time.ParseInLocation(variable.FullDayTimeFormat, test.now, time.UTC)
-		c.Assert(err, IsNil)
-		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio)
 		c.Assert(needAnalyze, Equals, test.result)
 		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}
@@ -2328,4 +2339,182 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (5, 6), (7, 8)")
+	tk.MustExec("insert into t3 values (1, 2), (3, 4), (11, 12), (13, 14)")
+	tk.MustExec("select * from t1 where a > 1")
+	tk.MustExec("select * from t2 where b < 10")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a is collected as predicate column
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+	tk.MustExec("analyze table t1")
+	tk.MustExec("select * from t1 where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// t1.a updates last_used_at first and then updates last_analyzed_at while t1.b updates last_analyzed_at first and then updates last_used_at.
+	// Check both of them behave as expected.
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[1][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[1][5].(string) != "<nil>", IsTrue)
+
+	// Test partition table.
+	// No matter whether it is static or dynamic pruning mode, we record predicate columns using table ID rather than partition ID.
+	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", val))
+		tk.MustExec("delete from mysql.column_stats_usage")
+		tk.MustExec("select * from t3 where a < 5")
+		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
+		c.Assert(len(rows), Equals, 1)
+		c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t3", "global", "a"})
+		c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+		c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	}
+
+	// Test non-correlated subquery.
+	// Non-correlated subquery will be executed during the plan building phase, which cannot be done by mock in (*testPlanSuite).TestCollectPredicateColumns.
+	// Hence we put the test of collecting predicate columns for non-correlated subquery here.
+	tk.MustExec("delete from mysql.column_stats_usage")
+	tk.MustExec("select * from t2 where t2.a > (select count(*) from t1 where t1.b > 1)")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "b"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t2", "", "a"})
+	c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+	c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+}
+
+func (s *testSerialStatsSuite) TestCollectPredicateColumnsFromExecute(c *C) {
+	for _, val := range []bool{false, true} {
+		func(planCache bool) {
+			originalVal1 := plannercore.PreparedPlanCacheEnabled()
+			defer func() {
+				plannercore.SetPreparedPlanCache(originalVal1)
+			}()
+			plannercore.SetPreparedPlanCache(planCache)
+
+			defer cleanEnv(c, s.store, s.do)
+			tk := testkit.NewTestKit(c, s.store)
+
+			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+			defer func() {
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
+			}()
+			tk.MustExec("set global tidb_enable_column_tracking = 1")
+
+			h := s.do.StatsHandle()
+			tk.MustExec("use test")
+			tk.MustExec("create table t1(a int, b int)")
+			tk.MustExec("prepare stmt from 'select * from t1 where a > ?'")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			// Prepare only converts sql string to ast and doesn't do optimization, so no predicate column is collected.
+			tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			tk.MustExec("set @p1 = 1")
+			tk.MustExec("execute stmt using @p1")
+			c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+			c.Assert(len(rows), Equals, 1)
+			c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+			c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+			c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+
+			tk.MustExec("delete from mysql.column_stats_usage")
+			tk.MustExec("set @p2 = 2")
+			tk.MustExec("execute stmt using @p2")
+			if planCache {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				// If the second execution uses the cached plan, no predicate column is collected.
+				tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Check(testkit.Rows())
+			} else {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+				c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+				rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
+				c.Assert(len(rows), Equals, 1)
+				c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t1", "", "a"})
+				c.Assert(rows[0][4].(string) != "<nil>", IsTrue)
+				c.Assert(rows[0][5].(string) == "<nil>", IsTrue)
+			}
+		}(val)
+	}
+}
+
+func (s *testSerialStatsSuite) TestEnableAndDisableColumnTracking(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][3], Equals, "b")
+
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
+	time.Sleep(1500 * time.Millisecond)
+	tk.MustExec("select * from t where a > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// We don't collect predicate columns when tidb_enable_column_tracking = 0
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b < 1 and c > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+
+	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }

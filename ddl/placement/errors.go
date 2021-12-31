@@ -41,4 +41,10 @@ var (
 	ErrMissingRoleField = errors.New("the ROLE field is not specified")
 	// ErrNoRulesToDrop is from bundle.go.
 	ErrNoRulesToDrop = errors.New("no rule of such role to drop")
+	// ErrInvalidPlacementOptions is from bundle.go.
+	ErrInvalidPlacementOptions = errors.New("invalid placement option")
+	// ErrInvalidConstraintsMappingWrongSeparator is wrong separator in mapping.
+	ErrInvalidConstraintsMappingWrongSeparator = errors.New("mappings use a colon and space (“: ”) to mark each key/value pair")
+	// ErrInvalidConstraintsMappingNoColonFound is no colon found in mapping.
+	ErrInvalidConstraintsMappingNoColonFound = errors.New("no colon found")
 )

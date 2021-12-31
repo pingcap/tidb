@@ -20,11 +20,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -32,6 +32,7 @@ import (
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
+var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -118,8 +119,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}
@@ -253,7 +253,9 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
 func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
-	stmtNodes, warns, err := p.Parse(sql, charset, collation)
+	stmtNodes, warns, err := p.ParseSQL(sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -297,7 +299,8 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 
 func extractHintWarns(warns []error) []error {
 	for _, w := range warns {
-		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+		if parser.ErrParse.Equal(w) ||
+			parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
 			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
 			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
 			parser.ErrWarnOptimizerHintParseError.Equal(w) ||

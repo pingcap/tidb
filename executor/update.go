@@ -15,20 +15,23 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -58,7 +61,7 @@ type UpdateExec struct {
 	drained                   bool
 	memTracker                *memory.Tracker
 
-	stats *runtimeStatsWithSnapshot
+	stats *updateRuntimeStats
 
 	handles        []kv.Handle
 	tableUpdatable []bool
@@ -217,6 +220,9 @@ func (e *UpdateExec) unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpd
 func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.drained {
+		if e.collectRuntimeStatsEnabled() {
+			ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
+		}
 		numRows, err := e.updateRows(ctx)
 		if err != nil {
 			return err
@@ -265,10 +271,14 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if variable.TopSQLEnabled() {
+		if topsqlstate.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
-				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
+				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+				if e.ctx.GetSessionVars().StmtCtx.KvExecCounter != nil {
+					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().StmtCtx.KvExecCounter.RPCInterceptor())
+				}
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -414,7 +424,7 @@ func (e *UpdateExec) Close() error {
 	e.setMessage()
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
-		if err == nil && txn.GetSnapshot() != nil {
+		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
@@ -442,13 +452,81 @@ func (e *UpdateExec) setMessage() {
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
+			e.stats = &updateRuntimeStats{
+				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},
+				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
 	}
 	return false
+}
+
+// updateRuntimeStats is the execution stats about update statements.
+type updateRuntimeStats struct {
+	*txnsnapshot.SnapshotRuntimeStats
+	*autoid.AllocatorRuntimeStats
+}
+
+func (e *updateRuntimeStats) String() string {
+	if e.SnapshotRuntimeStats == nil && e.AllocatorRuntimeStats == nil {
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if e.SnapshotRuntimeStats != nil {
+		stats := e.SnapshotRuntimeStats.String()
+		if stats != "" {
+			buf.WriteString(stats)
+		}
+	}
+	if e.AllocatorRuntimeStats != nil {
+		stats := e.AllocatorRuntimeStats.String()
+		if stats != "" {
+			if buf.Len() > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(stats)
+		}
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &updateRuntimeStats{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats
+	}
+	if e.AllocatorRuntimeStats != nil {
+		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*updateRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats
+		} else {
+			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+		}
+	}
+	if tmp.AllocatorRuntimeStats != nil {
+		if e.AllocatorRuntimeStats == nil {
+			e.AllocatorRuntimeStats = tmp.AllocatorRuntimeStats.Clone()
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *updateRuntimeStats) Tp() int {
+	return execdetails.TpUpdateRuntimeStats
 }

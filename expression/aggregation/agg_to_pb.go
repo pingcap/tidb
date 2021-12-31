@@ -15,25 +15,22 @@
 package aggregation
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
-func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
-	// if aggFunc.HasDistinct {
-	// do nothing and ignore aggFunc.HasDistinct
-	// }
-	if len(aggFunc.OrderByItems) > 0 {
-		return nil
-	}
-	pc := expression.NewPBConverter(client, sc)
+func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
 	var tp tipb.ExprType
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
@@ -82,6 +79,30 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 			return nil
 		}
 		children = append(children, pbArg)
+	}
+	if tp == tipb.ExprType_GroupConcat {
+		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
+		sc := sctx.GetSessionVars().StmtCtx
+		for _, arg := range aggFunc.OrderByItems {
+			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
+			if pbArg == nil {
+				return nil
+			}
+			orderBy = append(orderBy, pbArg)
+		}
+		// encode GroupConcatMaxLen
+		GCMaxLen, err := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		if err != nil {
+			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
+			return nil
+		}
+		maxLen, err := strconv.ParseUint(GCMaxLen, 10, 64)
+		// Should never happen
+		if err != nil {
+			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
+			return nil
+		}
+		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy}
 	}
 	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct}
 }

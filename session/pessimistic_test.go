@@ -26,12 +26,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -70,13 +70,11 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	transaction.PrewriteMaxBackoff = 500
-	transaction.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	transaction.PrewriteMaxBackoff = 20000
-	transaction.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
@@ -1166,11 +1164,11 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err := tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 4 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 7 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 
@@ -1182,9 +1180,9 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 	tk1.MustExec("begin pessimistic")
 	err = tk1.ExecToErr("select * from t where k = 2 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	err = tk1.ExecToErr("select * from t where k = 6 for update nowait")
-	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
+	c.Check(storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue, Commentf("got %v", err))
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
 }

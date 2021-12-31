@@ -286,9 +286,9 @@
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` )"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       },
       {
         "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
@@ -304,15 +304,15 @@
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` )"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
-        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.c, 1), gt(test.t.f, 2))]))",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
         "HasWarn": true,
-        "Hints": "use_index(@`sel_1` `test`.`t` )"
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
       }
     ]
   },
@@ -1476,14 +1476,12 @@
         ],
         "Plan": [
           "Sort 12500.00 root  test.t1.c_int, test.t2.c_str",
-          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, test.t1.c_int, right key:test.t2.c_int, test.t2.c_int",
-          "  ├─Sort(Build) 10000.00 root  test.t2.c_int, test.t2.c_int",
-          "  │ └─UnionScan 10000.00 root  ",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) 10000.00 root  test.t1.c_int, test.t1.c_int",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, right key:test.t2.c_int",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       }
     ]
@@ -1580,7 +1578,7 @@
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'intdiv'(signature: IntDivideInt) can not be pushed to storage layer",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to storage layer now.",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
@@ -1707,7 +1705,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
           "  └─PartitionUnion 16000.00 root  ",
           "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -1790,7 +1788,7 @@
         "Plan": [
           "Projection 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg 8000.00 root  group by:Column#17, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->test.t.c",
-          "  └─Projection 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(32,0) BINARY)->Column#15, test.t.c, test.t.c",
+          "  └─Projection 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#15, test.t.c, test.t.c",
           "    └─TableReader 10000.00 root  data:TableFullScan",
           "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1852,7 +1850,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
           "  └─PartitionUnion 16000.00 root  ",
           "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -1894,7 +1892,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
           "  └─PartitionUnion 16000.00 root  ",
           "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader 8000.00 root  data:HashAgg",
@@ -2663,6 +2661,19 @@
           "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
           "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28316",
+    "Cases": [
+      {
+        "SQL": "select * from t where t.a < 3 and t.a < 3",
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

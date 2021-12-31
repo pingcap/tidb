@@ -34,6 +34,7 @@ import (
 
 // hashContext keeps the needed hash context of a db table in hash join.
 type hashContext struct {
+	// allTypes one-to-one correspondence with keyColIdx
 	allTypes  []*types.FieldType
 	keyColIdx []int
 	buf       []byte
@@ -61,7 +62,8 @@ func (hc *hashContext) initHash(rows int) {
 }
 
 type hashStatistic struct {
-	probeCollision   int
+	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
+	probeCollision   int64
 	buildTableElapse time.Duration
 }
 
@@ -70,10 +72,12 @@ func (s *hashStatistic) String() string {
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
+// NOTE: a hashRowContainer may be shallow copied by the invoker, define all the
+// member attributes as pointer type to avoid unexpected problems.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
 	hCtx *hashContext
-	stat hashStatistic
+	stat *hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
@@ -81,16 +85,23 @@ type hashRowContainer struct {
 	rowContainer *chunk.RowContainer
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
+	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
+		stat:         new(hashStatistic),
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 	}
 	return c
+}
+
+func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
+	newHRC := *c
+	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
+	return &newHRC
 }
 
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
@@ -115,7 +126,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			return
 		}
 		if !ok {
-			c.stat.probeCollision++
+			atomic.AddInt64(&c.stat.probeCollision, 1)
 			continue
 		}
 		matched = append(matched, matchedRow)
@@ -161,7 +172,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	hCtx := c.hCtx
 	for keyIdx, colIdx := range c.hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -22,21 +22,26 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 type tikvTxn struct {
 	*tikv.KVTxn
-	idxNameCache map[int64]*model.TableInfo
+	idxNameCache        map[int64]*model.TableInfo
+	snapshotInterceptor kv.SnapshotInterceptor
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -47,7 +52,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -75,25 +80,57 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return &tikvSnapshot{txn.KVTxn.GetSnapshot()}
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.snapshotInterceptor}
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), derr.ToTiDBErr(err)
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err error) {
+	var dirtyIter, snapIter kv.Iterator
+
+	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
+		return nil, err
+	}
+
+	if snapIter, err = txn.GetSnapshot().Iter(k, upperBound); err != nil {
+		dirtyIter.Close()
+		return nil, err
+	}
+
+	iter, err = NewUnionIter(dirtyIter, snapIter, false)
+	if err != nil {
+		dirtyIter.Close()
+		snapIter.Close()
+	}
+
+	return iter, err
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
 // TODO: Add lower bound limit
-func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), derr.ToTiDBErr(err)
+func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
+	var dirtyIter, snapIter kv.Iterator
+
+	if dirtyIter, err = txn.GetMemBuffer().IterReverse(k); err != nil {
+		return nil, err
+	}
+
+	if snapIter, err = txn.GetSnapshot().IterReverse(k); err != nil {
+		dirtyIter.Close()
+		return nil, err
+	}
+
+	iter, err = NewUnionIter(dirtyIter, snapIter, true)
+	if err != nil {
+		dirtyIter.Close()
+		snapIter.Close()
+	}
+
+	return iter, err
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -114,8 +151,16 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := txn.KVTxn.Get(ctx, k)
-	return data, derr.ToTiDBErr(err)
+	val, err := txn.GetMemBuffer().Get(ctx, k)
+	if kv.ErrNotExist.Equal(err) {
+		val, err = txn.GetSnapshot().Get(ctx, k)
+	}
+
+	if err == nil && len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return val, err
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -182,8 +227,16 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.ResourceGroupTagger:
+		txn.KVTxn.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
+	case kv.SnapInterceptor:
+		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
+	case kv.CommitTSUpperBoundCheck:
+		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
+	case kv.RPCInterceptor:
+		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	}
 }
 
@@ -241,6 +294,15 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 type TiDBKVFilter struct{}
 
 // IsUnnecessaryKeyValue defines which kinds of KV pairs from TiDB needn't be committed.
-func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
+	isUntouchedValue := tablecodec.IsUntouchedIndexKValue(key, value)
+	if isUntouchedValue && flags.HasPresumeKeyNotExists() {
+		logutil.BgLogger().Error("unexpected path the untouched key value with PresumeKeyNotExists flag",
+			zap.Stringer("key", kv.Key(key)), zap.Stringer("value", kv.Key(value)),
+			zap.Uint16("flags", uint16(flags)), zap.Stack("stack"))
+		return false, errors.Errorf(
+			"unexpected path the untouched key=%s value=%s contains PresumeKeyNotExists flag keyFlags=%v",
+			kv.Key(key).String(), kv.Key(value).String(), flags)
+	}
+	return isUntouchedValue, nil
 }

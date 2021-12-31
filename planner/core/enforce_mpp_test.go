@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
@@ -61,12 +61,12 @@ func (s *testEnforceMPPSuite) TestSetVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// test value limit of tidb_opt_tiflash_concurrency_factor
-	err := tk.ExecToErr("set @@tidb_opt_tiflash_concurrency_factor = 0")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_opt_tiflash_concurrency_factor' can't be set to the value of '0'`)
+	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 0")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'"))
+	tk.MustQuery(`select @@tidb_opt_tiflash_concurrency_factor`).Check(testkit.Rows("1"))
 
 	// test set tidb_enforce_mpp when tidb_allow_mpp=false;
-	err = tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
+	err := tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[variable:1231]Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.'`)
 
@@ -143,7 +143,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning1(c *C) {
 	// test query
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int as (a+1), c time)")
+	tk.MustExec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))")
 	tk.MustExec("create index idx on t(a)")
 
 	var input []string

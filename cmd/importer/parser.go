@@ -21,10 +21,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -174,17 +174,17 @@ func (t *table) String() string {
 	}
 
 	ret := fmt.Sprintf("[table]name: %s\n", t.name)
-	ret += fmt.Sprintf("[table]columns:\n")
+	ret += "[table]columns:\n"
 	ret += t.printColumns()
 
 	ret += fmt.Sprintf("[table]column list: %s\n", t.columnList)
 
-	ret += fmt.Sprintf("[table]indices:\n")
+	ret += "[table]indices:\n"
 	for k, v := range t.indices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}
 
-	ret += fmt.Sprintf("[table]unique indices:\n")
+	ret += "[table]unique indices:\n"
 	for k, v := range t.uniqIndices {
 		ret += fmt.Sprintf("key->%s, value->%v", k, v)
 	}

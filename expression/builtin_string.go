@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package expression
 
 import (
@@ -29,9 +29,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/text/transform"
 )
 
 var (
@@ -99,6 +98,7 @@ var (
 	_ builtinFunc = &builtinRightSig{}
 	_ builtinFunc = &builtinRightUTF8Sig{}
 	_ builtinFunc = &builtinRepeatSig{}
+	_ builtinFunc = &builtinLowerUTF8Sig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
@@ -173,10 +173,12 @@ func reverseRunes(origin []rune) []rune {
 
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
+// We need to check if the tp is enum or set, if so, don't add binary flag directly unless it has binary flag.
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	nonEnumOrSet := !(argTp.Tp == mysql.TypeEnum || argTp.Tp == mysql.TypeSet)
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || (!types.IsNonBinaryStr(argTp) && nonEnumOrSet) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -288,7 +290,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -364,15 +366,15 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
+			bf.tp.Flen += argType.Flen
 		}
-		bf.tp.Flen += argType.Flen
 	}
 
 	// add separator
-	argsLen := len(args) - 1
-	bf.tp.Flen += argsLen - 1
+	sepsLen := len(args) - 2
+	bf.tp.Flen += sepsLen * args[0].GetType().Flen
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -700,9 +702,36 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinLowerSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinLowerSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	} else {
+		sig = &builtinLowerUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
+	}
 	return sig, nil
+}
+
+type builtinLowerUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinLowerUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinLowerUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
+func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -723,11 +752,7 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToLower(d), false, nil
+	return d, false, nil
 }
 
 type reverseFunctionClass struct {
@@ -742,12 +767,12 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	retTp := *args[0].GetType()
-	retTp.Tp = mysql.TypeVarString
-	retTp.Decimal = types.UnspecifiedLength
-	bf.tp = &retTp
+
+	argTp := args[0].GetType()
+	bf.tp.Flen = args[0].GetType().Flen
+	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(bf.tp) {
+	if types.IsBinaryStr(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
@@ -900,8 +925,8 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-
-	return strings.ToUpper(d), false, nil
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1070,6 +1095,13 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
+	// convert function should always derive to CoercibilityImplicit
+	bf.SetCoercibility(CoercibilityImplicit)
+	if bf.tp.Charset == charset.CharsetASCII {
+		bf.SetRepertoire(ASCII)
+	} else {
+		bf.SetRepertoire(UNICODE)
+	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
 	if types.IsBinaryStr(bf.tp) {
@@ -1102,18 +1134,27 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	argTp, resultTp := b.args[0].GetType(), b.tp
+	if !charset.IsSupportedEncoding(resultTp.Charset) {
+		return "", false, errUnknownCharacterSet.GenWithStackByArgs(resultTp.Charset)
 	}
-
-	target, _, err := transform.String(encoding.NewDecoder(), expr)
-	return target, err != nil, err
+	if types.IsBinaryStr(argTp) {
+		// Convert charset binary -> utf8. If it meets error, NULL is returned.
+		enc := charset.FindEncoding(resultTp.Charset)
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpDecodeReplace)
+		return string(ret), err != nil, nil
+	} else if types.IsBinaryStr(resultTp) {
+		// Convert charset utf8 -> binary.
+		enc := charset.FindEncoding(argTp.Charset)
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpEncode)
+		return string(ret), false, err
+	}
+	enc := charset.FindEncoding(resultTp.Charset)
+	if !enc.IsValid(hack.Slice(expr)) {
+		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplaceNoErr)
+		return string(replace), false, nil
+	}
+	return expr, false, nil
 }
 
 type substringFunctionClass struct {
@@ -1364,6 +1405,10 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	if len(delim) == 0 {
 		return "", false, nil
 	}
+	// when count > MaxInt64, returns whole string.
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+		return str, false, nil
+	}
 
 	strs := strings.Split(str, delim)
 	start, end := int64(0), int64(len(strs))
@@ -1376,8 +1421,8 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < 0 {
-			// -count overflows max int64, returns an empty string.
-			return "", false, nil
+			// -count overflows max int64, returns whole string.
+			return str, false, nil
 		}
 
 		if count < end {
@@ -1587,9 +1632,9 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
-		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
+		bf.tp.Flen = argFieldTp.Flen * 4 * 2
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
@@ -1842,33 +1887,23 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
-	if err != nil {
-		return d, isNull, err
+	if err != nil || isRemStrNull {
+		return d, isRemStrNull, err
 	}
 	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
 	}
 	direction = ast.TrimDirectionType(x)
-	if direction == ast.TrimLeading {
-		if isRemStrNull {
-			d = strings.TrimLeft(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-		}
-	} else if direction == ast.TrimTrailing {
-		if isRemStrNull {
-			d = strings.TrimRight(str, spaceChars)
-		} else {
-			d = trimRight(str, remstr)
-		}
-	} else {
-		if isRemStrNull {
-			d = strings.Trim(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-			d = trimRight(d, remstr)
-		}
+	switch direction {
+	case ast.TrimLeading:
+		d = trimLeft(str, remstr)
+	case ast.TrimTrailing:
+		d = trimRight(str, remstr)
+	default:
+		d = trimLeft(str, remstr)
+		d = trimRight(d, remstr)
+
 	}
 	return d, false, nil
 }
@@ -2285,7 +2320,6 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
 	return int64(len(val) * 8), false, nil
 }
 
@@ -2373,8 +2407,17 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	enc := charset.FindEncoding(b.tp.Charset)
+	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		if b.ctx.GetSessionVars().StrictSQLMode {
+			return "", true, nil
+		}
+	}
+	return string(res), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -2841,41 +2884,19 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	strBytes := hack.Slice(str)
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
+	res, err := enc.Transform(nil, strBytes[:w], charset.OpEncode)
 	if err != nil {
-		return 0, false, err
+		// Fallback to the first byte.
+		return calcOrd(strBytes[:1]), false, nil
 	}
-	return ord(str), false, nil
+	// Only the first character is considered.
+	return calcOrd(res[:len(enc.Peek(res))]), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
-	// use utf8 by default
-	if charSet == "" {
-		charSet = charset.CharsetUTF8
-	}
-	desc, err := charset.GetCharsetInfo(charSet)
-	if err != nil {
-		return nil, err
-	}
-	if desc.Maxlen == 1 {
-		return ordSingleByte, nil
-	}
-	return ordUtf8, nil
-}
-
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	return int64(str[0])
-}
-
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func calcOrd(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
@@ -3612,7 +3633,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {
@@ -3813,7 +3834,35 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 64
+	sig := &builtinLoadFileSig{bf}
+	return sig, nil
+}
+
+type builtinLoadFileSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLoadFileSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	return "", true, nil
+}
+
+func (b *builtinLoadFileSig) Clone() builtinFunc {
+	newSig := &builtinLoadFileSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 type weightStringPadding byte

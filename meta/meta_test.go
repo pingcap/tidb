@@ -24,18 +24,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPlacementPolicy(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -51,16 +48,18 @@ func TestPlacementPolicy(t *testing.T) {
 	m := meta.NewMeta(txn)
 
 	// test the meta storage of placemnt policy.
-	policy := &placementpolicy.PolicyInfo{
-		Name:               model.NewCIStr("aa"),
-		PrimaryRegion:      "my primary",
-		Regions:            "my regions",
-		Learners:           1,
-		Followers:          2,
-		Voters:             3,
-		Schedule:           "even",
-		Constraints:        "+disk=ssd",
-		LearnerConstraints: "+zone=shanghai",
+	policy := &model.PolicyInfo{
+		Name: model.NewCIStr("aa"),
+		PlacementSettings: &model.PlacementSettings{
+			PrimaryRegion:      "my primary",
+			Regions:            "my regions",
+			Learners:           1,
+			Followers:          2,
+			Voters:             3,
+			Schedule:           "even",
+			Constraints:        "+disk=ssd",
+			LearnerConstraints: "+zone=shanghai",
+		},
 	}
 	err = m.CreatePolicy(policy)
 	require.NoError(t, err)
@@ -86,7 +85,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	ps, err := m.ListPolicies()
 	require.NoError(t, err)
-	require.Equal(t, []*placementpolicy.PolicyInfo{policy}, ps)
+	require.Equal(t, []*model.PolicyInfo{policy}, ps)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -103,9 +102,54 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestMeta(t *testing.T) {
-	t.Parallel()
+func TestBackupAndRestoreAutoIDs(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
 
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	acc := m.GetAutoIDAccessors(1, 1)
+	require.NoError(t, acc.RowID().Put(100))
+	require.NoError(t, acc.RandomID().Put(101))
+	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 1, 1, 2, 2))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	mustGet := func(acc meta.AutoIDAccessor) int {
+		v, err := acc.Get()
+		require.NoError(t, err)
+		return int(v)
+	}
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMeta(txn)
+	acc = m.GetAutoIDAccessors(1, 1)
+	// Test old auto IDs are cleaned.
+	require.Equal(t, mustGet(acc.RowID()), 0)
+	require.Equal(t, mustGet(acc.RandomID()), 0)
+
+	// Test new auto IDs are restored.
+	acc2 := m.GetAutoIDAccessors(2, 2)
+	require.Equal(t, mustGet(acc2.RowID()), 100)
+	require.Equal(t, mustGet(acc2.RandomID()), 101)
+	// Backup & restore with the same database & table ID.
+	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 2, 2, 2, 2))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMeta(txn)
+	// Test auto IDs are unchanged.
+	acc2 = m.GetAutoIDAccessors(2, 2)
+	require.Equal(t, mustGet(acc2.RowID()), 100)
+	require.Equal(t, mustGet(acc2.RandomID()), 101)
+}
+
+func TestMeta(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -191,11 +235,11 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
-	n, err = m.GenAutoTableID(1, 1, 10)
+	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	n, err = m.GetAutoTableID(1, 1)
+	n, err = m.GetAutoIDAccessors(1, 1).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
@@ -226,18 +270,20 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	// Generate an auto id.
-	n, err = m.GenAutoTableID(1, 2, 10)
+	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 	// Make sure the auto id key-value entry is there.
-	n, err = m.GetAutoTableID(1, 2)
+	n, err = m.GetAutoIDAccessors(1, 2).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, tbInfo2.ID, true)
+	err = m.DropTableOrView(1, tbInfo2.ID)
+	require.NoError(t, err)
+	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
 	// Make sure auto id key-value entry is gone.
-	n, err = m.GetAutoTableID(1, 2)
+	n, err = m.GetAutoIDAccessors(1, 2).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), n)
 
@@ -256,19 +302,19 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
-	n, err = m.GenAutoTableID(currentDBID, tid, 10)
+	n, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 	// Fail to update auto ID.
 	// The table ID doesn't exist.
 	nonExistentID := int64(1234)
-	_, err = m.GenAutoTableID(currentDBID, nonExistentID, 10)
+	_, err = m.GetAutoIDAccessors(currentDBID, nonExistentID).RowID().Inc(10)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableNotExists.Equal(err))
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
-	_, err = m.GenAutoTableID(currentDBID, tid, 10)
+	_, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
@@ -278,7 +324,7 @@ func TestMeta(t *testing.T) {
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
 	require.NoError(t, err)
-	id, err := m.GetAutoTableID(1, tbInfo3.ID)
+	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(123), id)
 	// Test case for GenAutoTableIDKeyValue.
@@ -337,7 +383,6 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -375,7 +420,6 @@ func TestSnapshot(t *testing.T) {
 }
 
 func TestElement(t *testing.T) {
-	t.Parallel()
 	checkElement := func(key []byte, resErr error) {
 		e := &meta.Element{ID: 123, TypeKey: key}
 		eBytes := e.EncodeElement()
@@ -401,8 +445,6 @@ func TestElement(t *testing.T) {
 }
 
 func TestDDL(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		desc        string
 		startHandle kv.Handle
@@ -421,8 +463,9 @@ func TestDDL(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
-			t.Parallel()
 			store, err := mockstore.NewMockStore()
 			require.NoError(t, err)
 			defer func() {
@@ -565,8 +608,6 @@ func TestDDL(t *testing.T) {
 }
 
 func TestAddIndexJob(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {

@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -14,19 +16,24 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/schedule/placement"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type TestClient struct {
-	mu           sync.RWMutex
-	stores       map[uint64]*metapb.Store
-	regions      map[uint64]*restore.RegionInfo
-	regionsInfo  *core.RegionsInfo // For now it's only used in ScanRegions
-	nextRegionID uint64
+	mu                  sync.RWMutex
+	stores              map[uint64]*metapb.Store
+	regions             map[uint64]*restore.RegionInfo
+	regionsInfo         *core.RegionsInfo // For now it's only used in ScanRegions
+	nextRegionID        uint64
+	injectInScatter     func(*restore.RegionInfo) error
+	supportBatchScatter bool
 
 	scattered map[uint64]bool
 }
@@ -41,12 +48,43 @@ func NewTestClient(
 		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &TestClient{
-		stores:       stores,
-		regions:      regions,
-		regionsInfo:  regionsInfo,
-		nextRegionID: nextRegionID,
-		scattered:    map[uint64]bool{},
+		stores:          stores,
+		regions:         regions,
+		regionsInfo:     regionsInfo,
+		nextRegionID:    nextRegionID,
+		scattered:       map[uint64]bool{},
+		injectInScatter: func(*restore.RegionInfo) error { return nil },
 	}
+}
+
+func (c *TestClient) InstallBatchScatterSupport() {
+	c.supportBatchScatter = true
+}
+
+// ScatterRegions scatters regions in a batch.
+func (c *TestClient) ScatterRegions(ctx context.Context, regionInfo []*restore.RegionInfo) error {
+	if !c.supportBatchScatter {
+		return status.Error(codes.Unimplemented, "Ah, yep")
+	}
+	regions := map[uint64]*restore.RegionInfo{}
+	for _, region := range regionInfo {
+		regions[region.Region.Id] = region
+	}
+	var err error
+	for i := 0; i < 3; i++ {
+		if len(regions) == 0 {
+			return nil
+		}
+		for id, region := range regions {
+			splitErr := c.ScatterRegion(ctx, region)
+			if splitErr == nil {
+				delete(regions, id)
+			}
+			err = multierr.Append(err, splitErr)
+
+		}
+	}
+	return nil
 }
 
 func (c *TestClient) GetAllRegions() map[uint64]*restore.RegionInfo {
@@ -164,12 +202,7 @@ func (c *TestClient) BatchSplitRegions(
 }
 
 func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *restore.RegionInfo) error {
-	if _, ok := c.scattered[regionInfo.Region.Id]; !ok {
-		c.scattered[regionInfo.Region.Id] = false
-		return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
-	}
-	c.scattered[regionInfo.Region.Id] = true
-	return nil
+	return c.injectInScatter(regionInfo)
 }
 
 func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -206,22 +239,36 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-func (c *TestClient) checkScatter(check *C) {
-	regions := c.GetAllRegions()
-	for key := range regions {
-		if !c.scattered[key] {
-			check.Fatalf("region %d has not been scattered: %#v", key, regions[key])
-		}
+type assertRetryLessThanBackoffer struct {
+	max     int
+	already int
+	t       *testing.T
+}
+
+func assertRetryLessThan(t *testing.T, times int) utils.Backoffer {
+	return &assertRetryLessThanBackoffer{
+		max:     times,
+		already: 0,
+		t:       t,
 	}
 }
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-// range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
-// rewrite rules: aa -> xx,  cc -> bb
-// expected regions after split:
-//   [, aay), [aay, bb), [bb, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xx), [xx, xxe), [xxe, xxz), [xxz, )
-func (s *testRangeSuite) TestSplitAndScatter(c *C) {
+// NextBackoff returns a duration to wait before retrying again
+func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
+	b.already++
+	if b.already >= b.max {
+		b.t.Logf("retry more than %d time: test failed", b.max)
+		b.t.FailNow()
+	}
+	return 0
+}
+
+// Attempt returns the remain attempt times
+func (b *assertRetryLessThanBackoffer) Attempt() int {
+	return b.max - b.already
+}
+
+func TestScatterFinishInTime(t *testing.T) {
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
@@ -229,23 +276,93 @@ func (s *testRangeSuite) TestSplitAndScatter(c *C) {
 
 	ctx := context.Background()
 	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
-	if err != nil {
-		c.Assert(err, IsNil, Commentf("split regions failed: %v", err))
-	}
+	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
 		for _, region := range regions {
-			c.Logf("region: %v\n", region.Region)
+			t.Logf("region: %v\n", region.Region)
 		}
-		c.Log("get wrong result")
-		c.Fail()
+		t.Log("get wrong result")
+		t.Fail()
+	}
+
+	regionInfos := make([]*restore.RegionInfo, 0, len(regions))
+	for _, info := range regions {
+		regionInfos = append(regionInfos, info)
+	}
+	failed := map[uint64]int{}
+	client.injectInScatter = func(r *restore.RegionInfo) error {
+		failed[r.Region.Id]++
+		if failed[r.Region.Id] > 7 {
+			return nil
+		}
+		return status.Errorf(codes.Unknown, "region %d is not fully replicated", r.Region.Id)
+	}
+
+	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
+	// it would cost time unacceptable.
+	regionSplitter.ScatterRegionsWithBackoffer(ctx,
+		regionInfos,
+		assertRetryLessThan(t, 40))
+
+}
+
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
+// rewrite rules: aa -> xx,  cc -> bb
+// expected regions after split:
+//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
+func TestSplitAndScatter(t *testing.T) {
+	t.Run("BatchScatter", func(t *testing.T) {
+		client := initTestClient()
+		client.InstallBatchScatterSupport()
+		runTestSplitAndScatterWith(t, client)
+	})
+	t.Run("BackwardCompatibility", func(t *testing.T) {
+		client := initTestClient()
+		runTestSplitAndScatterWith(t, client)
+	})
+}
+
+func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
+	ranges := initRanges()
+	rewriteRules := initRewriteRules()
+	regionSplitter := restore.NewRegionSplitter(client)
+
+	ctx := context.Background()
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	require.NoError(t, err)
+	regions := client.GetAllRegions()
+	if !validateRegions(regions) {
+		for _, region := range regions {
+			t.Logf("region: %v\n", region.Region)
+		}
+		t.Log("get wrong result")
+		t.Fail()
 	}
 	regionInfos := make([]*restore.RegionInfo, 0, len(regions))
 	for _, info := range regions {
 		regionInfos = append(regionInfos, info)
 	}
+	scattered := map[uint64]bool{}
+	const alwaysFailedRegionID = 1
+	client.injectInScatter = func(regionInfo *restore.RegionInfo) error {
+		if _, ok := scattered[regionInfo.Region.Id]; !ok || regionInfo.Region.Id == alwaysFailedRegionID {
+			scattered[regionInfo.Region.Id] = false
+			return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
+		}
+		scattered[regionInfo.Region.Id] = true
+		return nil
+	}
 	regionSplitter.ScatterRegions(ctx, regionInfos)
-	client.checkScatter(c)
+	for key := range regions {
+		if key == alwaysFailedRegionID {
+			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
+		} else if !scattered[key] {
+			t.Fatalf("region %d has not been scattered: %#v", key, regions[key])
+		}
+	}
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -320,11 +437,11 @@ func initRewriteRules() *restore.RewriteRules {
 }
 
 // expected regions after split:
-//   [, aay), [aay, bb), [bb, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xx), [xx, xxe), [xxe, xxz), [xxz, )
+//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
+//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func validateRegions(regions map[uint64]*restore.RegionInfo) bool {
-	keys := [12]string{"", "aay", "bb", "bba", "bbf", "bbh", "bbj", "cca", "xx", "xxe", "xxz", ""}
-	if len(regions) != 11 {
+	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
+	if len(regions) != len(keys)-1 {
 		return false
 	}
 FindRegion:
@@ -369,4 +486,71 @@ func (s *testRangeSuite) TestNeedSplit(c *C) {
 	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
 	// Out of region
 	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
+}
+
+func (s *testRangeSuite) TestRegionConsistency(c *C) {
+	cases := []struct {
+		startKey []byte
+		endKey   []byte
+		err      string
+		regions  []*restore.RegionInfo
+	}{
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
+			[]*restore.RegionInfo{},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"first region's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("b")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"last region's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region endKey not equal to next region startKey(.*?)",
+			[]*restore.RegionInfo{
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+				{
+					Region: &metapb.Region{
+						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
+					},
+				},
+			},
+		},
+	}
+	for _, ca := range cases {
+		c.Assert(
+			restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions),
+			ErrorMatches,
+			ca.err)
+	}
 }

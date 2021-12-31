@@ -26,10 +26,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -47,7 +50,6 @@ import (
 const dbName = "test"
 
 func TestCheckDBPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -77,13 +79,11 @@ func TestCheckDBPrivilege(t *testing.T) {
 }
 
 func TestCheckPointGetDBPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
 	mustExec(t, rootSe, `CREATE USER 'tester'@'localhost';`)
 	mustExec(t, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	mustExec(t, rootSe, `create database test2`)
 	mustExec(t, rootSe, `create table test2.t(id int, v int, primary key(id))`)
 	mustExec(t, rootSe, `insert into test2.t(id, v) values(1, 1)`)
@@ -98,7 +98,6 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 }
 
 func TestIssue22946(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -114,7 +113,6 @@ func TestIssue22946(t *testing.T) {
 	mustExec(t, rootSe, "grant all on db1.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant all on db2.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant select on test.* to delTest@'localhost';")
-	mustExec(t, rootSe, "flush privileges;")
 
 	se := newSession(t, store, dbName)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil))
@@ -126,7 +124,6 @@ func TestIssue22946(t *testing.T) {
 }
 
 func TestCheckTablePrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -163,7 +160,6 @@ func TestCheckTablePrivilege(t *testing.T) {
 }
 
 func TestCheckViewPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -186,7 +182,6 @@ func TestCheckViewPrivilege(t *testing.T) {
 }
 
 func TestCheckPrivilegeWithRoles(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	rootSe := newSession(t, store, dbName)
@@ -198,6 +193,9 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `SET ROLE r_1, r_2;`)
 	mustExec(t, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
+	// test bogus role for current user.
+	_, err := se.ExecuteInternal(context.Background(), `SET DEFAULT ROLE roledoesnotexist TO 'test_role'@'localhost';`)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
 
 	mustExec(t, rootSe, `GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(se)
@@ -218,7 +216,6 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 }
 
 func TestShowGrants(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -368,8 +365,35 @@ func TestShowGrants(t *testing.T) {
 	require.Len(t, gs, 3)
 }
 
+// TestErrorMessage checks that the identity in error messages matches the mysql.user table one.
+// MySQL is inconsistent in its error messages, as some match the loginHost and others the
+// identity from mysql.user. In TiDB we now use the identity from mysql.user in error messages
+// for consistency.
+func TestErrorMessage(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	rootSe := newSession(t, store, dbName)
+	mustExec(t, rootSe, `CREATE USER wildcard`)
+	mustExec(t, rootSe, `CREATE USER specifichost@192.168.1.1`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO wildcard`)
+	mustExec(t, rootSe, `GRANT SELECT on test.* TO specifichost@192.168.1.1`)
+
+	wildSe := newSession(t, store, dbName)
+
+	// The session.Auth() func will populate the AuthUsername and AuthHostname fields.
+	// We don't have to explicitly specify them.
+	require.True(t, wildSe.Auth(&auth.UserIdentity{Username: "wildcard", Hostname: "192.168.1.1"}, nil, nil))
+	_, err := wildSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'wildcard'@'%' to database 'mysql'", err.Error())
+
+	specificSe := newSession(t, store, dbName)
+	require.True(t, specificSe.Auth(&auth.UserIdentity{Username: "specifichost", Hostname: "192.168.1.1"}, nil, nil))
+	_, err = specificSe.ExecuteInternal(context.Background(), "use mysql;")
+	require.Equal(t, "[executor:1044]Access denied for user 'specifichost'@'192.168.1.1' to database 'mysql'", err.Error())
+}
+
 func TestShowColumnGrants(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -385,7 +409,6 @@ func TestShowColumnGrants(t *testing.T) {
 }
 
 func TestDropTablePrivileges(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -413,7 +436,6 @@ func TestDropTablePrivileges(t *testing.T) {
 }
 
 func TestSetPasswdStmt(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -534,7 +556,6 @@ func TestAlterUserStmt(t *testing.T) {
 }
 
 func TestSelectViewSecurity(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -560,8 +581,103 @@ func TestSelectViewSecurity(t *testing.T) {
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func TestShowViewPriv(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`CREATE VIEW test.v AS SELECT 1`)
+	tk.MustExec("CREATE USER vnobody, vshowview, vselect, vshowandselect")
+	tk.MustExec("GRANT SHOW VIEW ON test.v TO vshowview")
+	tk.MustExec("GRANT SELECT ON test.v TO vselect")
+	tk.MustExec("GRANT SHOW VIEW, SELECT ON test.v TO vshowandselect")
+
+	tests := []struct {
+		userName     string
+		showViewErr  string
+		showTableErr string
+		explainErr   string
+		explainRes   string
+		descErr      string
+		descRes      string
+		tablesNum    string
+		columnsNum   string
+	}{
+		{"vnobody",
+			"[planner:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vnobody'@'%' for table 'v'",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"0",
+			"0",
+		},
+		{"vshowview",
+			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"1",
+			"0",
+		},
+		{"vselect",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+		{"vshowandselect",
+			"",
+			"",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
+		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
+		if test.showViewErr != "" {
+			require.EqualError(t, err, test.showViewErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		err = tk.ExecToErr("SHOW CREATE TABLE test.v")
+		if test.showTableErr != "" {
+			require.EqualError(t, err, test.showTableErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		if test.explainErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.explainErr, test)
+		} else {
+			tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+		}
+		if test.descErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.descErr, test)
+		} else {
+			tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
+		tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+	}
+}
+
 func TestRoleAdminSecurity(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -584,7 +700,6 @@ func TestRoleAdminSecurity(t *testing.T) {
 }
 
 func TestCheckCertBasedAuth(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -609,7 +724,6 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	mustExec(t, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
 	mustExec(t, se, `CREATE USER 'r14_san_only_pass'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1'`)
 	mustExec(t, se, `CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
-	mustExec(t, se, "flush privileges")
 
 	defer func() {
 		require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
@@ -822,7 +936,6 @@ func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x5
 }
 
 func TestCheckAuthenticate(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -865,7 +978,6 @@ func TestCheckAuthenticate(t *testing.T) {
 }
 
 func TestUseDB(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -912,7 +1024,6 @@ func TestUseDB(t *testing.T) {
 }
 
 func TestRevokePrivileges(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -940,7 +1051,6 @@ func TestRevokePrivileges(t *testing.T) {
 }
 
 func TestSetGlobal(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
@@ -957,7 +1067,6 @@ func TestSetGlobal(t *testing.T) {
 }
 
 func TestCreateDropUser(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -986,7 +1095,6 @@ func TestCreateDropUser(t *testing.T) {
 }
 
 func TestConfigPrivilege(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1005,15 +1113,14 @@ func TestConfigPrivilege(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil))
 	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
 	require.Error(t, err)
-	require.Regexp(t, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
 	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	require.Error(t, err)
-	require.Regexp(t, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
 	mustExec(t, se, `DROP USER tcd1, tcd2`)
 }
 
 func TestShowCreateTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1032,7 +1139,6 @@ func TestShowCreateTable(t *testing.T) {
 }
 
 func TestReplaceAndInsertOnDuplicate(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1075,7 +1181,6 @@ func TestReplaceAndInsertOnDuplicate(t *testing.T) {
 }
 
 func TestAnalyzeTable(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1116,13 +1221,13 @@ func TestAnalyzeTable(t *testing.T) {
 }
 
 func TestSystemSchema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
 	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `select * from information_schema.tables`)
 	mustExec(t, se, `select * from information_schema.key_column_usage`)
@@ -1135,21 +1240,6 @@ func TestSystemSchema(t *testing.T) {
 	_, err = se.ExecuteInternal(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
-
-	// Test performance_schema.
-	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
-	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
-	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
-	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
-	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
 	// Test metric_schema.
 	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
@@ -1167,8 +1257,152 @@ func TestSystemSchema(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
+func TestPerformanceSchema(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	// This test tests no privilege check for INFORMATION_SCHEMA database.
+	se := newSession(t, store, dbName)
+	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	_, err = se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
+	require.NoError(t, err)
+	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
+	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+}
+
+func TestMetricsSchema(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER nobody, msprocess, msselect")
+	tk.MustExec("GRANT Process ON *.* TO msprocess")
+	tk.MustExec("GRANT SELECT ON metrics_schema.* TO msselect")
+
+	tests := []struct {
+		stmt     string
+		user     string
+		checkErr func(err error)
+	}{
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, executor.ErrDBaccessDenied))
+			},
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"msprocess",
+			func(err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"msselect",
+			func(err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"msselect",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{
+			Username: test.user,
+			Hostname: "localhost",
+		}, nil, nil)
+
+		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		if err == nil {
+			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+		}
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		test.checkErr(err)
+	}
+}
+
 func TestAdminCommand(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1191,7 +1425,6 @@ func TestAdminCommand(t *testing.T) {
 }
 
 func TestTableNotExistNoPermissions(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1240,7 +1473,6 @@ func TestTableNotExistNoPermissions(t *testing.T) {
 }
 
 func TestLoadDataPrivilege(t *testing.T) {
-	t.Parallel()
 	// Create file.
 	path := "/tmp/load_data_priv.csv"
 	fp, err := os.Create(path)
@@ -1275,7 +1507,6 @@ func TestLoadDataPrivilege(t *testing.T) {
 }
 
 func TestSelectIntoNoPermissions(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1288,7 +1519,6 @@ func TestSelectIntoNoPermissions(t *testing.T) {
 }
 
 func TestGetEncodedPassword(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1299,7 +1529,6 @@ func TestGetEncodedPassword(t *testing.T) {
 }
 
 func TestAuthHost(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1321,7 +1550,6 @@ func TestAuthHost(t *testing.T) {
 }
 
 func TestDefaultRoles(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1337,18 +1565,15 @@ func TestDefaultRoles(t *testing.T) {
 	require.Len(t, ret, 0)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 2)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 0)
 }
 
 func TestUserTableConsistency(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1378,7 +1603,6 @@ func TestUserTableConsistency(t *testing.T) {
 }
 
 func TestFieldList(t *testing.T) { // Issue #14237 List fields RPC
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1421,7 +1645,6 @@ func newSession(t *testing.T, store kv.Storage, dbName string) session.Session {
 }
 
 func TestDynamicPrivs(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1468,7 +1691,6 @@ func TestDynamicPrivs(t *testing.T) {
 }
 
 func TestDynamicGrantOption(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1558,7 +1780,6 @@ func TestSecurityEnhancedModeInfoschema(t *testing.T) {
 }
 
 func TestClusterConfigInfoschema(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1646,7 +1867,6 @@ func TestSecurityEnhancedModeStatusVars(t *testing.T) {
 	// So we can only test that the dynamic privilege is grantable.
 	// We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
 	// and verify if it appears.
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1682,16 +1902,27 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
 	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
 }
 
 func TestRenameUser(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1708,11 +1939,11 @@ func TestRenameUser(t *testing.T) {
 	// Check privileges (need CREATE USER)
 	_, err := se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.Error(t, err)
-	require.Regexp(t, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation", err.Error())
+	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	mustExec(t, rootSe, "GRANT UPDATE ON mysql.user TO 'ru1'@'localhost'")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.Error(t, err)
-	require.Regexp(t, ".*Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation", err.Error())
+	require.Regexp(t, "Access denied; you need .at least one of. the CREATE USER privilege.s. for this operation$", err.Error())
 	mustExec(t, rootSe, "GRANT CREATE USER ON *.* TO 'ru1'@'localhost'")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru4")
 	require.NoError(t, err)
@@ -1725,19 +1956,19 @@ func TestRenameUser(t *testing.T) {
 	// Including negative tests, i.e. non existing from user and existing to user
 	_, err = rootSe.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru1@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru3@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru4 TO ru5@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru4@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru3")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru3@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru3@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru4 TO ru7")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru4@%.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru4@%")
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost")
 	require.Error(t, err)
-	require.Regexp(t, ".*Operation RENAME USER failed for ru6@localhost.*", err.Error())
+	require.Contains(t, err.Error(), "Operation RENAME USER failed for ru6@localhost")
 
 	// Test multi rename, this is a full swap of ru3 and ru6, i.e. need to read its previous state in the same transaction.
 	_, err = se1.ExecuteInternal(context.Background(), "RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost")
@@ -1803,7 +2034,6 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
 // See: https://github.com/pingcap/tidb/issues/24414
 func TestViewDefiner(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1881,7 +2111,6 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 }
 
 func TestDynamicPrivsRegistration(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1924,7 +2153,6 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 func TestInfoSchemaUserPrivileges(t *testing.T) {
 	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
 	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -1983,7 +2211,6 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
 func TestGrantOptionAndRevoke(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2061,7 +2288,6 @@ func tearDownTest(t *testing.T, store kv.Storage, dbName string) {
 }
 
 func TestGrantReferences(t *testing.T) {
-	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2086,10 +2312,51 @@ func TestGrantReferences(t *testing.T) {
 	tk.MustExec("DROP SCHEMA reftestdb")
 }
 
+func TestDashboardClientDynamicPriv(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE dc_r1")
+	tk.MustExec("CREATE USER dc_u1")
+	tk.MustExec("GRANT dc_r1 TO dc_u1")
+	tk.MustExec("SET DEFAULT ROLE dc_r1 TO dc_u1")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "dc_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+}
+
 // https://github.com/pingcap/tidb/issues/27213
 func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newStore(t)
 	defer clean()
 
@@ -2175,4 +2442,531 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
+}
+
+func TestGrantLockTables(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
+}
+
+// https://github.com/pingcap/tidb/issues/27560
+func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege")
+	tk.MustExec("CREATE USER joe;")
+	tk.MustExec("CREATE ROLE engineering;")
+	tk.MustExec("CREATE ROLE admins;")
+	tk.MustExec("CREATE ROLE notgranted;")
+	tk.MustExec("CREATE ROLE otherrole;")
+	tk.MustExec("GRANT INSERT ON test.* TO engineering;")
+	tk.MustExec("GRANT DELETE ON test.* TO admins;")
+	tk.MustExec("GRANT SELECT on test.* to joe;")
+	tk.MustExec("GRANT engineering TO joe;")
+	tk.MustExec("GRANT admins TO joe;")
+	tk.MustExec("SET DEFAULT ROLE admins TO joe;")
+	tk.MustExec("GRANT otherrole TO joe;")
+	tk.MustExec("GRANT UPDATE ON role.* TO otherrole;")
+	tk.MustExec("GRANT SELECT ON mysql.user TO otherrole;")
+	tk.MustExec("CREATE ROLE delete_stuff_privilege;")
+	tk.MustExec("GRANT DELETE ON mysql.user TO delete_stuff_privilege;")
+	tk.MustExec("GRANT delete_stuff_privilege TO otherrole;")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "joe",
+		Hostname: "%",
+	}, nil, nil)
+
+	err := tk.QueryToErr("SHOW GRANTS FOR CURRENT_USER() USING notgranted")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+
+	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+
+}
+
+func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE placement_db")
+	tk.MustExec("USE placement_db")
+	tk.MustExec("CREATE TABLE placement_table (a int)")
+	tk.MustExec("CREATE USER placement_user")
+	tk.MustExec("GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR placement_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'placement_user'@'%'`,
+		`GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'`))
+	tk.MustExec("DROP USER placement_user")
+	tk.MustExec("DROP DATABASE placement_db")
+}
+
+func TestPlacementPolicyStmt(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "drop placement policy if exists x")
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""
+	dropStmt := "drop placement policy if exists x"
+
+	// high privileged user setting password for other user (passes)
+	mustExec(t, se, "CREATE USER super_user, placement_user, empty_user")
+	mustExec(t, se, "GRANT ALL ON *.* TO super_user")
+	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), createStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), dropStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
+}
+
+func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "CREATE USER test_user")
+	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
+}
+
+func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	defer func() {
+		require.True(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "root",
+			Hostname: "localhost",
+		}, nil, nil))
+		tk.MustExec(`DROP SCHEMA IF EXISTS placment_rule_db`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_scheam`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_table`)
+	}()
+	tk.MustExec("CREATE DATABASE placement_rule_db")
+	tk.MustExec("USE placement_rule_db")
+	tk.Session().GetSessionVars().EnableAlterPlacement = true
+	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
+	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+	tk.MustExec("CREATE USER placement_rule_user_schema")
+	tk.MustExec("CREATE USER placement_rule_user_table")
+	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows())
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_table",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil))
+	tk.MustExec("GRANT SELECT ON placement_rule_db.* TO placement_rule_user_schema")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+}
+
+func TestGrantCreateTmpTables(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE create_tmp_table_db")
+	tk.MustExec("USE create_tmp_table_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
+	tk.MustGetErrCode("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.tmp to u1", mysql.ErrIllegalGrantForTable)
+	// Must set a session user to avoid null pointer dereference
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
+		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE create_tmp_table_db")
+}
+
+func TestCreateTmpTablesPriv(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	createStmt := "CREATE TEMPORARY TABLE test.tmp(id int)"
+	dropStmt := "DROP TEMPORARY TABLE IF EXISTS test.tmp"
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(dropStmt)
+	tk.MustExec("CREATE TABLE test.t(id int primary key)")
+	tk.MustExec("CREATE SEQUENCE test.tmp")
+	tk.MustExec("CREATE USER vcreate, vcreate_tmp, vcreate_tmp_all")
+	tk.MustExec("GRANT CREATE, USAGE ON test.* TO vcreate")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON test.* TO vcreate_tmp")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON *.* TO vcreate_tmp_all")
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate", Hostname: "localhost"}, nil, nil)
+	err := tk.ExecToErr(createStmt)
+	require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate'@'%' to database 'test'")
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil)
+	tk.MustExec(createStmt)
+	tk.MustExec(dropStmt)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil)
+	// TODO: issue #29280 to be fixed.
+	//err = tk.ExecToErr(createStmt)
+	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
+
+	tests := []struct {
+		sql     string
+		errcode int
+	}{
+		{
+			sql: "create temporary table tmp(id int primary key)",
+		},
+		{
+			sql: "insert into tmp value(1)",
+		},
+		{
+			sql: "insert into tmp value(1) on duplicate key update id=1",
+		},
+		{
+			sql: "replace tmp values(1)",
+		},
+		{
+			sql:     "insert into tmp select * from t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "update tmp set id=1 where id=1",
+		},
+		{
+			sql:     "update tmp t1, t t2 set t1.id=t2.id where t1.id=t2.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "delete from tmp where id=1",
+		},
+		{
+			sql:     "delete t1 from tmp t1 join t t2 where t1.id=t2.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "select * from tmp where id=1",
+		},
+		{
+			sql: "select * from tmp where id in (1,2)",
+		},
+		{
+			sql: "select * from tmp",
+		},
+		{
+			sql:     "select * from tmp join t where tmp.id=t.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "(select * from tmp) union (select * from t)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create temporary table tmp1 like t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create table tmp(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create table t(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "analyze table tmp",
+		},
+		{
+			sql:     "analyze table tmp, t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "show create table tmp",
+		},
+		// TODO: issue #29281 to be fixed.
+		//{
+		//	sql: "show create table t",
+		//	errcode: mysql.ErrTableaccessDenied,
+		//},
+		{
+			sql:     "drop sequence tmp",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "alter table tmp add column c1 char(10)",
+			errcode: errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			sql: "truncate table tmp",
+		},
+		{
+			sql:     "drop temporary table t",
+			errcode: mysql.ErrBadTable,
+		},
+		{
+			sql:     "drop table t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "drop table t, tmp",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "drop temporary table tmp",
+		},
+	}
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil)
+	tk.MustExec("use test")
+	tk.MustExec(dropStmt)
+	for _, test := range tests {
+		if test.errcode == 0 {
+			tk.MustExec(test.sql)
+		} else {
+			tk.MustGetErrCode(test.sql, test.errcode)
+		}
+	}
+
+	// TODO: issue #29282 to be fixed.
+	//for i, test := range tests {
+	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
+	//	executeStmt := fmt.Sprintf("execute stmt%d", i)
+	//	tk.MustExec(preparedStmt)
+	//	if test.errcode == 0 {
+	//		tk.MustExec(executeStmt)
+	//	} else {
+	//		tk.MustGetErrCode(executeStmt, test.errcode)
+	//	}
+	//}
+}
+
+func TestRevokeSecondSyntax(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustExec(`drop user if exists ss1;`)
+	tk.MustExec(`create user ss1;`)
+	tk.MustExec(`revoke all privileges, grant option from ss1;`)
+	tk.MustQuery("show grants for ss1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ss1'@'%'"))
+}
+
+func TestGrantEvent(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE event_db")
+	tk.MustExec("USE event_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE event_table (a int)")
+	tk.MustExec("GRANT EVENT on event_db.* to u1")
+	tk.MustExec("GRANT EVENT on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT EVENT ON *.* TO 'u1'@'%'`,
+		`GRANT EVENT ON event_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE event_db")
+}
+
+func TestGrantRoutine(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE routine_db")
+	tk.MustExec("USE routine_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE routine_table (a int)")
+	tk.MustExec("GRANT CREATE ROUTINE on routine_db.* to u1")
+	tk.MustExec("GRANT CREATE ROUTINE on *.* to u1")
+	tk.MustExec("GRANT ALTER ROUTINE on routine_db.* to u1")
+	tk.MustExec("GRANT ALTER ROUTINE on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'`,
+		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE routine_db")
+}
+
+func TestIssue28675(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`create user test_user`)
+	tk.MustExec("create view test.v as select 1")
+	tk.MustExec("grant show view on test.v to test_user")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("0"))
+	tk.ExecToErr("desc test.v")
+	tk.ExecToErr("explain test.v")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk.MustExec("grant update on test.v to test_user")
+	tk.MustExec("grant select on test.v to test_user")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("1"))
+	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
+	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
+	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
+}
+
+func TestSkipGrantTable(t *testing.T) {
+	save := config.GetGlobalConfig()
+	config.UpdateGlobal(func(c *config.Config) { c.Security.SkipGrantTable = true })
+	defer config.StoreGlobalConfig(save)
+
+	store, clean := newStore(t)
+	defer clean()
+
+	// Issue 29317
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'test1'@'%';`)
+	tk.MustExec(`GRANT BACKUP_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTORE_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RELOAD ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_CONNECTION_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT PROCESS ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON information_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON performance_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO root;`)
+	tk.MustExec(`revoke SHUTDOWN on *.* from root;`)
+	tk.MustExec(`revoke CONFIG on *.* from root;`)
+
+	tk.MustExec(`CREATE USER 'test2'@'%' IDENTIFIED BY '12345';`)
+	tk.MustExec(`GRANT PROCESS, CONFIG ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SHOW DATABASES ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT DASHBOARD_CLIENT ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
+}
+
+func TestIssue29823(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create user u1")
+	tk.MustExec("create role r1")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("grant select on t1 to r1")
+	tk.MustExec("grant r1 to u1")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	tk2.MustExec("set role all")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	tk2.MustQuery("select * from test.t1").Check(testkit.Rows())
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
+	tk2.MustQuery("show tables from test").Check(testkit.Rows("t1"))
+
+	tk.MustExec("revoke r1 from u1")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	err := tk2.ExecToErr("select * from test.t1")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'")
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows())
+	err = tk2.QueryToErr("show tables from test")
+	require.EqualError(t, err, "[executor:1044]Access denied for user 'u1'@'%' to database 'test'")
 }

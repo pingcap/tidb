@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -38,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -147,7 +147,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 					return
 				}
 			}
-			req := result.NewChunk()
+			req := result.NewChunk(nil)
 			checkErr = result.Next(context.Background(), req)
 			if checkErr != nil {
 				return
@@ -340,7 +340,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	// Mock the server is in `write reorg` state.
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 }
 
 type stateCase struct {
@@ -411,7 +411,9 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		se.PrepareTxnCtx(ctx)
+		if err = se.PrepareTxnCtx(ctx); err != nil {
+			return err
+		}
 		sctx := se.(sessionctx.Context)
 		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
 			return errors.Trace(err)
@@ -882,7 +884,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
 	if expectQuery != nil {
@@ -966,7 +968,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
@@ -1055,6 +1057,54 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		c.Assert(err2, IsNil)
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnWithData(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN c int;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[0][2], Equals, "3")
+		c.Assert(rs[0].Close(), IsNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, 33.3, 44, 55)")
+		c.Assert(err, IsNil)
+		rs, err = s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[1][2], Equals, "33")
+		c.Assert(rs[0].Close(), IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[0][2], Equals, "3")
+		c.Assert(rs[0].Close(), IsNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, null, 44, 55)")
+		c.Assert(err, NotNil)
+		_, err = s.se.Execute(context.Background(), "insert into t values(11, 22, 33.3, 44, 55)")
+		c.Assert(err, IsNil)
+		rs, err = s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.se, rs[0])
+		c.Assert(err, IsNil)
+		c.Assert(sRows[1][2], Equals, "33")
 		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
@@ -1335,12 +1385,15 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	c.Assert(err, IsNil)
 	if len(s.preSQL) != 0 {
 		_, err := s.se.Execute(context.Background(), s.preSQL)
 		c.Assert(err, IsNil)
 	}
+	_, err = s.se.Execute(context.Background(), "insert into t values(1, 2, 3.1234, 4, 5)")
+	c.Assert(err, IsNil)
+
 	defer func() {
 		_, err := s.se.Execute(context.Background(), "drop table t")
 		c.Assert(err, IsNil)
@@ -1819,9 +1872,12 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1847,6 +1903,11 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1879,9 +1940,12 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1930,6 +1994,11 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return
@@ -1989,6 +2058,7 @@ func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -2039,4 +2109,17 @@ func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
 	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
 	tk.MustExec("drop table t")
+}
+
+func (s *serialTestStateChangeSuite) TestRestrainDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, index(a));")
+	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
+	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
+	tk.MustGetErrCode("alter table t drop column a;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
+	tk.MustExec("alter table t drop column a;")
+	tk.MustExec("drop table if exists t;")
 }

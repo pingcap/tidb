@@ -16,20 +16,21 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -148,7 +149,7 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	c.Assert(
 		createTableIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
 		DeepEquals,
-		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));"},
+		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`???` TINYINT(1));"},
 	)
 
 	// renaming a table
@@ -462,7 +463,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
@@ -488,7 +489,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
@@ -505,8 +506,22 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, ErrorMatches, "obtain new collation enabled failed: mock permission deny")
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
+	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, IsNil)
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -518,7 +533,8 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		c.Assert(err, IsNil)
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.

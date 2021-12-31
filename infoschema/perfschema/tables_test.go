@@ -27,9 +27,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -37,14 +37,11 @@ import (
 )
 
 func TestPredefinedTables(t *testing.T) {
-	t.Parallel()
 	require.True(t, perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"))
 	require.False(t, perfschema.IsPredefinedTable("statements"))
 }
 
 func TestPerfSchemaTables(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -57,8 +54,6 @@ func TestPerfSchemaTables(t *testing.T) {
 }
 
 func TestTiKVProfileCPU(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 

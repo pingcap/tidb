@@ -1,4 +1,6 @@
-<!-- Thank you for contributing to TiDB!
+<!--
+
+Thank you for contributing to TiDB!
 
 PR Title Format:
 1. pkg [, pkg2, pkg3]: what's changed
@@ -7,20 +9,24 @@ PR Title Format:
 -->
 
 ### What problem does this PR solve?
+<!--
 
-Issue Number: close #xxx <!-- REMOVE this line if no issue to close -->
+Please create an issue first to describe the problem.
+
+There MUST be one line starting with "Issue Number:  " and 
+linking the relevant issues via the "close" or "ref".
+
+For more info, check https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/contribute-code.html#referring-to-an-issue.
+
+-->
+
+Issue Number: close #xxx
 
 Problem Summary:
 
 ### What is changed and how it works?
 
-Proposal: [xxx](url) <!-- REMOVE this line if not applicable -->
-
-What's Changed:
-
-How it Works:
-
-### Check List <!--REMOVE the items that are not applicable-->
+### Check List
 
 Tests <!-- At least one of them must be included. -->
 
@@ -43,8 +49,10 @@ Documentation
 - [ ] Contains experimental features
 - [ ] Changes MySQL compatibility
 
-### Release note <!-- bugfixes or new feature need a release note -->
+### Release note
+
+<!-- bugfix or new feature needs a release note -->
 
 ```release-note
-Please add a release note, or a 'None' if it is not needed.
+None
 ```

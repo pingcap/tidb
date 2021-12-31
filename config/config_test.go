@@ -15,6 +15,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/user"
@@ -26,15 +27,37 @@ import (
 
 	"github.com/BurntSushi/toml"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
-func TestNullableBoolUnmarshal(t *testing.T) {
-	t.Parallel()
+func TestAtomicBoolUnmarshal(t *testing.T) {
+	type data struct {
+		Ab AtomicBool `toml:"ab"`
+	}
+	var d data
+	var firstBuffer bytes.Buffer
+	_, err := toml.Decode("ab=true", &d)
+	require.NoError(t, err)
+	require.True(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"true\"\n", firstBuffer.String())
+	firstBuffer.Reset()
 
+	_, err = toml.Decode("ab=false", &d)
+	require.NoError(t, err)
+	require.False(t, d.Ab.Load())
+	err = toml.NewEncoder(&firstBuffer).Encode(d)
+	require.NoError(t, err)
+	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
+
+	_, err = toml.Decode("ab = 1", &d)
+	require.EqualError(t, err, "Invalid value for bool type: 1")
+}
+
+func TestNullableBoolUnmarshal(t *testing.T) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	require.NoError(t, err)
@@ -154,13 +177,16 @@ func TestConfig(t *testing.T) {
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
-	conf.Log.EnableSlowLog = logutil.DefaultTiDBEnableSlowLog
+	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// Make sure the server refuses to start if there's an unrecognized configuration option
 	_, err = f.WriteString(`
@@ -209,6 +235,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -220,6 +247,7 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -231,6 +259,14 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
+[status]
+grpc-keepalive-time = 20
+grpc-keepalive-timeout = 10
+grpc-concurrent-streams = 2048
+grpc-initial-window-size = 10240
+grpc-max-send-msg-size = 40960
 `)
 
 	require.NoError(t, err)
@@ -238,8 +274,6 @@ deadlock-history-collect-retryable = true
 
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, "test_version", conf.ServerVersion)
-	require.Equal(t, conf.ServerVersion, mysql.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	require.True(t, conf.Binlog.Enable)
 	require.Equal(t, "hash", conf.Binlog.Strategy)
@@ -268,6 +302,7 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, 100, conf.StmtSummary.HistorySize)
 	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
 	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
@@ -287,10 +322,24 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
 	require.False(t, conf.Experimental.EnableNewCharset)
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
+	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
+	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
+	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
+	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
 	_, err = f.WriteString(`
 [log.file]
-log-rotate = true`)
+log-rotate = true
+[performance]
+mem-profile-interval="1m"`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
@@ -337,7 +386,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	require.NoError(t, conf.Load(configFile))
 
-	// Make sure the example config is the same as default config.
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
@@ -438,8 +488,6 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 }
 
 func TestOOMActionValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		oomAction string
@@ -458,8 +506,6 @@ func TestOOMActionValid(t *testing.T) {
 }
 
 func TestTxnTotalSizeLimitValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := []struct {
 		limit uint64
@@ -467,7 +513,9 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}{
 		{4 << 10, true},
 		{10 << 30, true},
-		{10<<30 + 1, false},
+		{10<<30 + 1, true},
+		{1 << 40, true},
+		{1<<40 + 1, false},
 	}
 
 	for _, tt := range tests {
@@ -477,8 +525,6 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestPreparePlanCacheValid(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
 		{Enabled: true, Capacity: 0}:                        false,
@@ -494,8 +540,6 @@ func TestPreparePlanCacheValid(t *testing.T) {
 }
 
 func TestMaxIndexLength(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {
 		conf.MaxIndexLength = indexLen
@@ -508,8 +552,6 @@ func TestMaxIndexLength(t *testing.T) {
 }
 
 func TestIndexLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(indexLimit int, shouldBeValid bool) {
 		conf.IndexLimit = indexLimit
@@ -522,8 +564,6 @@ func TestIndexLimit(t *testing.T) {
 }
 
 func TestTableColumnCountLimit(t *testing.T) {
-	t.Parallel()
-
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
 		conf.TableColumnCountLimit = uint32(tableColumnLimit)
@@ -536,8 +576,6 @@ func TestTableColumnCountLimit(t *testing.T) {
 }
 
 func TestEncodeDefTempStorageDir(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		host       string
 		statusHost string
@@ -600,8 +638,6 @@ func TestModifyThroughLDFlags(t *testing.T) {
 }
 
 func TestSecurityValid(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	tests := []struct {
 		spilledFileEncryptionMethod string
@@ -620,8 +656,6 @@ func TestSecurityValid(t *testing.T) {
 }
 
 func TestTcpNoDelay(t *testing.T) {
-	t.Parallel()
-
 	c1 := NewConfig()
 	//check default value
 	require.True(t, c1.Performance.TCPNoDelay)
@@ -639,4 +673,25 @@ func TestConfigExample(t *testing.T) {
 			require.False(t, ContainHiddenConfig(s))
 		}
 	}
+}
+
+func TestStatsLoadLimit(t *testing.T) {
+	conf := NewConfig()
+	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
+		conf.Performance.StatsLoadConcurrency = uint(concurrency)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit-1, false)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit+1, false)
+	conf = NewConfig()
+	checkQueueSizeValid := func(queueSize int, shouldBeValid bool) {
+		conf.Performance.StatsLoadQueueSize = uint(queueSize)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }

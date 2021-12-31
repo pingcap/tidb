@@ -23,12 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
@@ -105,8 +105,6 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.processor = &tableScanProcessor{closureExecutor: ce}
 	} else if scanExec.Tp == tipb.ExecType_TypeIndexScan {
 		ce.processor = &indexScanProcessor{closureExecutor: ce}
-	} else if scanExec.Tp == tipb.ExecType_TypeJoin || scanExec.Tp == tipb.ExecType_TypeExchangeReceiver {
-		ce.processor = &mockReaderScanProcessor{closureExecutor: ce}
 	}
 	outputFieldTypes := make([]*types.FieldType, 0, 1)
 	lastExecutor := executors[len(executors)-1]
@@ -199,8 +197,8 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 
 func isScanNode(executor *tipb.Executor) bool {
 	switch executor.Tp {
-	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeExchangeReceiver,
-		tipb.ExecType_TypeIndexScan, tipb.ExecType_TypeJoin:
+	case tipb.ExecType_TypeTableScan,
+		tipb.ExecType_TypeIndexScan:
 		return true
 	default:
 		return false
@@ -332,10 +330,6 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
-	e.scanCtx.newCollationIds = colIDs
-
-	// We don't need to decode handle here, and colIDs >= 0 always.
-	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos[:e.idxScanCtx.columnLen], []int64{-1}, nil, nil)
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
@@ -517,9 +511,7 @@ type scanCtx struct {
 	desc    bool
 	decoder *rowcodec.ChunkDecoder
 
-	newCollationRd  *rowcodec.BytesDecoder
-	newCollationIds map[int64]int
-	execDetail      *execDetail
+	execDetail *execDetail
 }
 
 type idxScanCtx struct {
@@ -752,27 +744,6 @@ func (e *tableScanProcessor) Process(key, value []byte) error {
 }
 
 func (e *tableScanProcessor) Finish() error {
-	return e.scanFinish()
-}
-
-type mockReaderScanProcessor struct {
-	skipVal
-	*closureExecutor
-}
-
-func (e *mockReaderScanProcessor) Process(key, value []byte) error {
-	if e.rowCount == e.limit {
-		return dbreader.ErrScanBreak
-	}
-	e.rowCount++
-	err := e.mockReadScanProcessCore(key, value)
-	if e.scanCtx.chk.NumRows() == chunkMaxRows {
-		err = e.chunkToOldChunk(e.scanCtx.chk)
-	}
-	return err
-}
-
-func (e *mockReaderScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 

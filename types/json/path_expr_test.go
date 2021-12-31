@@ -32,8 +32,9 @@ func TestContainsAnyAsterisk(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
-			t.Parallel()
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
 			require.Equal(t, test.containsAsterisks, pe.flags.containsAnyAsterisk())
@@ -60,8 +61,9 @@ func TestValidatePathExpr(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
-			t.Parallel()
 			pe, err := ParseJSONPathExpr(test.expression)
 			if test.success {
 				require.NoError(t, err)
@@ -84,8 +86,9 @@ func TestPathExprToString(t *testing.T) {
 		{`$."\"hello\""`},
 	}
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
-			t.Parallel()
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
 			require.Equal(t, test.expression, pe.String())
@@ -109,8 +112,9 @@ func TestPushBackOneIndexLeg(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
-			t.Parallel()
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
 

@@ -16,6 +16,7 @@ package placement
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -50,52 +51,57 @@ type Rule struct {
 	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
+// NewRule constructs *Rule from role, count, and constraints. It is here to
+// consistent the behavior of creating new rules.
+func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
+	return &Rule{
+		Role:           role,
+		Count:          int(replicas),
+		Constraints:    cnst,
+		LocationLabels: []string{"region", "zone", "rack", "host"},
+	}
+}
+
+var wrongSeparatorRegexp = regexp.MustCompile(`[^"':]+:\d`)
+
+func getYamlMapFormatError(str string) error {
+	if !strings.Contains(str, ":") {
+		return ErrInvalidConstraintsMappingNoColonFound
+	}
+	if wrongSeparatorRegexp.MatchString(str) {
+		return ErrInvalidConstraintsMappingWrongSeparator
+	}
+	return nil
+}
+
 // NewRules constructs []*Rule from a yaml-compatible representation of
-// array or map of constraints. It converts 'CONSTRAINTS' field in RFC
-// https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md to structs.
-func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
+// 'array' or 'dict' constraints.
+// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
+func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 
 	cnstbytes := []byte(cnstr)
 
-	constraints1 := []string{}
-	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
-		// can not emit REPLICAS with an array or empty label
-		if replicas == 0 {
-			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
-		}
-
-		labelConstraints, err := NewConstraints(constraints1)
-		if err != nil {
-			return rules, err
-		}
-
-		rules = append(rules, &Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-
+		rules = append(rules, NewRule(role, replicas, constraints1))
 		return rules, nil
 	}
 
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
 	if err2 == nil {
-		ruleCnt := 0
+		if replicas != 0 {
+			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
+		}
+
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
+				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
+					return rules, err
+				}
 				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
 			}
-			ruleCnt += cnt
-		}
-
-		if replicas == 0 {
-			replicas = uint64(ruleCnt)
-		}
-
-		if int(replicas) < ruleCnt {
-			return rules, fmt.Errorf("%w: should be larger or equal to the number of total replicas, but REPLICAS=%d < total=%d", ErrInvalidConstraintsRelicas, replicas, ruleCnt)
 		}
 
 		for labels, cnt := range constraints2 {
@@ -104,19 +110,8 @@ func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 				return rules, err
 			}
 
-			rules = append(rules, &Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
+			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
 		}
-
-		remain := int(replicas) - ruleCnt
-		if remain > 0 {
-			rules = append(rules, &Rule{
-				Count: remain,
-			})
-		}
-
 		return rules, nil
 	}
 
@@ -130,4 +125,8 @@ func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
 	return n
+}
+
+func (r *Rule) String() string {
+	return fmt.Sprintf("%+v", *r)
 }

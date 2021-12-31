@@ -15,7 +15,7 @@
 package core
 
 import (
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 )
 
 // Trace represents a trace plan.
@@ -24,4 +24,8 @@ type Trace struct {
 
 	StmtNode ast.StmtNode
 	Format   string
+
+	// OptimizerTrace indicates `trace plan target = 'xxx' <statement>` case
+	OptimizerTrace       bool
+	OptimizerTraceTarget string
 }

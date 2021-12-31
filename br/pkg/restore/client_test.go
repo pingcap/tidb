@@ -10,13 +10,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testleak"
 	pd "github.com/tikv/pd/client"
@@ -38,15 +38,15 @@ func (s *testRestoreClientSuite) SetUpTest(c *C) {
 	var err error
 	s.mock, err = mock.NewCluster()
 	c.Assert(err, IsNil)
+	c.Assert(s.mock.Start(), IsNil)
 }
 
 func (s *testRestoreClientSuite) TearDownTest(c *C) {
+	s.mock.Stop()
 	testleak.AfterTest(c)()
 }
 
 func (s *testRestoreClientSuite) TestCreateTables(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
 
@@ -102,8 +102,6 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 }
 
 func (s *testRestoreClientSuite) TestIsOnline(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
@@ -114,8 +112,6 @@ func (s *testRestoreClientSuite) TestIsOnline(c *C) {
 }
 
 func (s *testRestoreClientSuite) TestPreCheckTableClusterIndex(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
@@ -185,8 +181,6 @@ func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]
 }
 
 func (s *testRestoreClientSuite) TestPreCheckTableTiFlashReplicas(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	mockStores := []*metapb.Store{
 		{

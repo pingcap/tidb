@@ -1,16 +1,10 @@
 package utils
 
 import (
-	"encoding/json"
-	"fmt"
-	"reflect"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-type testJSONSuite struct{}
-
-var _ = Suite(&testJSONSuite{})
 
 var testMetaJSONs = [][]byte{
 	[]byte(`{
@@ -212,40 +206,12 @@ var testMetaJSONs = [][]byte{
 }`),
 }
 
-type jsonEquals struct{}
-
-func (j jsonEquals) Info() *CheckerInfo {
-	return &CheckerInfo{
-		Name:   "JSONEquals",
-		Params: []string{"lhs", "rhs"},
-	}
-}
-
-func (j jsonEquals) Check(params []interface{}, _ []string) (result bool, error string) {
-	lhs := params[0].([]byte)
-	rhs := params[1].([]byte)
-
-	lhsMap := map[string]interface{}{}
-	rhsMap := map[string]interface{}{}
-
-	if err := json.Unmarshal(lhs, &lhsMap); err != nil {
-		return false, fmt.Sprintf("failed to unmarshal lhs: %s", error)
-	}
-	if err := json.Unmarshal(rhs, &rhsMap); err != nil {
-		return false, fmt.Sprintf("failed to unmarshal rhs: %s", error)
-	}
-	if !reflect.DeepEqual(lhsMap, rhsMap) {
-		return false, fmt.Sprintf("lhs %s not equals rhs %s", lhsMap, rhsMap)
-	}
-	return true, ""
-}
-
-func (testJSONSuite) TestEncodeAndDecode(c *C) {
+func TestEncodeAndDecode(t *testing.T) {
 	for _, testMetaJSON := range testMetaJSONs {
 		meta, err := UnmarshalBackupMeta(testMetaJSON)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		metaJSON, err := MarshalBackupMeta(meta)
-		c.Assert(err, IsNil)
-		c.Assert(metaJSON, jsonEquals{}, testMetaJSON)
+		require.NoError(t, err)
+		require.JSONEq(t, string(testMetaJSON), string(metaJSON))
 	}
 }

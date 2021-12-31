@@ -18,44 +18,32 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-type testClusteredSuiteBase struct{ testSessionSuiteBase }
-type testClusteredSuite struct {
-	testClusteredSuiteBase
-	testData testutil.TestData
-}
-type testClusteredSerialSuite struct{ testClusteredSuiteBase }
-
-func (s *testClusteredSuiteBase) newTK(c *C) *testkit.TestKit {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+func createTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	return tk
 }
 
-func (s *testClusteredSuite) SetUpSuite(c *C) {
-	s.testClusteredSuiteBase.SetUpSuite(c)
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "clustered_index_suite")
-	c.Assert(err, IsNil)
-}
+func TestClusteredUnionScan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-func (s *testClusteredSuite) TearDownSuite(c *C) {
-	s.testClusteredSuiteBase.TearDownSuite(c)
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
-	tk := s.newTK(c)
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
 	tk.MustExec("insert t (a, b) values (1, 1)")
@@ -65,16 +53,20 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("rollback")
 
 	// cover old row format.
-	tk = testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk = testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("use test")
 	tk.MustExec("begin")
 	tk.MustExec("update t set c = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
 }
 
-func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
-	tk := s.newTK(c)
+func TestClusteredPrefixColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(cb varchar(12), ci int, v int, primary key(cb(1)), key idx_1(cb))")
 	tk.MustExec("insert into t1 values('PvtYW2', 1, 1)")
@@ -93,12 +85,13 @@ func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
 		Plan []string
 		Res  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData := session.GetClusteredIndexSuiteData()
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
@@ -142,8 +135,11 @@ func (s *testClusteredSuite) TestClusteredPrefixColumn(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
-	tk := s.newTK(c)
+func TestClusteredUnionScanIndexLookup(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, pk char(10), c int, primary key(pk), key(a));")
 	tk.MustExec("insert into t values (1, '111', 3);")
@@ -158,8 +154,11 @@ func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
 	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
 }
 
-func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
-	tk := s.newTK(c)
+func TestClusteredIndexLookUp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, d int, primary key (a, b))")
 	tk.MustExec("create index idx on t(c)")
@@ -167,8 +166,11 @@ func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
 	tk.MustQuery("select d from t use index (idx)").Check(testkit.Rows("1"))
 }
 
-func (s *testClusteredSuite) TestClusteredIndexLookUp2(c *C) {
-	tk := s.newTK(c)
+func TestClusteredIndexLookUp2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists c3")
 	createTable := `
 CREATE TABLE c3 (
@@ -190,8 +192,11 @@ SELECT c_balance, c_first, c_middle, c_id FROM c3 use index (idx) WHERE c_w_id =
 	tk.MustQuery(query).Check(testkit.Rows("0.00 aaa OE 772", "0.00 bbb OE 1905"))
 }
 
-func (s *testClusteredSuite) TestClusteredTopN(c *C) {
-	tk := s.newTK(c)
+func TestClusteredTopN(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists o3")
 	createTables := `
 	CREATE TABLE o3 (
@@ -207,15 +212,21 @@ func (s *testClusteredSuite) TestClusteredTopN(c *C) {
 	tk.MustQuery("SELECT max(o_id) max_order FROM o3 use index (idx_order)").Check(testkit.Rows("3"))
 }
 
-func (s *testClusteredSuite) TestClusteredHint(c *C) {
-	tk := s.newTK(c)
+func TestClusteredHint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists ht")
 	tk.MustExec("create table ht (a varchar(64) primary key, b int)")
 	tk.MustQuery("select * from ht use index (`PRIMARY`)")
 }
 
-func (s *testClusteredSuite) TestClusteredBatchPointGet(c *C) {
-	tk := s.newTK(c)
+func TestClusteredBatchPointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b)) PARTITION BY HASH(a) PARTITIONS 3")
 	tk.MustExec("insert t values (1, 1, 1), (3, 3, 3), (5, 5, 5)")
@@ -227,25 +238,30 @@ type SnapCacheSizeGetter interface {
 	SnapCacheSize() int
 }
 
-func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
-	tk := s.newTK(c)
+func TestClusteredInsertIgnoreBatchGetKeyCount(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a varchar(10) primary key, b int)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert ignore t values ('a', 1)")
-	txn, err := tk.Se.Txn(false)
-	c.Assert(err, IsNil)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
 	snapSize := 0
-	if t, ok := txn.GetSnapshot().(SnapCacheSizeGetter); ok {
-		snapSize = t.SnapCacheSize()
+	if snap, ok := txn.GetSnapshot().(SnapCacheSizeGetter); ok {
+		snapSize = snap.SnapCacheSize()
 	}
-
-	c.Assert(snapSize, Equals, 1)
+	require.Equal(t, 1, snapSize)
 	tk.MustExec("rollback")
 }
 
-func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
-	tk := s.newTK(c)
+func TestClusteredPrefixingPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));")
 	tk.MustExec("insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);")
@@ -319,8 +335,104 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1,t2) */  * from t1, t2 where t1.c_int = t2.c_int and t1.c_str >= t2.c_str;`).Check(testkit.Rows("1 nifty elion 1 funny shaw"))
 }
 
-func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
-	tk := s.newTK(c)
+func TestClusteredWithOldRowFormat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
+	tk.Session().GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
+	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21502.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
+	tk.MustExec("delete from t where c_int = 5;")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/21568#issuecomment-741601887
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (11, 'abc', null, null);")
+	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
+	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
+
+	// Test for issue https://github.com/pingcap/tidb/issues/22193
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
+	tk.MustExec("insert into t values('aaa', 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set col_0 = 'ccc';")
+	tk.MustExec("update t set col_0 = 'ddd';")
+	tk.MustExec("commit;")
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
+	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
+	tk.MustExec("admin check table t")
+
+	// Test for issue https://github.com/pingcap/tidb/issues/23646
+	tk.MustExec("drop table if exists txx")
+	tk.MustExec("create table txx(c1 varchar(100), c2 set('dav', 'aaa'), c3 varchar(100), primary key(c1(2), c2) clustered, unique key uk1(c2), index idx1(c2, c1, c3))")
+	tk.MustExec("insert into txx select 'AarTrNoAL', 'dav', '1'")
+	tk.MustExec("update txx set c3 = '10', c1 = 'BxTXbyKRFBGbcPmPR' where c2 in ('dav', 'dav')")
+	tk.MustExec("admin check table txx")
+}
+
+func TestIssue20002(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t ( c_int int, c_str varchar(40), c_datetime datetime, primary key(c_str), unique key(c_datetime));")
+	tk.MustExec("insert into t values (1, 'laughing hertz', '2020-04-27 20:29:30'), (2, 'sharp yalow', '2020-04-01 05:53:36'), (3, 'pedantic hoover', '2020-03-10 11:49:00');")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set c_str = 'amazing herschel' where c_int = 3;")
+	tk.MustExec("select c_int, c_str, c_datetime from t where c_datetime between '2020-01-09 22:00:28' and '2020-04-08 15:12:37';")
+	tk.MustExec("commit;")
+	tk.MustExec("admin check index t `c_datetime`;")
+}
+
+// https://github.com/pingcap/tidb/issues/20727
+func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, primary key(a));")
+	tk.MustExec("insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);")
+	tk.MustQuery("split table t between ('a') and ('z') regions 5;").Check(testkit.Rows("4 1"))
+	tk.MustExec("create index idx on t (b);")
+	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+}
+
+func TestClusteredIndexSelectWhereInNull(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
+	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
+}
+
+func TestCreateClusteredTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only';")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7, t8")
 	tk.MustExec("create table t1(id int primary key, v int)")
@@ -404,11 +516,13 @@ func (s *testClusteredSerialSuite) TestCreateClusteredTable(c *C) {
 
 // Test for union scan in prefixed clustered index table.
 // See https://github.com/pingcap/tidb/issues/22069.
-func (s *testClusteredSerialSuite) TestClusteredUnionScanOnPrefixingPrimaryKey(c *C) {
+func TestClusteredUnionScanOnPrefixingPrimaryKey(t *testing.T) {
 	originCollate := collate.NewCollationEnabled()
 	collate.SetNewCollationEnabledForTest(false)
 	defer collate.SetNewCollationEnabledForTest(originCollate)
-	tk := s.newTK(c)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));")
 	tk.MustExec("insert into t values ('aaaaa', -38);")
@@ -424,83 +538,12 @@ func (s *testClusteredSerialSuite) TestClusteredUnionScanOnPrefixingPrimaryKey(c
 	tk.MustExec("admin check table t;")
 }
 
-func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
-	tk := s.newTK(c)
-	tk.Se.GetSessionVars().RowEncoder.Enable = false
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
-	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
-	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
-
-	// Test for issue https://github.com/pingcap/tidb/issues/21568
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key(c_str));")
-	tk.MustExec("begin;")
-	tk.MustExec("insert into t (c_int, c_str) values (13, 'dazzling torvalds'), (3, 'happy rhodes');")
-	tk.MustExec("delete from t where c_decimal <= 3.024 or (c_int, c_str) in ((5, 'happy saha'));")
-
-	// Test for issue https://github.com/pingcap/tidb/issues/21502.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_double double, c_decimal decimal(12, 6), primary key(c_decimal, c_double), unique key(c_int));")
-	tk.MustExec("begin;")
-	tk.MustExec("insert into t values (5, 55.068712, 8.256);")
-	tk.MustExec("delete from t where c_int = 5;")
-
-	// Test for issue https://github.com/pingcap/tidb/issues/21568#issuecomment-741601887
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c_int int, c_str varchar(40), c_timestamp timestamp, c_decimal decimal(12, 6), primary key(c_int, c_str), key(c_decimal));")
-	tk.MustExec("begin;")
-	tk.MustExec("insert into t values (11, 'abc', null, null);")
-	tk.MustExec("update t set c_str = upper(c_str) where c_decimal is null;")
-	tk.MustQuery("select * from t where c_decimal is null;").Check(testkit.Rows("11 ABC <nil> <nil>"))
-
-	// Test for issue https://github.com/pingcap/tidb/issues/22193
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (col_0 blob(20), col_1 int, primary key(col_0(1)), unique key idx(col_0(2)));")
-	tk.MustExec("insert into t values('aaa', 1);")
-	tk.MustExec("begin;")
-	tk.MustExec("update t set col_0 = 'ccc';")
-	tk.MustExec("update t set col_0 = 'ddd';")
-	tk.MustExec("commit;")
-	tk.MustQuery("select cast(col_0 as char(20)) from t use index (`primary`);").Check(testkit.Rows("ddd"))
-	tk.MustQuery("select cast(col_0 as char(20)) from t use index (idx);").Check(testkit.Rows("ddd"))
-	tk.MustExec("admin check table t")
-
-	// Test for issue https://github.com/pingcap/tidb/issues/23646
-	tk.MustExec("drop table if exists txx")
-	tk.MustExec("create table txx(c1 varchar(100), c2 set('dav', 'aaa'), c3 varchar(100), primary key(c1(2), c2) clustered, unique key uk1(c2), index idx1(c2, c1, c3))")
-	tk.MustExec("insert into txx select 'AarTrNoAL', 'dav', '1'")
-	tk.MustExec("update txx set c3 = '10', c1 = 'BxTXbyKRFBGbcPmPR' where c2 in ('dav', 'dav')")
-	tk.MustExec("admin check table txx")
-}
-
-func (s *testClusteredSuite) TestIssue20002(c *C) {
-	tk := s.newTK(c)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t ( c_int int, c_str varchar(40), c_datetime datetime, primary key(c_str), unique key(c_datetime));")
-	tk.MustExec("insert into t values (1, 'laughing hertz', '2020-04-27 20:29:30'), (2, 'sharp yalow', '2020-04-01 05:53:36'), (3, 'pedantic hoover', '2020-03-10 11:49:00');")
-	tk.MustExec("begin;")
-	tk.MustExec("update t set c_str = 'amazing herschel' where c_int = 3;")
-	tk.MustExec("select c_int, c_str, c_datetime from t where c_datetime between '2020-01-09 22:00:28' and '2020-04-08 15:12:37';")
-	tk.MustExec("commit;")
-	tk.MustExec("admin check index t `c_datetime`;")
-}
-
-// https://github.com/pingcap/tidb/issues/20727
-func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
-	tk := s.newTK(c)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a varchar(255), b int, primary key(a));")
-	tk.MustExec("insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);")
-	tk.MustQuery("split table t between ('a') and ('z') regions 5;").Check(testkit.Rows("4 1"))
-	tk.MustExec("create index idx on t (b);")
-	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
-	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
-}
-
 // https://github.com/pingcap/tidb/issues/22453
-func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
-	tk := s.newTK(c)
+func TestClusteredIndexSplitAndAddIndex2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := createTestKit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b enum('Alice'), c int, primary key (c, b));")
 	tk.MustExec("insert into t values (-1,'Alice',100);")
@@ -511,15 +554,12 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSplitAndAddIndex2(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
-func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
-	tk := s.newTK(c)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a datetime, b bigint, primary key (a));")
-	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
-}
+func TestClusteredIndexSyntax(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
 	const nonClustered, clustered = `NONCLUSTERED`, `CLUSTERED`
 	assertPkType := func(sql string, pkType string) {
@@ -537,11 +577,11 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 	assertPkType("create table t (a int, b int, primary key(a) /*T![clustered_index] nonclustered */);", nonClustered)
 
 	// Test for clustered index.
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) clustered);", clustered)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a));", clusteredDefault)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) nonclustered);", nonClustered)
 	assertPkType("create table t (a int, b varchar(255), primary key(b, a) /*T![clustered_index] nonclustered */);", nonClustered)
@@ -566,8 +606,11 @@ func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 	tk.MustGetErrMsg("create table t (a varchar(255), b decimal(5, 4), primary key (a, b) clustered, key (b) nonclustered)", errMsg)
 }
 
-func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
+func TestPrefixClusteredIndexAddIndexAndRecover(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test;")
 	tk1.MustExec("drop table if exists t;")
 	defer func() {
@@ -584,12 +627,15 @@ func (s *testClusteredSerialSuite) TestPrefixClusteredIndexAddIndexAndRecover(c 
 	tk1.MustExec("admin check table t")
 }
 
-func (s *testClusteredSerialSuite) TestPartitionTable(c *C) {
+func TestPartitionTable(t *testing.T) {
 	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
+		t.Skip("exhaustive types test, skip race test")
 	}
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_view")
 	tk.MustExec("use test_view")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -629,12 +675,16 @@ func (s *testClusteredSerialSuite) TestPartitionTable(c *C) {
 }
 
 // https://github.com/pingcap/tidb/issues/23106
-func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestClusteredIndexDecodeRestoredDataV5(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;")
 	tk.MustExec("insert into t values (1, 'asd', 1), (1, 'dsa', 1);")
@@ -651,12 +701,16 @@ func (s *testClusteredSerialSuite) TestClusteredIndexDecodeRestoredDataV5(c *C) 
 }
 
 // https://github.com/pingcap/tidb/issues/23178
-func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCollation(c *C) {
+func TestPrefixedClusteredIndexUniqueKeyWithNewCollation(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
-	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, " +
 		"primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;")
 	tk.MustExec("insert into t values ('aaa', 2);")
@@ -667,15 +721,19 @@ func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCol
 	tk.MustExec("drop table t;")
 }
 
-func (s *testClusteredSerialSuite) TestClusteredIndexNewCollationWithOldRowFormat(c *C) {
+func TestClusteredIndexNewCollationWithOldRowFormat(t *testing.T) {
 	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
 	// but unistore doesn't support old row format.
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
-	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().RowEncoder.Enable = false
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(col_1 varchar(132) CHARACTER SET utf8 COLLATE utf8_unicode_ci, primary key(col_1) clustered)")
 	tk.MustExec("insert into t2 select 'aBc'")

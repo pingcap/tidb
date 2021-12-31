@@ -18,10 +18,10 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -195,7 +195,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 		},
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroups, eqConds)
+	result, err := solver.solve(joinGroups, eqConds, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}")
 }
@@ -212,7 +212,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
 		},
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{MockJoin{a, b}, MockJoin{c, d}}")
 }

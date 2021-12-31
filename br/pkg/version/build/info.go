@@ -8,7 +8,7 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"

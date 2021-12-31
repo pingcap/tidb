@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ import (
 var isCoverageServer string
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -46,13 +47,29 @@ func TestRunMain(t *testing.T) {
 func TestSetGlobalVars(t *testing.T) {
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
+	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.MemQuotaQuery = 9999999
+		conf.ServerVersion = "test"
 	})
 	setGlobalVars()
 
 	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "9999999", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
+	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ServerVersion = ""
+	})
+	setGlobalVars()
+
+	// variable.Version won't change when len(conf.ServerVersion) == 0
+	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
 }

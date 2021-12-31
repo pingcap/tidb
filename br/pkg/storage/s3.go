@@ -155,7 +155,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
 	}
 
-	s3.Endpoint = options.Endpoint
+	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	s3.Region = options.Region
 	// StorageClass, SSE and ACL are acceptable to be empty
 	s3.StorageClass = options.StorageClass
@@ -189,6 +189,7 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	options.Region, err = flags.GetString(s3RegionOption)
 	if err != nil {
 		return errors.Trace(err)
@@ -283,14 +284,6 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
-	// TODO remove it after BR remove cfg skip-check-path
-	if !opts.SkipCheckPath {
-		err = checkS3Bucket(c, &qs)
-		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "Bucket %s is not accessible: %v", qs.Bucket, err)
-		}
-	}
-
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
@@ -666,6 +659,19 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	if realOffset == r.pos {
 		return realOffset, nil
+	} else if realOffset >= r.rangeInfo.Size {
+		// See: https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35
+		// because s3's GetObject interface doesn't allow get a range that matches zero length data,
+		// so if the position is out of range, we need to always return io.EOF after the seek operation.
+
+		// close current read and open a new one which target offset
+		if err := r.reader.Close(); err != nil {
+			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
+		}
+
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		r.pos = r.rangeInfo.Size
+		return r.pos, nil
 	}
 
 	// if seek ahead no more than 64k, we discard these data

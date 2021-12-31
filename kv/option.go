@@ -56,14 +56,26 @@ const (
 	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// ReadReplicaScope
+	ReadReplicaScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTag indicates the resource group of the kv request.
+	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
+	// SnapInterceptor is used for setting the interceptor for snapshot
+	SnapInterceptor
+	// CommitTSUpperBoundChec is used by cached table
+	// The commitTS must be greater than all the write lock lease of the visited cached table.
+	CommitTSUpperBoundCheck
+	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
+	// additional logic before and after the underlying client-go RPC request.
+	RPCInterceptor
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -74,11 +86,18 @@ const (
 	ReplicaReadLeader ReplicaReadType = iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	// ReplicaReadMixed stands for 'read from leader and follower'.
 	ReplicaReadMixed
+	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
+	ReplicaReadClosest
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
 	return r != ReplicaReadLeader
+}
+
+// IsClosestRead checks whether is going to request closet store to read
+func (r ReplicaReadType) IsClosestRead() bool {
+	return r == ReplicaReadClosest
 }

@@ -1,7 +1,3 @@
-// Copyright 2018 PingCAP, Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2018 PingCAP, Inc. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package timeutil
 
 import (
@@ -28,8 +28,6 @@ import (
 )
 
 func TestGetTZNameFromFileName(t *testing.T) {
-	t.Parallel()
-
 	tz, err := inferTZNameFromFileName("/usr/share/zoneinfo/Asia/Shanghai")
 
 	require.NoError(t, err)
@@ -42,8 +40,6 @@ func TestGetTZNameFromFileName(t *testing.T) {
 }
 
 func TestLocal(t *testing.T) {
-	t.Parallel()
-
 	os.Setenv("TZ", "Asia/Shanghai")
 	systemTZ.Store(InferSystemTZ())
 	loc := SystemLocation()
@@ -65,8 +61,6 @@ func TestLocal(t *testing.T) {
 }
 
 func TestInferOneStepLinkForPath(t *testing.T) {
-	t.Parallel()
-
 	os.Remove(filepath.Join(os.TempDir(), "testlink1"))
 	os.Remove(filepath.Join(os.TempDir(), "testlink2"))
 	os.Remove(filepath.Join(os.TempDir(), "testlink3"))

@@ -1,7 +1,3 @@
-// Copyright 2014 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2014 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package types
 
 import (
@@ -24,7 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -286,7 +286,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 	return iVal, errors.Trace(err)
 }
 
-// StrToUint converts a string to an unsigned integer at the best-effortt.
+// StrToUint converts a string to an unsigned integer at the best-effort.
 func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
@@ -556,8 +556,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			return 0, nil
+		case json.LiteralNil:
+			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 		default:
 			return 1, nil
 		}
@@ -614,8 +616,10 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			return 0, nil
+		case json.LiteralNil:
+			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 		default:
 			return 1, nil
 		}
@@ -641,8 +645,10 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 		err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 	case json.TypeCodeLiteral:
 		switch j.Value[0] {
-		case json.LiteralNil, json.LiteralFalse:
+		case json.LiteralFalse:
 			res = res.FromInt(0)
+		case json.LiteralNil:
+			err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", j.String())
 		default:
 			res = res.FromInt(1)
 		}

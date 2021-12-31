@@ -61,6 +61,7 @@ func (d *datum) setInitInt64Value(min int64, max int64) {
 	d.init = true
 }
 
+// #nosec G404
 func (d *datum) updateRemains() {
 	if uint32(rand.Int31n(100))+1 <= 100-d.probability {
 		d.remains -= uint64(rand.Int63n(int64(d.remains))) + 1

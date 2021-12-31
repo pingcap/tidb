@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -19,29 +20,51 @@ package testkit
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // CreateMockStore return a new mock kv.Storage.
-func CreateMockStore(t *testing.T) (store kv.Storage, clean func()) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
+	store, _, clean = CreateMockStoreAndDomain(t, opts...)
+	return
+}
 
+// CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	dom, clean := bootstrap(t, store)
+	return store, dom, clean
+}
+
+func bootstrap(t testing.TB, store kv.Storage) (*domain.Domain, func()) {
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
-	d, err := session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	d.SetStatsUpdating(true)
+	dom.SetStatsUpdating(true)
 
-	clean = func() {
-		d.Close()
+	clean := func() {
+		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
 	}
+	return dom, clean
+}
 
-	return
+// CreateMockStoreWithOracle returns a new mock kv.Storage and *domain.Domain, providing the oracle for the store.
+func CreateMockStoreWithOracle(t testing.TB, oracle oracle.Oracle, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	store.GetOracle().Close()
+	store.(tikv.Storage).SetOracle(oracle)
+	dom, clean := bootstrap(t, store)
+	return store, dom, clean
 }
