@@ -273,7 +273,7 @@ func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.Download(ctx, nil)
 	if err != nil {
-		return nil, errors.Annotatef(err, "Failed to read azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
+		return nil, errors.Annotatef(err, "Failed to download azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
 	defer resp.RawResponse.Body.Close()
 	data, err := io.ReadAll(resp.Body(azblob.RetryReaderOptions{}))
