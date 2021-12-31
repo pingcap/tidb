@@ -14,8 +14,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
-var MinBackendVersion = "3.1.0-beta.2"
-
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
@@ -111,7 +109,6 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		if err := options.Azblob.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
-		MinBackendVersion = "5.4.0"
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_AzureBlobStorage{AzureBlobStorage: azblob}}, nil
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %s not support yet", u.Scheme)

@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	pd "github.com/tikv/pd/client"
@@ -138,11 +137,6 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 
 	if tikvVersion.Compare(*minTiKVVersion) < 0 {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s don't support BR, please upgrade cluster to %s",
-			s.Address, tikvVersion, build.ReleaseVersion)
-	}
-
-	if tikvVersion.Compare(*semver.New(storage.MinBackendVersion)) < 0 {
-		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s don't support the storage backend, please upgrade cluster to %s",
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
