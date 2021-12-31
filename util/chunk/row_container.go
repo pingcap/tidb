@@ -16,6 +16,8 @@ package chunk
 
 import (
 	"errors"
+	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -137,6 +139,21 @@ func (c *RowContainer) SpillToDisk() {
 	N := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+
+		err := fmt.Errorf("%v", r)
+		c.m.records.spillError = err
+		buf := make([]byte, 4096)
+		stackSize := runtime.Stack(buf, false)
+		buf = buf[:stackSize]
+		logutil.BgLogger().Error("rowContainer panicked", zap.String("stack", string(buf)), zap.Error(err))
+	}()
+
 	for i := 0; i < N; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
