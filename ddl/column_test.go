@@ -35,9 +35,11 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 var _ = Suite(&testColumnSuite{})
+var _ = Suite(&testColumnSuiteCharset{})
 
 type testColumnSuite struct {
 	store  kv.Storage
@@ -62,6 +64,20 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 func (s *testColumnSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+}
+
+type testColumnSuiteCharset struct {
+	testColumnSuite
+}
+
+func (s *testColumnSuiteCharset) SetUpSuite(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	s.testColumnSuite.SetUpSuite(c)
+}
+
+func (s *testColumnSuiteCharset) TearDownSuite(c *C) {
+	s.testColumnSuite.TearDownSuite(c)
+	collate.SetCharsetFeatEnabledForTest(false)
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -1159,7 +1175,7 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testColumnSuite) TestModifyColumn(c *C) {
+func (s *testColumnSuiteCharset) TestModifyColumn(c *C) {
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
