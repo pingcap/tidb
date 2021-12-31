@@ -1179,9 +1179,9 @@ func TestModifyColumn(t *testing.T) {
 	ctx := testNewContext(d)
 
 	defer func() {
-		err := store.Close()
+		err := d.Stop()
 		require.NoError(t, err)
-		err = d.Stop()
+		err = store.Close()
 		require.NoError(t, err)
 	}()
 
