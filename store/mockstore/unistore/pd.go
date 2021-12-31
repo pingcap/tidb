@@ -41,6 +41,21 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
+func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string) ([]pd.GlobalConfigItem, error) {
+	// See https://github.com/pingcap/tidb/pull/31010
+	panic("not implemented")
+}
+
+func (c *pdClient) StoreGlobalConfig(ctx context.Context, items []pd.GlobalConfigItem) error {
+	// See https://github.com/pingcap/tidb/pull/31010
+	panic("not implemented")
+}
+
+func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfigItem, error) {
+	// See https://github.com/pingcap/tidb/pull/31010
+	panic("not implemented")
+}
+
 func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {
 	return c.GetTS(ctx)
 }
