@@ -125,14 +125,17 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 			for {
 				keys := make([][]byte, 0, batchSize)
 				values := make([][]byte, 0, batchSize)
+				totalSize := 0
 
 				for i := 0; i < batchSize; i++ {
 					key := randKey(startKey, endKey, maxLen)
 					keys = append(keys, key)
 					value := randValue()
 					values = append(values, value)
+					totalSize += len(key) + len(value)
 				}
 
+				log.Info("Putting random batch.", zap.Int("length", totalSize))
 				err := client.BatchPut(context.TODO(), keys, values, nil)
 				if err != nil {
 					errCh <- errors.Trace(err)
