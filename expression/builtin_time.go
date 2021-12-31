@@ -3355,8 +3355,8 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			types.SetBinChsClnFlag(tp)
 			args[0] = BuildCastFunction(ctx, args[0], tp)
-			bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 		}
+		bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 
 		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeDate {
 			switch strings.ToUpper(unit) {
@@ -4146,8 +4146,8 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			types.SetBinChsClnFlag(tp)
 			args[0] = BuildCastFunction(ctx, args[0], tp)
-			bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 		}
+		bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 
 		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeDate {
 			switch strings.ToUpper(unit) {
