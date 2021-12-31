@@ -308,11 +308,16 @@ func put(client *rawkv.Client, dataStr string) error {
 
 		keys = append(keys, key)
 		values = append(values, value)
+		// FIXME: because of the incompatibility of `BatchPut`,
+		//        we must use RawPut here. See https://github.com/tikv/client-go/pull/403.
+		//        Once the client get fixed, we'd better use the BatchPut API back.
+		if err := client.Put(context.Background(), key, value); err != nil {
+			return err
+		}
 	}
 
 	log.Info("Put rawkv data", zap.ByteStrings("keys", keys), zap.ByteStrings("values", values))
 
-	err := client.BatchPut(context.TODO(), keys, values, nil)
 	return errors.Trace(err)
 }
 
