@@ -690,7 +690,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		}
 		exprI := expr.GetBytes(i)
 		if !enc.IsValid(exprI) {
-			encBuf, _ = enc.Transform(encBuf, exprI, charset.OpReplace)
+			encBuf, _ = enc.Transform(encBuf, exprI, charset.OpReplaceNoErr)
 			result.AppendBytes(encBuf)
 		} else {
 			result.AppendBytes(exprI)
