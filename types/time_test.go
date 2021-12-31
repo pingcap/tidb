@@ -1696,6 +1696,10 @@ func TestIsDateFormat(t *testing.T) {
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
 	require.True(t, output)
+
+	input = "20129"
+	output = types.IsDateFormat(input)
+	require.True(t, output)
 }
 
 func TestParseTimeFromInt64(t *testing.T) {
