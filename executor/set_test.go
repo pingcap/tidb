@@ -1602,5 +1602,5 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 
 	// Test for hide top sql variable in show variable.
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF"))
 }
