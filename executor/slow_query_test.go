@@ -113,7 +113,6 @@ select * from t;`
 }
 
 func TestParseSlowLogFile(t *testing.T) {
-	t.Parallel()
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
@@ -267,7 +266,6 @@ select * from t;
 }
 
 func TestSlowLogParseTime(t *testing.T) {
-	t.Parallel()
 	t1Str := "2019-01-24T22:32:29.313255+08:00"
 	t2Str := "2019-01-24T22:32:29.313255"
 	t1, err := ParseTime(t1Str)
@@ -285,7 +283,6 @@ func TestSlowLogParseTime(t *testing.T) {
 // sql select * from INFORMATION_SCHEMA.SLOW_QUERY limit 1;
 // ERROR 1105 (HY000): string "2019-05-12-11:23:29.61474688" doesn't has a prefix that matches format "2006-01-02-15:04:05.999999999 -0700", err: parsing time "2019-05-12-11:23:29.61474688" as "2006-01-02-15:04:05.999999999 -0700": cannot parse "" as "-0700"
 func TestFixParseSlowLogFile(t *testing.T) {
-	t.Parallel()
 	slowLog := bytes.NewBufferString(
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227
@@ -333,7 +330,6 @@ select * from t;
 }
 
 func TestSlowQueryRetriever(t *testing.T) {
-	t.Parallel()
 	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
@@ -534,7 +530,6 @@ func TestSplitbyColon(t *testing.T) {
 }
 
 func TestBatchLogForReversedScan(t *testing.T) {
-	t.Parallel()
 	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
