@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -391,6 +392,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
+	errMgr := errormanager.New(nil, rc.cfg)
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
 		if !ok {
@@ -407,10 +409,17 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
-					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr); err != nil {
 						return sourceSize, errors.Trace(err)
 					}
-					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+
+					if tbl.IndexRatio > 0 {
+						sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					} else {
+						// if sample data failed due to max-error, fallback to use source size
+						sourceSize += tbl.TotalSize
+					}
+
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
 						bigTableCount += 1
 						if !tbl.IsRowOrdered {
@@ -690,12 +699,56 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 				}
 			}
 		} else {
+<<<<<<< HEAD
 			// compare column names and make sure
 			// 1. TiDB table info has data file's all columns(besides ignore columns)
 			// 2. Those columns not introduced in data file always have a default value.
 			colMap := make(map[string]struct{})
 			for col := range igCols {
 				colMap[col] = struct{}{}
+=======
+			// remove column for next iteration
+			delete(colMap, col)
+		}
+	}
+	// if theses rest columns don't have a default value.
+	for col := range colMap {
+		if _, ok := defaultCols[col]; ok {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s. "+
+			"Please add default value for column '%s' or choose another column to ignore or add this column in data file",
+			tableInfo.DB, tableInfo.Name, col, col))
+	}
+	return msgs, nil
+}
+
+// checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
+// 1. pick one table with two CSV files and a unique/primary key
+// 2. read the first row of those two CSV files
+// 3. checks if the content of those first rows are compatible with the table schema, and whether the
+//    two rows are identical, to determine if the first rows are a header rows.
+func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
+	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
+	// return error in this situation, so we need do it again.
+	if rc.cfg.Mydumper.CSV.Header {
+		return nil
+	}
+	var (
+		tableMeta    *mydump.MDTableMeta
+		csvCount     int
+		hasUniqueIdx bool
+	)
+	// only check one table source files for better performance. The checked table is chosen based on following two factor:
+	// 1. contains at least 1 csv source file, 2 is preferable
+	// 2. table schema contains primary key or unique key
+	// if the two factors can't be both satisfied, the first one has a higher priority
+outer:
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			if len(tblMeta.DataFiles) == 0 {
+				continue
+>>>>>>> ec4f87983... lightning: output clearer output message for max-error (#30908)
 			}
 			for _, col := range core.Columns {
 				if _, ok := colMap[col.Name.L]; ok {
@@ -740,7 +793,13 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	return msgs, nil
 }
 
-func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+func (rc *Controller) sampleDataFromTable(
+	ctx context.Context,
+	dbName string,
+	tableMeta *mydump.MDTableMeta,
+	tableInfo *model.TableInfo,
+	errMgr *errormanager.ErrorManager,
+) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
@@ -831,15 +890,21 @@ outloop:
 			return errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowSize += uint64(lastRow.Length)
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
-		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
-			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
-			return errors.Trace(err)
+			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+				"" /* use a empty string here because we don't actually record */, encodeErr)
+			if encodeErr != nil {
+				return errors.Annotatef(encodeErr, "in file at offset %d", offset)
+			}
+			if rowCount < maxSampleRowCount {
+				continue
+			} else {
+				break
+			}
 		}
 		if tableMeta.IsRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -855,11 +920,13 @@ outloop:
 			indexKVs = indexKVs.Clear()
 		}
 		kvSize += kvs.Size()
+		rowSize += uint64(lastRow.Length)
+		parser.RecycleRow(lastRow)
 
 		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 			kvSize += uint64(val.(int))
 		})
-		if rowSize > maxSampleDataSize && rowCount > maxSampleRowCount {
+		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}
 	}

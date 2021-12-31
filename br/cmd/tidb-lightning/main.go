@@ -90,8 +90,17 @@ func main() {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
+<<<<<<< HEAD
 		logger.Info("tidb lightning exit")
 		fmt.Fprintln(os.Stdout, "tidb lightning exit")
+=======
+		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
+		exitMsg := "tidb lightning exit successfully"
+		if !finished {
+			exitMsg = "tidb lightning canceled"
+		}
+		fmt.Fprintln(os.Stdout, exitMsg)
+>>>>>>> ec4f87983... lightning: output clearer output message for max-error (#30908)
 	}
 
 	// call Sync() with log to stdout may return error in some case, so just skip it
