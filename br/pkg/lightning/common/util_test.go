@@ -16,17 +16,26 @@ package common_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	tmysql "github.com/pingcap/tidb/errno"
 )
 
 type utilSuite struct{}
@@ -92,6 +101,60 @@ func (s *utilSuite) TestToDSN(c *C) {
 		},
 	}
 	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'")
+}
+
+type mockDriver struct {
+	driver.Driver
+	plainPsw string
+}
+
+func (m *mockDriver) Open(dsn string) (driver.Conn, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	accessDenied := cfg.Passwd != m.plainPsw
+	return &mockConn{accessDenied: accessDenied}, nil
+}
+
+type mockConn struct {
+	driver.Conn
+	driver.Pinger
+	accessDenied bool
+}
+
+func (c *mockConn) Ping(ctx context.Context) error {
+	if c.accessDenied {
+		return &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"}
+	}
+	return nil
+}
+
+func (s *utilSuite) TestConnect(c *C) {
+	plainPsw := "dQAUoDiyb1ucWZk7"
+	driverName := "mysql-mock-" + strconv.Itoa(rand.Int())
+	sql.Register(driverName, &mockDriver{plainPsw: plainPsw})
+
+	c.Assert(failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver",
+		fmt.Sprintf("return(\"%s\")", driverName)), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MockMySQLDriver"), IsNil)
+	}()
+
+	param := common.MySQLConnectParam{
+		Host:             "127.0.0.1",
+		Port:             4000,
+		User:             "root",
+		Password:         plainPsw,
+		SQLMode:          "strict",
+		MaxAllowedPacket: 1234,
+	}
+	_, err := param.Connect()
+	c.Assert(err, IsNil)
+	param.Password = base64.StdEncoding.EncodeToString([]byte(plainPsw))
+	_, err = param.Connect()
+	c.Assert(err, IsNil)
 }
 
 func (s *utilSuite) TestIsContextCanceledError(c *C) {

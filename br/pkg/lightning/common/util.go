@@ -17,6 +17,7 @@ package common
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,9 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
 )
@@ -52,9 +56,9 @@ type MySQLConnectParam struct {
 	Vars             map[string]string
 }
 
-func (param *MySQLConnectParam) ToDSN() string {
+func (param *MySQLConnectParam) toDSN(password string) string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
-		param.User, param.Password, param.Host, param.Port,
+		param.User, password, param.Host, param.Port,
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
@@ -64,13 +68,40 @@ func (param *MySQLConnectParam) ToDSN() string {
 	return dsn
 }
 
-func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
-	db, err := sql.Open("mysql", param.ToDSN())
+func (param *MySQLConnectParam) ToDSN() string {
+	return param.toDSN(param.Password)
+}
+
+func (param *MySQLConnectParam) tryConnect(password string) (*sql.DB, error) {
+	driverName := "mysql"
+	failpoint.Inject("MockMySQLDriver", func(val failpoint.Value) {
+		driverName = val.(string)
+	})
+	db, err := sql.Open(driverName, param.toDSN(password))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return db, errors.Trace(db.Ping())
+}
+
+func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
+	db, err := param.tryConnect(param.Password)
+	if err == nil {
+		return db, nil
+	}
+	// If access is denied and password is encoded by base64, try the decoded string as well.
+	if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+		// If password is encoded by base64, try the decoded string as well.
+		if password, decodeErr := base64.StdEncoding.DecodeString(param.Password); decodeErr == nil {
+			db2, err2 := param.tryConnect(string(password))
+			if err2 == nil {
+				return db2, nil
+			}
+		}
+	}
+	// If we can't connect successfully, return the first error.
+	return nil, errors.Trace(err)
 }
 
 // IsDirExists checks if dir exists.
