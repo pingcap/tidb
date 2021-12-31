@@ -63,12 +63,11 @@ var charsetInfos = map[string]*Charset{
 
 // All the names supported collations should be in the following table.
 var supportedCollationNames = map[string]struct{}{
-	CollationUTF8:     {},
-	CollationUTF8MB4:  {},
-	CollationASCII:    {},
-	CollationLatin1:   {},
-	CollationBin:      {},
-	"gbk_utf8mb4_bin": {},
+	CollationUTF8:    {},
+	CollationUTF8MB4: {},
+	CollationASCII:   {},
+	CollationLatin1:  {},
+	CollationBin:     {},
 }
 
 // TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
@@ -489,6 +488,11 @@ func AddCharset(c *Charset) {
 // Use only when adding a custom charset to the parser.
 func RemoveCharset(c string) {
 	delete(charsetInfos, c)
+	for i := range supportedCollations {
+		if supportedCollations[i].Name == c {
+			supportedCollations = append(supportedCollations[:i], supportedCollations[i+1:]...)
+		}
+	}
 }
 
 // AddCollation adds a new collation.
@@ -498,12 +502,18 @@ func AddCollation(c *Collation) {
 	collationsNameMap[c.Name] = c
 
 	if _, ok := supportedCollationNames[c.Name]; ok {
-		supportedCollations = append(supportedCollations, c)
+		AddSupportedCollation(c)
 	}
 
 	if charset, ok := charsetInfos[c.CharsetName]; ok {
 		charset.Collations[c.Name] = c
 	}
+}
+
+// AddSupportedCollation adds a new collation into supportedCollations.
+// Use only when adding a custom collation to the parser.
+func AddSupportedCollation(c *Collation) {
+	supportedCollations = append(supportedCollations, c)
 }
 
 // init method always puts to the end of file.

@@ -32,7 +32,6 @@ func EnableNewCharset() {
 // It will also enable or disable new collation.
 func SetCharsetFeatEnabledForTest(flag bool) {
 	enableCharsetFeat = flag
-	SetNewCollationEnabledForTest(flag)
 	if flag {
 		addCharset()
 	} else {
@@ -55,18 +54,16 @@ func addCharset() {
 		newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
 		newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
 	} else {
-		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: "gbk_utf8mb4_bin", Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
-		charset.AddCollation(&charset.Collation{ID: 0, CharsetName: charset.CharsetGBK, Name: "gbk_utf8mb4_bin", IsDefault: true})
+		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
+		charset.AddSupportedCollation(&charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: true})
 	}
 }
 
 func removeCharset() {
 	charset.RemoveCharset(charset.CharsetGBK)
-	if NewCollationEnabled() {
-		delete(newCollatorMap, charset.CollationGBKBin)
-		delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKBin))
+	delete(newCollatorMap, charset.CollationGBKBin)
+	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKBin))
 
-		delete(newCollatorMap, charset.CollationGBKChineseCI)
-		delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKChineseCI))
-	}
+	delete(newCollatorMap, charset.CollationGBKChineseCI)
+	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKChineseCI))
 }
