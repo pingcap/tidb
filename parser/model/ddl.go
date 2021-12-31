@@ -171,11 +171,6 @@ func (action ActionType) String() string {
 	return "none"
 }
 
-type HistoryInfoAffected struct {
-	DBInfo    *DBInfo
-	TableInfo *TableInfo
-}
-
 // HistoryInfo is used for binlog.
 type HistoryInfo struct {
 	SchemaVersion int64
