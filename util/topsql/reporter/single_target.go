@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -68,7 +68,7 @@ func NewSingleTargetDataSink(registerer DataSinkRegisterer) *SingleTargetDataSin
 
 // Start starts to run SingleTargetDataSink.
 func (ds *SingleTargetDataSink) Start() {
-	addr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+	addr := state.GlobalState.ReceiverAddress.Load()
 	if addr != "" {
 		ds.curRPCAddr = addr
 		err := ds.registerer.Register(ds)
@@ -117,10 +117,10 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		case <-ds.ctx.Done():
 			return false
 		case task := <-ds.sendTaskCh:
-			targetRPCAddr = config.GetGlobalConfig().TopSQL.ReceiverAddress
+			targetRPCAddr = state.GlobalState.ReceiverAddress.Load()
 			ds.doSend(targetRPCAddr, task)
 		case <-ticker.C:
-			targetRPCAddr = config.GetGlobalConfig().TopSQL.ReceiverAddress
+			targetRPCAddr = state.GlobalState.ReceiverAddress.Load()
 		}
 
 		if err := ds.trySwitchRegistration(targetRPCAddr); err != nil {

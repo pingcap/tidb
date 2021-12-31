@@ -39,7 +39,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -1300,9 +1299,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	dbt.MustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
-	})
+	topsqlstate.GlobalState.ReceiverAddress.Store("127.0.0.1:4001")
+
 	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
@@ -1545,9 +1543,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 
 	// Enable TopSQL
 	topsqlstate.GlobalState.Enable.Store(true)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
+	topsqlstate.GlobalState.ReceiverAddress.Store("mock-agent")
 	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
 
 	const ExecCountPerSQL = 3

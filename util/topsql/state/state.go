@@ -23,6 +23,15 @@ const (
 	DefTiDBTopSQLMaxStatementCount     = 100
 	DefTiDBTopSQLMaxCollect            = 5000
 	DefTiDBTopSQLReportIntervalSeconds = 60
+
+	// DefTiDBTopSQLReceiverAddress is temporary for testing
+	//
+	// Deprecated
+	//
+	// TiDB has deprecated the single target reporting mode. However, since TopSQL tests rely heavily
+	// on single target, this global variable is introduced to make the tests work properly before
+	// refactoring them. This variable will be removed later after refactoring is totally done.
+	DefTiDBTopSQLReceiverAddress = ""
 )
 
 // GlobalState is the global Top-SQL state.
@@ -32,6 +41,13 @@ var GlobalState = State{
 	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 	ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
+
+	// Deprecated
+	//
+	// TiDB has deprecated the single target reporting mode. However, since TopSQL tests rely heavily
+	// on single target, this global variable is introduced to make the tests work properly before
+	// refactoring them. This variable will be removed later after refactoring is totally done.
+	ReceiverAddress: atomic.NewString(DefTiDBTopSQLReceiverAddress),
 }
 
 // State is the state for control top sql feature.
@@ -46,6 +62,13 @@ type State struct {
 	MaxCollect *atomic.Int64
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
+
+	// Deprecated
+	//
+	// TiDB has deprecated the single target reporting mode. However, since TopSQL tests rely heavily
+	// on single target, this global variable is introduced to make the tests work properly before
+	// refactoring them. This variable will be removed later after refactoring is totally done.
+	ReceiverAddress *atomic.String
 }
 
 // EnableTopSQL enables the top SQL feature.

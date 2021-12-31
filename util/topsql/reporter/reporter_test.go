@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -86,9 +85,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*Re
 	topsqlstate.GlobalState.MaxStatementCount.Store(int64(maxStatementsNum))
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(int64(interval))
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = addr
-	})
+	topsqlstate.GlobalState.ReceiverAddress.Store(addr)
 
 	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
