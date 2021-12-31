@@ -62,8 +62,10 @@ const (
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
+	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagPushDownTopN
+	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
 	flagPrunColumnsAgain
 )
@@ -80,8 +82,10 @@ var optRuleList = []logicalOptRule{
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
+	&collectPredicateColumnsPoint{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
+	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
@@ -257,9 +261,6 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
-	// TODO: move it to the logic of sync load hist-needed columns.
-	predicateColumns, _ := CollectColumnStatsUsage(logic, true, false)
-	sctx.UpdateColStatsUsage(predicateColumns)
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
@@ -267,6 +268,8 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
