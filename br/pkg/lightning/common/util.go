@@ -58,7 +58,7 @@ func (param *MySQLConnectParam) ToDSN() string {
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+		dsn += fmt.Sprintf("&%s='%s'", k, url.QueryEscape(v))
 	}
 
 	return dsn
@@ -315,8 +315,6 @@ type KvPair struct {
 	Val []byte
 	// RowID is the row id of the KV pair.
 	RowID int64
-	// Offset is the row's offset in file.
-	Offset int64
 }
 
 // TableHasAutoRowID return whether table has auto generated row id

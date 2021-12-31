@@ -517,11 +517,11 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "sh",
 			Regions:       "bj,sh",
-			Followers:     5,
+			Followers:     4,
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			NewRule(Voter, 4, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "sh"),
 			)),
 			NewRule(Follower, 2, NewConstraintsDirect(
@@ -534,7 +534,6 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		name: "direct syntax: normal case 1",
 		input: &model.PlacementSettings{
 			Constraints: "[+region=us]",
-			Followers:   2,
 		},
 		output: []*Rule{
 			NewRule(Leader, 1, NewConstraintsDirect(
@@ -572,7 +571,10 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			LeaderConstraints:   "[+region=as]",
 			FollowerConstraints: "[-region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", NotIn, "us"))),
+		},
 	})
 
 	tests = append(tests, TestCase{
@@ -666,6 +668,27 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Followers:         2,
 		},
 		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect()),
+			NewRule(Learner, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints, with count",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+			Learners:           4,
+		},
+		err: ErrInvalidConstraintsRelicas,
 	})
 
 	for _, t := range tests {
