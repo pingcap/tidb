@@ -124,94 +124,11 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(err)
 }
 
-// CreateTable executes a internal CREATE TABLES.
-func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table) error {
-	if bse, ok := db.se.(glue.BatchCreateTableSession); ok {
-		m := map[string][]*model.TableInfo{}
-		for _, table := range tables {
-			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
-		}
-		if err := bse.CreateTables(ctx, m); err != nil {
-			return err
-		}
-
-		for _, table := range tables {
-			var restoreMetaSQL string
-			var err error
-			if table.Info.IsSequence() {
-				setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
-					utils.EncloseName(table.DB.Name.O),
-					utils.EncloseName(table.Info.Name.O))
-				if table.Info.Sequence.Cycle {
-					increment := table.Info.Sequence.Increment
-					// TiDB sequence's behaviour is designed to keep the same pace
-					// among all nodes within the same cluster. so we need restore round.
-					// Here is a hack way to trigger sequence cycle round > 0 according to
-					// https://github.com/pingcap/br/pull/242#issuecomment-631307978
-					// TODO use sql to set cycle round
-					nextSeqSQL := fmt.Sprintf("do nextval(%s.%s);",
-						utils.EncloseName(table.DB.Name.O),
-						utils.EncloseName(table.Info.Name.O))
-					var setValSQL string
-					if increment < 0 {
-						setValSQL = fmt.Sprintf(setValFormat, table.Info.Sequence.MinValue)
-					} else {
-						setValSQL = fmt.Sprintf(setValFormat, table.Info.Sequence.MaxValue)
-					}
-					err = db.se.Execute(ctx, setValSQL)
-					if err != nil {
-						log.Error("restore meta sql failed",
-							zap.String("query", setValSQL),
-							zap.Stringer("db", table.DB.Name),
-							zap.Stringer("table", table.Info.Name),
-							zap.Error(err))
-						return errors.Trace(err)
-					}
-					// trigger cycle round > 0
-					err = db.se.Execute(ctx, nextSeqSQL)
-					if err != nil {
-						log.Error("restore meta sql failed",
-							zap.String("query", nextSeqSQL),
-							zap.Stringer("db", table.DB.Name),
-							zap.Stringer("table", table.Info.Name),
-							zap.Error(err))
-						return errors.Trace(err)
-					}
-				}
-				restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-				err = db.se.Execute(ctx, restoreMetaSQL)
-			}
-			if err != nil {
-				log.Error("restore meta sql failed",
-					zap.String("query", restoreMetaSQL),
-					zap.Stringer("db", table.DB.Name),
-					zap.Stringer("table", table.Info.Name),
-					zap.Error(err))
-				return errors.Trace(err)
-			}
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
-}
-
-// CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
-	if err != nil {
-		log.Error("create table failed",
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
+//
+func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
 	var restoreMetaSQL string
-	switch {
-	case table.Info.IsView():
-		return nil
-	case table.Info.IsSequence():
+	var err error
+	if table.Info.IsSequence() {
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O))
@@ -240,7 +157,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 					zap.Error(err))
 				return errors.Trace(err)
 			}
-
 			// trigger cycle round > 0
 			err = db.se.Execute(ctx, nextSeqSQL)
 			if err != nil {
@@ -254,12 +170,56 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 		}
 		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
 		err = db.se.Execute(ctx, restoreMetaSQL)
+	}
+	if err != nil {
+		log.Error("restore meta sql failed",
+			zap.String("query", restoreMetaSQL),
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	return errors.Trace(err)
+}
+
+// CreateTables execute a internal CREATE TABLES.
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table) error {
+	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
+		m := map[string][]*model.TableInfo{}
+		for _, table := range tables {
+			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+		}
+		if err := batchSession.CreateTables(ctx, m); err != nil {
+			return err
+		}
+
+		for _, table := range tables {
+			err := db.restoreSequence(ctx, table)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// CreateTable executes a CREATE TABLE SQL.
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
+	if err != nil {
+		log.Error("create table failed",
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	var restoreMetaSQL string
+	switch {
+	case table.Info.IsView():
+		return nil
+	case table.Info.IsSequence():
+		err = db.restoreSequence(ctx, table)
 		if err != nil {
-			log.Error("restore meta sql failed",
-				zap.String("query", restoreMetaSQL),
-				zap.Stringer("db", table.DB.Name),
-				zap.Stringer("table", table.Info.Name),
-				zap.Error(err))
 			return errors.Trace(err)
 		}
 	// only table exists in ddlJobs during incremental restoration should do alter after creation.
