@@ -128,6 +128,7 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 		schema.Charset = mysql.DefaultCharset
 	}
 	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
+
 }
 
 // CreateTables implements glue.BatchCreateTableSession.

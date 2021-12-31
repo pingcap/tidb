@@ -8764,7 +8764,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	topsqlstate.GlobalState.Enable.Store(true)
+	topsqlstate.EnableTopSQL()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})

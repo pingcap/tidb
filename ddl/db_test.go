@@ -7642,7 +7642,8 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
-func (s *testDBSuite2) TestBatchCreateTable(c *C) {
+func (s *testDBSuite2) TestCreateTables(c *C) {
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tables_1")
