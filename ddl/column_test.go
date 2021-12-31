@@ -39,7 +39,6 @@ import (
 )
 
 var _ = Suite(&testColumnSuite{})
-var _ = Suite(&testColumnSuiteCharset{})
 
 type testColumnSuite struct {
 	store  kv.Storage
@@ -64,20 +63,6 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 func (s *testColumnSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-}
-
-type testColumnSuiteCharset struct {
-	testColumnSuite
-}
-
-func (s *testColumnSuiteCharset) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testColumnSuite.SetUpSuite(c)
-}
-
-func (s *testColumnSuiteCharset) TearDownSuite(c *C) {
-	s.testColumnSuite.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -1175,7 +1160,9 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testColumnSuiteCharset) TestModifyColumn(c *C) {
+func (s *testColumnSuite) TestModifyColumn(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
@@ -1209,11 +1196,11 @@ func (s *testColumnSuiteCharset) TestModifyColumn(c *C) {
 		{"decimal(2,1)", "bigint", nil},
 		{"int", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
 		{"varchar(10) character set gbk", "int", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
-		{"varchar(10) character set gbk", "varchar(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
-		{"varchar(10) character set gbk", "char(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
-		{"varchar(10) character set utf8", "char(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set utf8", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set gbk", "varchar(10) character set gbk", nil},
+		{"varchar(10) character set gbk", "varchar(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set gbk", "char(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set utf8", "char(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set utf8", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
