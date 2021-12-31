@@ -222,6 +222,9 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 
 func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
 	enc = charset.FindEncoding(chs)
+	if sc == nil {
+		return enc, false
+	}
 	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
 		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
 		return nil, true
