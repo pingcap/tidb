@@ -266,6 +266,7 @@ func (importer *FileImporter) Import(
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
 	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 ) error {
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
@@ -317,7 +318,7 @@ func (importer *FileImporter) Import(
 				for i, f := range remainFiles {
 					var downloadMeta *import_sstpb.SSTMeta
 					if importer.isRawKvMode {
-						downloadMeta, e = importer.downloadRawKVSST(ctx, info, f, cipher)
+						downloadMeta, e = importer.downloadRawKVSST(ctx, info, f, cipher, apiVersion)
 					} else {
 						downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules, cipher)
 					}
@@ -528,6 +529,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	regionInfo *RegionInfo,
 	file *backuppb.File,
 	cipher *backuppb.CipherInfo,
+	apiVersion kvrpcpb.APIVersion,
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
@@ -586,6 +588,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	sstMeta.Range.Start = downloadResp.Range.GetStart()
 	sstMeta.Range.End = downloadResp.Range.GetEnd()
+	sstMeta.ApiVersion = apiVersion
 	return &sstMeta, nil
 }
 
