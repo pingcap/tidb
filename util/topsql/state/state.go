@@ -20,7 +20,7 @@ import "go.uber.org/atomic"
 const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxStatementCount     = 100
 	DefTiDBTopSQLMaxCollect            = 5000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 )
@@ -46,6 +46,16 @@ type State struct {
 	MaxCollect *atomic.Int64
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
+}
+
+// EnableTopSQL enables the top SQL feature.
+func EnableTopSQL() {
+	GlobalState.Enable.Store(true)
+}
+
+// DisableTopSQL disables the top SQL feature.
+func DisableTopSQL() {
+	GlobalState.Enable.Store(false)
 }
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
