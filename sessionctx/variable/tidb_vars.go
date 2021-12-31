@@ -792,7 +792,7 @@ const (
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBPersistAnalyzeOptions          = true
-	DefTiDBEnableColumnTracking           = true
+	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
 )
