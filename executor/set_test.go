@@ -591,6 +591,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
+	// delete tidb_disable_column_tracking_time to avoid other tests' influence
+	tk.MustExec("delete from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time'")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
