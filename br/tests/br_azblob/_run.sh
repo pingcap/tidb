@@ -75,7 +75,7 @@ if $fail; then
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
 else
-    echo "TEST: [$TEST_NAME] successd!"
+    echo "TEST: [$TEST_NAME] succeed!"
 fi
 
 # clean up
