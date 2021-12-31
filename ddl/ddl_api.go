@@ -2063,10 +2063,8 @@ func (d *ddl) createTableWithInfoJob(
 		if err := d.assignTableID(tbInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
 
-	if tbInfo.Partition != nil {
-		if !retainID {
+		if tbInfo.Partition != nil {
 			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
 				return nil, errors.Trace(err)
 			}
