@@ -58,7 +58,7 @@ type tiflashDDLTestSuite struct {
 	dom          *domain.Domain
 	pdHTTPServer *httptest.Server
 	pdMockAddr   string
-	tiflash      infosync.MockTiFlash
+	tiflash      *infosync.MockTiFlash
 	cluster      *unistore.Cluster
 }
 
@@ -90,9 +90,11 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
 
-	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
+	c.Assert(err, IsNil)
+
+
 	server, addr := s.setUpMockTiFlashHTTPServer()
-	s.tiflash = infosync.MockTiFlash{
+	s.tiflash = &infosync.MockTiFlash{
 		StatusAddr:                  addr,
 		StatusServer:                server,
 		SyncStatus:                  make(map[int]infosync.MockTiFlashTableInfo),
@@ -101,18 +103,20 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		TiflashDelay:                0,
 		StartTime:                   time.Now(),
 	}
+	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
 
-	c.Assert(err, IsNil)
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
 	s.dom, err = session.BootstrapSession(s.store)
+	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
 
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
-	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
+	//infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{})
+	//s.tiflash = infosync.GetMockTiFlash()
 
 	// mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	log.Info("Mock stat", zap.String("pd address", s.pdMockAddr), zap.Any("infosyncer", s.dom.InfoSyncer()))
@@ -125,6 +129,7 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	if s.pdHTTPServer != nil {
 		s.pdHTTPServer.Close()
 	}
+	// TODO shall be moved into infosync
 	if s.tiflash.StatusServer != nil {
 		s.tiflash.StatusServer.Close()
 	}
@@ -289,7 +294,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 5)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
 	s.CheckFlashback(tk, c)
@@ -551,7 +556,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}))
 	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
 		// GetGroupRules
-		result, err := s.tiflash.HandleGetGroupRules()
+		result, err := s.tiflash.HandleGetGroupRules("tiflash")
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
@@ -586,7 +591,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		params := mux.Vars(req)
 		ruleID := params["ruleid"]
 		ruleID = strings.Trim(ruleID, "/")
-		s.tiflash.HandleDeletePlacementRule(ruleID)
+		s.tiflash.HandleDeletePlacementRule("tiflash", ruleID)
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodDelete)
 	var mockConfig = func() (map[string]interface{}, error) {

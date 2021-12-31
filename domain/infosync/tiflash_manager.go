@@ -159,8 +159,9 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 }
 
 type mockTiFlashPlacementManager struct {
-	TiFlashPDPlacementManager
 	sync.Mutex
+	addrs []string
+	tiflash *MockTiFlash
 }
 
 func makeBaseRule() placement.Rule {
@@ -265,13 +266,13 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.Rule) error {
 	return nil
 }
 
-// HandleDeletePlacementRule is ock function for DeletePlacementRule
-func (tiflash *MockTiFlash) HandleDeletePlacementRule(ruleID string) {
+// HandleDeletePlacementRule is mock function for DeletePlacementRule
+func (tiflash *MockTiFlash) HandleDeletePlacementRule(group string, ruleID string) {
 	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
 }
 
 // HandleGetGroupRules is mock function for GetGroupRules
-func (tiflash *MockTiFlash) HandleGetGroupRules() ([]placement.Rule, error) {
+func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.Rule, error) {
 	var result = make([]placement.Rule, 0)
 	for _, item := range tiflash.GlobalTiFlashPlacementRules {
 		result = append(result, item)
@@ -332,3 +333,45 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 		},
 	}
 }
+
+// SetPlacementRule is a helper function to set placement rule.
+func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+	m.Lock()
+	defer m.Unlock()
+	return m.tiflash.HandleSetPlacementRule(rule)
+}
+// DeletePlacementRule is to delete placement rule for certain group.
+func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflash.HandleDeletePlacementRule(group, ruleID)
+	return nil
+}
+// GetGroupRules to get all placement rule in a certain group.
+func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) {
+	m.Lock()
+	defer m.Unlock()
+	return m.tiflash.HandleGetGroupRules(group)
+}
+// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
+	m.Lock()
+	defer m.Unlock()
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
+}
+// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+	m.Lock()
+	defer m.Unlock()
+	stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	return nil
+}
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+	m.Lock()
+	defer m.Unlock()
+	return m.tiflash.HandleGetStoresStat(), nil
+}
+

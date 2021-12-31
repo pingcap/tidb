@@ -215,7 +215,7 @@ func GlobalInfoSyncerInit2(ctx context.Context, id string, serverIDGetter func()
 	} else {
 		is.labelRuleManager = initLabelRuleManager([]string{})
 		is.placementManager = initPlacementManager([]string{})
-		is.tiflashPlacementManager = initTiFlashPlacementManager(mockTiFlash)
+		is.tiflashPlacementManager = initTiFlashPlacementManager([]string{})
 	}
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -259,9 +259,32 @@ func initPlacementManager(addrs []string) PlacementManager {
 
 func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	if len(addrs) == 0 {
-		return &mockTiFlashPlacementManager{}
+		m := mockTiFlashPlacementManager{}
+		m.tiflash = &MockTiFlash{
+				StatusAddr:                  "",
+				StatusServer:                nil,
+				SyncStatus:                  make(map[int]MockTiFlashTableInfo),
+				GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
+				PdEnabled:                   true,
+				TiflashDelay:                0,
+				StartTime:                   time.Now(),
+			}
+		return &m
 	}
 	return &TiFlashPDPlacementManager{addrs: addrs}
+}
+
+func GetMockTiFlash() *MockTiFlash{
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		return m.tiflash
+	}
+	return nil
 }
 
 // GetServerInfo gets self server static information.

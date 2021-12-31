@@ -250,7 +250,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	}
 
 	// Missing/Removed pd rule handling.
-
 	handlePd := pollTiFlashContext.HandlePdCounter%PullTiFlashPdTick == 0
 	if atomic.CompareAndSwapUint32(&ReschePullTiFlash, 0, 1) {
 		// This is because last pd rule failed.
@@ -269,6 +268,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
 			available = val.(bool)
 		})
+		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available {
 			allReplicaReady = false
 
