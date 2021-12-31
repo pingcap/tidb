@@ -1299,7 +1299,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	dbt.MustExec("create table t (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
-	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
 	})
@@ -1548,7 +1547,6 @@ func TestTopSQLStatementStats(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
-	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
 
 	const ExecCountPerSQL = 3
 
