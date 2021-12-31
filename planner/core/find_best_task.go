@@ -303,20 +303,23 @@ func (op *physicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.PhysicalO
 	return op
 }
 
-func (op *physicalOptimizeOp) buildPhysicalOptimizeTraceInfo(p Plan, prop string) *tracing.PhysicalOptimizeTraceInfo {
+func (op *physicalOptimizeOp) buildPhysicalOptimizeTraceInfo(p LogicalPlan, prop string) *tracing.PhysicalOptimizeTraceInfo {
 	if op == nil || op.tracer == nil {
 		return nil
 	}
-	state := tracing.CodecState(p.TP(), p.ID(), prop)
-	if info, ok := op.tracer.State[state]; ok {
+	name := tracing.CodecPlanName(p.TP(), p.ID())
+	if _, ok := op.tracer.State[name]; !ok {
+		op.tracer.State[name] = make(map[string]*tracing.PhysicalOptimizeTraceInfo)
+	}
+	if info, ok := op.tracer.State[name][prop]; ok {
 		return info
 	}
 	traceInfo := buildPhysicalOptimizeTraceInfo(p, prop)
-	op.tracer.State[state] = traceInfo
+	op.tracer.State[name][prop] = traceInfo
 	return traceInfo
 }
 
-func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.TaskInfo, plan Plan, prop string) {
+func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.TaskInfo, plan LogicalPlan, prop string) {
 	if op == nil || op.tracer == nil || candidateInfo == nil {
 		return
 	}
@@ -327,11 +330,11 @@ func (op *physicalOptimizeOp) appendChildToCandidate(candidateInfo *tracing.Task
 	candidateInfo.Children = append(candidateInfo.Children, info)
 }
 
-func (op *physicalOptimizeOp) setBest(state string, info *tracing.TaskInfo) {
+func (op *physicalOptimizeOp) setBest(name string, prop string, info *tracing.TaskInfo) {
 	if op == nil || op.tracer == nil {
 		return
 	}
-	traceInfo := op.tracer.State[state]
+	traceInfo := op.tracer.State[name][prop]
 	if traceInfo == nil {
 		return
 	}
@@ -342,15 +345,13 @@ func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, phys
 	if op == nil || op.tracer == nil {
 		return nil
 	}
-	taskInfo := &tracing.TaskInfo{Name: fmt.Sprintf("%v_%v", physicalPlan.TP(), physicalPlan.ID())}
-	state := tracing.CodecState(logicalPlan.TP(), logicalPlan.ID(), prop)
-	traceInfo := op.tracer.State[state]
+	taskInfo := &tracing.TaskInfo{TP: physicalPlan.TP(), ID: physicalPlan.ID()}
+	name := tracing.CodecPlanName(logicalPlan.TP(), logicalPlan.ID())
+	traceInfo := op.tracer.State[name][prop]
 	if traceInfo == nil {
 		return nil
 	}
 	traceInfo.Candidates = append(traceInfo.Candidates, taskInfo)
-	logicalName := fmt.Sprintf("%v_%v", logicalPlan.TP(), logicalPlan.ID())
-	op.tracer.Mapping[logicalName] = append(op.tracer.Mapping[logicalName], taskInfo.Name)
 	return taskInfo
 }
 
@@ -426,7 +427,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	var cnt int64
 	var curTask task
 	opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
-	state := tracing.CodecState(p.TP(), p.ID(), newProp.String())
+	tmpName, tmpProp := tracing.CodecPlanName(p.TP(), p.ID()), newProp.String()
 	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
@@ -450,7 +451,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 END:
 	p.storeTask(prop, bestTask)
-	opt.setBest(state, &tracing.TaskInfo{Cost: bestTask.cost()})
+	opt.setBest(tmpName, tmpProp, &tracing.TaskInfo{Cost: bestTask.cost()})
 	return bestTask, cntPlan, nil
 }
 

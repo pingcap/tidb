@@ -170,7 +170,8 @@ type PhysicalOptimizeTraceInfo struct {
 }
 
 type TaskInfo struct {
-	Name     string                       `json:"name"`
+	ID       int                          `json:"id"`
+	TP       string                       `json:"type"`
 	Children []*PhysicalOptimizeTraceInfo `json:"children"`
 	Cost     float64                      `json:"cost"`
 }
@@ -183,10 +184,10 @@ type PhysicalPlanList []string
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
-	State   map[string]*PhysicalOptimizeTraceInfo
-	Mapping map[string]PhysicalPlanList
+	// (logical plan) -> property -> physical plan candidates
+	State map[string]map[string]*PhysicalOptimizeTraceInfo
 }
 
-func CodecState(tp string, id int, prop string) string {
-	return fmt.Sprintf("%v_%v_%v", tp, id, prop)
+func CodecPlanName(tp string, id int) string {
+	return fmt.Sprintf("%v_%v", tp, id)
 }

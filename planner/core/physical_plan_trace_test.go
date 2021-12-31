@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -66,11 +65,13 @@ func checkList(d []string, s []string) bool {
 }
 
 func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
-	for _, info := range otrace.State {
-		ll = append(ll, fmt.Sprintf("%v_%v", info.TP, info.ID))
-	}
-	for _, info := range otrace.Mapping {
-		pl = append(pl, info...)
+	for logicalPlan, v := range otrace.State {
+		ll = append(ll, logicalPlan)
+		for _, info := range v {
+			for _, task := range info.Candidates {
+				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
+			}
+		}
 	}
 	return ll, pl
 }
