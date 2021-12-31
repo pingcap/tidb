@@ -138,6 +138,12 @@ func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *Req
 	return builder
 }
 
+// SetIsolationLevel sets "IsolationLevel" for "kv.Request".
+func (builder *RequestBuilder) SetIsolationLevel(level kv.IsoLevel) *RequestBuilder {
+	builder.Request.IsolationLevel = level
+	return builder
+}
+
 const estimatedRegionRowCount = 100000
 
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.

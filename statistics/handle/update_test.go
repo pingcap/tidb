@@ -1465,6 +1465,9 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=1")
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait =0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
@@ -2341,6 +2344,13 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+
 	h := s.do.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int)")
@@ -2413,14 +2423,21 @@ func (s *testSerialStatsSuite) TestDumpColumnStatsUsage(c *C) {
 func (s *testSerialStatsSuite) TestCollectPredicateColumnsFromExecute(c *C) {
 	for _, val := range []bool{false, true} {
 		func(planCache bool) {
-			originalVal := plannercore.PreparedPlanCacheEnabled()
+			originalVal1 := plannercore.PreparedPlanCacheEnabled()
 			defer func() {
-				plannercore.SetPreparedPlanCache(originalVal)
+				plannercore.SetPreparedPlanCache(originalVal1)
 			}()
 			plannercore.SetPreparedPlanCache(planCache)
 
 			defer cleanEnv(c, s.store, s.do)
 			tk := testkit.NewTestKit(c, s.store)
+
+			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+			defer func() {
+				tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
+			}()
+			tk.MustExec("set global tidb_enable_column_tracking = 1")
+
 			h := s.do.StatsHandle()
 			tk.MustExec("use test")
 			tk.MustExec("create table t1(a int, b int)")
@@ -2456,4 +2473,48 @@ func (s *testSerialStatsSuite) TestCollectPredicateColumnsFromExecute(c *C) {
 			}
 		}(val)
 	}
+}
+
+func (s *testSerialStatsSuite) TestEnableAndDisableColumnTracking(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+
+	originalVal := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal))
+	}()
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][3], Equals, "b")
+
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	// After tidb_enable_column_tracking is set to 0, the predicate columns collected before are invalidated.
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	// Sleep for 1.5s to let `last_used_at` be larger than `tidb_disable_tracking_time`.
+	time.Sleep(1500 * time.Millisecond)
+	tk.MustExec("select * from t where a > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	// We don't collect predicate columns when tidb_enable_column_tracking = 0
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where b < 1 and c > 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "b")
+	c.Assert(rows[1][3], Equals, "c")
+
+	// Test invalidating predicate columns again in order to check that tidb_disable_tracking_time can be updated.
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_used_at is not null").Check(testkit.Rows())
 }
