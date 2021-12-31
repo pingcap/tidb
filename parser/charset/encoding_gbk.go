@@ -112,6 +112,14 @@ var GBKCase = unicode.SpecialCase{
 // customGBK is a simplifiedchinese.GBK wrapper.
 type customGBK struct{}
 
+func NewCustomGBKDecoder() *encoding.Decoder {
+	return customGBK{}.NewDecoder()
+}
+
+func NewCustomGBKEncoder() *encoding.Encoder {
+	return customGBK{}.NewEncoder()
+}
+
 // NewDecoder returns simplifiedchinese.GBK.NewDecoder().
 func (c customGBK) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{

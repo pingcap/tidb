@@ -63,11 +63,12 @@ var charsetInfos = map[string]*Charset{
 
 // All the names supported collations should be in the following table.
 var supportedCollationNames = map[string]struct{}{
-	CollationUTF8:    {},
-	CollationUTF8MB4: {},
-	CollationASCII:   {},
-	CollationLatin1:  {},
-	CollationBin:     {},
+	CollationUTF8:     {},
+	CollationUTF8MB4:  {},
+	CollationASCII:    {},
+	CollationLatin1:   {},
+	CollationBin:      {},
+	"gbk_utf8mb4_bin": {},
 }
 
 // TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
@@ -212,7 +213,8 @@ const (
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
 
-	CollationGBKBin = "gbk_bin"
+	CollationGBKBin       = "gbk_bin"
+	CollationGBKChineseCI = "gbk_chinese_ci"
 
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"

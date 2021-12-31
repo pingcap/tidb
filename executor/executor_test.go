@@ -5803,7 +5803,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
+		"gbk Chinese Internal Code Specification gbk_utf8mb4_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -5814,6 +5814,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"binary binary 63 Yes Yes 1",
 		"ascii_bin ascii 65 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
+		"gbk_utf8mb4_bin gbk 0 Yes Yes 1",
 	))
 }
 
