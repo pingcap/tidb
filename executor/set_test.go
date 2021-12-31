@@ -591,6 +591,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
