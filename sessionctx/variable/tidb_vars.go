@@ -796,7 +796,7 @@ const (
 	DefTiDBEnableIndexMerge               = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
-	DefTiDBEnableColumnTracking           = true
+	DefTiDBEnableColumnTracking           = false
 	DefTiDBStatsLoadSyncWait              = 0
 	DefTiDBStatsLoadPseudoTimeout         = false
 )
