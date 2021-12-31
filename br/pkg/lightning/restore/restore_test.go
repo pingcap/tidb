@@ -300,6 +300,63 @@ func (s *restoreSuite) TestDiskQuotaLock(c *C) {
 	}
 }
 
+// failMetaMgrBuilder mocks meta manager init failure
+type failMetaMgrBuilder struct {
+	metaMgrBuilder
+}
+
+func (b failMetaMgrBuilder) Init(context.Context) error {
+	return errors.New("mock init meta failure")
+}
+
+type panicCheckpointDB struct {
+	checkpoints.DB
+}
+
+func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints.TidbDBInfo) error {
+	panic("should not reach here")
+}
+
+func (s *restoreSuite) TestPreCheckFailed(c *C) {
+	cfg := config.NewConfig()
+	cfg.TikvImporter.Backend = config.BackendTiDB
+	cfg.App.CheckRequirements = false
+
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+
+	ctl := &Controller{
+		cfg:            cfg,
+		saveCpCh:       make(chan saveCp),
+		checkpointsDB:  panicCheckpointDB{},
+		metaMgrBuilder: failMetaMgrBuilder{},
+		checkTemplate:  NewSimpleTemplate(),
+		tidbGlue:       g,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	// precheck failed, will not do init checkpoint.
+	err = ctl.Run(context.Background())
+	c.Assert(err, ErrorMatches, ".*mock init meta failure")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SHOW VARIABLES WHERE Variable_name IN .*").
+		WillReturnRows(sqlmock.NewRows([]string{"Variable_name", "Value"}).
+			AddRow("tidb_row_format_version", "2"))
+	mock.ExpectCommit()
+	ctl.saveCpCh = make(chan saveCp)
+	// precheck failed, will not do init checkpoint.
+	err1 := ctl.Run(context.Background())
+	c.Assert(err1.Error(), Equals, err.Error())
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
 var _ = Suite(&tableRestoreSuite{})
 
 type tableRestoreSuiteBase struct {
@@ -532,6 +589,93 @@ func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
 	c.Assert(err, ErrorMatches, `.*unknown columns in header \[1 2 3\]`)
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
+}
+
+type errorLocalWriter struct{}
+
+func (w errorLocalWriter) AppendRows(context.Context, string, []string, kv.Rows) error {
+	return errors.New("mock write rows failed")
+}
+
+func (w errorLocalWriter) IsSynced() bool {
+	return true
+}
+
+func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, nil
+}
+
+func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(c)
+	mockBackend := mock.NewMockBackend(ctrl)
+	rc := &Controller{
+		cfg:            s.cfg,
+		pauser:         DeliverPauser,
+		ioWorkers:      worker.NewPool(ctx, 1, "io"),
+		regionWorkers:  worker.NewPool(ctx, 10, "region"),
+		store:          s.store,
+		backend:        backend.MakeBackend(mockBackend),
+		errorSummaries: makeErrorSummaries(log.L()),
+		saveCpCh:       make(chan saveCp, 1),
+		diskQuotaLock:  newDiskQuotaLock(),
+	}
+	defer close(rc.saveCpCh)
+	go func() {
+		for cp := range rc.saveCpCh {
+			cp.waitCh <- nil
+		}
+	}()
+
+	cp := &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
+	}
+	err := s.tr.populateChunks(ctx, rc, cp)
+	c.Assert(err, IsNil)
+
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
+	c.Assert(err, IsNil)
+	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
+	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
+	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(tbl, &kv.SessionOptions{})).
+		AnyTimes()
+	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
+		Return(nil, errors.New("mock open index local writer failed"))
+	openedIdxEngine, err := rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	c.Assert(err, IsNil)
+
+	// open the first engine meet error, should directly return the error
+	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	c.Assert(err, ErrorMatches, "mock open index local writer failed")
+
+	localWriter := func(ctx context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, errors.New("mock open index local writer failed after ctx.Done")
+		default:
+			return noop.Writer{}, nil
+		}
+	}
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(errorLocalWriter{}, nil).AnyTimes()
+	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
+		DoAndReturn(localWriter).AnyTimes()
+
+	openedIdxEngine, err = rc.backend.OpenEngine(ctx, nil, "`db`.`table`", -1)
+	c.Assert(err, IsNil)
+
+	// open engine failed after write rows failed, should return write rows error
+	_, err = s.tr.restoreEngine(ctx, rc, openedIdxEngine, 0, cp.Engines[0])
+	c.Assert(err, ErrorMatches, "mock write rows failed")
 }
 
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
@@ -1091,7 +1235,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	c.Assert(chunkPending-chunkPendingBase, Equals, float64(7))
-	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending)
+	c.Assert(chunkFinished-chunkFinishedBase, Equals, chunkPending-chunkPendingBase)
 
 	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	c.Assert(engineFinished-engineFinishedBase, Equals, float64(8))

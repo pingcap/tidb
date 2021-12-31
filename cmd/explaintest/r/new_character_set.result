@@ -56,3 +56,13 @@ a	hex(a)
 中文	E4B8ADE69687
 涓?枃	E6B6933FE69E83
 set @@character_set_client = 'utf8mb4';
+set names gbk;
+drop table if exists t;
+create table t (b blob, d json);
+insert into t values ('你好', '{"测试": "你好"}');
+select b, d from t;
+b	d
+你好	{"测试": "你好"}
+select hex(b), hex(d) from t;
+hex(b)	hex(d)
+E4BDA0E5A5BD	7B22B2E2CAD4223A2022C4E3BAC3227D

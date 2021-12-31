@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
@@ -485,7 +486,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 }
 
 func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
-	if !variable.TopSQLEnabled() || job == nil {
+	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
 
@@ -627,6 +628,10 @@ func skipWriteBinlog(job *model.Job) bool {
 	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
+	// Don't sync 'alter table cache|nocache' to other tools.
+	// It's internal to the current cluster.
+	case model.ActionAlterCacheTable, model.ActionAlterNoCacheTable:
 		return true
 	}
 
