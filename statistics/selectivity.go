@@ -184,6 +184,17 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
+	// For DNF recursive usage: finding of the selectivity for every item.
+	// where "0" / 0 / "false" / false / null ... the constant cnf item should refuse all rows.
+	// while for CNF, it shouldn't be here, because it's always a tableDual.
+	if c, ok := exprs[0].(*expression.Constant); ok && len(exprs) == 1 {
+		if d, err1 := c.Eval(chunk.Row{}); err1 == nil {
+			if dc, err2 := d.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDouble)); err2 == nil && (dc.GetFloat64() == 0 || dc.IsNull()) {
+				return 0, nil, nil
+			}
+		}
+		return 1, nil, nil
+	}
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
 	tableID := coll.PhysicalID
@@ -365,7 +376,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
 				if err != nil {
 					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-					selectivity = selectionFactor
+					curSelectivity = selectionFactor
 				}
 
 				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
