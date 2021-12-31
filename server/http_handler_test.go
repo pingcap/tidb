@@ -451,7 +451,6 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/%s.sock", t.Name())
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)

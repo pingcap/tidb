@@ -190,7 +190,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-
 	var oldTableID, newTableID int64
 	switch diff.Type {
 	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:

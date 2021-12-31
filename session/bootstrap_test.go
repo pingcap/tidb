@@ -929,7 +929,6 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 	require.Equal(t, "1", row.GetString(0))
 }
 
-
 func TestIndexMergeInNewCluster(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -1070,4 +1069,3 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 		}
 	}
 }
-

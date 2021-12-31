@@ -1148,7 +1148,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
 	if is.TableExists(schema.Name, model.NewCIStr(tableName)) {
-		return infoschema.ErrTableExists.GenWithStackByArgs(schema.Name.L + "." + tableName)
+		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
 	}
 	return nil
 }
