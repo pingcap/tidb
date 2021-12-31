@@ -33,6 +33,7 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 		result string
 	}{
 		{"char(10) charset gbk", "0xC4E3BAC3", "你好"},
+		{"char(10) charset gbk", "'好'", "好"},
 		{"varchar(10) charset gbk", "0xC4E3BAC3", "你好"},
 		{"char(10) charset utf8mb4", "0xE4BDA0E5A5BD", "你好"},
 		{"char(10) charset utf8mb4", "0b111001001011100010010110111001111001010110001100", "世界"},
