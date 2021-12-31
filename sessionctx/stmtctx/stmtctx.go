@@ -235,6 +235,8 @@ type StatementContext struct {
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
+		// ExitCh is used to notify the load stats goroutine to exit.
+		ExitCh chan struct{}
 	}
 }
 

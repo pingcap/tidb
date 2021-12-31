@@ -30,13 +30,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// TableColumnIDCombina contains chan model.TableColumnID and Exit channel
+type TableColumnIDCombina struct {
+	ResultCh chan model.TableColumnID
+	ExitCh   chan struct{}
+}
+
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
 	sync.Mutex
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
-	workingColMap    map[model.TableColumnID][]chan model.TableColumnID
+	workingColMap    map[model.TableColumnID][]TableColumnIDCombina
 }
 
 // NeededColumnTask represents one needed column with expire time.
@@ -44,6 +50,7 @@ type NeededColumnTask struct {
 	TableColumnID model.TableColumnID
 	ToTimeout     time.Time
 	ResultCh      chan model.TableColumnID
+	ExitCh        chan struct{}
 }
 
 // SendLoadRequests send neededColumns requests
@@ -55,8 +62,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededColumns = missingColumns
 	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(neededColumns))
+	sc.StatsLoad.ExitCh = make(chan struct{})
 	for _, col := range missingColumns {
-		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
+		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, sc.StatsLoad.ExitCh, timeout)
 		if err != nil {
 			return err
 		}
@@ -72,7 +80,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 	}
 	defer func() {
 		if sc.StatsLoad.ResultCh != nil {
-			close(sc.StatsLoad.ResultCh)
+			close(sc.StatsLoad.ExitCh)
 		}
 		sc.StatsLoad.NeededColumns = nil
 	}()
@@ -121,9 +129,9 @@ func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []mo
 }
 
 // AppendNeededColumn appends needed column to ch, if exists, do not append the duplicated one.
-func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, timeout time.Duration) error {
+func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.TableColumnID, exitCh chan struct{}, timeout time.Duration) error {
 	toTimout := time.Now().Local().Add(timeout)
-	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, ResultCh: resultCh}
+	colTask := &NeededColumnTask{TableColumnID: c, ToTimeout: toTimout, ResultCh: resultCh, ExitCh: exitCh}
 	return h.writeToChanWithTimeout(h.StatsLoad.NeededColumnsCh, colTask, timeout)
 }
 
@@ -182,7 +190,7 @@ func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.Restri
 	}
 	col := task.TableColumnID
 	// to avoid duplicated handling in concurrent scenario
-	if !h.setWorking(col, task.ResultCh) {
+	if !h.setWorking(col, task.ResultCh, task.ExitCh) {
 		return nil
 	}
 	oldCache := h.statsCache.Load().(statsCache)
@@ -350,16 +358,16 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version))
 }
 
-func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {
+func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID, exitCh chan struct{}) bool {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
 	chList, ok := h.StatsLoad.workingColMap[col]
 	if ok {
-		h.StatsLoad.workingColMap[col] = append(chList, resultCh)
+		h.StatsLoad.workingColMap[col] = append(chList, TableColumnIDCombina{ResultCh: resultCh, ExitCh: exitCh})
 		return false
 	}
-	chList = []chan model.TableColumnID{}
-	chList = append(chList, resultCh)
+	chList = []TableColumnIDCombina{}
+	chList = append(chList, TableColumnIDCombina{ResultCh: resultCh, ExitCh: exitCh})
 	h.StatsLoad.workingColMap[col] = chList
 	return true
 }
@@ -369,7 +377,12 @@ func (h *Handle) finishWorking(col model.TableColumnID) {
 	defer h.StatsLoad.Unlock()
 	if chList, ok := h.StatsLoad.workingColMap[col]; ok {
 		for _, ch := range chList {
-			ch <- col
+			select {
+			case <-ch.ExitCh:
+			case ch.ResultCh <- col:
+			default:
+				logutil.BgLogger().Warn("ResultCh cannot write", zap.Any("col", col))
+			}
 		}
 	}
 	delete(h.StatsLoad.workingColMap, col)

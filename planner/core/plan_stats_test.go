@@ -252,8 +252,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tableInfo := tbl.Meta()
 	neededColumn := model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[0].ID}
 	resultCh := make(chan model.TableColumnID, 1)
+	exitCh := make(chan struct{})
 	timeout := time.Duration(1<<63 - 1)
-	dom.StatsHandle().AppendNeededColumn(neededColumn, resultCh, timeout) // make channel queue full
+	dom.StatsHandle().AppendNeededColumn(neededColumn, resultCh, exitCh, timeout) // make channel queue full
 	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
