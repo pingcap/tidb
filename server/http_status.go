@@ -114,12 +114,14 @@ type Ballast struct {
 	ballast     []byte
 	ballastLock sync.Mutex
 
-	maxSize int
+	maxSize              int
+	autoMaxSizeThreshold int
 }
 
 func newBallast(maxSize int) *Ballast {
 	var b Ballast
-	b.maxSize = 1024 * 1024 * 1024 * 2
+	b.autoMaxSizeThreshold = 1024 * 1024 * 1024 * 2
+	b.maxSize = b.autoMaxSizeThreshold
 	if maxSize > 0 {
 		b.maxSize = maxSize
 	} else {
@@ -148,17 +150,17 @@ func (b *Ballast) GetSize() int {
 }
 
 // SetSize set the size of ballast object
-func (b *Ballast) SetSize(newSz int) error {
-	if newSz < 0 {
-		return fmt.Errorf("newSz cannot be negative: %d", newSz)
-	}
-	if newSz > b.maxSize {
-		return fmt.Errorf("newSz cannot be bigger than %d but it has value %d", b.maxSize, newSz)
+func (b *Ballast) SetSize(newSz int) (nowSz int, info string) {
+	if newSz < 0 || newSz > b.maxSize {
+		info = fmt.Sprintf(
+			"ballast.SetSize: maxSz is used since newSz %d is out of valid value range [0, %d] ", newSz, b.maxSize)
+		logutil.BgLogger().Warn(info)
+		newSz = b.maxSize
 	}
 	b.ballastLock.Lock()
 	b.ballast = make([]byte, newSz)
 	b.ballastLock.Unlock()
-	return nil
+	return newSz, info
 }
 
 // GenHTTPHandler generate a HTTP handler to get/set the size of this ballast object
@@ -175,8 +177,9 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			newSz, err := strconv.Atoi(string(body))
+			var info string
 			if err == nil {
-				err = b.SetSize(newSz)
+				_, info = b.SetSize(newSz)
 			}
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -185,6 +188,10 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 					terror.Log(err)
 				}
 				return
+			}
+			if len(info) > 0 {
+				_, err := w.Write([]byte(info))
+				terror.Log(err)
 			}
 		}
 	}
@@ -282,13 +289,8 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	ballast := newBallast(s.cfg.MaxBallastObjectSize)
-	{
-		err := ballast.SetSize(s.cfg.BallastObjectSize)
-		if err != nil {
-			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
-		}
-	}
+	ballast := newBallast(s.cfg.Performance.MaxBallastObjectSize)
+	ballast.SetSize(s.cfg.Performance.BallastObjectSize)
 	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
 
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
