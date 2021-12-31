@@ -215,7 +215,7 @@ func GlobalInfoSyncerInit2(ctx context.Context, id string, serverIDGetter func()
 	} else {
 		is.labelRuleManager = initLabelRuleManager([]string{})
 		is.placementManager = initPlacementManager([]string{})
-		is.tiflashPlacementManager = initTiFlashPlacementManager([]string{})
+		is.tiflashPlacementManager = initTiFlashPlacementManager(mockTiFlash)
 	}
 	setGlobalInfoSyncer(is)
 	return is, nil

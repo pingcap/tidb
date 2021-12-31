@@ -110,11 +110,11 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	session.DisableStats4Test()
 
 	s.dom, err = session.BootstrapSession(s.store)
-	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
 
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
+	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
 	//infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{})
 	//s.tiflash = infosync.GetMockTiFlash()
 
