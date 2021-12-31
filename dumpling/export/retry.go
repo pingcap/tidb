@@ -65,7 +65,7 @@ func (b *dumpChunkBackoffer) Attempt() int {
 }
 
 func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}, conf *Config) *lockTablesBackoffer {
-	if conf.Flag {
+	if conf.specifiedTables {
 		return &lockTablesBackoffer{
 			tctx:      tctx,
 			attempt:   1,

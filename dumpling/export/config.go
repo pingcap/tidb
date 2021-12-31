@@ -133,7 +133,7 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
-	Flag               bool
+	specifiedTables    bool
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -176,7 +176,7 @@ func DefaultConfig() *Config {
 		SessionParams:      make(map[string]interface{}),
 		OutputFileTemplate: DefaultOutputFileTemplate,
 		PosAfterConnect:    false,
-		Flag:               false,
+		specifiedTables:    false,
 	}
 }
 
@@ -532,9 +532,11 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 		schema, name string
 		tableType    TableType
 		avgRowLength uint64
+		conf         *Config
 	)
 	tableType = TableTypeBase
 	avgRowLength = 0
+	conf.specifiedTables = len(tablesList) > 0
 	for _, name = range tablesList {
 		parts := strings.SplitN(name, ".", 2)
 		if len(parts) < 2 {
