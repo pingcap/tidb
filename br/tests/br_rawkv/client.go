@@ -318,7 +318,7 @@ func put(client *rawkv.Client, dataStr string) error {
 
 	log.Info("Put rawkv data", zap.ByteStrings("keys", keys), zap.ByteStrings("values", values))
 
-	return errors.Trace(err)
+	return nil
 }
 
 const defaultScanBatchSize = 128
