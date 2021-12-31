@@ -26,12 +26,17 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
+// ErrInvalidCharacterString returns when the string is invalid in the specific charset.
+var ErrInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 // encodingBase defines some generic functions.
 type encodingBase struct {
 	enc  encoding.Encoding
 	self Encoding
+}
+
+func (b encodingBase) MbLen(_ string) int {
+	return 0
 }
 
 func (b encodingBase) ToUpper(src string) string {
@@ -111,16 +116,29 @@ func beginWithReplacementChar(dst []byte) bool {
 // generateEncodingErr generates an invalid string in charset error.
 func generateEncodingErr(name string, invalidBytes []byte) error {
 	arg := fmt.Sprintf("%X", invalidBytes)
-	return errInvalidCharacterString.FastGenByArgs(name, arg)
+	return ErrInvalidCharacterString.FastGenByArgs(name, arg)
 }
 
-// Slice converts string to slice without copy.
+// HackSlice converts string to slice without copy.
 // Use at your own risk.
-func Slice(s string) (b []byte) {
+func HackSlice(s string) (b []byte) {
 	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
 	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pBytes.Data = pString.Data
 	pBytes.Len = pString.Len
 	pBytes.Cap = pString.Len
+	return
+}
+
+// HackString converts slice to string without copy.
+// Use it at your own risk.
+func HackString(b []byte) (s string) {
+	if len(b) == 0 {
+		return ""
+	}
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
 	return
 }
