@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/topsql"
@@ -92,9 +91,7 @@ func TestTopSQLReporter(t *testing.T) {
 	require.NoError(t, err)
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = server.Address()
-	})
+	topsqlstate.GlobalState.ReceiverAddress.Store(server.Address())
 
 	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)

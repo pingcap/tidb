@@ -8766,9 +8766,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 
 	// Enable Top SQL
 	topsqlstate.GlobalState.Enable.Store(true)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
+	topsqlstate.GlobalState.ReceiverAddress.Store("mock-agent")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
