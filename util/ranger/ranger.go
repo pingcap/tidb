@@ -122,6 +122,11 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 				}
 				casted.SetMysqlEnum(upperEnum, tp.Collate)
 			}
+		} else if terror.ErrorEqual(err, charset.ErrInvalidCharacterString) {
+			// The invalid string can be produced by changing datum's underlying bytes directly.
+			// For example, newBuildFromPatternLike calculates the end point by adding 1 to bytes.
+			// We need to skip these invalid strings.
+			return point, nil
 		} else {
 			return point, errors.Trace(err)
 		}
@@ -639,7 +644,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 
 			// sanity check: only last column of the `Range` can be an interval
 			if j < len(ran.LowVal)-1 {
-				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[i])
+				cmp, err := ran.LowVal[j].Compare(sc, &ran.HighVal[j], ran.Collators[j])
 				if err != nil {
 					return "", errors.New("comparing values error: " + err.Error())
 				}
@@ -647,7 +652,7 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 					return "", errors.New("unexpected form of range")
 				}
 			}
-			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[i])
+			str, err := RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j], ran.Collators[j])
 			if err != nil {
 				return "false", err
 			}
