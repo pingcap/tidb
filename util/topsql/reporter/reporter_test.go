@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -47,9 +47,9 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 		tsr.RegisterPlan(key, value)
 	}
 	// collect
-	var records []tracecpu.SQLCPUTimeRecord
+	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, tracecpu.SQLCPUTimeRecord{
+		records = append(records, collector.SQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
@@ -90,8 +90,11 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*Re
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
+	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := NewSingleTargetDataSink(ts)
+	ts.Start()
+	ds.Start()
 	return ts, ds
 }
 
@@ -186,7 +189,7 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
-func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
@@ -195,14 +198,14 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	value = "planNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterPlan(key, value)
 
-	return tracecpu.SQLCPUTimeRecord{
+	return collector.SQLCPUTimeRecord{
 		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
 		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
 		CPUTimeMs:  cpuTimeMs,
 	}
 }
 
-func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []collector.SQLCPUTimeRecord) {
 	tsr.processCPUTimeData(timestamp, records)
 	time.Sleep(time.Millisecond * 100)
 }
@@ -218,35 +221,55 @@ func TestCollectAndTopN(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-2:  2ms
+	// SQL-3:  3ms
+	// Others: 1ms
 	collectAndWait(tsr, 1, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 3, 3),
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-1:  1ms
+	// SQL-3:  3ms
 	collectAndWait(tsr, 2, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 4, 1),
-		newSQLCPUTimeRecord(tsr, 1, 1),
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 3, 1),
 	}
+	// SQL-1:  10ms
+	// SQL-4:  4ms
+	// Others: 1ms
 	collectAndWait(tsr, 3, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 5, 1),
-		newSQLCPUTimeRecord(tsr, 1, 1),
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 5, 5),
+		newSQLCPUTimeRecord(tsr, 4, 4),
+		newSQLCPUTimeRecord(tsr, 1, 10),
+		newSQLCPUTimeRecord(tsr, 2, 20),
 	}
+	// SQL-2:  20ms
+	// SQL-1:  1ms
+	// Others: 9ms
 	collectAndWait(tsr, 4, records)
 
 	// Test for time jump back.
-	records = []tracecpu.SQLCPUTimeRecord{
-		newSQLCPUTimeRecord(tsr, 6, 1),
+	records = []collector.SQLCPUTimeRecord{
+		newSQLCPUTimeRecord(tsr, 6, 6),
 		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 3, 3),
 	}
+	// SQL-6:  6ms
+	// SQL-3:  3ms
+	// Others: 3ms
 	collectAndWait(tsr, 0, records)
 
 	// Wait agent server collect finish.
@@ -254,7 +277,14 @@ func TestCollectAndTopN(t *testing.T) {
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
-	require.Len(t, results, 3)
+	// Digest  total
+	// "":     14ms    (others)
+	// SQL-1:  21ms
+	// SQL-2:  22ms
+	// SQL-3:  9ms
+	// SQL-4:  4ms
+	// SQL-6:  6ms
+	require.Len(t, results, 6)
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
@@ -266,19 +296,26 @@ func TestCollectAndTopN(t *testing.T) {
 		return int(total)
 	}
 	require.Nil(t, results[0].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[0]))
-	require.Equal(t, uint64(0), results[0].Items[0].TimestampSec)
-	require.Equal(t, uint64(1), results[0].Items[1].TimestampSec)
-	require.Equal(t, uint64(3), results[0].Items[2].TimestampSec)
-	require.Equal(t, uint64(4), results[0].Items[3].TimestampSec)
+	require.Equal(t, []byte(nil), results[0].SqlDigest)
+	require.Equal(t, 14, getTotalCPUTime(results[0]))
+	require.Equal(t, uint64(1), results[0].Items[0].TimestampSec)
+	require.Equal(t, uint64(3), results[0].Items[1].TimestampSec)
+	require.Equal(t, uint64(4), results[0].Items[2].TimestampSec)
+	require.Equal(t, uint64(0), results[0].Items[3].TimestampSec)
 	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
-	require.Equal(t, uint32(2), results[0].Items[1].CpuTimeMs)
-	require.Equal(t, uint32(1), results[0].Items[2].CpuTimeMs)
-	require.Equal(t, uint32(1), results[0].Items[3].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[1].CpuTimeMs)
+	require.Equal(t, uint32(9), results[0].Items[2].CpuTimeMs)
+	require.Equal(t, uint32(3), results[0].Items[3].CpuTimeMs)
 	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
-	require.Equal(t, 5, getTotalCPUTime(results[1]))
-	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
-	require.Equal(t, 3, getTotalCPUTime(results[2]))
+	require.Equal(t, 21, getTotalCPUTime(results[1]))
+	require.Equal(t, []byte("sqlDigest2"), results[2].SqlDigest)
+	require.Equal(t, 22, getTotalCPUTime(results[2]))
+	require.Equal(t, []byte("sqlDigest3"), results[3].SqlDigest)
+	require.Equal(t, 9, getTotalCPUTime(results[3]))
+	require.Equal(t, []byte("sqlDigest4"), results[4].SqlDigest)
+	require.Equal(t, 4, getTotalCPUTime(results[4]))
+	require.Equal(t, []byte("sqlDigest6"), results[5].SqlDigest)
+	require.Equal(t, 6, getTotalCPUTime(results[5]))
 	// sleep to wait for all SQL meta received.
 	time.Sleep(50 * time.Millisecond)
 	totalMetas := agentServer.GetTotalSQLMetas()
@@ -306,10 +343,10 @@ func TestCollectCapacity(t *testing.T) {
 			tsr.RegisterPlan(key, value)
 		}
 	}
-	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
-		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+	genRecord := func(n int) []collector.SQLCPUTimeRecord {
+		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
-			records = append(records, tracecpu.SQLCPUTimeRecord{
+			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 				CPUTimeMs:  uint32(i + 1),
@@ -353,7 +390,7 @@ func TestCollectInternal(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
@@ -383,7 +420,9 @@ func TestCollectInternal(t *testing.T) {
 func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
+	topsqlstate.EnableTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Start()
 	defer tsr.Close()
 
 	var chs []chan *ReportData
@@ -398,7 +437,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.NoError(t, tsr.Register(ds))
 	}
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
 	tsr.processCPUTimeData(3, records)
@@ -429,7 +468,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		tsr.Deregister(dss[i])
 	}
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
 	tsr.processCPUTimeData(6, records)
