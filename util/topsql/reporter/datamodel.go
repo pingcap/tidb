@@ -505,8 +505,6 @@ func (c *collecting) getReportRecords() records {
 		rs = append(rs, *v)
 	}
 	if others != nil && others.totalCPUTimeMs > 0 {
-		// Sort the records by timestamp to fix the affect of time jump backward.
-		sort.Sort(others)
 		rs = append(rs, *others)
 	}
 	return rs
