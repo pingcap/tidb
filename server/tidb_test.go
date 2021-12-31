@@ -1544,7 +1544,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 	dbt.MustExec("create table t3 (a int, b int, unique index idx(a));")
 
 	// Enable TopSQL
-	topsqlstate.GlobalState.Enable.Store(true)
+	topsqlstate.EnableTopSQL()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})

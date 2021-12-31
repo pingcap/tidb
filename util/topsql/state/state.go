@@ -27,7 +27,7 @@ const (
 
 // GlobalState is the global Top-SQL state.
 var GlobalState = State{
-	Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
+	enable:                atomic.NewBool(DefTiDBTopSQLEnable),
 	PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
@@ -36,8 +36,8 @@ var GlobalState = State{
 
 // State is the state for control top sql feature.
 type State struct {
-	// Enable top-sql or not.
-	Enable *atomic.Bool
+	// enable top-sql or not.
+	enable *atomic.Bool
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -50,15 +50,15 @@ type State struct {
 
 // EnableTopSQL enables the top SQL feature.
 func EnableTopSQL() {
-	GlobalState.Enable.Store(true)
+	GlobalState.enable.Store(true)
 }
 
 // DisableTopSQL disables the top SQL feature.
 func DisableTopSQL() {
-	GlobalState.Enable.Store(false)
+	GlobalState.enable.Store(false)
 }
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return GlobalState.Enable.Load()
+	return GlobalState.enable.Load()
 }

@@ -1539,10 +1539,10 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
-	c.Assert(topsqlstate.GlobalState.Enable.Load(), IsTrue)
+	c.Assert(topsqlstate.TopSQLEnabled(), IsTrue)
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
-	c.Assert(topsqlstate.GlobalState.Enable.Load(), IsFalse)
+	c.Assert(topsqlstate.TopSQLEnabled(), IsFalse)
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
