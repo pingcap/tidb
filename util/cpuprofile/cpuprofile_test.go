@@ -46,7 +46,7 @@ func TestBasicAPI(t *testing.T) {
 	defer StopCPUProfiler()
 
 	err = StartCPUProfiler()
-	require.Error(t, errProfilerAlreadyStarted)
+	require.Equal(t, err, errProfilerAlreadyStarted)
 
 	// Test for close multiple times.
 	StopCPUProfiler()
@@ -57,7 +57,7 @@ func TestBasicAPI(t *testing.T) {
 	err = StartCPUProfiler()
 	require.NoError(t, err)
 	err = StartCPUProfiler()
-	require.Error(t, errProfilerAlreadyStarted)
+	require.Equal(t, err, errProfilerAlreadyStarted)
 }
 
 func TestParallelCPUProfiler(t *testing.T) {
