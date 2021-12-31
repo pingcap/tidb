@@ -108,7 +108,8 @@ const (
 )
 
 const (
-	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
 	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
