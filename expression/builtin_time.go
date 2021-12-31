@@ -3339,7 +3339,6 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Tp = mysql.TypeString
 		bf.tp.Flen = mysql.MaxDatetimeFullWidth
 		types.SetBinChsClnFlag(bf.tp)
 	} else {
@@ -4131,7 +4130,6 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Tp = mysql.TypeString
 		types.SetBinChsClnFlag(bf.tp)
 		bf.tp.Flen = mysql.MaxDatetimeFullWidth
 	} else {
