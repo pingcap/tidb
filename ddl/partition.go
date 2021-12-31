@@ -482,7 +482,6 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 		case ast.TableOptionPlacementPolicy:
 			hasPlacement = true
 			if ignorePlacement {
-				hasPlacement = true
 				continue
 			}
 
