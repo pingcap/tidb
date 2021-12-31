@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20211122024046-03abd340988f
+	github.com/pingcap/kvproto v0.0.0-20211229082925-7a8280c36daf
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
 	github.com/pingcap/sysutil v0.0.0-20211208032423-041a72e5860d
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
