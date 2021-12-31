@@ -40,7 +40,7 @@ func (c collectPredicateColumnsPoint) optimize(ctx context.Context, plan Logical
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	if len(histNeededColumns) > 0 {
+	if histNeeded && len(histNeededColumns) > 0 {
 		err := RequestLoadColumnStats(plan.SCtx(), histNeededColumns, syncWait)
 		return plan, err
 	}
@@ -54,6 +54,9 @@ func (c collectPredicateColumnsPoint) name() string {
 type syncWaitStatsLoadPoint struct{}
 
 func (s syncWaitStatsLoadPoint) optimize(ctx context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
+	if plan.SCtx().GetSessionVars().InRestrictedSQL {
+		return plan, nil
+	}
 	_, err := SyncWaitStatsLoad(plan)
 	return plan, err
 }

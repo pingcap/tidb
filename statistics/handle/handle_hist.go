@@ -74,6 +74,7 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 		if sc.StatsLoad.ResultCh != nil {
 			close(sc.StatsLoad.ResultCh)
 		}
+		sc.StatsLoad.NeededColumns = nil
 	}()
 	resultCheckMap := map[model.TableColumnID]struct{}{}
 	for _, col := range sc.StatsLoad.NeededColumns {

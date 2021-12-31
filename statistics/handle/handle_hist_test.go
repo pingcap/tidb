@@ -79,6 +79,7 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait =9999999")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
@@ -106,13 +107,14 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableColumnID{TableID: tableInfo.ID, ColumnID: col.ID})
 	}
-	h.SendLoadRequests(stmtCtx, neededColumns, 0)
+	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	c.Assert(rs, Equals, false)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	c.Assert(hg.Len()+topn.Num(), Equals, 0)
+	// wait for timeout task to be handled
 	for {
 		time.Sleep(time.Millisecond * 100)
 		if len(h.StatsLoad.TimeoutColumnsCh)+len(h.StatsLoad.NeededColumnsCh) == 0 {
