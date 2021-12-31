@@ -936,6 +936,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	exprs = append(exprs, function)
 
 	// Datesub
+<<<<<<< HEAD
 	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
 	c.Assert(err, IsNil)
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_SubDateDatetimeInt)
@@ -947,6 +948,22 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
 	c.Assert(err, IsNil)
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_SubDateDatetimeInt)
+=======
+	constStringColumn := new(Constant)
+	constStringColumn.Value = types.NewStringDatum("day")
+	constStringColumn.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, constStringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_SubDateStringInt, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, constStringColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_SubDateDatetimeInt, function.(*ScalarFunction).Function.PbCode())
+>>>>>>> 5ea64e6e23 (expression: change date add function return type (#28133))
 	exprs = append(exprs, function)
 
 	// castTimeAsString:
