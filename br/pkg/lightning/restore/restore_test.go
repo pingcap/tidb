@@ -333,6 +333,7 @@ func (s *restoreSuite) TestPreCheckFailed(c *C) {
 		metaMgrBuilder: failMetaMgrBuilder{},
 		checkTemplate:  NewSimpleTemplate(),
 		tidbGlue:       g,
+		errorMgr:       errormanager.New(nil, cfg),
 	}
 
 	mock.ExpectBegin()

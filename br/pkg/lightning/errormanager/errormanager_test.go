@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
