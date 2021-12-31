@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -47,15 +47,15 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 		tsr.RegisterPlan(key, value)
 	}
 	// collect
-	var records []tracecpu.SQLCPUTimeRecord
+	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
-		records = append(records, tracecpu.SQLCPUTimeRecord{
+		records = append(records, collector.SQLCPUTimeRecord{
 			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	tsr.Collect(timestamp, records)
+	tsr.processCPUTimeData(timestamp, records)
 	// sleep a while for the asynchronous collect
 	time.Sleep(100 * time.Millisecond)
 }
@@ -83,15 +83,18 @@ func (ds *mockDataSink) OnReporterClosing() {
 }
 
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) (*RemoteTopSQLReporter, *SingleTargetDataSink) {
-	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
-	variable.TopSQLVariable.MaxCollect.Store(10000)
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
+	topsqlstate.GlobalState.MaxStatementCount.Store(int64(maxStatementsNum))
+	topsqlstate.GlobalState.MaxCollect.Store(10000)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(int64(interval))
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = addr
 	})
 
+	topsqlstate.EnableTopSQL()
 	ts := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	ds := NewSingleTargetDataSink(ts)
+	ts.Start()
+	ds.Start()
 	return ts, ds
 }
 
@@ -126,13 +129,10 @@ func TestCollectAndSendBatch(t *testing.T) {
 			require.NoError(t, err)
 			id = n
 		}
-		require.Len(t, req.RecordListCpuTimeMs, 1)
-		for i := range req.RecordListCpuTimeMs {
-			require.Equal(t, uint32(id), req.RecordListCpuTimeMs[i])
-		}
-		require.Len(t, req.RecordListTimestampSec, 1)
-		for i := range req.RecordListTimestampSec {
-			require.Equal(t, uint64(1), req.RecordListTimestampSec[i])
+		require.Len(t, req.Items, 1)
+		for i := range req.Items {
+			require.Equal(t, uint64(1), req.Items[i].TimestampSec)
+			require.Equal(t, uint32(id), req.Items[i].CpuTimeMs)
 		}
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
@@ -168,19 +168,18 @@ func TestCollectAndEvicted(t *testing.T) {
 			require.NoError(t, err)
 			id = n
 		}
-		require.Len(t, req.RecordListTimestampSec, 1)
-		require.Equal(t, uint64(2), req.RecordListTimestampSec[0])
-		require.Len(t, req.RecordListCpuTimeMs, 1)
+		require.Len(t, req.Items, 1)
+		require.Equal(t, uint64(2), req.Items[0].TimestampSec)
 		if id == 0 {
 			// test for others
 			require.Nil(t, req.SqlDigest)
 			require.Nil(t, req.PlanDigest)
 			// 12502500 is the sum of all evicted item's cpu time. 1 + 2 + 3 + ... + 5000 = (1 + 5000) * 2500 = 12502500
-			require.Equal(t, 12502500, int(req.RecordListCpuTimeMs[0]))
+			require.Equal(t, 12502500, int(req.Items[0].CpuTimeMs))
 			continue
 		}
 		require.Greater(t, id, maxSQLNum)
-		require.Equal(t, uint32(id), req.RecordListCpuTimeMs[0])
+		require.Equal(t, uint32(id), req.Items[0].CpuTimeMs)
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
@@ -190,7 +189,7 @@ func TestCollectAndEvicted(t *testing.T) {
 	}
 }
 
-func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
@@ -199,15 +198,15 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	value = "planNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterPlan(key, value)
 
-	return tracecpu.SQLCPUTimeRecord{
+	return collector.SQLCPUTimeRecord{
 		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
 		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
 		CPUTimeMs:  cpuTimeMs,
 	}
 }
 
-func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
-	tsr.Collect(timestamp, records)
+func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []collector.SQLCPUTimeRecord) {
+	tsr.processCPUTimeData(timestamp, records)
 	time.Sleep(time.Millisecond * 100)
 }
 
@@ -222,32 +221,32 @@ func TestCollectAndTopN(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
 	collectAndWait(tsr, 1, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 3, 3),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 2, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 3, records)
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 5, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
 	collectAndWait(tsr, 4, records)
 
 	// Test for time jump back.
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 6, 1),
 		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
@@ -262,17 +261,23 @@ func TestCollectAndTopN(t *testing.T) {
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
-	getTotalCPUTime := func(record *tipb.CPUTimeRecord) int {
+	getTotalCPUTime := func(record *tipb.TopSQLRecord) int {
 		total := uint32(0)
-		for _, v := range record.RecordListCpuTimeMs {
-			total += v
+		for _, i := range record.Items {
+			total += i.CpuTimeMs
 		}
 		return int(total)
 	}
 	require.Nil(t, results[0].SqlDigest)
 	require.Equal(t, 5, getTotalCPUTime(results[0]))
-	require.Equal(t, []uint64{0, 1, 3, 4}, results[0].RecordListTimestampSec)
-	require.Equal(t, []uint32{1, 2, 1, 1}, results[0].RecordListCpuTimeMs)
+	require.Equal(t, uint64(0), results[0].Items[0].TimestampSec)
+	require.Equal(t, uint64(1), results[0].Items[1].TimestampSec)
+	require.Equal(t, uint64(3), results[0].Items[2].TimestampSec)
+	require.Equal(t, uint64(4), results[0].Items[3].TimestampSec)
+	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
+	require.Equal(t, uint32(2), results[0].Items[1].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[2].CpuTimeMs)
+	require.Equal(t, uint32(1), results[0].Items[3].CpuTimeMs)
 	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
 	require.Equal(t, 5, getTotalCPUTime(results[1]))
 	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
@@ -304,10 +309,10 @@ func TestCollectCapacity(t *testing.T) {
 			tsr.RegisterPlan(key, value)
 		}
 	}
-	genRecord := func(n int) []tracecpu.SQLCPUTimeRecord {
-		records := make([]tracecpu.SQLCPUTimeRecord, 0, n)
+	genRecord := func(n int) []collector.SQLCPUTimeRecord {
+		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
-			records = append(records, tracecpu.SQLCPUTimeRecord{
+			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
 				CPUTimeMs:  uint32(i + 1),
@@ -316,111 +321,28 @@ func TestCollectCapacity(t *testing.T) {
 		return records
 	}
 
-	variable.TopSQLVariable.MaxCollect.Store(10000)
+	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	registerSQL(5000)
-	require.Equal(t, int64(5000), tsr.sqlMapLength.Load())
+	require.Equal(t, int64(5000), tsr.normalizedSQLMap.length.Load())
 	registerPlan(1000)
-	require.Equal(t, int64(1000), tsr.planMapLength.Load())
+	require.Equal(t, int64(1000), tsr.normalizedPlanMap.length.Load())
 
 	registerSQL(20000)
-	require.Equal(t, int64(10000), tsr.sqlMapLength.Load())
+	require.Equal(t, int64(10000), tsr.normalizedSQLMap.length.Load())
 	registerPlan(20000)
-	require.Equal(t, int64(10000), tsr.planMapLength.Load())
+	require.Equal(t, int64(10000), tsr.normalizedPlanMap.length.Load())
 
-	variable.TopSQLVariable.MaxCollect.Store(20000)
+	topsqlstate.GlobalState.MaxCollect.Store(20000)
 	registerSQL(50000)
-	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
 	registerPlan(50000)
-	require.Equal(t, int64(20000), tsr.planMapLength.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
 
-	variable.TopSQLVariable.MaxStatementCount.Store(5000)
-	collectedData := make(map[string]*dataPoints)
-	tsr.doCollect(collectedData, 1, genRecord(20000))
-	require.Equal(t, 5001, len(collectedData))
-	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
-	require.Equal(t, int64(20000), tsr.planMapLength.Load())
-}
-
-func TestCollectOthers(t *testing.T) {
-	collectTarget := make(map[string]*dataPoints)
-	addEvictedCPUTime(collectTarget, 1, 10)
-	addEvictedCPUTime(collectTarget, 2, 20)
-	addEvictedCPUTime(collectTarget, 3, 30)
-	others := collectTarget[keyOthers]
-	require.Equal(t, uint64(60), others.CPUTimeMsTotal)
-	require.Equal(t, []uint64{1, 2, 3}, others.TimestampList)
-	require.Equal(t, []uint32{10, 20, 30}, others.CPUTimeMsList)
-
-	others = addEvictedIntoSortedDataPoints(nil, others)
-	require.Equal(t, uint64(60), others.CPUTimeMsTotal)
-
-	// test for time jump backward.
-	evict := &dataPoints{}
-	evict.TimestampList = []uint64{3, 2, 4}
-	evict.CPUTimeMsList = []uint32{30, 20, 40}
-	evict.CPUTimeMsTotal = 90
-	others = addEvictedIntoSortedDataPoints(others, evict)
-	require.Equal(t, uint64(150), others.CPUTimeMsTotal)
-	require.Equal(t, []uint64{1, 2, 3, 4}, others.TimestampList)
-	require.Equal(t, []uint32{10, 40, 60, 40}, others.CPUTimeMsList)
-}
-
-func TestDataPoints(t *testing.T) {
-	// test for dataPoints invalid.
-	d := &dataPoints{}
-	d.TimestampList = []uint64{1}
-	d.CPUTimeMsList = []uint32{10, 30}
-	require.True(t, d.isInvalid())
-
-	// test for dataPoints sort.
-	d = &dataPoints{}
-	d.TimestampList = []uint64{1, 2, 5, 6, 3, 4}
-	d.CPUTimeMsList = []uint32{10, 20, 50, 60, 30, 40}
-	sort.Sort(d)
-	require.Equal(t, []uint64{1, 2, 3, 4, 5, 6}, d.TimestampList)
-	require.Equal(t, []uint32{10, 20, 30, 40, 50, 60}, d.CPUTimeMsList)
-
-	// test for dataPoints merge.
-	d = &dataPoints{}
-	evict := &dataPoints{}
-	addEvictedIntoSortedDataPoints(d, evict)
-	evict.TimestampList = []uint64{1, 3}
-	evict.CPUTimeMsList = []uint32{10, 30}
-	evict.CPUTimeMsTotal = 40
-	addEvictedIntoSortedDataPoints(d, evict)
-	require.Equal(t, uint64(40), d.CPUTimeMsTotal)
-	require.Equal(t, []uint64{1, 3}, d.TimestampList)
-	require.Equal(t, []uint32{10, 30}, d.CPUTimeMsList)
-
-	evict.TimestampList = []uint64{1, 2, 3, 4, 5}
-	evict.CPUTimeMsList = []uint32{10, 20, 30, 40, 50}
-	evict.CPUTimeMsTotal = 150
-	addEvictedIntoSortedDataPoints(d, evict)
-	require.Equal(t, uint64(190), d.CPUTimeMsTotal)
-	require.Equal(t, []uint64{1, 2, 3, 4, 5}, d.TimestampList)
-	require.Equal(t, []uint32{20, 20, 60, 40, 50}, d.CPUTimeMsList)
-
-	// test for time jump backward.
-	d = &dataPoints{}
-	evict = &dataPoints{}
-	evict.TimestampList = []uint64{3, 2}
-	evict.CPUTimeMsList = []uint32{30, 20}
-	evict.CPUTimeMsTotal = 50
-	addEvictedIntoSortedDataPoints(d, evict)
-	require.Equal(t, uint64(50), d.CPUTimeMsTotal)
-	require.Equal(t, []uint64{2, 3}, d.TimestampList)
-	require.Equal(t, []uint32{20, 30}, d.CPUTimeMsList)
-
-	// test for merge invalid dataPoints
-	d = &dataPoints{}
-	evict = &dataPoints{}
-	evict.TimestampList = []uint64{1}
-	evict.CPUTimeMsList = []uint32{10, 30}
-	require.True(t, evict.isInvalid())
-	addEvictedIntoSortedDataPoints(d, evict)
-	require.False(t, d.isInvalid())
-	require.Nil(t, d.CPUTimeMsList)
-	require.Nil(t, d.TimestampList)
+	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
+	tsr.processCPUTimeData(1, genRecord(20000))
+	require.Equal(t, 5001, len(tsr.collecting.records))
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
 }
 
 func TestCollectInternal(t *testing.T) {
@@ -434,7 +356,7 @@ func TestCollectInternal(t *testing.T) {
 		tsr.Close()
 	}()
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
@@ -462,9 +384,11 @@ func TestCollectInternal(t *testing.T) {
 }
 
 func TestMultipleDataSinks(t *testing.T) {
-	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 
+	topsqlstate.EnableTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	tsr.Start()
 	defer tsr.Close()
 
 	var chs []chan *ReportData
@@ -479,20 +403,20 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.NoError(t, tsr.Register(ds))
 	}
 
-	records := []tracecpu.SQLCPUTimeRecord{
+	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
-	tsr.Collect(3, records)
+	tsr.processCPUTimeData(3, records)
 
 	for _, ch := range chs {
 		d := <-ch
 		require.NotNil(t, d)
-		require.Equal(t, []tipb.CPUTimeRecord{{
-			SqlDigest:              []byte("sqlDigest1"),
-			PlanDigest:             []byte("planDigest1"),
-			RecordListTimestampSec: []uint64{3},
-			RecordListCpuTimeMs:    []uint32{2},
-		}}, d.CPUTimeRecords)
+		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, []byte("sqlDigest1"), d.DataRecords[0].SqlDigest)
+		require.Equal(t, []byte("planDigest1"), d.DataRecords[0].PlanDigest)
+		require.Len(t, d.DataRecords[0].Items, 1)
+		require.Equal(t, uint64(3), d.DataRecords[0].Items[0].TimestampSec)
+		require.Equal(t, uint32(2), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest1"),
@@ -510,20 +434,20 @@ func TestMultipleDataSinks(t *testing.T) {
 		tsr.Deregister(dss[i])
 	}
 
-	records = []tracecpu.SQLCPUTimeRecord{
+	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
-	tsr.Collect(6, records)
+	tsr.processCPUTimeData(6, records)
 
 	for i := 1; i < 7; i += 2 {
 		d := <-chs[i]
 		require.NotNil(t, d)
-		require.Equal(t, []tipb.CPUTimeRecord{{
-			SqlDigest:              []byte("sqlDigest4"),
-			PlanDigest:             []byte("planDigest4"),
-			RecordListTimestampSec: []uint64{6},
-			RecordListCpuTimeMs:    []uint32{5},
-		}}, d.CPUTimeRecords)
+		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, []byte("sqlDigest4"), d.DataRecords[0].SqlDigest)
+		require.Equal(t, []byte("planDigest4"), d.DataRecords[0].PlanDigest)
+		require.Len(t, d.DataRecords[0].Items, 1)
+		require.Equal(t, uint64(6), d.DataRecords[0].Items[0].TimestampSec)
+		require.Equal(t, uint32(5), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
 			SqlDigest:     []byte("sqlDigest4"),
