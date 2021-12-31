@@ -56,9 +56,9 @@ type MySQLConnectParam struct {
 	Vars             map[string]string
 }
 
-func (param *MySQLConnectParam) toDSN(password string) string {
+func (param *MySQLConnectParam) ToDSN() string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?charset=utf8mb4&sql_mode='%s'&maxAllowedPacket=%d&tls=%s",
-		param.User, password, param.Host, param.Port,
+		param.User, param.Password, param.Host, param.Port,
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
@@ -68,40 +68,55 @@ func (param *MySQLConnectParam) toDSN(password string) string {
 	return dsn
 }
 
-func (param *MySQLConnectParam) ToDSN() string {
-	return param.toDSN(param.Password)
-}
-
-func (param *MySQLConnectParam) tryConnect(password string) (*sql.DB, error) {
+func tryConnectMySQL(dsn string) (*sql.DB, error) {
 	driverName := "mysql"
 	failpoint.Inject("MockMySQLDriver", func(val failpoint.Value) {
 		driverName = val.(string)
 	})
-	db, err := sql.Open(driverName, param.toDSN(password))
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	return db, errors.Trace(db.Ping())
+	if err = db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, errors.Trace(err)
+	}
+	return db, nil
 }
 
-func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
-	db, err := param.tryConnect(param.Password)
-	if err == nil {
+// ConnectMySQL connects MySQL with the dsn. If access is denied and the password is a valid base64 encoding,
+// we will try to connect MySQL with the base64 decoding of the password.
+func ConnectMySQL(dsn string) (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Try plain password first.
+	db, firstErr := tryConnectMySQL(dsn)
+	if firstErr == nil {
 		return db, nil
 	}
 	// If access is denied and password is encoded by base64, try the decoded string as well.
-	if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
 		// If password is encoded by base64, try the decoded string as well.
-		if password, decodeErr := base64.StdEncoding.DecodeString(param.Password); decodeErr == nil {
-			db2, err2 := param.tryConnect(string(password))
-			if err2 == nil {
-				return db2, nil
+		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+			cfg.Passwd = string(password)
+			db, err = tryConnectMySQL(cfg.FormatDSN())
+			if err == nil {
+				return db, nil
 			}
 		}
 	}
 	// If we can't connect successfully, return the first error.
-	return nil, errors.Trace(err)
+	return nil, errors.Trace(firstErr)
+}
+
+func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
+	db, err := ConnectMySQL(param.ToDSN())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return db, nil
 }
 
 // IsDirExists checks if dir exists.

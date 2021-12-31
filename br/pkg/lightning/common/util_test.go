@@ -130,6 +130,10 @@ func (c *mockConn) Ping(ctx context.Context) error {
 	return nil
 }
 
+func (c *mockConn) Close() error {
+	return nil
+}
+
 func (s *utilSuite) TestConnect(c *C) {
 	plainPsw := "dQAUoDiyb1ucWZk7"
 	driverName := "mysql-mock-" + strconv.Itoa(rand.Int())
