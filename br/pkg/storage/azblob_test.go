@@ -4,10 +4,8 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -30,13 +28,6 @@ func (b *sharedKeyAzuriteClientBuilder) GetAccountName() string {
 }
 
 func TestAzblob(t *testing.T) {
-	checkStatement := fmt.Sprintf("lsof -i:%d ", 10000)
-	output, _ := exec.Command("sh", "-c", checkStatement).CombinedOutput()
-	if len(output) == 0 {
-		t.Log("azurite is not running, skip test")
-		return
-	}
-
 	ctx := context.Background()
 	options := &backuppb.AzureBlobStorage{
 		Bucket: "test",
