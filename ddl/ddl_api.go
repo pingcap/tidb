@@ -2043,7 +2043,7 @@ func (d *ddl) CreateTableWithInfo(
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
 		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement options is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		))
 	}
 
