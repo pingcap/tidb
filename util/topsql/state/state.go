@@ -27,7 +27,7 @@ const (
 
 // GlobalState is the global Top-SQL state.
 var GlobalState = State{
-	enable:                atomic.NewBool(DefTiDBTopSQLEnable),
+	enable:                atomic.NewBool(false),
 	PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 	MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 	MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
