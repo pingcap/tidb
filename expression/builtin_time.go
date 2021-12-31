@@ -3334,12 +3334,16 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			return nil, err
 		}
 		bf.setDecimalAndFlenForTime(mathutil.Max(arg0Dec, internalFsp))
-	} else {
-		createEvalTp := types.ETDatetime
-		if dateEvalTp == types.ETString {
-			createEvalTp = types.ETString
+	} else if dateEvalTp == types.ETString {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+		if err != nil {
+			return nil, err
 		}
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, createEvalTp, argTps...)
+		bf.tp.Tp = mysql.TypeString
+		bf.tp.Flen = mysql.MaxDatetimeFullWidth
+		types.SetBinChsClnFlag(bf.tp)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -3352,14 +3356,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			types.SetBinChsClnFlag(tp)
 			args[0] = BuildCastFunction(ctx, args[0], tp)
-		}
-		bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
-
-		if dateEvalTp == types.ETString {
-			bf.tp.Tp = mysql.TypeString
-			bf.tp.Flen = mysql.MaxDatetimeFullWidth
-			bf.tp.Decimal = -1
-			types.SetBinChsClnFlag(bf.tp)
+			bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 		}
 
 		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeDate {
@@ -4129,12 +4126,16 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			return nil, err
 		}
 		bf.setDecimalAndFlenForTime(mathutil.Max(arg0Dec, internalFsp))
-	} else {
-		createEvalTp := types.ETDatetime
-		if dateEvalTp == types.ETString {
-			createEvalTp = types.ETString
+	} else if dateEvalTp == types.ETString {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+		if err != nil {
+			return nil, err
 		}
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, createEvalTp, argTps...)
+		bf.tp.Tp = mysql.TypeString
+		types.SetBinChsClnFlag(bf.tp)
+		bf.tp.Flen = mysql.MaxDatetimeFullWidth
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -4147,14 +4148,7 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			types.SetBinChsClnFlag(tp)
 			args[0] = BuildCastFunction(ctx, args[0], tp)
-		}
-		bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
-
-		if dateEvalTp == types.ETString {
-			bf.tp.Tp = mysql.TypeString
-			bf.tp.Flen = mysql.MaxDatetimeFullWidth
-			bf.tp.Decimal = -1
-			types.SetBinChsClnFlag(bf.tp)
+			bf.setDecimalAndFlenForDatetime(int(types.MaxFsp))
 		}
 
 		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeDate {
