@@ -1367,6 +1367,28 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		SetSession: func(s *SessionVars, val string) error {
+			s.StatsLoadSyncWait = tidbOptInt64(val, DefTiDBStatsLoadSyncWait)
+			return nil
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(StatsLoadSyncWait.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			StatsLoadSyncWait.Store(tidbOptInt64(val, DefTiDBStatsLoadSyncWait))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			StatsLoadPseudoTimeout.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

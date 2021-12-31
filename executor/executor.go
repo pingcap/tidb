@@ -1837,6 +1837,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
+	sc.SkipUTF8Check = vars.SkipUTF8Check
+	sc.SkipASCIICheck = vars.SkipASCIICheck
+	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority

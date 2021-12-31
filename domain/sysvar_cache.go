@@ -252,6 +252,15 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableColumnTracking:
 		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBStatsLoadSyncWait:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.StatsLoadSyncWait.Store(val)
+	case variable.TiDBStatsLoadPseudoTimeout:
+		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
