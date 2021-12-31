@@ -16,27 +16,26 @@ package errormanager
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"io"
+	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
-var _ = Suite(errorManagerSuite{})
-
-func TestErrorManager(t *testing.T) {
-	TestingT(t)
-}
-
-type errorManagerSuite struct{}
-
-func (e errorManagerSuite) TestInit(c *C) {
+func TestInit(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRecord
@@ -44,15 +43,15 @@ func (e errorManagerSuite) TestInit(c *C) {
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg)
-	c.Assert(em.dupResolution, Equals, cfg.TikvImporter.DuplicateResolution)
-	c.Assert(em.remainingError.Type.Load(), Equals, cfg.App.MaxError.Type.Load())
-	c.Assert(em.remainingError.Conflict.Load(), Equals, cfg.App.MaxError.Conflict.Load())
+	require.Equal(t, cfg.TikvImporter.DuplicateResolution, em.dupResolution)
+	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
+	require.Equal(t, cfg.App.MaxError.Conflict.Load(), em.remainingError.Conflict.Load())
 
 	em.remainingError.Type.Store(0)
 	em.dupResolution = config.DupeResAlgNone
 	ctx := context.Background()
 	err = em.Init(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	em.dupResolution = config.DupeResAlgRecord
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
@@ -60,7 +59,7 @@ func (e errorManagerSuite) TestInit(c *C) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = em.Init(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	em.dupResolution = config.DupeResAlgNone
 	em.remainingError.Type.Store(1)
@@ -69,8 +68,7 @@ func (e errorManagerSuite) TestInit(c *C) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(4, 1))
 	err = em.Init(ctx)
-	c.Assert(err, IsNil)
-
+	require.NoError(t, err)
 	em.dupResolution = config.DupeResAlgRecord
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`.*").
@@ -80,12 +78,110 @@ func (e errorManagerSuite) TestInit(c *C) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (e errorManagerSuite) TestHasError(c *C) {
+type mockDriver struct {
+	driver.Driver
+	totalRows int64
+}
+
+func (m mockDriver) Open(_ string) (driver.Conn, error) {
+	return mockConn{totalRows: m.totalRows}, nil
+}
+
+type mockConn struct {
+	driver.Conn
+	driver.ExecerContext
+	driver.QueryerContext
+	totalRows int64
+}
+
+func (c mockConn) ExecContext(_ context.Context, _ string, _ []driver.NamedValue) (driver.Result, error) {
+	return sqlmock.NewResult(1, 1), nil
+}
+
+func (mockConn) Close() error { return nil }
+
+type mockRows struct {
+	driver.Rows
+	start int64
+	end   int64
+}
+
+func (r *mockRows) Columns() []string {
+	return []string{"_tidb_rowid", "raw_handle", "raw_row"}
+}
+
+func (r *mockRows) Close() error { return nil }
+
+func (r *mockRows) Next(dest []driver.Value) error {
+	if r.start >= r.end {
+		return io.EOF
+	}
+	dest[0] = r.start  // _tidb_rowid
+	dest[1] = []byte{} // raw_handle
+	dest[2] = []byte{} // raw_row
+	r.start++
+	return nil
+}
+
+func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	expectedQuery := "SELECT _tidb_rowid, raw_handle, raw_row.*"
+	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
+		return &mockRows{}, nil
+	}
+	if len(args) != 4 {
+		return &mockRows{}, nil
+	}
+	// args are tableName, start, end, and limit.
+	start := args[1].Value.(int64)
+	if start < 1 {
+		start = 1
+	}
+	end := args[2].Value.(int64)
+	if end > c.totalRows+1 {
+		end = c.totalRows + 1
+	}
+	limit := args[3].Value.(int64)
+	if start+limit < end {
+		end = start + limit
+	}
+	return &mockRows{start: start, end: end}, nil
+}
+
+func TestResolveAllConflictKeys(t *testing.T) {
+	const totalRows = int64(1 << 18)
+	driverName := "errmgr-mock-" + strconv.Itoa(rand.Int())
+	sql.Register(driverName, mockDriver{totalRows: totalRows})
+	db, err := sql.Open(driverName, "")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgRemove
+	cfg.App.TaskInfoSchemaName = "lightning_errors"
+	em := New(db, cfg)
+	ctx := context.Background()
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	resolved := atomic.NewInt64(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows")
+	err = em.ResolveAllConflictKeys(
+		ctx, "test", pool,
+		func(ctx context.Context, handleRows [][2][]byte) error {
+			resolved.Add(int64(len(handleRows)))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, totalRows, resolved.Load())
+}
+
+func TestErrorMgrHasError(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
 		Syntax:   *atomic.NewInt64(100),
@@ -99,23 +195,23 @@ func (e errorManagerSuite) TestHasError(c *C) {
 	}
 
 	// no field changes, should return false
-	c.Assert(em.HasError(), IsFalse)
+	require.False(t, em.HasError())
 
 	// change single field
 	em.remainingError.Syntax.Sub(1)
-	c.Assert(em.HasError(), IsTrue)
+	require.True(t, em.HasError())
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Charset.Sub(1)
-	c.Assert(em.HasError(), IsTrue)
+	require.True(t, em.HasError())
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Type.Sub(1)
-	c.Assert(em.HasError(), IsTrue)
+	require.True(t, em.HasError())
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Conflict.Sub(1)
-	c.Assert(em.HasError(), IsTrue)
+	require.True(t, em.HasError())
 
 	// change multiple keys
 	em.remainingError = cfg.App.MaxError
@@ -123,10 +219,10 @@ func (e errorManagerSuite) TestHasError(c *C) {
 	em.remainingError.Charset.Store(0)
 	em.remainingError.Type.Store(0)
 	em.remainingError.Conflict.Store(0)
-	c.Assert(em.HasError(), IsTrue)
+	require.True(t, em.HasError())
 }
 
-func (e errorManagerSuite) TestErrorOutput(c *C) {
+func TestErrorMgrErrorOutput(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.App.MaxError = config.MaxError{
 		Syntax:   *atomic.NewInt64(100),
@@ -141,13 +237,13 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	}
 
 	output := em.Output()
-	c.Assert(output, Equals, "")
+	require.Equal(t, output, "")
 
 	em.remainingError.Syntax.Sub(1)
 	output = em.Output()
 	checkStr := strings.ReplaceAll(output, "\n", "")
 	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	c.Assert(checkStr, Equals, expected)
+	require.Equal(t, expected, checkStr)
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Sub(10)
@@ -155,7 +251,7 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
 	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	c.Assert(checkStr, Equals, expected)
+	require.Equal(t, expected, checkStr)
 
 	// change multiple keys
 	em.remainingError = cfg.App.MaxError
@@ -166,5 +262,5 @@ func (e errorManagerSuite) TestErrorOutput(c *C) {
 	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
 	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
-	c.Assert(checkStr, Equals, expected)
+	require.Equal(t, expected, checkStr)
 }
