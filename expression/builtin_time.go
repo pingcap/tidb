@@ -4370,7 +4370,7 @@ func (b *builtinSubDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
-	return result.String(), isNull || err != nil, err
+	return result.String(), isNull, err
 }
 
 type builtinSubDateStringRealSig struct {
@@ -4424,7 +4424,7 @@ func (b *builtinSubDateStringRealSig) evalString(row chunk.Row) (string, bool, e
 
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
-	return result.String(), isNull || err != nil, err
+	return result.String(), isNull, err
 }
 
 type builtinSubDateStringDecimalSig struct {
@@ -4477,7 +4477,7 @@ func (b *builtinSubDateStringDecimalSig) evalString(row chunk.Row) (string, bool
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
-	return result.String(), isNull || err != nil, err
+	return result.String(), isNull, err
 }
 
 type builtinSubDateIntStringSig struct {
