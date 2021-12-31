@@ -1095,12 +1095,12 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt:
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringReal:
 			return true
 		}
 	case ast.DateSub, ast.SubDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt:
+		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt, tipb.ScalarFuncSig_SubDateStringReal:
 			return true
 		}
 	case ast.UnixTimestamp:
