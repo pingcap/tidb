@@ -4315,7 +4315,7 @@ func (b *builtinSubDateStringStringSig) evalString(row chunk.Row) (string, bool,
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 
 	result.SetType(getDateAddOrSubReturnTypeByUnit(date.Type(), unit))
-	return result.String(), isNull , err
+	return result.String(), isNull, err
 }
 
 type builtinSubDateStringIntSig struct {
