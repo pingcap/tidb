@@ -20,7 +20,7 @@ import "go.uber.org/atomic"
 const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxStatementCount     = 100
 	DefTiDBTopSQLMaxCollect            = 5000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 )
