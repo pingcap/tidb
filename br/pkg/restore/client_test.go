@@ -38,15 +38,15 @@ func (s *testRestoreClientSuite) SetUpTest(c *C) {
 	var err error
 	s.mock, err = mock.NewCluster()
 	c.Assert(err, IsNil)
+	c.Assert(s.mock.Start(), IsNil)
 }
 
 func (s *testRestoreClientSuite) TearDownTest(c *C) {
+	s.mock.Stop()
 	testleak.AfterTest(c)()
 }
 
 func (s *testRestoreClientSuite) TestCreateTables(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
 
@@ -103,8 +103,6 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 }
 
 func (s *testRestoreClientSuite) TestIsOnline(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
@@ -115,8 +113,6 @@ func (s *testRestoreClientSuite) TestIsOnline(c *C) {
 }
 
 func (s *testRestoreClientSuite) TestPreCheckTableClusterIndex(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
 	c.Assert(err, IsNil)
@@ -186,8 +182,6 @@ func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]
 }
 
 func (s *testRestoreClientSuite) TestPreCheckTableTiFlashReplicas(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	defer s.mock.Stop()
 
 	mockStores := []*metapb.Store{
 		{
