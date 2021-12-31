@@ -1322,7 +1322,7 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
@@ -1332,6 +1332,51 @@ var defaultSysVars = []*SysVar{
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
 			PersistAnalyzeOptions.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableColumnTracking, Value: BoolToOnOff(DefTiDBEnableColumnTracking), skipInit: true, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableColumnTracking.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		v := TiDBOptOn(val)
+		if !v {
+			// Set the location to UTC to avoid time zone interference.
+			disableTime := time.Now().UTC().Format(types.UTCTimeFormat)
+			if err := setTiDBTableValue(s, TiDBDisableColumnTrackingTime, disableTime, "Record the last time tidb_enable_column_tracking is set off"); err != nil {
+				return err
+			}
+		}
+		EnableColumnTracking.Store(v)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBReadConsistency, Value: string(ReadConsistencyStrict), Type: TypeStr, Hidden: true,
+		Validation: func(_ *SessionVars, normalized string, _ string, _ ScopeFlag) (string, error) {
+			return normalized, validateReadConsistencyLevel(normalized)
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.ReadConsistency = ReadConsistencyLevel(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		SetSession: func(s *SessionVars, val string) error {
+			s.StatsLoadSyncWait = tidbOptInt64(val, DefTiDBStatsLoadSyncWait)
+			return nil
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(StatsLoadSyncWait.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			StatsLoadSyncWait.Store(tidbOptInt64(val, DefTiDBStatsLoadSyncWait))
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			StatsLoadPseudoTimeout.Store(TiDBOptOn(val))
 			return nil
 		},
 	},

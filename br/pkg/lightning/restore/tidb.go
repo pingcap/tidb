@@ -111,6 +111,8 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
 	}
 
 	if dsn.Vars != nil {
@@ -120,7 +122,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	for k, v := range vars {
-		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
