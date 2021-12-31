@@ -192,7 +192,7 @@ func (em *ErrorManager) RecordTypeError(
 	if em.remainingError.Type.Dec() < 0 {
 		threshold := em.configError.Type.Load()
 		if threshold > 0 {
-			encodeErr = errors.Annotatef(encodeErr, "meet errors exceed the max-error threshold %d",
+			encodeErr = errors.Annotatef(encodeErr, "meet errors exceed the max-error.type threshold '%d'",
 				em.configError.Type.Load())
 		}
 		return encodeErr
@@ -239,10 +239,16 @@ func (em *ErrorManager) RecordDataConflictError(
 	tableName string,
 	conflictInfos []DataConflictInfo,
 ) error {
-	if em.db == nil {
+	if len(conflictInfos) == 0 {
 		return nil
 	}
-	if len(conflictInfos) == 0 {
+
+	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configError.Conflict.Load()
+		return errors.Errorf(" meet errors exceed the max-error.conflict threshold '%d'", threshold)
+	}
+
+	if em.db == nil {
 		return nil
 	}
 
@@ -282,10 +288,16 @@ func (em *ErrorManager) RecordIndexConflictError(
 	conflictInfos []DataConflictInfo,
 	rawHandles, rawRows [][]byte,
 ) error {
-	if em.db == nil {
+	if len(conflictInfos) == 0 {
 		return nil
 	}
-	if len(conflictInfos) == 0 {
+
+	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configError.Conflict.Load()
+		return errors.Errorf(" meet errors exceed the max-error.conflict threshold %d", threshold)
+	}
+
+	if em.db == nil {
 		return nil
 	}
 
