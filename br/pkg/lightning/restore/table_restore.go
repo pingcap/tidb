@@ -812,7 +812,7 @@ func (tr *TableRestore) postProcess(
 		}
 
 		// Don't call FinishTable when other lightning will calculate checksum.
-		if err == nil && !hasDupe && needChecksum {
+		if err == nil && needChecksum {
 			err = metaMgr.FinishTable(ctx)
 		}
 
