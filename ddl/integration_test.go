@@ -72,9 +72,11 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustExec("create table t(a enum('a', 0x91) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")                 // Use 1-base index to locate the value.
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "")) // 0x91 is truncate.
-
 	tk.MustExec("drop table t;")
 	tk.MustGetErrMsg("create table t(a set('a', 0x91, '') charset gbk);",
 		"[types:1291]Column 'a' has duplicated value '' in SET")
-
+	// Test valid gbk string value in enum.
+	tk.MustExec("create table t (a enum('a', 0xC4E3BAC3) charset gbk);")
+	tk.MustExec("insert into t values (1), (2);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
 }
