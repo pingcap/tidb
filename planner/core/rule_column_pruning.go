@@ -578,9 +578,9 @@ func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Colum
 	if len(prunedColumns) < 1 {
 		return
 	}
-	s := make([]string, 0)
+	s := make([]fmt.Stringer, 0, len(prunedColumns))
 	for _, item := range prunedColumns {
-		s = append(s, item.String())
+		s = append(s, item)
 	}
 	appendItemPruneTraceStep(p, "columns", s, opt)
 }
@@ -589,9 +589,9 @@ func appendFunctionPruneTraceStep(p LogicalPlan, prunedFunctions []*aggregation.
 	if len(prunedFunctions) < 1 {
 		return
 	}
-	s := make([]string, 0)
+	s := make([]fmt.Stringer, 0, len(prunedFunctions))
 	for _, item := range prunedFunctions {
-		s = append(s, item.String())
+		s = append(s, item)
 	}
 	appendItemPruneTraceStep(p, "aggregation functions", s, opt)
 }
@@ -600,14 +600,25 @@ func appendByItemsPruneTraceStep(p LogicalPlan, prunedByItems []*util.ByItems, o
 	if len(prunedByItems) < 1 {
 		return
 	}
-	s := make([]string, 0)
+	s := make([]fmt.Stringer, 0, len(prunedByItems))
 	for _, item := range prunedByItems {
-		s = append(s, item.String())
+		s = append(s, item)
 	}
 	appendItemPruneTraceStep(p, "byItems", s, opt)
 }
 
-func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []string, opt *logicalOptimizeOp) {
+func appendGroupByItemsPruneTraceStep(p LogicalPlan, prunedGroupByItems []expression.Expression, opt *logicalOptimizeOp) {
+	if len(prunedGroupByItems) < 1 {
+		return
+	}
+	s := make([]fmt.Stringer, 0, len(prunedGroupByItems))
+	for _, item := range prunedGroupByItems {
+		s = append(s, item)
+	}
+	appendItemPruneTraceStep(p, "groupByItems", s, opt)
+}
+
+func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []fmt.Stringer, opt *logicalOptimizeOp) {
 	if len(prunedObjects) < 1 {
 		return
 	}
@@ -617,7 +628,7 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []st
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(item)
+			buffer.WriteString(item.String())
 		}
 		buffer.WriteString("] have been pruned")
 		return buffer.String()
@@ -626,15 +637,4 @@ func appendItemPruneTraceStep(p LogicalPlan, itemType string, prunedObjects []st
 		return ""
 	}
 	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
-}
-
-func appendGroupByItemsPruneTraceStep(p LogicalPlan, prunedGroupByItems []expression.Expression, opt *logicalOptimizeOp) {
-	if len(prunedGroupByItems) < 1 {
-		return
-	}
-	s := make([]string, 0)
-	for _, item := range prunedGroupByItems {
-		s = append(s, item.String())
-	}
-	appendItemPruneTraceStep(p, "groupByItems", s, opt)
 }
