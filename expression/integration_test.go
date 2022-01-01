@@ -6928,7 +6928,6 @@ func TestIssue30174(t *testing.T) {
 	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
 }
 
-
 func TestIssue30327(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
