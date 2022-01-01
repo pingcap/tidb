@@ -21,13 +21,15 @@ import (
 	"io"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 func TestInit(t *testing.T) {
@@ -176,4 +178,88 @@ func TestResolveAllConflictKeys(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, totalRows, resolved.Load())
+}
+
+func TestErrorMgrHasError(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.App.MaxError = config.MaxError{
+		Syntax:   *atomic.NewInt64(100),
+		Charset:  *atomic.NewInt64(100),
+		Type:     *atomic.NewInt64(100),
+		Conflict: *atomic.NewInt64(100),
+	}
+	em := &ErrorManager{
+		configError:    &cfg.App.MaxError,
+		remainingError: cfg.App.MaxError,
+	}
+
+	// no field changes, should return false
+	require.False(t, em.HasError())
+
+	// change single field
+	em.remainingError.Syntax.Sub(1)
+	require.True(t, em.HasError())
+
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Charset.Sub(1)
+	require.True(t, em.HasError())
+
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Type.Sub(1)
+	require.True(t, em.HasError())
+
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Conflict.Sub(1)
+	require.True(t, em.HasError())
+
+	// change multiple keys
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Syntax.Store(0)
+	em.remainingError.Charset.Store(0)
+	em.remainingError.Type.Store(0)
+	em.remainingError.Conflict.Store(0)
+	require.True(t, em.HasError())
+}
+
+func TestErrorMgrErrorOutput(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.App.MaxError = config.MaxError{
+		Syntax:   *atomic.NewInt64(100),
+		Charset:  *atomic.NewInt64(100),
+		Type:     *atomic.NewInt64(100),
+		Conflict: *atomic.NewInt64(100),
+	}
+	em := &ErrorManager{
+		configError:    &cfg.App.MaxError,
+		remainingError: cfg.App.MaxError,
+		schemaEscaped:  "`error_info`",
+	}
+
+	output := em.Output()
+	require.Equal(t, output, "")
+
+	em.remainingError.Syntax.Sub(1)
+	output = em.Output()
+	checkStr := strings.ReplaceAll(output, "\n", "")
+	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
+	require.Equal(t, expected, checkStr)
+
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Syntax.Sub(10)
+	em.remainingError.Type.Store(10)
+	output = em.Output()
+	checkStr = strings.ReplaceAll(output, "\n", "")
+	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
+	require.Equal(t, expected, checkStr)
+
+	// change multiple keys
+	em.remainingError = cfg.App.MaxError
+	em.remainingError.Syntax.Store(0)
+	em.remainingError.Charset.Store(0)
+	em.remainingError.Type.Store(0)
+	em.remainingError.Conflict.Store(0)
+	output = em.Output()
+	checkStr = strings.ReplaceAll(output, "\n", "")
+	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
+	require.Equal(t, expected, checkStr)
 }
