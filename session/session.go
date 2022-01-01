@@ -2866,8 +2866,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	cfg := config.GetGlobalConfig()
 	vars := s.GetSessionVars()
 	if !s.isInternal() && cfg.EnableReplaySQL.Load() {
-		fmt.Println("print sql")
-		go func(sql, id string) {
+		go func(sql string) {
 			//TODO: We need to add a client col also.
 			var builder strings.Builder
 			builder.WriteString(fmt.Sprintf("%v", vars.ConnectionID))
@@ -2876,11 +2875,16 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			ts := strconv.FormatInt(s.sessionVars.StartTime.Unix()-cfg.ReplayMetaTS, 10)
 			builder.WriteString(ts)
 			builder.WriteString(" ")
-			text := strings.ReplaceAll(sql, "\n", " ")
+			builder.WriteString(vars.CurrentDB)
+			text := executor.QueryReplacer.Replace(sql)
 			builder.WriteString(text)
+			builder.WriteString(" ")
+			if vars.PreparedParams != nil {
+				builder.WriteString(vars.PreparedParams.String())
+			}
 			builder.WriteString("\n")
 			logutil.PutRecordOrDrop(builder.String())
-		}(vars.SQL, vars.TxnCtx.ID.String())
+		}(vars.SQL)
 	}
 
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {

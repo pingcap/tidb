@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -17,6 +16,7 @@ import (
 
 // RecordReplayer is used to replay sql
 var RecordReplayer *recordReplayer
+
 // Sessions is a map
 var Sessions map[string]session.Session
 
@@ -72,7 +72,6 @@ func (r *recordReplayer) start() {
 		}
 		ts, _ := strconv.ParseFloat(record[1], 10)
 		if sleepTime := ts - time.Since(start).Seconds(); sleepTime > 0 {
-			fmt.Printf("sleep time:%v\n", sleepTime)
 			time.Sleep(time.Duration(sleepTime) * time.Second)
 		}
 		if s, exist := Sessions[record[0]]; !exist {
@@ -83,24 +82,43 @@ func (r *recordReplayer) start() {
 				return
 			}
 			Sessions[record[0]] = se
-			go replayExecuteSQL(record[3], se, record[0])
+			go replayExecuteSQL(record[3], se)
 		} else {
-			go replayExecuteSQL(record[3], s, record[0])
+			go replayExecuteSQL(record[3], s)
 		}
 	}
 }
 
-func replayExecuteSQL(sql string, s session.Session, connection string) error {
+func replayExecuteSQL(sql string, s session.Session) error {
 	ctx := context.Background()
+	fmt.Println(sql)
+	args := strings.Split(sql, "[arguments: (")
+	fmt.Println(args)
+	if len(args) > 1{
+		argument := strings.Split(args[1][:len(args[1])-2], ", ")
+		sql = helper(args[0], argument)
+	}
+	fmt.Println(sql)
 	stmts, err := s.Parse(ctx, sql)
 	if err != nil {
 		return err
 	}
 	for _, stmt := range stmts {
-		_, err := s.ExecuteStmt(ctx, stmt)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		s.ExecuteStmt(ctx, stmt)
 	}
 	return nil
+}
+
+func helper(sql string, args []string) string {
+	newsql := ""
+	i := 0
+	for _, b := range []byte(sql) {
+		if b == byte('?'){
+			newsql += args[i]
+			i++
+		}else{
+			newsql += string(b)
+		}
+	}
+	return newsql
 }
