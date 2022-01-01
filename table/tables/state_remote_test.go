@@ -89,7 +89,7 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lease, leaseVal)
 
 	// Check write lock.
-	writeLease, err := h.LockForWrite(ctx, 5)
+	writeLease, err := h.LockForWrite(ctx, 5, 3*time.Second)
 	require.NoError(t, err)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestStateRemote(t *testing.T) {
 	require.Greater(t, writeLease, leaseVal)
 
 	// Lock for write again
-	writeLease, err = h.LockForWrite(ctx, 5)
+	writeLease, err = h.LockForWrite(ctx, 5, 3*time.Second)
 	require.NoError(t, err)
 	lockType, _, err = h.Load(ctx, 5)
 	require.NoError(t, err)

@@ -239,6 +239,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBTableCacheLease:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TableCacheLease.Store(val)
 	case variable.TiDBPersistAnalyzeOptions:
 		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableColumnTracking:
