@@ -25,8 +25,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"go.uber.org/atomic"
 	// Set the correct when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
 )
@@ -71,6 +73,8 @@ type task struct {
 
 var P int
 var workDir string
+
+var FailureExit atomic.Bool = *atomic.NewBool(false)
 
 func cmdList(args ...string) {
 	pkgs, err := listPackages()
@@ -292,6 +296,10 @@ func main() {
 			usage()
 		}
 	}
+	if FailureExit.Load() {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
@@ -371,7 +379,11 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	cmd.Stdout = &res.output
 	cmd.Stderr = &res.output
 	if err := cmd.Run(); err != nil {
+		isFailureExitByError(err)
 		res.err = withTrace(err)
+	} else {
+		exitCode := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+		isFailureExitByStatus(exitCode)
 	}
 	return res
 }
@@ -427,7 +439,14 @@ func buildTestBinary(pkg string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
-	return withTrace(err)
+	if err != nil {
+		isFailureExitByError(err)
+		return withTrace(err)
+	}
+	exitCode := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
+	isFailureExitByStatus(exitCode)
+	return nil
+
 }
 
 func testBinaryExist(pkg string) (bool, error) {
@@ -454,6 +473,18 @@ func testFileName(pkg string) string {
 
 func testFileFullPath(pkg string) string {
 	return path.Join(workDir, pkg, testFileName(pkg))
+}
+
+func isFailureExitByError(err error) {
+	if err != nil {
+		FailureExit.Store(true)
+	}
+}
+
+func isFailureExitByStatus(exitStatus int) {
+	if exitStatus != 0 {
+		FailureExit.Store(true)
+	}
 }
 
 func listNewTestCases(pkg string) ([]string, error) {
