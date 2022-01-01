@@ -911,6 +911,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCTERecursiveForbiddenJoinOrder:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints", nil),
 	ErrInvalidRequiresSingleReference:                        mysql.Message("In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery", nil),
 	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
+	ErrGeneralLog:                                            mysql.Message("TiDB general log is implemented differently, and changes on the parameter '%s' will not be honored. Please check 'tidb_general_log' for details", nil),
+
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),

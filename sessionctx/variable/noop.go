@@ -110,7 +110,9 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InnodbCmpPerIndexEnabled, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_ft_server_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_instances", Value: "7693"},
-	{Scope: ScopeNone, Name: "log_output", Value: "FILE"},
+	{Scope: ScopeGlobal, Name: "log_output", Value: "FILE", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return normalizedValue, ErrGeneralLog.GenWithStackByArgs("log_output")
+	}},
 	{Scope: ScopeGlobal, Name: "binlog_group_commit_sync_delay", Value: ""},
 	{Scope: ScopeGlobal, Name: "binlog_group_commit_sync_no_delay_count", Value: ""},
 	{Scope: ScopeNone, Name: "have_crypt", Value: "YES"},
