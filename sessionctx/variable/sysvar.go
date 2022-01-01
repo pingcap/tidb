@@ -1245,6 +1245,15 @@ var defaultSysVars = []*SysVar{
 		s.TMPTableSize = tidbOptInt64(val, DefTiDBTmpTableMaxSize)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTableCacheLease, Value: strconv.Itoa(DefTiDBTableCacheLease), Type: TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(s *SessionVars, sVal string) error {
+		var val int64
+		val, err := strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		TableCacheLease.Store(val)
+		return nil
+	}},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
