@@ -624,7 +624,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 const cacheTableWriteLease = 5 * time.Second
 
 func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
@@ -2706,6 +2706,18 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// start sub workers for concurrent stats loading
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < int(concurrency); i++ {
+		subSe, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		subCtxs[i] = subSe
+	}
+	dom.StartLoadStatsSubWorkers(subCtxs)
 
 	dom.PlanReplayerLoop()
 

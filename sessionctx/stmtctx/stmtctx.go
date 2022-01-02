@@ -221,6 +221,19 @@ type StatementContext struct {
 
 	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
 	WeakConsistency bool
+
+	StatsLoad struct {
+		// Timeout to wait for sync-load
+		Timeout time.Duration
+		// NeededColumns stores the columns whose stats are needed for planner.
+		NeededColumns []model.TableColumnID
+		// ResultCh to receive stats loading results
+		ResultCh chan model.TableColumnID
+		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
+		Fallback bool
+		// LoadStartTime is to record the load start time to calculate latency
+		LoadStartTime time.Time
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
