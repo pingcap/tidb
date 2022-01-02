@@ -5350,6 +5350,11 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if _, ok := expr.(*expression.Column); ok {
 			return nil, ErrFunctionalIndexOnField
 		}
+		if r, ok := expr.(*expression.Constant); ok {
+			if r.Value.Kind() == types.KindNull {
+				return nil, errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
+			}
+		}
 
 		colInfo := &model.ColumnInfo{
 			Name:                idxPart.Column.Name,
