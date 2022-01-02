@@ -55,7 +55,7 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
-	tsr.processCPUTimeData(timestamp, records)
+	tsr.Collect(records)
 	// sleep a while for the asynchronous collect
 	time.Sleep(100 * time.Millisecond)
 }
@@ -205,9 +205,9 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	}
 }
 
-func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []collector.SQLCPUTimeRecord) {
-	tsr.processCPUTimeData(timestamp, records)
-	time.Sleep(time.Millisecond * 100)
+func collectAndWait(tsr *RemoteTopSQLReporter, records []collector.SQLCPUTimeRecord) {
+	tsr.Collect(records)
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestCollectAndTopN(t *testing.T) {
@@ -220,7 +220,7 @@ func TestCollectAndTopN(t *testing.T) {
 		ds.Close()
 		tsr.Close()
 	}()
-
+	ts := time.Now().Unix()
 	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
@@ -229,7 +229,7 @@ func TestCollectAndTopN(t *testing.T) {
 	// SQL-2:  2ms
 	// SQL-3:  3ms
 	// Others: 1ms
-	collectAndWait(tsr, 1, records)
+	collectAndWait(tsr, records)
 
 	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
@@ -237,7 +237,7 @@ func TestCollectAndTopN(t *testing.T) {
 	}
 	// SQL-1:  1ms
 	// SQL-3:  3ms
-	collectAndWait(tsr, 2, records)
+	collectAndWait(tsr, records)
 
 	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 4),
@@ -247,7 +247,7 @@ func TestCollectAndTopN(t *testing.T) {
 	// SQL-1:  10ms
 	// SQL-4:  4ms
 	// Others: 1ms
-	collectAndWait(tsr, 3, records)
+	collectAndWait(tsr, records)
 
 	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 5, 5),
@@ -258,7 +258,7 @@ func TestCollectAndTopN(t *testing.T) {
 	// SQL-2:  20ms
 	// SQL-1:  1ms
 	// Others: 9ms
-	collectAndWait(tsr, 4, records)
+	collectAndWait(tsr, records)
 
 	// Test for time jump back.
 	records = []collector.SQLCPUTimeRecord{
@@ -270,7 +270,7 @@ func TestCollectAndTopN(t *testing.T) {
 	// SQL-6:  6ms
 	// SQL-3:  3ms
 	// Others: 3ms
-	collectAndWait(tsr, 0, records)
+	collectAndWait(tsr, records)
 
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -298,10 +298,10 @@ func TestCollectAndTopN(t *testing.T) {
 	require.Nil(t, results[0].SqlDigest)
 	require.Equal(t, []byte(nil), results[0].SqlDigest)
 	require.Equal(t, 14, getTotalCPUTime(results[0]))
-	require.Equal(t, uint64(1), results[0].Items[0].TimestampSec)
-	require.Equal(t, uint64(3), results[0].Items[1].TimestampSec)
-	require.Equal(t, uint64(4), results[0].Items[2].TimestampSec)
-	require.Equal(t, uint64(0), results[0].Items[3].TimestampSec)
+	require.Greater(t, results[0].Items[0].TimestampSec, ts)
+	require.Greater(t, results[0].Items[1].TimestampSec, ts)
+	require.Greater(t, results[0].Items[2].TimestampSec, ts)
+	require.Greater(t, results[0].Items[3].TimestampSec, ts)
 	require.Equal(t, uint32(1), results[0].Items[0].CpuTimeMs)
 	require.Equal(t, uint32(1), results[0].Items[1].CpuTimeMs)
 	require.Equal(t, uint32(9), results[0].Items[2].CpuTimeMs)
@@ -373,7 +373,8 @@ func TestCollectCapacity(t *testing.T) {
 	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
-	tsr.processCPUTimeData(1, genRecord(20000))
+	tsr.Collect(genRecord(20000))
+	time.Sleep(time.Second * 2)
 	require.Equal(t, 5001, len(tsr.collecting.records))
 	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
 	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
@@ -394,7 +395,7 @@ func TestCollectInternal(t *testing.T) {
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
-	collectAndWait(tsr, 1, records)
+	collectAndWait(tsr, records)
 
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -423,6 +424,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.EnableTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	tsr.Start()
+	ts := time.Now().Unix()
 	defer tsr.Close()
 
 	var chs []chan *ReportData
@@ -440,7 +442,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 2),
 	}
-	tsr.processCPUTimeData(3, records)
+	tsr.Collect(records)
 
 	for _, ch := range chs {
 		d := <-ch
@@ -449,7 +451,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Equal(t, []byte("sqlDigest1"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest1"), d.DataRecords[0].PlanDigest)
 		require.Len(t, d.DataRecords[0].Items, 1)
-		require.Equal(t, uint64(3), d.DataRecords[0].Items[0].TimestampSec)
+		require.Greater(t, d.DataRecords[0].Items[0].TimestampSec, ts)
 		require.Equal(t, uint32(2), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
@@ -467,11 +469,11 @@ func TestMultipleDataSinks(t *testing.T) {
 	for i := 0; i < 7; i += 2 {
 		tsr.Deregister(dss[i])
 	}
-
+	ts = time.Now().Unix()
 	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
-	tsr.processCPUTimeData(6, records)
+	tsr.Collect(records)
 
 	for i := 1; i < 7; i += 2 {
 		d := <-chs[i]
@@ -480,7 +482,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Equal(t, []byte("sqlDigest4"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest4"), d.DataRecords[0].PlanDigest)
 		require.Len(t, d.DataRecords[0].Items, 1)
-		require.Equal(t, uint64(6), d.DataRecords[0].Items[0].TimestampSec)
+		require.Greater(t, d.DataRecords[0].Items[0].TimestampSec, ts)
 		require.Equal(t, uint32(5), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{

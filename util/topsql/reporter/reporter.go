@@ -29,7 +29,7 @@ import (
 
 const (
 	reportTimeout         = 40 * time.Second
-	collectChanBufferSize = 2
+	collectChanBufferSize = 6
 )
 
 var nowFunc = time.Now
