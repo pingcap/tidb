@@ -211,7 +211,9 @@ func (e *CTEExec) Close() (err error) {
 		}
 	}
 	if e.isInApply {
-		e.reopenTbls()
+		if err = e.reopenTbls(); err != nil {
+			return err
+		}
 	}
 
 	return e.baseExecutor.Close()
