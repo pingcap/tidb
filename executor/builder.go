@@ -4725,6 +4725,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		hasLimit:      v.CTE.HasLimit,
 		limitBeg:      v.CTE.LimitBeg,
 		limitEnd:      v.CTE.LimitEnd,
+		isInApply:     v.CTE.IsInApply,
 	}
 }
 

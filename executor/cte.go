@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -89,6 +90,11 @@ type CTEExec struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
+
+	// isInApply indicates whether CTE is in inner side of Apply
+	// and should resTbl/iterInTbl be reset for each outer row of Apply.
+	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
+	isInApply bool
 }
 
 // Open implements the Executor interface.
@@ -141,6 +147,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
+		fmt.Println("gjt in CTEExec.Next")
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
@@ -209,6 +216,9 @@ func (e *CTEExec) Close() (err error) {
 				return err
 			}
 		}
+	}
+	if e.isInApply {
+		e.reopenTbls()
 	}
 
 	return e.baseExecutor.Close()
@@ -398,7 +408,9 @@ func (e *CTEExec) reset() {
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
-	e.hashTbl = newConcurrentMapHashTable()
+	if e.isDistinct {
+		e.hashTbl = newConcurrentMapHashTable()
+	}
 	if err := e.resTbl.Reopen(); err != nil {
 		return err
 	}
