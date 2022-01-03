@@ -210,7 +210,7 @@ func TestDecodeIndex(t *testing.T) {
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1, -1}, "1.csv", 123)
 	data := pairs.(*KvPairs)
-	require.Equal(t, len(data.pairs), 2)
+	require.Len(t, data.pairs, 2)
 
 	decoder, err := NewTableKVDecoder(tbl, "`test`.``", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
@@ -336,7 +336,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 			RowID: 70,
 		},
 	}})
-	require.EqualValues(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoIncrementType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoIncrementType).Base(), int64(70))
 }
 
 func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
@@ -373,7 +373,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: 70,
 		},
 	}})
-	require.EqualValues(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(70))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(70))
 
 	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, "1.csv", 1234)
 	require.NoError(t, err)
@@ -588,6 +588,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	return s
 }
 
+// Run `go test github.com/pingcap/tidb/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
 func BenchmarkSQL2KV(b *testing.B) {
 	s := SetUpTest(b)
 	for i := 0; i < b.N; i++ {
