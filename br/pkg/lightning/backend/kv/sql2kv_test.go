@@ -384,7 +384,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 			RowID: 71,
 		},
 	}})
-	require.EqualValues(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(71))
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), int64(71))
 }
 
 func TestShardRowId(t *testing.T) {
@@ -411,8 +411,8 @@ func TestShardRowId(t *testing.T) {
 		require.EqualValues(t, rowID&((1<<60)-1), i)
 		keyMap[rowID>>60] = struct{}{}
 	}
-	require.EqualValues(t, len(keyMap), 8)
-	require.EqualValues(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.RowIDAllocType).Base(), int64(32))
+	require.Len(t, keyMap, 8)
+	require.Equal(t, tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.RowIDAllocType).Base(), int64(32))
 }
 
 func TestSplitIntoChunks(t *testing.T) {
