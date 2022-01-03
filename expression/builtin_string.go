@@ -1151,7 +1151,7 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
 	if !enc.IsValid(hack.Slice(expr)) {
-		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplace)
+		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplaceNoErr)
 		return string(replace), false, nil
 	}
 	return expr, false, nil
