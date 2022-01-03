@@ -550,16 +550,9 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
 	require.NoError(b, err)
-<<<<<<< HEAD
-	s := &benchSQL2KVSuite{}
-	s.encoder, err = NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
-	require.NoError(b, err)
-	s.logger = log.Logger{Logger: zap.NewNop()}
-=======
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
 	require.NoError(b, err)
 	logger := log.Logger{Logger: zap.NewNop()}
->>>>>>> 1d7f7bab00 (br/pkg/kv/lightning/backend/kv: session_test.go sql2kv_test.go)
 
 	// Prepare the row to insert.
 	row := []types.Datum{
@@ -585,13 +578,6 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 		types.NewStringDatum("OE"),
 		types.NewStringDatum("H5p3dpjp7uu8n1l3j0o1buecfV6FngNNgftpNALDhOzJaSzMCMlrQwXuvLAFPIFg215D3wAYB62kiixIuasfbD729oq8TwgKzPPsx8kHE1b4AdhHwpCml3ELKiwuNGQl7CcBQOiq6aFEMMHzjGwQyXwGey0wutjp2KP3Nd4qj3FHtmHbsD8cJ0pH9TswNmdQBgXsFPZeJJhsG3rTimQpS9Tmn3vNeI9fFas3ClDZuQtBjqoTJlyzmBIYT8HeV3TuS93TNFDaXZpQqh8HsvlPq4uTTLOO9CguiY29zlSmIjkZYtva3iscG3YDOQVLeGpP9dtqEJwlRvJ4oe9jWkvRMlCeslSNEuzLxjUBtJBnGRFAzJF6RMlIWCkdCpIhcnIy3jUEsxTuiAU3hsZxUjLg2dnOG62h5qR"),
 	}
-<<<<<<< HEAD
-	s.colPerm = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
-	return s
-}
-
-// BenchmarkSQL2KV Run `go test github.com/pingcap/tidb/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
-=======
 	colPerm := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
 	s := &benchSQL2KVSuite{
 		encoder: encoder,
@@ -602,7 +588,6 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	return s
 }
 
->>>>>>> 1d7f7bab00 (br/pkg/kv/lightning/backend/kv: session_test.go sql2kv_test.go)
 func BenchmarkSQL2KV(b *testing.B) {
 	s := SetUpTest(b)
 	for i := 0; i < b.N; i++ {
@@ -610,9 +595,5 @@ func BenchmarkSQL2KV(b *testing.B) {
 		require.NoError(b, err)
 		len := reflect.ValueOf(rows).Elem().Field(0).Len()
 		require.EqualValues(b, len, 2)
-<<<<<<< HEAD
-=======
-
->>>>>>> 1d7f7bab00 (br/pkg/kv/lightning/backend/kv: session_test.go sql2kv_test.go)
 	}
 }
