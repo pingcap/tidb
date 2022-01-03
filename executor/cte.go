@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -142,7 +141,6 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
-		fmt.Println("gjt in CTEExec.Next")
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
