@@ -315,6 +315,31 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			return s.optimize(ctx, p, opt)
 		}
 	}
+	// transform sql: ... where (select count(*) from ...) > 0 --> ... where exists (select * from ...)
+	// used when enter optimize for the second time
+	if sel, ok := p.(*LogicalSelection); ok {
+		if apply, ok := sel.children[0].(*LogicalApply); ok && len(sel.Conditions) == 1 {
+			_, _, right, _ := apply.ExtractOnCondition(sel.Conditions, apply.children[0].Schema(), apply.children[1].Schema(), false, false)
+			if len(right) == 1 {
+				if agg, ok := apply.children[1].(*LogicalAggregation); ok {
+					// determine whether the aggregation function is count.
+					if len(agg.AggFuncs) == 1 && agg.AggFuncs[0].Name == "count" {
+						// determine whether the selection condition is scalarFunction
+						if cond, ok := right[0].(*expression.ScalarFunction); ok {
+							// determine whether the selection condition is scalarFunction
+							if v, ok := cond.GetArgs()[1].(*expression.Constant); ok && v.Value.GetUint64() == 0 && cond.FuncName.L == "gt" {
+								outerPlan := apply.children[0]
+								innerPlan := agg.children[0]
+								apply.SetChildren(outerPlan, innerPlan)
+								apply.JoinType = SemiJoin
+								return s.optimize(ctx, apply)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, err := s.optimize(ctx, child, opt)

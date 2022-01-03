@@ -234,7 +234,10 @@
       // Test Apply.
       "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
       "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-      "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a"
+      "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
+      // Test BinaryOptSubquery -> existsSubquery
+      "select ts1.a from ts1 where exists (select * from ts2 where ts1.a = ts2.a and ts1.b_str like ts2.b_str )",
+      "select ts1.a from ts1 where (select count(*) from ts2 where ts1.a = ts2.a and ts1.b_str like ts2.b_str ) > 0"
     ]
   },
   {

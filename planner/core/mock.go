@@ -363,6 +363,56 @@ func MockNoPKTable() *model.TableInfo {
 	return table
 }
 
+// MockNoPKTableString1 is only used for plan related tests.
+func MockNoPKTableString1() *model.TableInfo {
+	// column: a, b
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("b_str"),
+		FieldType: newStringType(),
+		ID:        3,
+	}
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{col0, col1},
+		Name:       model.NewCIStr("ts1"),
+		PKIsHandle: true,
+	}
+	return table
+}
+
+// MockNoPKTableString2 is only used for plan related tests.
+func MockNoPKTableString2() *model.TableInfo {
+	// column: a, b
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("b_str"),
+		FieldType: newStringType(),
+		ID:        3,
+	}
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{col0, col1},
+		Name:       model.NewCIStr("ts2"),
+		PKIsHandle: true,
+	}
+	return table
+}
+
 // MockView is only used for plan related tests.
 func MockView() *model.TableInfo {
 	selectStmt := "select b,c,d from t"
