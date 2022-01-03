@@ -19,12 +19,12 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,19 +50,23 @@ func TestConsume(t *testing.T) {
 	tracker.Consume(100)
 	require.Equal(t, int64(100), tracker.BytesConsumed())
 
-	var wg util.WaitGroupWrapper
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(10)
 	for i := 0; i < 10; i++ {
-		wg.Run(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Consume(10)
-		})
+		}()
 	}
+	waitGroup.Add(10)
 	for i := 0; i < 10; i++ {
-		wg.Run(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Consume(-10)
-		})
+		}()
 	}
 
-	wg.Wait()
+	waitGroup.Wait()
 	require.Equal(t, int64(100), tracker.BytesConsumed())
 }
 
