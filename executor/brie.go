@@ -204,6 +204,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	switch s.Kind {
 	case ast.BRIEKindBackup, ast.BRIEKindRestore:
 		return b.buildBR(s, schema)
+	case ast.BRIEKindImport:
+		return b.buildI(s, schema)
 	case ast.BRIEKindExport:
 		return b.buildE(s, schema)
 	default:
@@ -213,6 +215,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 }
 
 func (b *executorBuilder) buildE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	b.err = errors.Errorf("export unimplement!")
+	return nil
+}
+
+func (b *executorBuilder) buildI(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	b.err = errors.Errorf("export unimplement!")
 	return nil
 }

@@ -1358,6 +1358,12 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "SHOW IMPORTS",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+			},
+		},
+		{
 			sql: "SHOW EXPORTS",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},

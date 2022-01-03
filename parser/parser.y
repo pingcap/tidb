@@ -4659,6 +4659,8 @@ ExplainFormatType:
  *	BACKUP TABLE [ db1.tbl1, db2.tbl2 ] TO 'scheme://location' [ options... ]
  *	RESTORE DATABASE [ * | db1, db2, db3 ] FROM 'scheme://location' [ options... ]
  *	RESTORE TABLE [ db1.tbl1, db2.tbl2 ] FROM 'scheme://location' [ options... ]
+ *	IMPORT DATABASE [ * | db1, db2, db3 ] FROM 'scheme://location' [ options... ]
+ *	IMPORT TABLE [ db1.tbl1, db2.tbl2 ] FROM 'scheme://location' [ options... ]
  *	EXPORT DATABASE [ * | db1, db2, db3 ] TO 'scheme://location' [ options... ]
  *	EXPORT TABLE [ db1.tbl1, db2.tbl2 ] TO 'scheme://location' [ options... ]
  */
@@ -4675,6 +4677,14 @@ BRIEStmt:
 	{
 		stmt := $2.(*ast.BRIEStmt)
 		stmt.Kind = ast.BRIEKindRestore
+		stmt.Storage = $4
+		stmt.Options = $5.([]*ast.BRIEOption)
+		$$ = stmt
+	}
+|	"IMPORT" BRIETables "FROM" stringLit BRIEOptions
+	{
+		stmt := $2.(*ast.BRIEStmt)
+		stmt.Kind = ast.BRIEKindImport
 		stmt.Storage = $4
 		stmt.Options = $5.([]*ast.BRIEOption)
 		$$ = stmt
