@@ -244,6 +244,7 @@ type Client interface {
 	IsRequestTypeSupported(reqType, subType int64) bool
 }
 
+// ClientSendOption wrap options during Client Send
 type ClientSendOption struct {
 	SessionMemTracker          *memory.Tracker
 	EnabledRateLimitAction     bool
