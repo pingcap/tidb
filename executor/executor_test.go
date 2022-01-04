@@ -108,6 +108,7 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
+var _ = SerialSuites(&testSuiteWithCliBaseCharsetNoNewCollation{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -3441,11 +3442,27 @@ type testSuiteWithCliBaseCharset struct {
 }
 
 func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
 	collate.SetCharsetFeatEnabledForTest(true)
 	s.testSuiteWithCliBase.SetUpSuite(c)
 }
 
 func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
+	s.testSuiteWithCliBase.TearDownSuite(c)
+	collate.SetNewCollationEnabledForTest(false)
+	collate.SetCharsetFeatEnabledForTest(false)
+}
+
+type testSuiteWithCliBaseCharsetNoNewCollation struct {
+	testSuiteWithCliBase
+}
+
+func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	s.testSuiteWithCliBase.SetUpSuite(c)
+}
+
+func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
 	collate.SetCharsetFeatEnabledForTest(false)
 }
@@ -5736,6 +5753,27 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
+func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
+		"latin1 Latin1 latin1_bin 1",
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+	))
+	tk.MustQuery("show collation").Check(testkit.Rows(
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"ascii_bin ascii 65 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"gbk_bin gbk 87 Yes Yes 1",
+	))
+}
+
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5797,23 +5835,6 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` char(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
-	))
-
-	collate.SetNewCollationEnabledForTest(false)
-	tk.MustQuery("show charset").Check(testkit.Rows(
-		"ascii US ASCII ascii_bin 1",
-		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
-		"latin1 Latin1 latin1_bin 1",
-		"utf8 UTF-8 Unicode utf8_bin 3",
-		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-	))
-	tk.MustQuery("show collation").Check(testkit.Rows(
-		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
-		"latin1_bin latin1 47 Yes Yes 1",
-		"binary binary 63 Yes Yes 1",
-		"ascii_bin ascii 65 Yes Yes 1",
-		"utf8_bin utf8 83 Yes Yes 1",
 	))
 }
 
@@ -8765,7 +8786,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Enable Top SQL
-	topsqlstate.GlobalState.Enable.Store(true)
+	topsqlstate.EnableTopSQL()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
@@ -9450,6 +9471,19 @@ func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
 	for _, file := range reader.File {
 		c.Assert(checkFileName(file.Name), IsTrue)
 	}
+}
+
+func (s *testSuiteWithData) TestDropColWithPrimaryKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
+	tk.MustExec("set global tidb_enable_change_multi_schema = off")
+	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
+	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
+	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
+	tk.MustExec("set global tidb_enable_change_multi_schema = on")
+	tk.MustExec("alter table t drop column c3")
 }
 
 func (s *testSuiteP1) TestIssue28935(c *C) {
