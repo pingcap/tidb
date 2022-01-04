@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -122,11 +124,15 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 }
 
-func TestCreateTables(t *testing.T) {
+func TestCreateTablesInDb(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
-	c.Assert(err, IsNil, Commentf("Error get snapshot info schema: %s", err))
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
-	c.Assert(isExist, IsTrue)
+	require.True(t, isExist)
+
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
@@ -148,10 +154,10 @@ func TestCreateTables(t *testing.T) {
 		}
 	}
 	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
-	c.Assert(err, IsNil, Commentf("Error create DB"))
+	require.Nil(t, err)
 
 	err = db.CreateTables(context.Background(), tables)
-	c.Assert(err, IsNil, Commentf("Error create tables: %s %s", err, s.mock.DSN))
+	require.Nil(t, err)
 
 }
 
