@@ -71,9 +71,6 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 		return true
 	}
 	defer func() {
-		if sc.StatsLoad.ResultCh != nil {
-			close(sc.StatsLoad.ResultCh)
-		}
 		sc.StatsLoad.NeededColumns = nil
 	}()
 	resultCheckMap := map[model.TableColumnID]struct{}{}
@@ -92,6 +89,8 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
 					return true
 				}
+			} else {
+				return false
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
@@ -147,8 +146,10 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 			}
 		}
 	}()
+	var lastTask *NeededColumnTask
 	for {
-		err := h.handleOneTask(readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
+		task, err := h.handleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
+		lastTask = task
 		if err != nil {
 			switch err {
 			case errExit:
@@ -162,7 +163,8 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 }
 
 // handleOneTask handles one column task.
-func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (err error) {
+func (h *Handle) handleOneTask(task *NeededColumnTask, readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (*NeededColumnTask, error) {
+	working := false
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -171,43 +173,48 @@ func (h *Handle) handleOneTask(readerCtx *statsReaderContext, ctx sqlexec.Restri
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("stats loading panicked", zap.String("stack", string(buf)))
 		}
+		if working {
+			h.failWorking(task.TableColumnID)
+		}
 	}()
 	h.getFreshStatsReader(readerCtx, ctx)
-	task, err := h.drainColTask(exit)
-	if err != nil {
-		if err != errExit {
-			logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
+	if task == nil {
+		task, err := h.drainColTask(exit)
+		if err != nil {
+			if err != errExit {
+				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
+			}
+			return task, err
 		}
-		return err
 	}
 	col := task.TableColumnID
 	// to avoid duplicated handling in concurrent scenario
-	if !h.setWorking(col, task.ResultCh) {
-		return nil
+	working = h.setWorking(col, task.ResultCh)
+	if !working {
+		return nil, nil
 	}
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.tables[col.TableID]
 	if !ok {
-		task.ResultCh <- col
-		return nil
+		h.writeToResultChan(task.ResultCh, col)
+		return nil, nil
 	}
 	c, ok := tbl.Columns[col.ColumnID]
 	if !ok || c.Len() > 0 {
-		task.ResultCh <- col
-		return nil
+		h.writeToResultChan(task.ResultCh, col)
+		return nil, nil
 	}
 	t := time.Now()
 	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
 	if err != nil {
-		h.StatsLoad.NeededColumnsCh <- task
-		return err
+		return task, err
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if hist != nil && h.updateCachedColumn(col, hist) {
-		task.ResultCh <- col
+		h.writeToResultChan(task.ResultCh, col)
 	}
 	h.finishWorking(col)
-	return nil
+	return nil, nil
 }
 
 func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
@@ -284,7 +291,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				h.writeToChanNonblocking(h.StatsLoad.TimeoutColumnsCh, task)
+				h.writeToTimeoutChan(h.StatsLoad.TimeoutColumnsCh, task)
 				continue
 			}
 			return task, nil
@@ -297,7 +304,7 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
-				h.writeToChanNonblocking(h.StatsLoad.TimeoutColumnsCh, task)
+				h.writeToTimeoutChan(h.StatsLoad.TimeoutColumnsCh, task)
 				return task0, nil
 			default:
 				if !ok {
@@ -310,8 +317,8 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	}
 }
 
-// writeToChanNonblocking writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (h *Handle) writeToChanNonblocking(taskCh chan *NeededColumnTask, task *NeededColumnTask) {
+// writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
+func (h *Handle) writeToTimeoutChan(taskCh chan *NeededColumnTask, task *NeededColumnTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -328,6 +335,14 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 		return errors.New("Channel is full and timeout writing to channel")
 	}
 	return nil
+}
+
+// writeToResultChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
+func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.TableColumnID) {
+	select {
+	case resultCh <- rs:
+	default:
+	}
 }
 
 // updateCachedColumn updates the column hist to global statsCache.
@@ -359,9 +374,14 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 		return false
 	}
 	chList = []chan model.TableColumnID{}
-	chList = append(chList, resultCh)
 	h.StatsLoad.workingColMap[col] = chList
 	return true
+}
+
+func (h *Handle) failWorking(col model.TableColumnID) {
+	h.StatsLoad.Lock()
+	defer h.StatsLoad.Unlock()
+	delete(h.StatsLoad.workingColMap, col)
 }
 
 func (h *Handle) finishWorking(col model.TableColumnID) {
@@ -369,7 +389,7 @@ func (h *Handle) finishWorking(col model.TableColumnID) {
 	defer h.StatsLoad.Unlock()
 	if chList, ok := h.StatsLoad.workingColMap[col]; ok {
 		for _, ch := range chList {
-			ch <- col
+			h.writeToResultChan(ch, col)
 		}
 	}
 	delete(h.StatsLoad.workingColMap, col)
