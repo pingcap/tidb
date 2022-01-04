@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -199,36 +200,34 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxStmtCount(uint(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxStmtCount)))
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(variable.TidbOptInt(sVal, variable.DefTiDBStmtSummaryMaxSQLLength))
-	case variable.TiDBEnableTopSQL:
-		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBTopSQLPrecisionSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+		topsqlstate.GlobalState.PrecisionSeconds.Store(val)
 	case variable.TiDBTopSQLMaxStatementCount:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.MaxStatementCount.Store(val)
+		topsqlstate.GlobalState.MaxStatementCount.Store(val)
 	case variable.TiDBTopSQLMaxCollect:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.MaxCollect.Store(val)
+		topsqlstate.GlobalState.MaxCollect.Store(val)
 	case variable.TiDBTopSQLReportIntervalSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
 		if err != nil {
 			break
 		}
-		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+		topsqlstate.GlobalState.ReportIntervalSeconds.Store(val)
 	case variable.TiDBRestrictedReadOnly:
 		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBStoreLimit:
@@ -238,6 +237,26 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		storekv.StoreLimit.Store(val)
+	case variable.TiDBTableCacheLease:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TableCacheLease.Store(val)
+	case variable.TiDBPersistAnalyzeOptions:
+		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBEnableColumnTracking:
+		variable.EnableColumnTracking.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBStatsLoadSyncWait:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.StatsLoadSyncWait.Store(val)
+	case variable.TiDBStatsLoadPseudoTimeout:
+		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

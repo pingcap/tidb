@@ -15,8 +15,6 @@
 package collate
 
 import (
-	"strings"
-
 	"github.com/pingcap/tidb/parser/charset"
 )
 
@@ -34,7 +32,6 @@ func EnableNewCharset() {
 // It will also enable or disable new collation.
 func SetCharsetFeatEnabledForTest(flag bool) {
 	enableCharsetFeat = flag
-	SetNewCollationEnabledForTest(flag)
 	if flag {
 		addCharset()
 	} else {
@@ -48,45 +45,25 @@ func CharsetFeatEnabled() bool {
 }
 
 func addCharset() {
-	for _, c := range experimentalCharsetInfo {
-		charset.AddCharset(c)
-		for _, coll := range charset.GetCollations() {
-			if strings.EqualFold(coll.CharsetName, c.Name) {
-				charset.AddCollation(coll)
-			}
-		}
-	}
+	if NewCollationEnabled() {
+		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKChineseCI, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
+		charset.AddCollation(&charset.Collation{ID: 28, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKChineseCI, IsDefault: true})
 
-	for name, collator := range experimentalCollation {
-		newCollatorMap[name] = collator
-		newCollatorIDMap[CollationName2ID(name)] = collator
+		newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+		newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+		newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
+		newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
+	} else {
+		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
+		charset.AddSupportedCollation(&charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: true})
 	}
 }
 
 func removeCharset() {
-	for _, c := range experimentalCharsetInfo {
-		charset.RemoveCharset(c.Name)
-	}
+	charset.RemoveCharset(charset.CharsetGBK)
+	delete(newCollatorMap, charset.CollationGBKBin)
+	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKBin))
 
-	for name := range experimentalCollation {
-		delete(newCollatorMap, name)
-		delete(newCollatorIDMap, CollationName2ID(name))
-	}
-}
-
-var (
-	// All the experimental supported charset should be in the following table, only used when charset feature is enable.
-	experimentalCharsetInfo []*charset.Charset
-
-	experimentalCollation map[string]Collator
-)
-
-func init() {
-	experimentalCollation = make(map[string]Collator)
-	experimentalCharsetInfo = append(experimentalCharsetInfo,
-		&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: "gbk_chinese_ci", Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
-	)
-	e, _ := charset.Lookup(charset.CharsetGBK)
-	experimentalCollation[charset.CollationGBKBin] = &gbkBinCollator{e.NewEncoder()}
-	experimentalCollation["gbk_chinese_ci"] = &gbkChineseCICollator{}
+	delete(newCollatorMap, charset.CollationGBKChineseCI)
+	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKChineseCI))
 }
