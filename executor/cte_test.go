@@ -408,20 +408,3 @@ func TestSpillToDisk(t *testing.T) {
 	}
 	rows.Check(testkit.Rows(resRows...))
 }
-
-func TestCTEWithApply(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1(c1 int, c2 int);")
-	tk.MustExec("insert into t1 values(2, 1);")
-	tk.MustExec("insert into t1 values(2, 2);")
-	tk.MustExec("create table t2(c1 int, c2 int);")
-	tk.MustExec("insert into t2 values(1, 1);")
-	tk.MustExec("insert into t2 values(3, 2);")
-	tk.MustQuery("select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);").Check(testkit.Rows("2 1"))
-}
