@@ -157,7 +157,6 @@ func (s *testRestoreSchemaSuite) TestCreateTables(c *C) {
 	}
 	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
 	c.Assert(err, IsNil, Commentf("Error create DB"))
-	tk.MustExec("create database test;")
 
 	err = db.CreateTables(context.Background(), tables)
 	c.Assert(err, IsNil, Commentf("Error create tables: %s %s", err, s.mock.DSN))
