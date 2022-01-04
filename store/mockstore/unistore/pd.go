@@ -75,7 +75,6 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context) (chan []pd.GlobalConfi
 				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
 			}
 		}
-		return
 	}()
 	return globalConfigWatcherCh, nil
 }
