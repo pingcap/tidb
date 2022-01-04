@@ -230,7 +230,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 				break
 			}
 			childTasks = append(childTasks, childTask)
-			if opt != nil {
+			if opt != nil && childTask != nil {
 				opt.appendChildToCandidate(candidateInfo, childTask.plan())
 			}
 		}
