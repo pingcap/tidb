@@ -209,6 +209,7 @@ type Task struct {
 func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) time.Duration {
 	elapsed := time.Since(task.since)
 	var verb string
+	errDetail := zap.Error(nil)
 	switch {
 	case err == nil:
 		level = task.level
@@ -220,12 +221,13 @@ func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) 
 	default:
 		verb = " failed"
 		extraFields = nil
+		errDetail = zap.Error(err)
 	}
 	if ce := task.WithOptions(zap.AddCallerSkip(1)).Check(level, task.name+verb); ce != nil {
 		ce.Write(append(
 			extraFields,
 			zap.Duration("takeTime", elapsed),
-			ShortError(err),
+			errDetail,
 		)...)
 	}
 	return elapsed

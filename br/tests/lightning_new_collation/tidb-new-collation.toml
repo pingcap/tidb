@@ -2,6 +2,9 @@
 
 new_collations_enabled_on_first_bootstrap = true
 
+[experimental]
+enable-new-charset = true
+
 [security]
 ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
 ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
