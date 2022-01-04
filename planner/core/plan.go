@@ -390,11 +390,6 @@ func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
 	return planTrace
 }
 
-func buildPhysicalOptimizeTraceInfo(p LogicalPlan, prop string) *tracing.PhysicalOptimizeTraceInfo {
-	traceInfo := &tracing.PhysicalOptimizeTraceInfo{ID: p.ID(), TP: p.TP(), Property: prop, ExplainInfo: p.ExplainInfo()}
-	return traceInfo
-}
-
 type basePhysicalPlan struct {
 	basePlan
 

@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -47,9 +48,10 @@ func (s *testPlanSuite) TestPhysicalOptimizeWithTraceEnabled(c *C) {
 	c.Assert(err, IsNil)
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
 	c.Assert(otrace, NotNil)
-	logicalList, physicalList := getList(otrace)
-	c.Assert(checkList(logicalList, []string{"Projection_3", "Selection_2", "DataSource_1"}), IsTrue)
+	logicalList, physicalList, bests := getList(otrace)
+	c.Assert(checkList(logicalList, []string{"Projection_3", "Selection_2"}), IsTrue)
 	c.Assert(checkList(physicalList, []string{"Projection_4", "Selection_5"}), IsTrue)
+	c.Assert(checkList(bests, []string{"Projection_4", "Selection_5"}), IsTrue)
 }
 
 func checkList(d []string, s []string) bool {
@@ -64,14 +66,18 @@ func checkList(d []string, s []string) bool {
 	return true
 }
 
-func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
+func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string, bests []string) {
 	for logicalPlan, v := range otrace.State {
 		ll = append(ll, logicalPlan)
 		for _, info := range v {
+			bests = append(bests, tracing.CodecPlanName(info.BestTask.TP, info.BestTask.ID))
 			for _, task := range info.Candidates {
 				pl = append(pl, tracing.CodecPlanName(task.TP, task.ID))
 			}
 		}
 	}
-	return ll, pl
+	sort.Strings(ll)
+	sort.Strings(pl)
+	sort.Strings(bests)
+	return ll, pl, bests
 }

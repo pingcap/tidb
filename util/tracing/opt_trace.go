@@ -158,25 +158,21 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 // Because DP is performed on the plan tree,
 // we need to record the state of each candidate's child node, namely Children.
 type PhysicalOptimizeTraceInfo struct {
-	ID       int    `json:"id"`
-	TP       string `json:"type"`
 	Property string `json:"property"`
-
-	// ExplainInfo should be implemented by each implemented LogicalPlan
-	ExplainInfo string `json:"info"`
-
-	BestTask   *TaskInfo   `json:"best"`
-	Candidates []*TaskInfo `json:"candidates"`
+	BestTask   *PhysicalPlanTrace   `json:"best"`
+	Candidates []*PhysicalPlanTrace `json:"candidates"`
 }
 
-type TaskInfo struct {
-	ID       int                          `json:"id"`
-	TP       string                       `json:"type"`
-	Children []*PhysicalOptimizeTraceInfo `json:"children"`
-	Cost     float64                      `json:"cost"`
+// PhysicalPlanTrace records each generated physical plan during findBestTask
+type PhysicalPlanTrace struct {
+	ID       int                  `json:"id"`
+	TP       string               `json:"type"`
+	Cost     float64              `json:"cost"`
+	Info     string               `json:"info"`
+	Children []*PhysicalPlanTrace `json:"children"`
 }
 
-func (t *TaskInfo) SetCost(cost float64) {
+func (t *PhysicalPlanTrace) SetCost(cost float64) {
 	t.Cost = cost
 }
 
