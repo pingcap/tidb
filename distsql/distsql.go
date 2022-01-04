@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -93,7 +94,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
+	option := &kv.ClientSendOption{
+		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
+		EnableCollectExecutionInfo: enabledRateLimitAction,
+		EventCb:                    eventCb,
+		EnabledRateLimitAction:     config.GetGlobalConfig().EnableCollectExecutionInfo,
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -157,7 +164,13 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
-	resp := client.Send(ctx, kvReq, vars, stmtCtx.MemTracker, false, nil)
+	option := &kv.ClientSendOption{
+		SessionMemTracker:          nil,
+		EnableCollectExecutionInfo: false,
+		EventCb:                    nil,
+		EnabledRateLimitAction:     false,
+	}
+	resp := client.Send(ctx, kvReq, vars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -180,7 +193,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil, false, nil)
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
