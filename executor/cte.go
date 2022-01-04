@@ -119,6 +119,14 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
 		}
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
+		recursiveTypes := e.recursiveExec.base().retFieldTypes
+		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
+		if err = e.iterOutTbl.OpenAndRef(); err != nil {
+			return err
+		}
 	}
 
 	if e.isDistinct {
