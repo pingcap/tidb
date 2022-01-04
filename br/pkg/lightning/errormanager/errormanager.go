@@ -22,15 +22,18 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -116,6 +119,7 @@ type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
 	schemaEscaped  string
+	configError    *config.MaxError
 	remainingError config.MaxError
 	dupResolution  config.DuplicateResolutionAlgorithm
 }
@@ -128,6 +132,7 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
+		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
 		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
@@ -185,6 +190,11 @@ func (em *ErrorManager) RecordTypeError(
 ) error {
 	// elide the encode error if needed.
 	if em.remainingError.Type.Dec() < 0 {
+		threshold := em.configError.Type.Load()
+		if threshold > 0 {
+			encodeErr = errors.Annotatef(encodeErr, "meet errors exceed the max-error.type threshold '%d'",
+				em.configError.Type.Load())
+		}
 		return encodeErr
 	}
 
@@ -229,10 +239,16 @@ func (em *ErrorManager) RecordDataConflictError(
 	tableName string,
 	conflictInfos []DataConflictInfo,
 ) error {
-	if em.db == nil {
+	if len(conflictInfos) == 0 {
 		return nil
 	}
-	if len(conflictInfos) == 0 {
+
+	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configError.Conflict.Load()
+		return errors.Errorf(" meet errors exceed the max-error.conflict threshold '%d'", threshold)
+	}
+
+	if em.db == nil {
 		return nil
 	}
 
@@ -272,10 +288,16 @@ func (em *ErrorManager) RecordIndexConflictError(
 	conflictInfos []DataConflictInfo,
 	rawHandles, rawRows [][]byte,
 ) error {
-	if em.db == nil {
+	if len(conflictInfos) == 0 {
 		return nil
 	}
-	if len(conflictInfos) == 0 {
+
+	if em.remainingError.Conflict.Sub(int64(len(conflictInfos))) < 0 {
+		threshold := em.configError.Conflict.Load()
+		return errors.Errorf(" meet errors exceed the max-error.conflict threshold %d", threshold)
+	}
+
+	if em.db == nil {
 		return nil
 	}
 
@@ -387,4 +409,112 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 		})
 	}
 	return errors.Trace(g.Wait())
+}
+
+func (em *ErrorManager) errorCount(typeVal func(*config.MaxError) int64) int64 {
+	cfgVal := typeVal(em.configError)
+	val := typeVal(&em.remainingError)
+	if val < 0 {
+		val = 0
+	}
+	return cfgVal - val
+}
+
+func (em *ErrorManager) typeErrors() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Type.Load()
+	})
+}
+
+func (em *ErrorManager) syntaxError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Syntax.Load()
+	})
+}
+
+func (em *ErrorManager) conflictError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Conflict.Load()
+	})
+}
+
+func (em *ErrorManager) charsetError() int64 {
+	return em.errorCount(func(maxError *config.MaxError) int64 {
+		return maxError.Charset.Load()
+	})
+}
+
+func (em *ErrorManager) HasError() bool {
+	return em.typeErrors() > 0 || em.syntaxError() > 0 ||
+		em.charsetError() > 0 || em.conflictError() > 0
+}
+
+// GenErrorLogFields return a slice of zap.Field for each error type
+func (em *ErrorManager) LogErrorDetails() {
+	fmtErrMsg := func(cnt int64, errType, tblName string) string {
+		return fmt.Sprintf("Detect %d %s errors in total, please refer to table %s for more details",
+			cnt, errType, em.fmtTableName(tblName))
+	}
+	if errCnt := em.typeErrors(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", typeErrorTableName))
+	}
+	if errCnt := em.syntaxError(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", syntaxErrorTableName))
+	}
+	if errCnt := em.charsetError(); errCnt > 0 {
+		// TODO: add charset table name
+		log.L().Warn(fmtErrMsg(errCnt, "data type", ""))
+	}
+	if errCnt := em.conflictError(); errCnt > 0 {
+		log.L().Warn(fmtErrMsg(errCnt, "data type", conflictErrorTableName))
+	}
+}
+
+func (em *ErrorManager) fmtTableName(t string) string {
+	return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
+}
+
+// Output renders a table which contains error summery for each error type.
+func (em *ErrorManager) Output() string {
+	if !em.HasError() {
+		return ""
+	}
+
+	t := table.NewWriter()
+	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Name: "#", WidthMax: 6},
+		{Name: "Error Type", WidthMax: 20},
+		{Name: "Error Count", WidthMax: 12},
+		{Name: "Error Data Table", WidthMax: 42},
+	})
+	t.SetAllowedRowLength(80)
+	t.SetRowPainter(func(row table.Row) text.Colors {
+		return text.Colors{text.FgRed}
+	})
+
+	count := 0
+	if errCnt := em.typeErrors(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Data Type", errCnt, em.fmtTableName(typeErrorTableName)})
+	}
+	if errCnt := em.syntaxError(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Data Syntax", errCnt, em.fmtTableName(syntaxErrorTableName)})
+	}
+	if errCnt := em.charsetError(); errCnt > 0 {
+		count++
+		// do not support record charset error now.
+		t.AppendRow(table.Row{count, "Charset Error", errCnt, ""})
+	}
+	if errCnt := em.conflictError(); errCnt > 0 {
+		count++
+		t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(conflictErrorTableName)})
+	}
+
+	res := "\nImport Data Error Summary: \n"
+	res += t.Render()
+	res += "\n"
+
+	return res
 }

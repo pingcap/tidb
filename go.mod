@@ -4,6 +4,8 @@ go 1.16
 
 require (
 	cloud.google.com/go/storage v1.16.1
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.12.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.2.0
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
@@ -88,7 +90,6 @@ require (
 	golang.org/x/tools v0.1.8
 	google.golang.org/api v0.54.0
 	google.golang.org/grpc v1.40.0
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/mathutil v1.4.1
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
