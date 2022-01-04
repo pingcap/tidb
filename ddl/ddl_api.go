@@ -3252,13 +3252,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	if d.IsTiFlashPollEnabled() && meta.TiFlashReplica != nil {
-		// Must set placement rule before the ActionAddTablePartition job is in queue.
-		if err := infosync.ConfigureTiFlashPDForPartitions(true, &partInfo.Definitions, meta.TiFlashReplica.Count, &meta.TiFlashReplica.LocationLabels); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
