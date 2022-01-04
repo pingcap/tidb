@@ -130,7 +130,6 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 }
 
 func (s *testRestoreSchemaSuite) TestCreateTables(c *C) {
-	tk := testkit.NewTestKit(c, s.mock.Storage)
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	c.Assert(err, IsNil, Commentf("Error get snapshot info schema: %s", err))
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
