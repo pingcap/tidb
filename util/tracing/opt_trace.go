@@ -158,7 +158,7 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 // Because DP is performed on the plan tree,
 // we need to record the state of each candidate's child node, namely Children.
 type PhysicalOptimizeTraceInfo struct {
-	Property string `json:"property"`
+	Property   string               `json:"property"`
 	BestTask   *PhysicalPlanTrace   `json:"best"`
 	Candidates []*PhysicalPlanTrace `json:"candidates"`
 }
