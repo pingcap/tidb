@@ -406,6 +406,9 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return errors.New("MockTiFlash not inited")
+	}
 	return m.tiflash.HandleSetPlacementRule(rule)
 }
 
@@ -413,6 +416,9 @@ func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule
 func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return errors.New("MockTiFlash not inited")
+	}
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }
@@ -421,6 +427,9 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil, errors.New("MockTiFlash not inited")
+	}
 	return m.tiflash.HandleGetGroupRules(group)
 }
 
@@ -428,6 +437,9 @@ func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group s
 func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return errors.New("MockTiFlash not inited")
+	}
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
@@ -437,6 +449,9 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return errors.New("MockTiFlash not inited")
+	}
 	*stats = *m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
 }
@@ -445,6 +460,9 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	m.Lock()
 	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil, errors.New("MockTiFlash not inited")
+	}
 	return m.tiflash.HandleGetStoresStat(), nil
 }
 

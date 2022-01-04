@@ -63,6 +63,7 @@ const (
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
+	s.tiflash = infosync.NewMockTiFlash()
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
@@ -88,9 +89,10 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	s.dom, err = session.BootstrapSession(s.store)
 
+	infosync.SetMockTiFlash(s.tiflash)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
-	s.tiflash = infosync.GetMockTiFlash()
+	//s.tiflash = infosync.GetMockTiFlash()
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
 	ddl.EnableTiFlashPoll(s.dom.DDL())
@@ -99,6 +101,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
+	s.tiflash.StatusServer.Close()
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)

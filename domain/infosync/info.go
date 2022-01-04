@@ -236,12 +236,13 @@ func initPlacementManager(addrs []string) PlacementManager {
 func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	if len(addrs) == 0 {
 		m := mockTiFlashPlacementManager{}
-		m.tiflash = NewMockTiFlash()
+		//m.tiflash = NewMockTiFlash()
 		return &m
 	}
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 
+// GetMockTiFlash can only be used in tests to get MockTiFlash
 func GetMockTiFlash() *MockTiFlash {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -253,6 +254,20 @@ func GetMockTiFlash() *MockTiFlash {
 		return m.tiflash
 	}
 	return nil
+}
+
+
+// SetMockTiFlash can only be used in tests to set MockTiFlash
+func SetMockTiFlash(tiflash *MockTiFlash) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		m.tiflash = tiflash
+	}
 }
 
 // GetServerInfo gets self server static information.
