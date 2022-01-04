@@ -166,6 +166,9 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 			break
 		}
 	}
+	if collate.NewCollationEnabled() {
+		return false
+	}
 	return true
 }
 

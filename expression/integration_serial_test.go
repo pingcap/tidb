@@ -96,6 +96,22 @@ func TestIssue17891(t *testing.T) {
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }
 
+func TestIssue31022(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (v varchar(254), index (v)) charset=utf8mb4 collate=utf8mb4_bin;")
+	tk.MustExec("insert into t1 values ('This is a test '),(' This is a test '),('This is a test');")
+	tk.MustQuery("select * from t1 where v like 'This is a test';").Check(testkit.Rows("This is a test"))
+	tk.MustQuery("select * from t1 where v = 'This is a test';").Check(testkit.Rows("This is a test ", "This is a test"))
+}
+
 func TestIssue20268(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
