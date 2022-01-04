@@ -58,10 +58,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
 	}
-	// TODO: support load data with replace field.
-	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		return errors.New("Load Data: don't support load data with replace field")
-	}
+	e.loadDataInfo.OnDuplicate = e.OnDuplicate
 	// TODO: support lines terminated is "".
 	if len(e.loadDataInfo.LinesInfo.Terminated) == 0 {
 		return errors.New("Load Data: don't support load data terminated is nil")
@@ -123,6 +120,7 @@ type LoadDataInfo struct {
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
+	OnDuplicate     ast.OnDuplicateKeyHandlingType
 }
 
 // FieldMapping inticates the relationship between input field and table column or user variable
@@ -640,7 +638,13 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
-	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD)
+
+	replace := false
+	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+		replace = true
+	}
+
+	err = e.batchCheckAndInsert(ctx, rows[0:cnt], e.addRecordLD, replace)
 	if err != nil {
 		return err
 	}
@@ -652,7 +656,7 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 func (e *LoadDataInfo) SetMessage() {
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
-	numDeletes := 0
+	numDeletes := stmtCtx.DeletedRows()
 	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)

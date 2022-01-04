@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -1040,7 +1042,9 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
+func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum,
+	addRecord func(ctx context.Context, row []types.Datum) error,
+	replace bool) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1087,10 +1091,16 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
-				continue
-			}
-			if !kv.IsErrNotFound(err) {
+				if replace {
+					err2 := e.removeRow(ctx, txn, r)
+					if err2 != nil {
+						return err2
+					}
+				} else {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					continue
+				}
+			} else if !kv.IsErrNotFound(err) {
 				return err
 			}
 		}
@@ -1122,6 +1132,58 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
+}
+
+func (e *InsertValues) removeRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) error {
+	handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
+	if err != nil {
+		return err
+	}
+
+	newRow := r.row
+	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
+	if err != nil {
+		logutil.BgLogger().Error("get old row failed when replace",
+			zap.String("handle", handle.String()),
+			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
+		if kv.IsErrNotFound(err) {
+			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
+		}
+		return err
+	}
+
+	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
+	if err != nil {
+		return err
+	}
+	if identical {
+		return nil
+	}
+
+	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return err
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddDeletedRows(1)
+
+	return nil
+}
+
+// equalDatumsAsBinary compare if a and b contains the same datum values in binary collation.
+func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bool, error) {
+	if len(a) != len(b) {
+		return false, nil
+	}
+	for i, ai := range a {
+		v, err := ai.Compare(e.ctx.GetSessionVars().StmtCtx, &b[i], collate.GetBinaryCollator())
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if v != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
