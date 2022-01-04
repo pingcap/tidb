@@ -378,8 +378,8 @@ func (h *Handle) finishWorking(col model.TableColumnID) {
 	if chList, ok := h.StatsLoad.workingColMap[col]; ok {
 		for _, ch := range chList {
 			select {
-			case <-ch.ExitCh:
 			case ch.ResultCh <- col:
+			case <-ch.ExitCh:
 			default:
 				logutil.BgLogger().Warn("ResultCh cannot write", zap.Any("col", col))
 			}
