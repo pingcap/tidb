@@ -685,6 +685,7 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
+	infosync.CloseTiFlashManager(context.Background())
 	do.slowQuery.Close()
 	do.cancel()
 	do.wg.Wait()

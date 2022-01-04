@@ -19,6 +19,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -46,14 +55,6 @@ import (
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
-	"io"
-	"net/http"
-	"os"
-	"path"
-	"strconv"
-	"strings"
-	"sync/atomic"
-	"time"
 )
 
 const (
@@ -241,7 +242,7 @@ func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 
-func GetMockTiFlash() *MockTiFlash{
+func GetMockTiFlash() *MockTiFlash {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil
@@ -1004,6 +1005,15 @@ func GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 		return nil, errors.Trace(err)
 	}
 	return is.tiflashPlacementManager.GetStoresStat(ctx)
+}
+
+// CloseTiFlashManager closes TiFlash manager.
+func CloseTiFlashManager(ctx context.Context) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	is.tiflashPlacementManager.Close(ctx)
 }
 
 func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {

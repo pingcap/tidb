@@ -99,14 +99,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
-	if s.pdHTTPServer != nil {
-		s.pdHTTPServer.Close()
-	}
-	// TODO shall be moved into infosync
-	if s.tiflash.StatusServer != nil {
-		s.tiflash.StatusServer.Close()
-	}
-
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
@@ -307,9 +299,9 @@ func (s *tiflashDDLTestSuite) TestTiFlashFailTruncatePartition(c *C) {
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	failpoint.Enable("github.com/pingcap/tidb/ddl/FailTiFlashTruncatePartition", `return`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/FailTiFlashTruncatePartition", `return`), IsNil)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/ddl/FailTiFlashTruncatePartition")
+		failpoint.Disable("github.com/pingcap/tidb/ddl/FailTiFlashTruncatePartition")
 	}()
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 
@@ -433,8 +425,8 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 // When gc worker works, it will automatically remove pd rule for TiFlash.
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	_, _, cluster, err := unistore.New("")
-	for _, s := range s.cluster.GetAllStores() {
-		cluster.AddStore(s.Id, s.Address, s.Labels...)
+	for _, store := range s.cluster.GetAllStores() {
+		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
 
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
