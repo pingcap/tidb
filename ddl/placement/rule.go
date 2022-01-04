@@ -38,27 +38,24 @@ const (
 
 // Rule is the core placement rule struct. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
-	GroupID        string       `json:"group_id"`
-	ID             string       `json:"id"`
-	Index          int          `json:"index,omitempty"`
-	Override       bool         `json:"override,omitempty"`
-	StartKeyHex    string       `json:"start_key"`
-	EndKeyHex      string       `json:"end_key"`
-	Role           PeerRoleType `json:"role"`
-	Count          int          `json:"count"`
-	Constraints    Constraints  `json:"label_constraints,omitempty"`
-	LocationLabels []string     `json:"location_labels,omitempty"`
-	IsolationLevel string       `json:"isolation_level,omitempty"`
+	GroupID     string       `json:"group_id"`
+	ID          string       `json:"id"`
+	Index       int          `json:"index,omitempty"`
+	Override    bool         `json:"override,omitempty"`
+	StartKeyHex string       `json:"start_key"`
+	EndKeyHex   string       `json:"end_key"`
+	Role        PeerRoleType `json:"role"`
+	Count       int          `json:"count"`
+	Constraints Constraints  `json:"label_constraints,omitempty"`
 }
 
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
 func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
 	return &Rule{
-		Role:           role,
-		Count:          int(replicas),
-		Constraints:    cnst,
-		LocationLabels: []string{"region", "zone", "rack", "host"},
+		Role:        role,
+		Count:       int(replicas),
+		Constraints: cnst,
 	}
 }
 
@@ -119,8 +116,7 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.
-// Note that it is a shallow copy: LocationLabels and Constraints
-// is not cloned.
+// Note that it is a shallow copy: Constraints is not cloned.
 func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r

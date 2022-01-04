@@ -591,6 +591,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 
 	// test for tidb_enable_column_tracking
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_column_tracking = 0")
 	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
@@ -1539,10 +1541,8 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))
-	c.Assert(topsqlstate.GlobalState.Enable.Load(), IsTrue)
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
-	c.Assert(topsqlstate.GlobalState.Enable.Load(), IsFalse)
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
@@ -1600,7 +1600,7 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
 	c.Assert(topsqlstate.GlobalState.ReportIntervalSeconds.Load(), Equals, int64(120))
 
-	// Test for hide top sql variable in show variable.
-	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows())
+	// Test for hide top sql variable except 'tidb_enable_top_sql' in show variable.
+	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF"))
+	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF"))
 }
