@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/auth"
@@ -308,25 +307,22 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var wg util.WaitGroupWrapper
 
-	go func() {
+	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
 			tk1.MustExec(executeQuery)
 		}
-		wg.Done()
-	}()
+	})
 
-	go func() {
+	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
 			tk2.Se.SetSessionManager(&mockSessionManager1{
 				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
-		wg.Done()
-	}()
+	})
 
 	wg.Wait()
 }
