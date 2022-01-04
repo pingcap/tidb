@@ -19,21 +19,15 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/pingcap/tidb/domain/infosync"
 	"math"
-	"net/http"
 	"net/http/httptest"
-	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
@@ -43,10 +37,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
@@ -91,10 +83,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	c.Assert(err, IsNil)
 
-
-	//s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
-
-
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
@@ -102,12 +90,9 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
-
-	//infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
 	s.tiflash = infosync.GetMockTiFlash()
 
-	// mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
-	log.Info("Mock stat", zap.String("pd address", s.pdMockAddr), zap.Any("infosyncer", s.dom.InfoSyncer()))
+	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
 	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick = 60
@@ -506,109 +491,4 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
-}
-
-func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
-	// mock PD http server
-	router := mux.NewRouter()
-	server := httptest.NewServer(router)
-	// mock store stats stat
-	mockAddr := strings.TrimPrefix(server.URL, "http://")
-	s.tiflash.PdEnabled = true
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return s.tiflash.HandleGetStoresStat(), nil
-	}))
-	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
-		return struct {
-			GitHash        string `json:"git_hash"`
-			StartTimestamp int64  `json:"start_timestamp"`
-		}{
-			GitHash:        "mock-pd-githash",
-			StartTimestamp: s.tiflash.StartTime.Unix(),
-		}, nil
-	}))
-	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
-		// GetGroupRules
-		result, err := s.tiflash.HandleGetGroupRules("tiflash")
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-		} else {
-			w.WriteHeader(http.StatusOK)
-			m, _ := json.Marshal(result)
-			w.Write(m)
-		}
-	}) //.Methods(http.MethodGet)
-	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
-		// SetPlacementRule
-		buf := new(bytes.Buffer)
-		_, err := buf.ReadFrom(req.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var rule placement.Rule
-		err = json.Unmarshal(buf.Bytes(), &rule)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		err = s.tiflash.HandleSetPlacementRule(rule)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-		} else {
-			w.WriteHeader(http.StatusOK)
-		}
-	}).Methods(http.MethodPost)
-	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
-		// Delete placement rule
-		params := mux.Vars(req)
-		ruleID := params["ruleid"]
-		ruleID = strings.Trim(ruleID, "/")
-		s.tiflash.HandleDeletePlacementRule("tiflash", ruleID)
-		w.WriteHeader(http.StatusOK)
-	}).Methods(http.MethodDelete)
-	var mockConfig = func() (map[string]interface{}, error) {
-		configuration := map[string]interface{}{
-			"key1": "value1",
-		}
-		return configuration, nil
-	}
-	// PD config.
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
-	// TiDB/TiKV config.
-	router.Handle("/config", fn.Wrap(mockConfig))
-	// PD region.
-	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
-		return s.tiflash.HandleGetPDRegionRecordStats(0), nil
-	}))
-
-	router.HandleFunc("/pd/api/v1/regions/accelerate-schedule", func(w http.ResponseWriter, req *http.Request) {
-		buf := new(bytes.Buffer)
-		_, err := buf.ReadFrom(req.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		var dat = make(map[string]interface{})
-		err = json.Unmarshal(buf.Bytes(), &dat)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		endKey, ok := dat["end_key"].(string)
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		if e := s.tiflash.HandlePostAccelerateSchedule(endKey); e != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}).Methods(http.MethodPost)
-	return server, mockAddr
 }

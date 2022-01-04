@@ -196,31 +196,6 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	return is, nil
 }
 
-// GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit2(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool, mockTiFlash []string) (*InfoSyncer, error) {
-	is := &InfoSyncer{
-		etcdCli:        etcdCli,
-		info:           getServerInfo(id, serverIDGetter),
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
-	}
-	err := is.init(ctx, skipRegisterToDashBoard)
-	if err != nil {
-		return nil, err
-	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-		is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-		is.tiflashPlacementManager = initTiFlashPlacementManager(mockTiFlash)
-	}
-	setGlobalInfoSyncer(is)
-	return is, nil
-}
-
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
 	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
