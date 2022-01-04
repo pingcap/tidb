@@ -155,7 +155,7 @@ func TestDecode(t *testing.T) {
 		Timestamp: 1234567890,
 	})
 	require.NotNil(t, decoder)
-	require.EqualValues(t, decoder.Name(), "`test`.`c1`")
+	require.Equal(t, decoder.Name(), "`test`.`c1`")
 	p := common.KvPair{
 		Key: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 		Val: []byte{0x8, 0x2, 0x8, 0x2},
@@ -404,11 +404,11 @@ func TestShardRowId(t *testing.T) {
 		pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum(fmt.Sprintf("%d", i))}, i, []int{0, -1}, "1.csv", i*32)
 		require.NoError(t, err)
 		kvs := pairs.(*KvPairs)
-		require.EqualValues(t, len(kvs.pairs), 1)
+		require.Len(t, kvs.pairs, 1)
 		_, h, err := tablecodec.DecodeRecordKey(kvs.pairs[0].Key)
 		require.NoError(t, err)
 		rowID := h.IntValue()
-		require.EqualValues(t, rowID&((1<<60)-1), i)
+		require.Equal(t, rowID&((1<<60)-1), i)
 		keyMap[rowID>>60] = struct{}{}
 	}
 	require.Len(t, keyMap, 8)
@@ -501,8 +501,8 @@ func TestClassifyAndAppend(t *testing.T) {
 			Val: []byte("index1"),
 		},
 	}))
-	require.EqualValues(t, dataChecksum.SumKVS(), uint64(2))
-	require.EqualValues(t, indexChecksum.SumKVS(), uint64(1))
+	require.Equal(t, dataChecksum.SumKVS(), uint64(2))
+	require.Equal(t, indexChecksum.SumKVS(), uint64(1))
 }
 
 type benchSQL2KVSuite struct {
@@ -595,6 +595,6 @@ func BenchmarkSQL2KV(b *testing.B) {
 		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, "", 0)
 		require.NoError(b, err)
 		len := reflect.ValueOf(rows).Elem().Field(0).Len()
-		require.EqualValues(b, len, 2)
+		require.Equal(b, len, 2)
 	}
 }
