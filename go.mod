@@ -103,4 +103,4 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 
 replace github.com/pingcap/kvproto => github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072
 
-replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877
+replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20220104065301-61825ccccfbf

@@ -754,6 +754,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877 h1:J+zgBmxCh72qDGsAQaUIRgado4kvs82DAXKM4MrtYNg=
 github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877/go.mod h1:ayDughXuG4Lh/+gaAUXi6UAyszN9S2Aaj/HKicEMFus=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20220104065301-61825ccccfbf h1:ZoRBxYdNd9Cz09Yj3fL3ebrhLE6A7C+779Z5MRXhpFo=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20220104065301-61825ccccfbf/go.mod h1:ayDughXuG4Lh/+gaAUXi6UAyszN9S2Aaj/HKicEMFus=
 github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072 h1:hLYlMrH8XSG/rNl/u8wjpRZnuxlM4qaw76sg9WIAHHc=
 github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072/go.mod h1:WrHYs1PlRu3BFA9fzBJHYOj26PZrhN018z2qaJ1Y3VU=
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
