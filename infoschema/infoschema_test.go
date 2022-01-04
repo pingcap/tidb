@@ -16,7 +16,6 @@ package infoschema_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/testkit"
 	"strings"
 	"testing"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testutil"
