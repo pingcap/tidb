@@ -333,6 +333,7 @@ func (s *restoreSuite) TestPreCheckFailed(c *C) {
 		metaMgrBuilder: failMetaMgrBuilder{},
 		checkTemplate:  NewSimpleTemplate(),
 		tidbGlue:       g,
+		errorMgr:       errormanager.New(nil, cfg),
 	}
 
 	mock.ExpectBegin()
@@ -1213,6 +1214,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
 		diskQuotaLock:     newDiskQuotaLock(),
+		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {
 		for scp := range chptCh {
