@@ -220,7 +220,7 @@ func (b *executorBuilder) buildE(s *ast.BRIEStmt, schema *expression.Schema) Exe
 }
 
 func (b *executorBuilder) buildI(s *ast.BRIEStmt, schema *expression.Schema) Executor {
-	b.err = errors.Errorf("export unimplement!")
+	b.err = errors.Errorf("import unimplement!")
 	return nil
 }
 
