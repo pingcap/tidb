@@ -172,11 +172,10 @@ type PhysicalPlanTrace struct {
 	Children []*PhysicalPlanTrace `json:"children"`
 }
 
+// SetCost sets cost for PhysicalPlanTrace
 func (t *PhysicalPlanTrace) SetCost(cost float64) {
 	t.Cost = cost
 }
-
-type PhysicalPlanList []string
 
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
@@ -184,6 +183,7 @@ type PhysicalOptimizeTracer struct {
 	State map[string]map[string]*PhysicalOptimizeTraceInfo
 }
 
+// CodecPlanName returns tp_id of plan.
 func CodecPlanName(tp string, id int) string {
 	return fmt.Sprintf("%v_%v", tp, id)
 }
