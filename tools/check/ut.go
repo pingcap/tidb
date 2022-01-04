@@ -299,7 +299,6 @@ func main() {
 	if FailureExit.Load() {
 		os.Exit(1)
 	}
-	os.Exit(0)
 }
 
 func listTestCases(pkg string, tasks []task) ([]task, error) {
