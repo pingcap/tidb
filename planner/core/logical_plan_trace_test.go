@@ -87,6 +87,48 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select count(1) from t join (select count(1) from t where false) as tmp;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Aggregation_8's columns[Column#25,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_8's aggregation functions[firstrow(Column#25),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a)] have been pruned",
+				},
+				{
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Projection_6's columns[Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a,Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's aggregation functions[firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a),count(1)] have been pruned",
+				},
+				{
+					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Join_7's columns[Column#28,test.t.a] have been pruned",
+				},
+			},
+		},
+		{
+			sql:            "select a from t where b > 5;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
+				},
+			},
+		},
+		{
 			sql:            "select * from t as t1 where t1.a < (select sum(t2.a) from t as t2 where t2.b = t1.b);",
 			flags:          []uint64{flagDecorrelate, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "decorrelate",

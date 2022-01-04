@@ -472,6 +472,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		}
+		if job.BinlogInfo.MultipleTableInfos != nil {
+			tablenames := new(strings.Builder)
+			for i, affect := range job.BinlogInfo.MultipleTableInfos {
+				if i > 0 {
+					fmt.Fprintf(tablenames, ",")
+				}
+				fmt.Fprintf(tablenames, "%s", affect.Name.L)
+			}
+			tableName = tablenames.String()
+		}
 		if len(schemaName) == 0 && job.BinlogInfo.DBInfo != nil {
 			schemaName = job.BinlogInfo.DBInfo.Name.L
 		}
@@ -1837,6 +1847,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
+	sc.SkipUTF8Check = vars.SkipUTF8Check
+	sc.SkipASCIICheck = vars.SkipASCIICheck
+	sc.SkipUTF8MB4Check = !globalConfig.CheckMb4ValueInUTF8
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority

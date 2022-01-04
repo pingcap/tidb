@@ -606,6 +606,12 @@ const (
 
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
+	// TiDBTableCacheLease indicates the read lock lease of a cached table.
+	TiDBTableCacheLease = "tidb_table_cache_lease"
+
+	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
+	TiDBStatsLoadSyncWait = "tidb_stats_load_sync_wait"
 )
 
 // TiDB vars that have only global scope
@@ -633,6 +639,8 @@ const (
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory and we directly get/set the variable value from/to mysql.tidb.
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
+	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
+	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 )
 
 // TiDB intentional limits
@@ -786,8 +794,11 @@ const (
 	DefEnablePlacementCheck               = true
 	DefTimestamp                          = "0"
 	DefTiDBEnableIndexMerge               = true
+	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
-	DefTiDBEnableColumnTracking           = true
+	DefTiDBEnableColumnTracking           = false
+	DefTiDBStatsLoadSyncWait              = 0
+	DefTiDBStatsLoadPseudoTimeout         = false
 )
 
 // Process global variables.
@@ -817,5 +828,8 @@ var (
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	PersistAnalyzeOptions                 = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	TableCacheLease                       = atomic.NewInt64(DefTiDBTableCacheLease)
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
+	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
+	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 )
