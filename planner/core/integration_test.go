@@ -5197,5 +5197,11 @@ func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
 	testKit.MustQuery("explain select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
 		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
 		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustExec("drop table if exists t1")
 }
