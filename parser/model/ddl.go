@@ -222,7 +222,13 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *time.Location                   `json:"time_location"`
+	Location      *TimeZone                        `json:"time_zone"`
+}
+
+// TimeZone represents a single time zone.
+type TimeZone struct {
+	Name   string
+	Offset int // seconds east of UTC
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
