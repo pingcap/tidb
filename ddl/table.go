@@ -582,20 +582,22 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
-		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
-		tblInfo.TiFlashReplica.Available = false
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
-				logutil.BgLogger().Warn("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-				atomic.StoreUint32(&ReschePullTiFlash, 1)
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 		} else {
 			if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
-				logutil.BgLogger().Warn("ConfigureTiFlashPDForTable fails", zap.Error(err))
-				atomic.StoreUint32(&ReschePullTiFlash, 1)
+				logutil.BgLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 		}
+		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
+		tblInfo.TiFlashReplica.Available = false
 	}
 
 	tblInfo.ID = newTableID

@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -81,9 +80,6 @@ var (
 	PullTiFlashPdTick = 60 * 5
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
 	UpdateTiFlashStoreTick = 10
-	// ReschePullTiFlash is set true, so we do a fully sync, regardless of PullTiFlashPdTick.
-	// Set to be true, when last TiFlash pd rule fails.
-	ReschePullTiFlash = uint32(0)
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -251,10 +247,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 
 	// Missing/Removed pd rule handling.
 	handlePd := pollTiFlashContext.HandlePdCounter%PullTiFlashPdTick == 0
-	if atomic.CompareAndSwapUint32(&ReschePullTiFlash, 0, 1) {
-		// This is because last pd rule failed.
-		handlePd = true
-	}
 	if handlePd {
 		if err := HandlePlacementRuleRoutine(ctx, d, tableList); err != nil {
 			logutil.BgLogger().Error("handle placement rule routine error", zap.Error(err))
@@ -410,7 +402,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
 			if e := infosync.ConfigureTiFlashPDForTable(tb.ID, tb.Count, &tb.LocationLabels); e != nil {
 				logutil.BgLogger().Warn("ConfigureTiFlashPDForTable fails", zap.Error(err))
-				atomic.StoreUint32(&ReschePullTiFlash, 1)
 			}
 		}
 		// For every existing table, we do not remove their rules.

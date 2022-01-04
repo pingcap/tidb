@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -1200,6 +1199,15 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels)
+		failpoint.Inject("FailTiFlashTruncatePartition", func() {
+			e = errors.New("enforced error")
+		})
+		if e != nil {
+			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(e))
+			job.State = model.JobStateCancelled
+			return ver, e
+		}
 		tblInfo.TiFlashReplica.Available = false
 		// Set partition replica become unavailable.
 		for _, oldID := range oldIDs {
@@ -1211,10 +1219,6 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 					break
 				}
 			}
-		}
-		if e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
-			logutil.BgLogger().Warn("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-			atomic.StoreUint32(&ReschePullTiFlash, 1)
 		}
 	}
 

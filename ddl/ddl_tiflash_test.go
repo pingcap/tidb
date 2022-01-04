@@ -297,7 +297,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 
 // Truncate partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -310,7 +309,29 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash")
+}
+
+// Fail truncate partition.
+func (s *tiflashDDLTestSuite) TestTiFlashFailTruncatePartition(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	failpoint.Enable("github.com/pingcap/tidb/ddl/FailTiFlashTruncatePartition", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/ddl/FailTiFlashTruncatePartition")
+	}()
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+
+	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
+	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]enforced error")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash")
 }
 
 // Drop partition shall not block.
