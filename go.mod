@@ -105,4 +105,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-replace github.com/tikv/client-go/v2 v2.0.0-rc.0.20211229051614-62d6b4a2e8f7 => github.com/lemonhx/client-go/v2 v2.0.0-rc.0.20211231054516-ed0388e01e9f
+replace github.com/tikv/client-go/v2 v2.0.0-rc.0.20211229051614-62d6b4a2e8f7 => github.com/lemonhx/client-go/v2 v2.0.0-rc.0.20220104084506-f6411ec6c715
