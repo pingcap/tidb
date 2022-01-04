@@ -17,12 +17,9 @@ import (
 	"fmt"
 	"strconv"
 
-<<<<<<< HEAD
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-=======
->>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
