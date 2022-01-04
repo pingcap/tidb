@@ -1543,7 +1543,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 	if colLen != 1 {
 		return
 	}
-	for i := stkLen - elemCnt - 1; i < stkLen; i++ {
+	for i := stkLen - elemCnt; i < stkLen; i++ {
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {
 			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
 			if ok && rowFunc.FuncName.String() == ast.RowFunc {
