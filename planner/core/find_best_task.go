@@ -425,7 +425,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
+	if opt != nil {
+		opt.buildPhysicalOptimizeTraceInfo(p, newProp.String())
+	}
 	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
@@ -449,7 +451,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 END:
 	p.storeTask(prop, bestTask)
-	opt.setBest(p.self, bestTask.plan(), prop.String())
+	if opt != nil {
+		opt.setBest(p.self, bestTask.plan(), prop.String())
+	}
 	return bestTask, cntPlan, nil
 }
 
