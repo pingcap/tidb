@@ -273,19 +273,16 @@ func Test_collecting_appendOthers(t *testing.T) {
 	assert.Equal(t, uint64(2000), r.tsItems[1].stmtStats.SumDurationNs)
 }
 
-func Test_collecting_compactToTopNAndOthers(t *testing.T) {
+func Test_collecting_getReportRecords(t *testing.T) {
 	c := newCollecting()
 	c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
 	c.getOrCreateRecord([]byte("SQL-2"), []byte("PLAN-2")).appendCPUTime(1, 2)
 	c.getOrCreateRecord([]byte("SQL-3"), []byte("PLAN-3")).appendCPUTime(1, 3)
-	rs := c.compactToTopNAndOthers(1)
-	assert.Len(t, rs, 2)
-	assert.Equal(t, []byte("SQL-3"), rs[0].sqlDigest)
-	assert.Equal(t, []byte("PLAN-3"), rs[0].planDigest)
-	assert.Equal(t, uint64(3), rs[0].totalCPUTimeMs)
-	assert.Len(t, rs[0].tsItems, 1)
-	assert.Equal(t, uint32(3), rs[0].tsItems[0].cpuTimeMs)
-	assert.Equal(t, uint64(3), rs[1].totalCPUTimeMs) // 1 + 2 = 3
+	c.getOrCreateRecord([]byte(keyOthers), []byte(keyOthers)).appendCPUTime(1, 10)
+	rs := c.getReportRecords()
+	assert.Len(t, rs, 4)
+	assert.Equal(t, uint32(10), rs[3].tsItems[0].cpuTimeMs)
+	assert.Equal(t, uint64(10), rs[3].totalCPUTimeMs)
 }
 
 func Test_collecting_take(t *testing.T) {
