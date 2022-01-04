@@ -6,10 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -231,6 +234,58 @@ type MockTiFlash struct {
 	StartTime                   time.Time
 }
 
+func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() (*httptest.Server, string) {
+	// mock TiFlash http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	// mock store stats stat
+	statusAddr := strings.TrimPrefix(server.URL, "http://")
+	statusAddrVec := strings.Split(statusAddr, ":")
+	statusPort, _ := strconv.Atoi(statusAddrVec[1])
+	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
+		params := mux.Vars(req)
+		tableID, err := strconv.Atoi(params["tableid"])
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		table, ok := tiflash.SyncStatus[tableID]
+		logutil.BgLogger().Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
+		if !ok {
+			b := []byte("0\n\n")
+			w.WriteHeader(http.StatusOK)
+			w.Write(b)
+			return
+		}
+		sync := table.String()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sync))
+	})
+	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
+		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(s))
+	})
+	return server, statusAddr
+}
+
+// NewMockTiFlash creates a MockTiFlash with a mocked TiFlash server.
+func NewMockTiFlash() *MockTiFlash{
+	tiflash := &MockTiFlash{
+		StatusAddr:                  "",
+		StatusServer:                nil,
+		SyncStatus:                  make(map[int]MockTiFlashTableInfo),
+		GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
+		PdEnabled:                   true,
+		TiflashDelay:                0,
+		StartTime:                   time.Now(),
+	}
+	server, addr := tiflash.setUpMockTiFlashHTTPServer()
+	tiflash.StatusAddr = addr
+	tiflash.StatusServer = server
+	return tiflash
+}
+
 // HandleSetPlacementRule is mock function for SetPlacementRule
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.Rule) error {
 	if !tiflash.PdEnabled {
@@ -369,7 +424,7 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	m.Lock()
 	defer m.Unlock()
-	stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	*stats = *m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
 }
 // GetStoresStat gets the TiKV store information by accessing PD's api.

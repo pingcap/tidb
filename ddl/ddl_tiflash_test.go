@@ -27,7 +27,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"time"
 
@@ -93,17 +92,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 
 
-	server, addr := s.setUpMockTiFlashHTTPServer()
-	s.tiflash = &infosync.MockTiFlash{
-		StatusAddr:                  addr,
-		StatusServer:                server,
-		SyncStatus:                  make(map[int]infosync.MockTiFlashTableInfo),
-		GlobalTiFlashPlacementRules: make(map[string]placement.Rule),
-		PdEnabled:                   true,
-		TiflashDelay:                0,
-		StartTime:                   time.Now(),
-	}
-	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
+	//s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
 
 
 	session.SetSchemaLease(0)
@@ -114,9 +103,8 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
-	infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
-	//infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{})
-	//s.tiflash = infosync.GetMockTiFlash()
+	//infosync.GlobalInfoSyncerInit2(context.Background(), s.dom.DDL().GetID(), s.dom.ServerID, s.dom.GetEtcdClient(), true, []string{s.pdMockAddr})
+	s.tiflash = infosync.GetMockTiFlash()
 
 	// mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
 	log.Info("Mock stat", zap.String("pd address", s.pdMockAddr), zap.Any("infosyncer", s.dom.InfoSyncer()))
@@ -497,41 +485,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
-}
-
-func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, string) {
-	// mock TiFlash http server
-	router := mux.NewRouter()
-	server := httptest.NewServer(router)
-	// mock store stats stat
-	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	statusAddrVec := strings.Split(statusAddr, ":")
-	statusPort, _ := strconv.Atoi(statusAddrVec[1])
-	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
-		params := mux.Vars(req)
-		tableID, err := strconv.Atoi(params["tableid"])
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		table, ok := s.tiflash.SyncStatus[tableID]
-		log.Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
-		if !ok {
-			b := []byte("0\n\n")
-			w.WriteHeader(http.StatusOK)
-			w.Write(b)
-			return
-		}
-		sync := table.String()
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sync))
-	})
-	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
-		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(s))
-	})
-	return server, statusAddr
 }
 
 func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
