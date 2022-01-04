@@ -184,17 +184,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
-	// For DNF recursive usage: finding of the selectivity for every item.
-	// where "0" / 0 / "false" / false / null ... the constant cnf item should refuse all rows.
-	// while for CNF, it shouldn't be here, because it's always a tableDual.
-	if c, ok := exprs[0].(*expression.Constant); ok && len(exprs) == 1 {
-		if d, err1 := c.Eval(chunk.Row{}); err1 == nil {
-			if dc, err2 := d.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDouble)); err2 == nil && (dc.GetFloat64() == 0 || dc.IsNull()) {
-				return 0, nil, nil
-			}
-		}
-		return 1, nil, nil
-	}
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
 	tableID := coll.PhysicalID
@@ -364,6 +353,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				_, ok := cond.(*expression.CorrelatedColumn)
 				if ok {
 					continue
+				}
+				// where {"0" / 0 / "false" / false / null} or A or B ... the '0' constant item should be ignored.
+				if c, ok := cond.(*expression.Constant); ok && len(exprs) == 1 {
+					if d, err1 := c.Eval(chunk.Row{}); err1 == nil {
+						if dc, err2 := d.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDouble)); err2 == nil && (dc.GetFloat64() == 0 || dc.IsNull()) {
+							continue
+						}
+					}
 				}
 
 				var cnfItems []expression.Expression
