@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -58,8 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -4193,8 +4190,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if err != nil {
 			return nil, err
 		}
+		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
+		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
 		if cacheData != nil {
 			sessionVars.StmtCtx.ReadFromTableCache = true
 			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
@@ -4204,20 +4202,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
 				startTS := txn.StartTS()
 				store := b.ctx.GetStore()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-						}
-					}()
-					_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
-						err := cachedTable.UpdateLockForRead(ctx, store, startTS)
-						if err != nil {
-							log.Warn("Update Lock Info Error", zap.Error(err))
-						}
-						return nil, nil
-					})
-					terror.Log(err)
-				}()
+				cachedTable.UpdateLockForRead(ctx, store, startTS, leaseDuration)
 			}
 		}
 	}
@@ -4243,8 +4228,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	return result, nil
 }
-
-var sf singleflight.Group
 
 func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {
 	const defaultSummaryDuration = 30 * time.Minute
