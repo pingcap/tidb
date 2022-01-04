@@ -50,20 +50,23 @@ func (ts *TestStore) newReqCtx() *requestCtx {
 }
 
 func (ts *TestStore) newReqCtxWithKeys(rawStartKey, rawEndKey []byte) *requestCtx {
+	epoch := &metapb.RegionEpoch{ConfVer: 1, Version: 1}
+	peer := &metapb.Peer{Id: 1, StoreId: 1, Role: metapb.PeerRole_Voter}
 	return &requestCtx{
 		regCtx: &regionCtx{
+			meta: &metapb.Region{
+				Id:          1,
+				RegionEpoch: epoch,
+				Peers:       []*metapb.Peer{peer},
+			},
 			latches:     newLatches(),
 			rawStartKey: rawStartKey,
 			rawEndKey:   rawEndKey,
 		},
 		rpcCtx: &kvrpcpb.Context{
 			RegionId:    1,
-			RegionEpoch: &metapb.RegionEpoch{Version: 1, ConfVer: 1},
-			Peer: &metapb.Peer{
-				Id:      1,
-				StoreId: 1,
-				Role:    metapb.PeerRole_Voter,
-			},
+			RegionEpoch: epoch,
+			Peer:        peer,
 		},
 		svr: ts.Svr,
 	}

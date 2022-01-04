@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +25,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
 	"go.uber.org/zap"
 )
 
@@ -87,46 +84,13 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	var (
-		err       error
-		statusURL *url.URL
-		addrURL   *url.URL
-	)
-	for i := 0; i < 10; i++ {
-		// retry 10 times to get available port
-		statusURL, err = url.Parse(tempurl.Alloc())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", statusURL.Port()))
-		if err == nil {
-			// release port listening
-			listen.Close()
-			break
-		}
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// choose a random available port
+	l1, _ := net.Listen("tcp", "127.0.0.1:")
+	statusPort := l1.Addr().(*net.TCPAddr).Port
 
-	for i := 0; i < 10; i++ {
-		addrURL, err = url.Parse(tempurl.Alloc())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", addrURL.Port()))
-		if err == nil {
-			// release port listening
-			listen.Close()
-			break
-		}
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
+	// choose a random available port
+	l2, _ := net.Listen("tcp", "127.0.0.1:")
+	addrPort := l2.Addr().(*net.TCPAddr).Port
 
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
@@ -136,17 +100,20 @@ func (mock *Cluster) Start() error {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
+	// close port for next listen in NewServer
+	l1.Close()
+	l2.Close()
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err != nil {
+		if err1 := svr.Run(); err1 != nil {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 

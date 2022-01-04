@@ -1511,7 +1511,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
 	c.Assert(ok, IsTrue)
 
-	tk.MustExec(`CREATE TABLE tp (id INT) PARTITION BY RANGE (id) (
+	tk.MustExec(`CREATE TABLE tp (id INT) FOLLOWERS=1 PARTITION BY RANGE (id) (
         PARTITION p0 VALUES LESS THAN (100),
         PARTITION p1 VALUES LESS THAN (1000)
 	);`)
@@ -1519,7 +1519,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
@@ -1534,7 +1534,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
@@ -1563,7 +1563,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] FOLLOWERS=1 */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
