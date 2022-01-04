@@ -25,7 +25,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"go.uber.org/atomic"
@@ -378,11 +377,10 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) (res testResult) {
 	cmd.Stdout = &res.output
 	cmd.Stderr = &res.output
 	if err := cmd.Run(); err != nil {
-		isFailureExitByError(err)
 		res.err = withTrace(err)
-	} else {
-		exitCode := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
-		isFailureExitByStatus(exitCode)
+		if exitStat, ok := err.(*exec.ExitError); ok && !exitStat.Success() {
+			setFailureExit()
+		}
 	}
 	return res
 }
@@ -438,12 +436,15 @@ func buildTestBinary(pkg string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
-	if err != nil {
-		isFailureExitByError(err)
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
 		return withTrace(err)
 	}
-	exitCode := cmd.ProcessState.Sys().(syscall.WaitStatus).ExitStatus()
-	isFailureExitByStatus(exitCode)
+	if err := cmd.Run(); err != nil {
+		if exitStat, ok := err.(*exec.ExitError); ok && !exitStat.Success() {
+			setFailureExit()
+		}
+		return withTrace(err)
+	}
 	return nil
 
 }
@@ -474,16 +475,8 @@ func testFileFullPath(pkg string) string {
 	return path.Join(workDir, pkg, testFileName(pkg))
 }
 
-func isFailureExitByError(err error) {
-	if err != nil {
-		FailureExit.Store(true)
-	}
-}
-
-func isFailureExitByStatus(exitStatus int) {
-	if exitStatus != 0 {
-		FailureExit.Store(true)
-	}
+func setFailureExit() {
+	FailureExit.Store(true)
 }
 
 func listNewTestCases(pkg string) ([]string, error) {
