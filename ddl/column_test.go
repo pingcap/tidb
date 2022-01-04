@@ -1160,7 +1160,13 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(err, IsNil)
 }
 
+<<<<<<< HEAD
 func (s *testColumnSuite) TestModifyColumn(c *C) {
+=======
+func TestModifyColumn(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+>>>>>>> 6e75367ad... collation: make gbk default collation to `gbk_bin` if new collation is not enabled (#31208)
 	collate.SetCharsetFeatEnabledForTest(true)
 	defer collate.SetCharsetFeatEnabledForTest(false)
 	d, err := testNewDDLAndStart(
