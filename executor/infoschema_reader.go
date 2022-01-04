@@ -464,7 +464,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 				nullable,              // NULLABLE
 				"BTREE",               // INDEX_TYPE
 				"",                    // COMMENT
-				"",                    // INDEX_COMMENT
+				index.Comment,         // INDEX_COMMENT
 				visible,               // IS_VISIBLE
 				expression,            // Expression
 			)
