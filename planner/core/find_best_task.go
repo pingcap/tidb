@@ -225,12 +225,12 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			if err != nil {
 				return nil, 0, err
 			}
-			opt.appendChildToCandidate(candidateInfo, childTask.plan())
 			curCntPlan = curCntPlan * cnt
 			if childTask != nil && childTask.invalid() {
 				break
 			}
 			childTasks = append(childTasks, childTask)
+			opt.appendChildToCandidate(candidateInfo, childTask.plan())
 		}
 
 		// This check makes sure that there is no invalid child task.
