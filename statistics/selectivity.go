@@ -361,11 +361,10 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 							if dc.GetFloat64() == 0 || dc.IsNull() {
 								// constant == 0
 								continue
-							} else {
-								// constant == 1
-								selectivity = 1.0
-								break
 							}
+							// constant == 1
+							selectivity = 1.0
+							break
 						}
 					}
 				}
