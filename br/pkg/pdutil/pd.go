@@ -703,7 +703,9 @@ func (p *PdController) doRemoveSchedulersWith(
 // Close close the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
-	close(p.schedulerPauseCh)
+	if p.schedulerPauseCh != nil {
+		close(p.schedulerPauseCh)
+	}
 }
 
 // FetchPDVersion get pd version

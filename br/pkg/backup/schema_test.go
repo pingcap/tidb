@@ -8,9 +8,9 @@ import (
 	"math"
 	"strings"
 	"sync/atomic"
+	"testing"
 
 	"github.com/golang/protobuf/proto"
-	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
@@ -20,42 +20,35 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testBackupSchemaSuite{})
-
-type testBackupSchemaSuite struct {
-	mock *mock.Cluster
-}
-
-func (s *testBackupSchemaSuite) SetUpSuite(c *C) {
+func createMockCluster(t *testing.T) (m *mock.Cluster, clean func()) {
 	var err error
-	s.mock, err = mock.NewCluster()
-	c.Assert(err, IsNil)
-	c.Assert(s.mock.Start(), IsNil)
+	m, err = mock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, m.Start())
+	clean = func() {
+		m.Stop()
+	}
+	return
 }
 
-func (s *testBackupSchemaSuite) TearDownSuite(c *C) {
-	s.mock.Stop()
-	testleak.AfterTest(c)()
-}
-
-func (s *testBackupSchemaSuite) GetRandomStorage(c *C) storage.ExternalStorage {
-	base := c.MkDir()
+func GetRandomStorage(t *testing.T) storage.ExternalStorage {
+	base := t.TempDir()
 	es, err := storage.NewLocalStorage(base)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return es
 }
 
-func (s *testBackupSchemaSuite) GetSchemasFromMeta(c *C, es storage.ExternalStorage) []*metautil.Table {
+func GetSchemasFromMeta(t *testing.T, es storage.ExternalStorage) []*metautil.Table {
 	ctx := context.Background()
 	metaBytes, err := es.ReadFile(ctx, metautil.MetaFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	mockMeta := &backuppb.BackupMeta{}
 	err = proto.Unmarshal(metaBytes, mockMeta)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	metaReader := metautil.NewMetaReader(mockMeta,
 		es,
 		&backuppb.CipherInfo{
@@ -66,7 +59,7 @@ func (s *testBackupSchemaSuite) GetSchemasFromMeta(c *C, es storage.ExternalStor
 	output := make(chan *metautil.Table, 4)
 	go func() {
 		err = metaReader.ReadSchemasFiles(ctx, output)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		close(output)
 	}()
 
@@ -95,33 +88,36 @@ func (sp *simpleProgress) get() int64 {
 	return atomic.LoadInt64(&sp.counter)
 }
 
-func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.mock.Storage)
+func TestBuildBackupRangeAndSchema(t *testing.T) {
+	m, clean := createMockCluster(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, m.Storage)
 
 	// Table t1 is not exist.
 	testFilter, err := filter.Parse([]string{"test.t1"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(
-		s.mock.Storage, testFilter, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
+		m.Storage, testFilter, math.MaxUint64)
+	require.NoError(t, err)
+	require.Nil(t, backupSchemas)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		s.mock.Storage, fooFilter, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
+		m.Storage, fooFilter, math.MaxUint64)
+	require.NoError(t, err)
+	require.Nil(t, backupSchemas)
 
 	// Empty database.
 	// Filter out system tables manually.
 	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		s.mock.Storage, noFilter, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas, IsNil)
+		m.Storage, noFilter, math.MaxUint64)
+	require.NoError(t, err)
+	require.Nil(t, backupSchemas)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
@@ -129,30 +125,30 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	tk.MustExec("insert into t1 values (10);")
 
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		s.mock.Storage, testFilter, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas.Len(), Equals, 1)
+		m.Storage, testFilter, math.MaxUint64)
+	require.NoError(t, err)
+	require.Equal(t, 1, backupSchemas.Len())
 	updateCh := new(simpleProgress)
 	skipChecksum := false
-	es := s.GetRandomStorage(c)
+	es := GetRandomStorage(t)
 	cipher := backuppb.CipherInfo{
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
-	c.Assert(updateCh.get(), Equals, int64(1))
-	c.Assert(err, IsNil)
+		ctx, metaWriter, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	require.Equal(t, int64(1), updateCh.get())
+	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	schemas := s.GetSchemasFromMeta(c, es)
-	c.Assert(len(schemas), Equals, 1)
+	schemas := GetSchemasFromMeta(t, es)
+	require.Len(t, schemas, 1)
 	// Cluster returns a dummy checksum (all fields are 1).
-	c.Assert(schemas[0].Crc64Xor, Not(Equals), 0, Commentf("%v", schemas[0]))
-	c.Assert(schemas[0].TotalKvs, Not(Equals), 0, Commentf("%v", schemas[0]))
-	c.Assert(schemas[0].TotalBytes, Not(Equals), 0, Commentf("%v", schemas[0]))
+	require.NotZerof(t, schemas[0].Crc64Xor, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalKvs, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalBytes, "%v", schemas[0])
 
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int);")
@@ -160,34 +156,37 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	tk.MustExec("insert into t2 values (11);")
 
 	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		s.mock.Storage, noFilter, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas.Len(), Equals, 2)
+		m.Storage, noFilter, math.MaxUint64)
+	require.NoError(t, err)
+	require.Equal(t, 2, backupSchemas.Len())
 	updateCh.reset()
 
-	es2 := s.GetRandomStorage(c)
+	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, s.mock.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
-	c.Assert(updateCh.get(), Equals, int64(2))
-	c.Assert(err, IsNil)
+		ctx, metaWriter2, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	require.Equal(t, int64(2), updateCh.get())
+	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	schemas = s.GetSchemasFromMeta(c, es2)
+	schemas = GetSchemasFromMeta(t, es2)
 
-	c.Assert(len(schemas), Equals, 2)
+	require.Len(t, schemas, 2)
 	// Cluster returns a dummy checksum (all fields are 1).
-	c.Assert(schemas[0].Crc64Xor, Not(Equals), 0, Commentf("%v", schemas[0]))
-	c.Assert(schemas[0].TotalKvs, Not(Equals), 0, Commentf("%v", schemas[0]))
-	c.Assert(schemas[0].TotalBytes, Not(Equals), 0, Commentf("%v", schemas[0]))
-	c.Assert(schemas[1].Crc64Xor, Not(Equals), 0, Commentf("%v", schemas[1]))
-	c.Assert(schemas[1].TotalKvs, Not(Equals), 0, Commentf("%v", schemas[1]))
-	c.Assert(schemas[1].TotalBytes, Not(Equals), 0, Commentf("%v", schemas[1]))
+	require.NotZerof(t, schemas[0].Crc64Xor, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalKvs, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalBytes, "%v", schemas[0])
+	require.NotZerof(t, schemas[1].Crc64Xor, "%v", schemas[1])
+	require.NotZerof(t, schemas[1].TotalKvs, "%v", schemas[1])
+	require.NotZerof(t, schemas[1].TotalBytes, "%v", schemas[1])
 }
 
-func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *C) {
-	tk := testkit.NewTestKit(c, s.mock.Storage)
+func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
+	m, clean := createMockCluster(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, m.Storage)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t3;")
 	tk.MustExec("create table t3 (a char(1));")
@@ -203,11 +202,11 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 	`)
 
 	f, err := filter.Parse([]string{"test.t3"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(s.mock.Storage, f, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas.Len(), Equals, 1)
+	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	require.NoError(t, err)
+	require.Equal(t, 1, backupSchemas.Len())
 
 	skipChecksum := false
 	updateCh := new(simpleProgress)
@@ -216,57 +215,60 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	es := s.GetRandomStorage(c)
+	es := GetRandomStorage(t)
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
-	c.Assert(err, IsNil)
+		ctx, metaWriter, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	schemas := s.GetSchemasFromMeta(c, es)
-	c.Assert(err, IsNil)
-	c.Assert(schemas, HasLen, 1)
+	schemas := GetSchemasFromMeta(t, es)
+	require.NoError(t, err)
+	require.Len(t, schemas, 1)
 	// the stats should be empty, but other than that everything should be backed up.
-	c.Assert(schemas[0].Stats, IsNil)
-	c.Assert(schemas[0].Crc64Xor, Not(Equals), 0)
-	c.Assert(schemas[0].TotalKvs, Not(Equals), 0)
-	c.Assert(schemas[0].TotalBytes, Not(Equals), 0)
-	c.Assert(schemas[0].Info, NotNil)
-	c.Assert(schemas[0].DB, NotNil)
+	require.Nil(t, schemas[0].Stats)
+	require.NotZerof(t, schemas[0].Crc64Xor, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalKvs, "%v", schemas[0])
+	require.NotZerof(t, schemas[0].TotalBytes, "%v", schemas[0])
+	require.NotNil(t, schemas[0].Info)
+	require.NotNil(t, schemas[0].DB)
 
 	// recover the statistics.
 	tk.MustExec("analyze table t3;")
 
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(s.mock.Storage, f, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas.Len(), Equals, 1)
+	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	require.NoError(t, err)
+	require.Equal(t, 1, backupSchemas.Len())
 
 	updateCh.reset()
-	statsHandle := s.mock.Domain.StatsHandle()
-	es2 := s.GetRandomStorage(c)
+	statsHandle := m.Domain.StatsHandle()
+	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, s.mock.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
-	c.Assert(err, IsNil)
+		ctx, metaWriter2, m.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	schemas2 := s.GetSchemasFromMeta(c, es2)
-	c.Assert(schemas2, HasLen, 1)
+	schemas2 := GetSchemasFromMeta(t, es2)
+	require.Len(t, schemas2, 1)
 	// the stats should now be filled, and other than that the result should be equivalent to the first backup.
-	c.Assert(schemas2[0].Stats, NotNil)
-	c.Assert(schemas2[0].Crc64Xor, Equals, schemas[0].Crc64Xor)
-	c.Assert(schemas2[0].TotalKvs, Equals, schemas[0].TotalKvs)
-	c.Assert(schemas2[0].TotalBytes, Equals, schemas[0].TotalBytes)
-	c.Assert(schemas2[0].Info, DeepEquals, schemas[0].Info)
-	c.Assert(schemas2[0].DB, DeepEquals, schemas[0].DB)
+	require.NotNil(t, schemas2[0].Stats)
+	require.Equal(t, schemas[0].Crc64Xor, schemas2[0].Crc64Xor)
+	require.Equal(t, schemas[0].TotalKvs, schemas2[0].TotalKvs)
+	require.Equal(t, schemas[0].TotalBytes, schemas2[0].TotalBytes)
+	require.Equal(t, schemas[0].Info, schemas2[0].Info)
+	require.Equal(t, schemas[0].DB, schemas2[0].DB)
 }
 
-func (s *testBackupSchemaSuite) TestBackupSchemasForSystemTable(c *C) {
-	tk := testkit.NewTestKit(c, s.mock.Storage)
-	es2 := s.GetRandomStorage(c)
+func TestBackupSchemasForSystemTable(t *testing.T) {
+	m, clean := createMockCluster(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, m.Storage)
+	es2 := GetRandomStorage(t)
 
 	systemTablesCount := 32
 	tablePrefix := "systable"
@@ -277,10 +279,10 @@ func (s *testBackupSchemaSuite) TestBackupSchemasForSystemTable(c *C) {
 	}
 
 	f, err := filter.Parse([]string{"mysql.systable*"})
-	c.Assert(err, IsNil)
-	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(s.mock.Storage, f, math.MaxUint64)
-	c.Assert(err, IsNil)
-	c.Assert(backupSchemas.Len(), Equals, systemTablesCount)
+	require.NoError(t, err)
+	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	require.NoError(t, err)
+	require.Equal(t, systemTablesCount, backupSchemas.Len())
 
 	ctx := context.Background()
 	cipher := backuppb.CipherInfo{
@@ -289,16 +291,16 @@ func (s *testBackupSchemaSuite) TestBackupSchemasForSystemTable(c *C) {
 	updateCh := new(simpleProgress)
 
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
-	err = backupSchemas.BackupSchemas(ctx, metaWriter2, s.mock.Storage, nil,
+	err = backupSchemas.BackupSchemas(ctx, metaWriter2, m.Storage, nil,
 		math.MaxUint64, 1, variable.DefChecksumTableConcurrency, true, updateCh)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	schemas2 := s.GetSchemasFromMeta(c, es2)
-	c.Assert(schemas2, HasLen, systemTablesCount)
+	schemas2 := GetSchemasFromMeta(t, es2)
+	require.Len(t, schemas2, systemTablesCount)
 	for _, schema := range schemas2 {
-		c.Assert(schema.DB.Name, Equals, utils.TemporaryDBName("mysql"))
-		c.Assert(strings.HasPrefix(schema.Info.Name.O, tablePrefix), Equals, true)
+		require.Equal(t, utils.TemporaryDBName("mysql"), schema.DB.Name)
+		require.Equal(t, true, strings.HasPrefix(schema.Info.Name.O, tablePrefix))
 	}
 }
