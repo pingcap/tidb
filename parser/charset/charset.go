@@ -59,6 +59,7 @@ var charsetInfos = map[string]*Charset{
 	CharsetASCII:   {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
 	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
 	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
+	CharsetGBK:     {CharsetGBK, CollationGBKChineseCI, make(map[string]*Collation), "Chinese Internal Code Specification", 2},
 }
 
 // All the names supported collations should be in the following table.
@@ -68,6 +69,7 @@ var supportedCollationNames = map[string]struct{}{
 	CollationASCII:   {},
 	CollationLatin1:  {},
 	CollationBin:     {},
+	CollationGBKBin:  {},
 }
 
 // TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
