@@ -2934,8 +2934,6 @@
         ]
       }
     ]
-<<<<<<< HEAD
-=======
   },
   {
     "Name": "TestPushDownGroupConcatToTiFlash",
@@ -3801,6 +3799,5 @@
         ]
       }
     ]
->>>>>>> 9aa756336... executor: avoid sum from avg overflow (#30010)
   }
 ]
