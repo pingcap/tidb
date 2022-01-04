@@ -485,7 +485,7 @@ func AddCharset(c *Charset) {
 }
 
 // RemoveCharset remove a charset.
-// Use only when adding a custom charset to the parser.
+// Use only when remove a custom charset to the parser.
 func RemoveCharset(c string) {
 	delete(charsetInfos, c)
 	for i := range supportedCollations {
