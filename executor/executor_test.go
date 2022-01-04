@@ -73,7 +73,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
@@ -3440,15 +3439,11 @@ type testSuiteWithCliBaseCharset struct {
 }
 
 func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	collate.SetCharsetFeatEnabledForTest(true)
 	s.testSuiteWithCliBase.SetUpSuite(c)
 }
 
 func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetNewCollationEnabledForTest(false)
-	collate.SetCharsetFeatEnabledForTest(false)
 }
 
 type testSuiteWithCliBaseCharsetNoNewCollation struct {
@@ -3456,13 +3451,11 @@ type testSuiteWithCliBaseCharsetNoNewCollation struct {
 }
 
 func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
 	s.testSuiteWithCliBase.SetUpSuite(c)
 }
 
 func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
 }
 
 type testSuiteWithCliBase struct {
