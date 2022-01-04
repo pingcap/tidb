@@ -94,14 +94,13 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		return errors.Trace(err)
 	}
 
-	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError, false /*tryRetainID*/)
+	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
 }
 
 func (d *ddl) CreateSchemaWithInfo(
 	ctx sessionctx.Context,
 	dbInfo *model.DBInfo,
 	onExist OnExist,
-	tryRetainID bool,
 ) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(dbInfo.Name)
@@ -2008,7 +2007,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2027,17 +2026,21 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	return nil
 }
 
-func (d *ddl) CreateTableWithInfo(
+// createTableWithInfoJob returns the table creation job.
+// WARNING: it may return a nil job, which means you don't need to submit any DDL job.
+// WARNING!!!: if retainID == true, it will not allocate ID by itself. That means if the caller
+// can not promise ID is unique, then we got inconsistency.
+func (d *ddl) createTableWithInfoJob(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	onExist OnExist,
-	tryRetainID bool,
-) (err error) {
+	retainID bool,
+) (job *model.Job, err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
 	var oldViewTblID int64
@@ -2046,7 +2049,7 @@ func (d *ddl) CreateTableWithInfo(
 		switch onExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
+			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
 			if tbInfo.View != nil {
@@ -2055,27 +2058,28 @@ func (d *ddl) CreateTableWithInfo(
 					break
 				}
 				// The object to replace isn't a view.
-				return ErrWrongObject.GenWithStackByArgs(dbName, tbInfo.Name, "VIEW")
+				return nil, ErrWrongObject.GenWithStackByArgs(dbName, tbInfo.Name, "VIEW")
 			}
-			return err
+			return nil, err
 		default:
-			return err
+			return nil, err
 		}
 	}
 
-	// FIXME: Implement `tryRetainID`
-	if err := d.assignTableID(tbInfo); err != nil {
-		return errors.Trace(err)
-	}
+	if !retainID {
+		if err := d.assignTableID(tbInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
 
-	if tbInfo.Partition != nil {
-		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
-			return errors.Trace(err)
+		if tbInfo.Partition != nil {
+			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
 	if err := checkTableInfoValidExtra(tbInfo); err != nil {
-		return err
+		return nil, err
 	}
 
 	var actionType model.ActionType
@@ -2090,13 +2094,53 @@ func (d *ddl) CreateTableWithInfo(
 		actionType = model.ActionCreateTable
 	}
 
-	job := &model.Job{
+	job = &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tbInfo.ID,
 		SchemaName: schema.Name.L,
 		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       args,
+	}
+	return job, nil
+}
+
+func (d *ddl) createTableWithInfoPost(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	schemaID int64,
+) error {
+	var err error
+	d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		newEnd := tbInfo.AutoIncID - 1
+		if err = d.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.RowIDAllocType); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tbInfo.AutoRandID > 1 {
+		// Default tableAutoRandID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		newEnd := tbInfo.AutoRandID - 1
+		err = d.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
+	}
+	return err
+}
+
+func (d *ddl) CreateTableWithInfo(
+	ctx sessionctx.Context,
+	dbName model.CIStr,
+	tbInfo *model.TableInfo,
+	onExist OnExist,
+) (err error) {
+	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
+	if err != nil {
+		return err
+	}
+	if job == nil {
+		return nil
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2106,26 +2150,112 @@ func (d *ddl) CreateTableWithInfo(
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
 		}
-	} else if actionType == model.ActionCreateTable {
-		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
-		if tbInfo.AutoIncID > 1 {
-			// Default tableAutoIncID base is 0.
-			// If the first ID is expected to greater than 1, we need to do rebase.
-			newEnd := tbInfo.AutoIncID - 1
-			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if tbInfo.AutoRandID > 1 {
-			// Default tableAutoRandID base is 0.
-			// If the first ID is expected to greater than 1, we need to do rebase.
-			newEnd := tbInfo.AutoRandID - 1
-			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
-		}
+	} else {
+		err = d.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
 	}
 
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
+	dbName model.CIStr,
+	infos []*model.TableInfo,
+	onExist OnExist) error {
+	jobs := &model.Job{
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	args := make([]*model.TableInfo, 0, len(infos))
+
+	var err error
+
+	// 1. counts how many IDs are there
+	// 2. if there is any duplicated table name
+	totalID := 0
+	duplication := make(map[string]struct{})
+	for _, info := range infos {
+		if _, ok := duplication[info.Name.L]; ok {
+			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				err = nil
+			}
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		duplication[info.Name.L] = struct{}{}
+
+		totalID += 1
+		parts := info.GetPartitionInfo()
+		if parts != nil {
+			totalID += len(parts.Definitions)
+		}
+	}
+
+	genIDs, err := d.genGlobalIDs(totalID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, info := range infos {
+		info.ID, genIDs = genIDs[0], genIDs[1:]
+
+		if parts := info.GetPartitionInfo(); parts != nil {
+			for i := range parts.Definitions {
+				parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+			}
+		}
+
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if job == nil {
+			continue
+		}
+
+		// if jobs.Type == model.ActionCreateTables, it is initialized
+		// if not, initialize jobs by job.XXXX
+		if jobs.Type != model.ActionCreateTables {
+			jobs.Type = model.ActionCreateTables
+			jobs.SchemaID = job.SchemaID
+			jobs.SchemaName = job.SchemaName
+		}
+
+		// append table job args
+		if len(job.Args) != 1 {
+			return errors.Trace(fmt.Errorf("except only one argument"))
+		}
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return errors.Trace(fmt.Errorf("except table info"))
+		}
+		args = append(args, info)
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	jobs.Args = append(jobs.Args, args)
+
+	err = d.doDDLJob(ctx, jobs)
+	if err != nil {
+		// table exists, but if_not_exists flags is true, so we ignore this error.
+		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			err = nil
+		}
+		return errors.Trace(d.callHookOnChanged(err))
+	}
+
+	for j := range infos {
+		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
+			return errors.Trace(d.callHookOnChanged(err))
+		}
+	}
+
+	return nil
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
@@ -2227,7 +2357,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
@@ -4260,7 +4390,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      sctx.GetSessionVars().Location(),
 		},
 		Args: []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
@@ -4500,7 +4629,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
@@ -5312,7 +5440,6 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -5500,7 +5627,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 			SQLMode:       ctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      ctx.GetSessionVars().Location(),
 		},
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
@@ -6203,7 +6329,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist)
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {

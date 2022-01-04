@@ -67,7 +67,7 @@ type StateRemote interface {
 	LockForRead(ctx context.Context, tid int64, lease uint64) (bool, error)
 
 	// LockForWrite try to add a write lock to the table with the specified tableID
-	LockForWrite(ctx context.Context, tid int64) (uint64, error)
+	LockForWrite(ctx context.Context, tid int64, leaseDuration time.Duration) (uint64, error)
 
 	// RenewLease attempt to renew the read / write lock on the table with the specified tableID
 	RenewLease(ctx context.Context, tid int64, newTs uint64, op RenewLeaseType) (bool, error)
@@ -96,7 +96,7 @@ func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLoc
 	return lockType, lease, err
 }
 
-func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint64) ( /*succ*/ bool, error) {
+func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease uint64) ( /*succ*/ bool, error) {
 	h.Lock()
 	defer h.Unlock()
 	succ := false
@@ -108,7 +108,7 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
 			succ = true
-			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
 			return nil
@@ -121,8 +121,8 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 			return nil
 		}
 		succ = true
-		if ts > lease { // Note the check, don't decrease lease value!
-			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+		if newLease > lease { // Note the check, don't decrease lease value!
+			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -133,12 +133,12 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 }
 
 // LockForWrite try to add a write lock to the table with the specified tableID, return the write lock lease.
-func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64) (uint64, error) {
+func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDuration time.Duration) (uint64, error) {
 	h.Lock()
 	defer h.Unlock()
 	var ret uint64
 	for {
-		waitAndRetry, lease, err := h.lockForWriteOnce(ctx, tid)
+		waitAndRetry, lease, err := h.lockForWriteOnce(ctx, tid, leaseDuration)
 		if err != nil {
 			return 0, err
 		}
@@ -151,13 +151,13 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64) (uint64
 	return ret, nil
 }
 
-func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64) (waitAndRetry time.Duration, ts uint64, err error) {
+func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, leaseDuration time.Duration) (waitAndRetry time.Duration, ts uint64, err error) {
 	err = h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, lease, oldReadLease, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ts = leaseFromTS(now)
+		ts = leaseFromTS(now, leaseDuration)
 		// The lease is outdated, so lock is invalid, clear orphan lock of any kind.
 		if now > lease {
 			if err := h.updateRow(ctx, tid, "WRITE", ts); err != nil {
