@@ -13,6 +13,7 @@ require (
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
+	github.com/cloudwego/kitex v0.1.4-0.20211230135655-71593d8a2e05 // indirect
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
 	github.com/coocood/freecache v1.1.1
 	github.com/coreos/go-semver v0.3.0
@@ -101,6 +102,6 @@ replace github.com/pingcap/tidb/parser => ./parser
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-replace github.com/tikv/client-go/v2 => ../../tikv/client-go
+replace github.com/pingcap/kvproto => github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072
 
-replace github.com/pingcap/kvproto => ../kvproto
+replace github.com/tikv/client-go/v2 => github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877

@@ -126,6 +126,8 @@ github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5P
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=
 github.com/cloudwego/kitex v0.1.2 h1:b+mL2/10r0eVyQu8EoFuWfq4oTzflmHj9/kG8TINX7U=
 github.com/cloudwego/kitex v0.1.2/go.mod h1:qxxpIUl5zvbcvcQeKrlm2t2f1BBxt4EPMksBUFwr6QA=
+github.com/cloudwego/kitex v0.1.4-0.20211230135655-71593d8a2e05 h1:T8QQh7kU+zJWrPk9lZ1d+K0rSJpXvri4/W6RYF8Pygg=
+github.com/cloudwego/kitex v0.1.4-0.20211230135655-71593d8a2e05/go.mod h1:qxxpIUl5zvbcvcQeKrlm2t2f1BBxt4EPMksBUFwr6QA=
 github.com/cloudwego/netpoll v0.1.0/go.mod h1:rZOiNI0FYjuvNybXKKhAPUja03loJi/cdv2F55AE6E8=
 github.com/cloudwego/netpoll v0.1.2 h1:NSvqHfCmmR3g0ASshwAB0F2RJvXK8v7ToFmhWzh/ukY=
 github.com/cloudwego/netpoll v0.1.2/go.mod h1:rZOiNI0FYjuvNybXKKhAPUja03loJi/cdv2F55AE6E8=
@@ -729,6 +731,10 @@ github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965/go.mod h1:9OrXJ
 github.com/thoas/go-funk v0.8.0/go.mod h1:+IWnUfUmFO1+WVYQWQtIJHeRRdaIyyYglZN7xzUPe4Q=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877 h1:J+zgBmxCh72qDGsAQaUIRgado4kvs82DAXKM4MrtYNg=
+github.com/tiancaiamao/client-go/v2 v2.0.0-alpha.0.20211226110354-5e31e91b8877/go.mod h1:ayDughXuG4Lh/+gaAUXi6UAyszN9S2Aaj/HKicEMFus=
+github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072 h1:hLYlMrH8XSG/rNl/u8wjpRZnuxlM4qaw76sg9WIAHHc=
+github.com/tiancaiamao/kvproto v0.0.0-20220104054903-c615718ca072/go.mod h1:WrHYs1PlRu3BFA9fzBJHYOj26PZrhN018z2qaJ1Y3VU=
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/gjson v1.9.3 h1:hqzS9wAHMO+KVBBkLxYdkEeeFHuqr95GfClRLKlgK0E=
 github.com/tidwall/gjson v1.9.3/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
