@@ -1029,6 +1029,7 @@ func CloseTiFlashManager(ctx context.Context) {
 	is.tiflashPlacementManager.Close(ctx)
 }
 
+// ConfigureTiFlashPDForTable configures pd rule for unpartitioned tables.
 func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1043,6 +1044,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	return nil
 }
 
+// ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
 func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
