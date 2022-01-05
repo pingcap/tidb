@@ -18,40 +18,48 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testPlanSuite) TestPhysicalOptimizeWithTraceEnabled(c *C) {
-	sql := "select * from t where a in (1,2)"
-	defer testleak.AfterTest(c)()
+func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
+	p := parser.New()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-	stmt, err := s.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
-	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+
+	sql := "select * from t where a in (1,2)"
+
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = Preprocess(ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	require.NoError(t, err)
 	sctx := MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
-	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
-	ctx := context.TODO()
-	p, err := builder.Build(ctx, stmt)
-	c.Assert(err, IsNil)
+	builder, _ := NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+	plan, err := builder.Build(context.TODO(), stmt)
+	require.NoError(t, err)
 	flag := uint64(0)
-	logical, err := logicalOptimize(ctx, flag, p.(LogicalPlan))
-	c.Assert(err, IsNil)
+	logical, err := logicalOptimize(context.TODO(), flag, plan.(LogicalPlan))
+	require.NoError(t, err)
 	_, _, err = physicalOptimize(logical, &PlanCounterDisabled)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
-	c.Assert(otrace, NotNil)
+	require.NotNil(t, otrace)
 	logicalList, physicalList, bests := getList(otrace)
-	c.Assert(checkList(logicalList, []string{"Projection_3", "Selection_2"}), IsTrue)
-	c.Assert(checkList(physicalList, []string{"Projection_4", "Selection_5"}), IsTrue)
-	c.Assert(checkList(bests, []string{"Projection_4", "Selection_5"}), IsTrue)
+	require.True(t, checkList(logicalList, []string{"Projection_3", "Selection_2"}))
+	require.True(t, checkList(physicalList, []string{"Projection_4", "Selection_5"}))
+	require.True(t, checkList(bests, []string{"Projection_4", "Selection_5"}))
 }
 
 func checkList(d []string, s []string) bool {
