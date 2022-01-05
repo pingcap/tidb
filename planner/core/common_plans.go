@@ -390,6 +390,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -480,8 +481,16 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
+<<<<<<< HEAD
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
+=======
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
+>>>>>>> 80527cbbc... planner: do not cache the tableDual plan (#31290)
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -510,6 +519,21 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	for _, child := range physicalPlan.Children() {
+		return containTableDual(child)
+	}
+	return false
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
