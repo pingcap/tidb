@@ -1076,14 +1076,6 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 
-	if date.IsZero() {
-		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err = handleInvalidZeroTime(b.ctx, date)
-			return 0, isNull, err
-		}
-		return 0, false, nil
-	}
-
 	return int64(date.Month()), false, nil
 }
 
@@ -1236,13 +1228,6 @@ func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
-	if arg.IsZero() {
-		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err = handleInvalidZeroTime(b.ctx, arg)
-			return 0, isNull, err
-		}
-		return 0, false, nil
-	}
 	return int64(arg.Day()), false, nil
 }
 
@@ -1282,8 +1267,7 @@ func (b *builtinDayOfWeekSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		isNull, err = handleInvalidZeroTime(b.ctx, arg)
-		return 0, isNull, err
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Weekday() + 1), false, nil
@@ -1325,8 +1309,7 @@ func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, arg)
-		return 0, isNull, err
+		return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 
 	return int64(arg.YearDay()), false, nil
@@ -1556,14 +1539,6 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
-	}
-
-	if date.IsZero() {
-		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err := handleInvalidZeroTime(b.ctx, date)
-			return 0, isNull, err
-		}
-		return 0, false, nil
 	}
 	return int64(date.Year()), false, nil
 }
@@ -6061,11 +6036,6 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	date, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
-	}
-
-	if date.IsZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, date)
-		return 0, isNull, err
 	}
 
 	return int64((date.Month() + 2) / 3), false, nil
