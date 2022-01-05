@@ -1486,6 +1486,10 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1563,6 +1567,11 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec("drop database if exists rename1")
+	tk.MustExec("drop database if exists rename2")
+	tk.MustExec("drop database if exists rename3")
+	tk.MustExec("drop database if exists rename4")
+
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
@@ -1577,14 +1586,14 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("insert rename2.t2 values ()")
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename4.t4 values ()")
-	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "5001"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "5001"))
 	// Rename a table to another table in the same database.
 	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
 	tk.MustExec("insert rename2.t1 values ()")
-	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("insert rename4.t3 values ()")
-	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "5001", "10001"))
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename4")
 

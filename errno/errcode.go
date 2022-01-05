@@ -841,6 +841,7 @@ const (
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONPath                                       = 3143
+	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150

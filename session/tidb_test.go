@@ -16,13 +16,13 @@ package session
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,14 +43,13 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	var wg sync.WaitGroup
-	wg.Add(count)
+	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
-		go func(se *session, stmt ast.StmtNode) {
-			_, _, err := se.ExecRestrictedStmt(context.Background(), stmt)
+		s := stmts[i]
+		wg.Run(func() {
+			_, _, err := se.ExecRestrictedStmt(context.Background(), s)
 			require.NoError(t, err)
-			wg.Done()
-		}(se, stmts[i])
+		})
 	}
 	wg.Wait()
 }
