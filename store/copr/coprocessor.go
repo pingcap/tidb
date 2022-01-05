@@ -1024,7 +1024,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	if !worker.enableCollectExecutionInfo {
 		return
 	}
-	failpoint.Inject("fix-31038", func(val failpoint.Value) {
+	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("shouldn't reachable")
 		}

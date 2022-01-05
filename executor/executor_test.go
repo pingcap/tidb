@@ -9761,7 +9761,7 @@ func (s *testSerialSuite) TestFix31038(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t123")
 	tk.MustExec("create table t123 (id int);")
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/fix-31038", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
 	tk.MustQuery("select * from t123;")
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/fix-31038")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
 }
