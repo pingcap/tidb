@@ -24,12 +24,10 @@ func TestParseTSString(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(400036290571534337), ts)
 
-	//_, offset := time.Now().Local().Zone()
 	ts, err = parseTSString("2021-01-01 01:42:23")
 	require.NoError(t, err)
 	localTime := time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.Local)
-	// t, _ := time.Parse("2006-01-02 00:00:00", "2021-01-01 01:42:23")
-	// fmt.Println(t)
+
 	localTimestamp := localTime.Unix()
 	localTSO := uint64((localTimestamp << 18) * 1000)
 	require.Equal(t, localTSO, ts)
