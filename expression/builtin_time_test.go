@@ -927,6 +927,7 @@ func TestAddTimeSig(t *testing.T) {
 		{"2018-08-16 20:21:01", "00:00:00.000001", "2018-08-16 20:21:01.000001"},
 		{"1", "xxcvadfgasd", ""},
 		{"xxcvadfgasd", "1", ""},
+		{"2020-05-13 14:01:24", "2020-04-29 05:11:19", ""},
 	}
 	fc := funcs[ast.AddTime]
 	for _, c := range tbl {
