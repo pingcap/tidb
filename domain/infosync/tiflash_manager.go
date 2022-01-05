@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package infosync
 
 import (
@@ -15,8 +29,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
@@ -25,9 +37,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
+	"github.com/gorilla/mux"
 )
 
-// TiFlashPlacementManager manages placement settings for TiFlash
+// TiFlashPlacementManager manages placement settings for TiFlash.
 type TiFlashPlacementManager interface {
 	// SetPlacementRule is a helper function to set placement rule.
 	SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error
@@ -45,12 +58,12 @@ type TiFlashPlacementManager interface {
 	Close(ctx context.Context)
 }
 
-// TiFlashPDPlacementManager manages placement with pd for TiFlash
+// TiFlashPDPlacementManager manages placement with pd for TiFlash.
 type TiFlashPDPlacementManager struct {
 	addrs []string
 }
 
-// Close is to close TiFlashPDPlacementManager
+// Close is called to close TiFlashPDPlacementManager.
 func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
 }
@@ -175,11 +188,6 @@ type mockTiFlashPlacementManager struct {
 	tiflash *MockTiFlash
 }
 
-type mockAddrTiFlashPlacementManager struct {
-	TiFlashPDPlacementManager
-	sync.Mutex
-}
-
 func makeBaseRule() placement.TiFlashRule {
 	return placement.TiFlashRule{
 		GroupID:  "tiflash",
@@ -295,10 +303,9 @@ func NewMockTiFlash() *MockTiFlash {
 	return tiflash
 }
 
-// HandleSetPlacementRule is mock function for SetPlacementRule
+// HandleSetPlacementRule is mock function for SetPlacementRule.
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	if !tiflash.PdEnabled {
-		fmt.Printf("pd server is manually disabled, just quit\n")
 		return errors.New("pd server is manually disabled, just quit")
 	}
 
@@ -309,8 +316,7 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	if err != nil {
 		return errors.New("Can't parse rule")
 	}
-	// Set up mock tiflash replica
-	// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
+	// Set up mock TiFlash replica
 	f := func() {
 		if z, ok := tiflash.SyncStatus[tid]; ok {
 			z.Regions = []int{1}
@@ -334,12 +340,12 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	return nil
 }
 
-// HandleDeletePlacementRule is mock function for DeletePlacementRule
+// HandleDeletePlacementRule is mock function for DeletePlacementRule.
 func (tiflash *MockTiFlash) HandleDeletePlacementRule(group string, ruleID string) {
 	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
 }
 
-// HandleGetGroupRules is mock function for GetGroupRules
+// HandleGetGroupRules is mock function for GetGroupRules.
 func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFlashRule, error) {
 	var result = make([]placement.TiFlashRule, 0)
 	for _, item := range tiflash.GlobalTiFlashPlacementRules {
@@ -348,7 +354,7 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFla
 	return result, nil
 }
 
-// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule
+// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule.
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
@@ -365,7 +371,8 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	return nil
 }
 
-// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats
+// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats.
+// It currently always returns 1 Region for convenience.
 func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) *helper.PDRegionStats {
 	return &helper.PDRegionStats{
 		Count:            1,
@@ -377,7 +384,8 @@ func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) *helper.PDRegi
 	}
 }
 
-// HandleGetStoresStat is mock function for GetStoresStat
+// HandleGetStoresStat is mock function for GetStoresStat.
+// It returns address of our mocked TiFlash server.
 func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	return &helper.StoresStat{
 		Count: 1,
@@ -407,7 +415,7 @@ func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash not inited")
+		return errors.New("MockTiFlash is not accessible")
 	}
 	return m.tiflash.HandleSetPlacementRule(rule)
 }
@@ -417,7 +425,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash not inited")
+		return errors.New("MockTiFlash is not accessible")
 	}
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
@@ -428,7 +436,7 @@ func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group s
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return nil, errors.New("MockTiFlash not inited")
+		return nil, errors.New("MockTiFlash is not accessible")
 	}
 	return m.tiflash.HandleGetGroupRules(group)
 }
@@ -438,7 +446,7 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash not inited")
+		return errors.New("MockTiFlash is not accessible")
 	}
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
@@ -450,7 +458,7 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return errors.New("MockTiFlash not inited")
+		return errors.New("MockTiFlash is not accessible")
 	}
 	*stats = *m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
@@ -461,12 +469,12 @@ func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helpe
 	m.Lock()
 	defer m.Unlock()
 	if m.tiflash == nil {
-		return nil, errors.New("MockTiFlash not inited")
+		return nil, errors.New("MockTiFlash is not accessible")
 	}
 	return m.tiflash.HandleGetStoresStat(), nil
 }
 
-// Close is to close mockTiFlashPlacementManager
+// Close is called to close mockTiFlashPlacementManager.
 func (m *mockTiFlashPlacementManager) Close(ctx context.Context) {
 	m.Lock()
 	defer m.Unlock()

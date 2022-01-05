@@ -19,8 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/helper"
 	"io"
 	"net/http"
 	"os"
@@ -40,9 +38,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -93,18 +93,18 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli          *clientv3.Client
-	info             *ServerInfo
-	serverInfoPath   string
-	minStartTS       uint64
-	minStartTSPath   string
-	manager          util2.SessionManager
-	session          *concurrency.Session
-	topologySession  *concurrency.Session
-	prometheusAddr   string
-	modifyTime       time.Time
-	labelRuleManager LabelRuleManager
-	placementManager PlacementManager
+	etcdCli                 *clientv3.Client
+	info                    *ServerInfo
+	serverInfoPath          string
+	minStartTS              uint64
+	minStartTSPath          string
+	manager                 util2.SessionManager
+	session                 *concurrency.Session
+	topologySession         *concurrency.Session
+	prometheusAddr          string
+	modifyTime              time.Time
+	labelRuleManager        LabelRuleManager
+	placementManager        PlacementManager
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
@@ -255,7 +255,6 @@ func GetMockTiFlash() *MockTiFlash {
 	}
 	return nil
 }
-
 
 // SetMockTiFlash can only be used in tests to set MockTiFlash
 func SetMockTiFlash(tiflash *MockTiFlash) {
