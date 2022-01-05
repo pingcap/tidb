@@ -130,10 +130,6 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
 
-func TestConcurrentLoadNonExistHist(t *testing.T) {
-
-}
-
 func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
