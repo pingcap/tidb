@@ -500,6 +500,10 @@ func TestVarsutil(t *testing.T) {
 	warn := v.StmtCtx.GetWarnings()[0]
 	require.Error(t, warn.Err)
 	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
+
+	err = SetSessionSystemVar(v, TiDBTableCacheLease, "123")
+	require.Error(t, err)
+	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
 }
 
 func TestValidate(t *testing.T) {
