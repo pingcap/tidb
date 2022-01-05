@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	fd "github.com/pingcap/tidb/planner/functional_dependency"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -308,6 +309,31 @@ type LogicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+// extractFD implements the logical plan interface, extracting the FD from bottom up.
+func (p *LogicalProjection) extractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := p.logicalSchemaProducer.extractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	for _, one := range p.Schema().Columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+		if mysql.HasNotNullFlag(one.RetType.Flag) {
+			notnullColsUniqueIDs.Insert(int(one.UniqueID))
+		}
+	}
+	// TODO: enclose the project expr as a `special column`, assigning unique ID and writing it to FDSet.
+	// projection(1 as x, (b+1) as y, b) from t
+	// once the upper layer use x, y to do more computation, we better maintain this FD in FDSet by:
+	// fds.AddConstants(fd.NewFastIntSet(x.uniqueID))
+	// fds.AddStrictFunctionalDependency(fd.NewFastIntSet(b.uniqueID), fd.NewFastIntSet((b+1).uniqueID))
+
+	// apply operator's characteristic's FD setting.
+	// 1: since the distinct attribute is built as firstRow agg func, we don't need to think about it here.
+	fds.ProjectCols(outputColsUniqueIDs)
+	return fds
+}
+
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
@@ -361,6 +387,41 @@ func (la *LogicalAggregation) HasOrderBy() bool {
 		}
 	}
 	return false
+}
+
+// extractFD implements the logical plan interface, extracting the FD from bottom up.
+func (la *LogicalAggregation) extractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := la.logicalSchemaProducer.extractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	groupByColsUniqueIDs := fd.NewFastIntSet()
+	for _, one := range la.Schema().Columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+		if mysql.HasNotNullFlag(one.RetType.Flag) {
+			notnullColsUniqueIDs.Insert(int(one.UniqueID))
+		}
+	}
+	// TODO: enclose the group expr as a `special column`, assigning unique ID and writing it to FDSet.
+	for _, one := range la.GetGroupByCols() {
+		groupByColsUniqueIDs.Insert(int(one.UniqueID))
+	}
+
+	// apply operator's characteristic's FD setting.
+	if len(la.GroupByItems) == 0 {
+		fds.MaxOneRow(outputColsUniqueIDs)
+	} else {
+		// eliminating input columns that are un-projected.
+		fds.ProjectCols(outputColsUniqueIDs)
+
+		if !groupByColsUniqueIDs.SubsetOf(notnullColsUniqueIDs) {
+			fds.AddLaxFunctionalDependency(groupByColsUniqueIDs, outputColsUniqueIDs)
+		} else {
+			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, outputColsUniqueIDs)
+		}
+	}
+	return fds
 }
 
 // CopyAggHints copies the aggHints from another LogicalAggregation.
@@ -455,6 +516,51 @@ type LogicalSelection struct {
 
 	// having selection can't be pushed down, because it must above the aggregation.
 	buildByHaving bool
+}
+
+func (p *LogicalSelection) extractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := p.baseLogicalPlan.extractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	for _, one := range p.Schema().Columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+		if mysql.HasNotNullFlag(one.RetType.Flag) {
+			notnullColsUniqueIDs.Insert(int(one.UniqueID))
+		}
+	}
+
+	// extract the column NOT NULL rejection characteristic from selection condition.
+	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
+	//
+	// Take this case: select * from t where (a = 1) and (b is null):
+	//
+	// If we wanna where phrase eval to true, two pre-condition: {a=1} and {b is null} both need to be true.
+	// Hence, we assert that:
+	//
+	// 1: `a` mustn't be null since `NULL = 1` is evaluated as NULL.
+	// 2: `b` can be null since `NULL is NULL` is evaluated as true.
+	//
+	// As a result,	`a` will be extracted to abound the FDSet.
+	for _, condition := range p.Conditions {
+		var cols []*expression.Column
+		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
+		if isNullRejected(p.ctx, p.Schema(), condition) {
+			for _, col := range cols {
+				notnullColsUniqueIDs.Insert(int(col.UniqueID))
+			}
+		}
+	}
+	// TODO: extract constant cols and equivalence cols.
+
+	// apply operator's characteristic's FD setting.
+	fds.MakeNotNull(notnullColsUniqueIDs)
+	// fds.AddConstants()
+	// fds.AddEquivalence()
+
+	fds.ProjectCols(outputColsUniqueIDs)
+	return fds
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

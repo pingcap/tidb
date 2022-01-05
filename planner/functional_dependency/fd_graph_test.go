@@ -252,6 +252,34 @@ func TestFDSet_AddConstant(t *testing.T) {
 	ass.Equal("(1-6)", fd.ConstantCols().String())
 }
 
+func TestFDSet_LaxImplies(t *testing.T) {
+	t.Parallel()
+	ass := assert.New(t)
+
+	fd := FDSet{}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
+	// lax FD won't imply each other once they have the different to side.
+	ass.Equal("(1)~~>(2,3), (1)~~>(2)", fd.String())
+
+	fd = FDSet{}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
+	ass.Equal("(1)~~>(2), (1)~~>(2,3)", fd.String())
+
+	fd = FDSet{}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
+	// lax FD can imply each other once they have the same to side. {1,2} ~~> {3} implies {1} ~~> {3}
+	ass.Equal("(1)~~>(3)", fd.String())
+
+	fd = FDSet{}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3, 4))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
+	// lax FD won't imply each other once they have the different to side. {1,2} ~~> {3} implies {1} ~~> {3}
+	ass.Equal("(1)~~>(3,4), (1,2)~~>(3)", fd.String())
+}
+
 func TestFDSet_AddEquivalence(t *testing.T) {
 	t.Parallel()
 	ass := assert.New(t)

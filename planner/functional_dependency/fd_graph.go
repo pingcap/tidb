@@ -1,5 +1,11 @@
 package functional_dependency
 
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
 type fdEdge struct {
 	// functional dependency = determinants -> dependencies
 	// determinants = from
@@ -13,8 +19,15 @@ type fdEdge struct {
 	equiv  bool
 }
 
+// FDSet is the main portal of functional dependency, it stores the relationship between (extended table/ physical table)'s
+// columns. For more theory about this design, ref the head comments in the functional_dependency/doc.go.
 type FDSet struct {
 	fdEdges []*fdEdge
+	// NotNullCols is used to record the columns with not-null attributes applied.
+	// eg: {1} ~~> {2,3}, when {2,3} not null is applied, it actually does nothing.
+	// but we should record {2,3} as not-null down for the convenience of transferring
+	// Lax FD: {1} ~~> {2,3} to strict FD: {1} --> {2,3} with {1} as not-null next time.
+	NotNullCols FastIntSet
 }
 
 // closureOfStrict is to find strict fd closure of X with respect to F.
@@ -45,7 +58,37 @@ func (s *FDSet) closureOfStrict(colSet FastIntSet) FastIntSet {
 	return resultSet
 }
 
-// closureOf is to find strict equivalence closure of X with respect to F.
+// ClosureOfLax is used to find lax fd closure of X with respect to F.
+func (s *FDSet) closureOfLax(colSet FastIntSet) FastIntSet {
+	// Lax dependencies are not transitive (see figure 2.1 in the paper for
+	// properties that hold for lax dependencies), so only include them if they
+	// are reachable in a single lax dependency step from the input set.
+	laxOneStepReached := NewFastIntSet()
+	// self included.
+	laxOneStepReached.UnionWith(colSet)
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		// A ~~> B && A == C && C ~~> D: given A, BD can be included via Lax FDs (plus self A and equiv C).
+		// A ~~> B && B == C: given A, BC can be included via Lax FDs (plus self A).
+		// which means both dependency and determinant can extend Lax exploration via equivalence.
+		//
+		// Besides, strict is a kind of strong lax FDs, result computed above should be unionised with strict FDs closure.
+		if fd.equiv && fd.from.Intersects(laxOneStepReached) && !fd.to.SubsetOf(laxOneStepReached) {
+			// equiv can extend the lax-set's access paths.
+			laxOneStepReached.UnionWith(fd.to)
+			i = -1
+		}
+		if !fd.strict && !fd.equiv && fd.from.SubsetOf(laxOneStepReached) && !fd.to.SubsetOf(laxOneStepReached) {
+			// lax FDs.
+			laxOneStepReached.UnionWith(fd.to)
+		}
+	}
+	// Unionised strict FDs
+	laxOneStepReached.UnionWith(s.closureOfStrict(colSet))
+	return laxOneStepReached
+}
+
+// closureOfEquivalence is to find strict equivalence closure of X with respect to F.
 func (s *FDSet) closureOfEquivalence(colSet FastIntSet) FastIntSet {
 	resultSet := NewFastIntSet()
 	// self included.
@@ -128,8 +171,8 @@ func (s *FDSet) AddLaxFunctionalDependency(from, to FastIntSet) {
 // addFunctionalDependency will add strict/lax functional dependency to the fdGraph.
 // eg:
 // CREATE TABLE t (a int key, b int, c int, d int, e int, UNIQUE (b,c))
-// strict FD: {a} --> {a,b,c,d,e} && lax FD: {b,c} --> {a,b,c,d,e} will be added.
-// stored FD: {a} --> {b,c,d,e} && lax FD: {b,c} --> {a,d,e} is determinant eliminated.
+// strict FD: {a} --> {a,b,c,d,e} && lax FD: {b,c} ~~> {a,b,c,d,e} will be added.
+// stored FD: {a} --> {b,c,d,e} && lax FD: {b,c} ~~> {a,d,e} is determinant eliminated.
 //
 // To reduce the edge number, we limit the functional dependency when we insert into the
 // set. The key code of insert is like the following codes.
@@ -141,7 +184,7 @@ func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv bool)
 
 	// exclude the intersection part.
 	if to.Intersects(from) {
-		to.Difference(from)
+		to.DifferenceWith(from)
 	}
 
 	// reduce the determinants.
@@ -197,8 +240,25 @@ func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv bool)
 // implies is used to shrink the edge size, keeping the minimum of the functional dependency set size.
 func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 	// The given one's from should be larger than the current one and the current one's to should be larger than the given one.
-	// A --> C is stronger than AB --> C
-	// A --> BC is stronger than A --> C.
+	// STRICT FD:
+	// A --> C is stronger than AB --> C. --- YES
+	// A --> BC is stronger than A --> C. --- YES
+	//
+	// LAX FD:
+	// 1: A ~~> C is stronger than AB ~~> C. --- YES
+	// 2: A ~~> BC is stronger than A ~~> C. --- NO
+	// The precondition for 2 to be strict FD is much easier to satisfied than 1, only to
+	// need {a,c} is not null. So we couldn't merge this two to be one lax FD.
+	// but for strict/equiv FD implies lax FD, 1 & 2 is implied both reasonably.
+	lhsIsLax := !e.equiv && !e.strict
+	rhsIsLax := !otherEdge.equiv && !otherEdge.strict
+	if lhsIsLax && rhsIsLax {
+		if e.from.SubsetOf(otherEdge.from) && e.to.Equals(otherEdge.to) {
+			return true
+		} else {
+			return false
+		}
+	}
 	if e.from.SubsetOf(otherEdge.from) && otherEdge.to.SubsetOf(e.to) {
 		// The given one should be weaker than the current one.
 		// So the given one should not be more strict than the current one.
@@ -206,6 +266,10 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 		if (e.strict || !otherEdge.strict) && (e.equiv || !otherEdge.equiv) {
 			return true
 		}
+		// 1: e.strict   + e.equiv       => e > o
+		// 2: e.strict   + !o.equiv      => e >= o
+		// 3: !o.strict  + e.equiv       => e > o
+		// 4: !o.strict  + !o.equiv      => o.lax
 	}
 	return false
 }
@@ -327,7 +391,7 @@ func (s *FDSet) AddConstants(cons FastIntSet) {
 	}
 }
 
-// removeColumnsFromSide remove the constant columns from determinant side of FDs in source.
+// removeColumnsFromSide remove the columns from determinant side of FDs in source.
 //
 // eg: {A B} --> {C}
 //
@@ -357,7 +421,7 @@ func (e *fdEdge) isEquivalence() bool {
 	return e.equiv && e.from.Equals(e.to)
 }
 
-// removeColumnsToSide remove the constant columns from dependencies side of FDs in source.
+// removeColumnsToSide remove the columns from dependencies side of FDs in source.
 //
 // eg: {A} --> {B, C}
 //
@@ -389,4 +453,317 @@ func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
 		}
 	}
 	return eqs
+}
+
+// MakeNotNull modify the FD set based the listed column with NOT NULL flags.
+// Most of the case is used in the derived process after predicate evaluation,
+// which can upgrade lax FDs to strict ones.
+func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
+	notNullCols.UnionWith(s.NotNullCols)
+	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		if fd.strict {
+			continue
+		}
+		// lax can be made strict if all determinant & dependency columns are not null.
+		if fd.from.SubsetOf(notNullColsSet) && fd.to.SubsetOf(notNullColsSet) {
+			// we don't need to clean the old lax FD because when adding the corresponding strict one, the lax
+			// one will be implied by that and itself is removed.
+			s.AddStrictFunctionalDependency(fd.from, fd.to)
+			// add strict FDs will cause reconstruction of FDSet, re-traverse it.
+			i = -1
+		}
+	}
+	s.NotNullCols = notNullColsSet
+}
+
+// MakeCartesianProduct records fdSet after the impact of Cartesian Product of (T1 x T2) is made.
+// 1: left FD is reserved.
+// 2: right FD is reserved.
+// Actually, for two independent table, FDs won't affect (implies or something) each other, appending
+// them together is adequate. But for constant FDs, according to our definition, we should merge them
+// as a larger superset pointing themselves.
+func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
+	for i := 0; i < len(rhs.fdEdges); i++ {
+		fd := rhs.fdEdges[i]
+		if fd.isConstant() {
+			// both from or to side is ok since {superset} --> {superset}.
+			s.AddConstants(fd.from)
+		} else {
+			s.fdEdges = append(s.fdEdges, fd)
+		}
+	}
+}
+
+func (s *FDSet) MakeLeftOuter(lhs, filterFDs *FDSet, lCols, rCols, notNullCols FastIntSet) {
+	// TODO:
+}
+
+func (s FDSet) AllCols() FastIntSet {
+	allCols := NewFastIntSet()
+	for i := 0; i < len(s.fdEdges); i++ {
+		allCols.UnionWith(s.fdEdges[i].from)
+		if !s.fdEdges[i].equiv {
+			allCols.UnionWith(s.fdEdges[i].to)
+		}
+	}
+	return allCols
+}
+
+// AddFrom merges two FD sets by adding each FD from the given set to this set.
+// Since two different tables may have some column ID overlap, we better use
+// column unique ID to build the FDSet instead.
+func (s *FDSet) AddFrom(fds *FDSet) {
+	for i := range fds.fdEdges {
+		fd := fds.fdEdges[i]
+		if fd.equiv {
+			s.addEquivalence(fd.from)
+		} else if fd.isConstant() {
+			s.AddConstants(fd.to)
+		} else if fd.strict {
+			s.AddStrictFunctionalDependency(fd.from, fd.to)
+		} else {
+			s.AddLaxFunctionalDependency(fd.from, fd.to)
+		}
+	}
+}
+
+// MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
+// take over all existed strict/lax FD, only keeping the equivalence. Because equivalence is stronger than constant.
+//
+//   f:      {a}--> {b,c}, {abc} == {abc}
+//   cols:   {a,c}
+//   result: {} --> {a,c}, {a,c} == {a,c}
+func (s *FDSet) MaxOneRow(cols FastIntSet) {
+	cnt := 0
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		// non-equivalence FD, skip it.
+		if !fd.equiv {
+			continue
+		}
+		// equivalence: {superset} --> {superset}
+		if cols.Intersects(fd.from) {
+			s.fdEdges[cnt] = &fdEdge{
+				from:   fd.from.Intersection(cols),
+				to:     fd.to.Intersection(cols),
+				strict: true,
+				equiv:  true,
+			}
+			cnt++
+		}
+	}
+	s.fdEdges = s.fdEdges[:cnt]
+	// At last, add the constant FD, {} --> {cols}
+	if !cols.IsEmpty() {
+		s.fdEdges = append(s.fdEdges, &fdEdge{
+			to:     cols,
+			strict: true,
+		})
+	}
+}
+
+// ProjectCols projects FDSet to the target columns
+// Formula:
+// Strict decomposition FD4A: If X −→ Y Z then X −→ Y and X −→ Z.
+// Lax decomposition FD4B: If X ~→ Y Z and I(R) is Y -definite then X ~→ Z.
+func (s *FDSet) ProjectCols(cols FastIntSet) {
+	// **************************************** START LOOP 1 ********************************************
+	// Ensure the transitive relationship between remaining columns won't be lost.
+	// 1: record all the constant columns
+	// 2: if an FD's to side contain un-projected column, substitute it with its closure.
+	// 		fd1: {a} --> {b,c}
+	//	    fd2: {b} --> {d}
+	//      when b is un-projected, the fd1 should be {a} --> {b,c's closure} which is {a} --> {b,c,d}
+	// 3: track all columns that have equivalent alternates that are part of the projection.
+	//		fd1: {a} --> {c}
+	//      fd2: {a,b} == {a,b}
+	//      if only a is un-projected, the fd1 can actually be kept as {b} --> {c}.
+	var constCols, detCols, equivCols FastIntSet
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+
+		if fd.isConstant() {
+			constCols = fd.to
+		}
+
+		if !fd.to.SubsetOf(cols) {
+			// equivalence FD has been the closure as {superset} == {superset}.
+			if !fd.equiv && fd.strict {
+				fd.to = s.closureOfStrict(fd.to)
+				fd.to.DifferenceWith(fd.from)
+			}
+		}
+
+		// {a,b} --> {c}, when b is un-projected, this FD should be handled latter, recording `b` here.
+		if !fd.equiv && !fd.from.SubsetOf(cols) {
+			detCols.UnionWith(fd.from.Difference(cols))
+		}
+
+		// equivalence {superset} == {superset}
+		if fd.equiv && fd.from.Intersects(cols) {
+			equivCols.UnionWith(fd.from)
+		}
+	}
+	// ****************************************** END LOOP 1 ********************************************
+
+	// find deleted columns with equivalence.
+	detCols.IntersectionWith(equivCols)
+	equivMap := s.makeEquivMap(detCols, cols)
+
+	// it's actually maintained already.
+	if !constCols.IsEmpty() {
+		s.AddConstants(constCols)
+	}
+
+	// **************************************** START LOOP 2 ********************************************
+	// leverage the information collected in the loop1 above and try to do some FD substitution.
+	var (
+		cnt    int
+		newFDs []*fdEdge
+	)
+	for i := range s.fdEdges {
+		fd := s.fdEdges[i]
+
+		// step1: clear the `to` side
+		// subtract out un-projected columns from dependants.
+		// subtract out strict constant columns from dependants.
+		if !fd.to.SubsetOf(cols) {
+			// since loop 1 has computed the complete transitive closure for strict FD, now as:
+			// 1: equivalence FD: {superset} == {superset}
+			// 2: strict FD: {xxx} --> {complete closure}
+			// 3: lax FD: {xxx} ~~> {yyy}
+			if fd.equiv {
+				// As formula FD4A above, delete from un-projected column from `to` side directly.
+				fd.to = fd.to.Intersection(cols)
+				// Since from are the same, delete it too here.
+				fd.from = fd.from.Intersection(cols)
+			} else if fd.strict {
+				// As formula FD4A above, delete from un-projected column from `to` side directly.
+				fd.to = fd.to.Intersection(cols)
+			} else {
+				// As formula FD4B above, only if the deleted columns are definite, then we can keep it.
+				deletedCols := fd.to.Difference(cols)
+				if deletedCols.SubsetOf(constCols) {
+					fd.to = fd.to.Intersection(cols)
+				} else if deletedCols.SubsetOf(s.NotNullCols) {
+					fd.to = fd.to.Intersection(cols)
+				} else {
+					continue
+				}
+			}
+
+			if !fd.isConstant() {
+				// clear the constant columns in the dependency of FD.
+				if fd.removeColumnsToSide(constCols) {
+					continue
+				}
+			}
+			if fd.removeColumnsToSide(fd.from) {
+				// fd.to side is empty, remove this FD.
+				continue
+			}
+		}
+
+		// step2: clear the `from` side
+		// substitute the equivalence columns for removed determinant columns.
+		if !fd.from.SubsetOf(cols) {
+			// equivalence and constant FD couldn't be here.
+			deletedCols := fd.from.Difference(cols)
+			substitutedCols := NewFastIntSet()
+			foundAll := true
+			for c, ok := deletedCols.Next(0); ok; c, ok = deletedCols.Next(c + 1) {
+				// For every un-projected column, try to found their substituted column in projection list.
+				var id int
+				if id, foundAll = equivMap[c]; !foundAll {
+					break
+				}
+				substitutedCols.Insert(id)
+			}
+			if foundAll {
+				// deleted columns can be remapped using equivalencies.
+				from := fd.from.Union(substitutedCols)
+				from.DifferenceWith(deletedCols)
+				newFDs = append(newFDs, &fdEdge{
+					from:   from,
+					to:     fd.to,
+					strict: fd.strict,
+					equiv:  fd.equiv,
+				})
+			}
+			continue
+		}
+
+		if cnt != i {
+			s.fdEdges[cnt] = s.fdEdges[i]
+		}
+		cnt++
+	}
+	s.fdEdges = s.fdEdges[:cnt]
+	// ****************************************** END LOOP 2 ********************************************
+
+	for i := range newFDs {
+		fd := newFDs[i]
+		if fd.equiv {
+			s.addEquivalence(fd.from)
+		} else if fd.isConstant() {
+			s.AddConstants(fd.to)
+		} else if fd.strict {
+			s.AddStrictFunctionalDependency(fd.from, fd.to)
+		} else {
+			s.AddLaxFunctionalDependency(fd.from, fd.to)
+		}
+	}
+}
+
+// makeEquivMap try to find the equivalence column of every deleted column in the project list.
+func (s *FDSet) makeEquivMap(detCols, projectedCols FastIntSet) map[int]int {
+	var equivMap map[int]int
+	for i, ok := detCols.Next(0); ok; i, ok = detCols.Next(i + 1) {
+		var oneCol FastIntSet
+		oneCol.Insert(i)
+		closure := s.closureOfEquivalence(oneCol)
+		closure.IntersectionWith(projectedCols)
+		// the column to be deleted has an equivalence column exactly in the project list.
+		if !closure.IsEmpty() {
+			if equivMap == nil {
+				equivMap = make(map[int]int)
+			}
+			id, _ := closure.Next(0)
+			equivMap[i] = id
+		}
+	}
+	return equivMap
+}
+
+// String returns format string of this FDSet.
+func (s *FDSet) String() string {
+	var builder strings.Builder
+
+	for i := range s.fdEdges {
+		if i != 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(s.fdEdges[i].String())
+	}
+	return builder.String()
+}
+
+// String returns format string of this FD.
+func (e *fdEdge) String() string {
+	var b strings.Builder
+	if e.equiv {
+		if !e.strict {
+			panic(errors.New("lax equivalent columns are not supported"))
+		}
+		_, _ = fmt.Fprintf(&b, "%s==%s", e.from, e.to)
+	} else {
+		if e.strict {
+			_, _ = fmt.Fprintf(&b, "%s-->%s", e.from, e.to)
+		} else {
+			_, _ = fmt.Fprintf(&b, "%s~~>%s", e.from, e.to)
+		}
+	}
+	return b.String()
 }
