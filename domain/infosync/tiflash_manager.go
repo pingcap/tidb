@@ -69,7 +69,7 @@ func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 }
 
 // SetTiFlashPlacementRule is a helper function to set placement rule.
-func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
+func (m *TiFlashPDPlacementManager) SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	j, _ := json.Marshal(rule)
 	buf := bytes.NewBuffer(j)
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule"), "POST", buf)
@@ -83,7 +83,7 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 }
 
 // DeleteTiFlashPlacementRule is to delete placement rule for certain group.
-func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
+func (m *TiFlashPDPlacementManager) DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -95,7 +95,7 @@ func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, gro
 }
 
 // GetTiFlashGroupRules to get all placement rule in a certain group.
-func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
+func (m *TiFlashPDPlacementManager) GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -114,7 +114,7 @@ func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group str
 }
 
 // PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
-func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
+func (m *TiFlashPDPlacementManager) PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
@@ -140,7 +140,7 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 }
 
 // GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
-func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+func (m *TiFlashPDPlacementManager) GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
@@ -165,7 +165,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 }
 
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
-func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+func (m *TiFlashPDPlacementManager) GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	var storesStat helper.StoresStat
 	res, err := doRequest(ctx, m.addrs, pdapi.Stores, "GET", nil)
 	if err != nil {
