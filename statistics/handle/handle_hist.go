@@ -354,7 +354,6 @@ func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.T
 			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.String("stack", string(buf)))
 		}
 	}()
-	failpoint.Inject("mockWriteToResultChanPanic", nil)
 	select {
 	case resultCh <- rs:
 	default:

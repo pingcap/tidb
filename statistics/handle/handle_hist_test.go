@@ -162,58 +162,83 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	require.Nil(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
-	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
 
 	neededColumns := make([]model.TableColumnID, 1)
 	neededColumns[0] = model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[2].ID}
 	timeout := time.Nanosecond * mathutil.MaxInt
-	stmtCtx1 := &stmtctx.StatementContext{}
-	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
-	stmtCtx2 := &stmtctx.StatementContext{}
-	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
-	readerCtx := &handle.StatsReaderContext{}
-	exitCh := make(chan struct{})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic", "panic"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic"))
-	}()
-	task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-	require.NotNil(t, err1)
-	require.NotNil(t, task1)
-	list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
-	require.True(t, ok)
-	require.Equal(t, 1, len(list))
-	require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
+	failpoints := []struct {
+		failPath string
+		inTerms  string
+	}{
+		{
+			failPath: "github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic",
+			inTerms:  "panic",
+		},
+		{
+			failPath: "github.com/pingcap/tidb/statistics/handle/mockReadStatsForOnePanic",
+			inTerms:  "panic",
+		},
+		{
+			failPath: "github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail",
+			inTerms:  "return(true)",
+		},
+	}
 
-	task2, err2 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-	require.Nil(t, err2)
-	require.Nil(t, task2)
-	list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
-	require.True(t, ok)
-	require.Equal(t, 2, len(list))
-	require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
+	for _, fp := range failpoints {
+		// clear statsCache
+		h.Clear()
+		require.NoError(t, dom.StatsHandle().Update(is))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic"))
-	task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-	require.Nil(t, err3)
-	require.Nil(t, task3)
+		// no stats at beginning
+		stat := h.GetTableStats(tableInfo)
+		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
+		require.Equal(t, 0, hg.Len()+topn.Num())
 
-	require.Equal(t, 1, len(stmtCtx1.StatsLoad.ResultCh))
-	require.Equal(t, 1, len(stmtCtx2.StatsLoad.ResultCh))
+		stmtCtx1 := &stmtctx.StatementContext{}
+		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+		stmtCtx2 := &stmtctx.StatementContext{}
+		h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
-	rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
-	require.True(t, ok1)
-	require.Equal(t, neededColumns[0], rs1)
-	rs2, ok2 := <-stmtCtx1.StatsLoad.ResultCh
-	require.True(t, ok2)
-	require.Equal(t, neededColumns[0], rs2)
+		readerCtx := &handle.StatsReaderContext{}
+		exitCh := make(chan struct{})
+		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Greater(t, hg.Len()+topn.Num(), 0)
+		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		require.NotNil(t, err1)
+		require.NotNil(t, task1)
+		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
+		require.True(t, ok)
+		require.Equal(t, 1, len(list))
+		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
+
+		task2, err2 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		require.Nil(t, err2)
+		require.Nil(t, task2)
+		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
+		require.True(t, ok)
+		require.Equal(t, 2, len(list))
+		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
+
+		require.NoError(t, failpoint.Disable(fp.failPath))
+		task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		require.Nil(t, err3)
+		require.Nil(t, task3)
+
+		require.Equal(t, 1, len(stmtCtx1.StatsLoad.ResultCh))
+		require.Equal(t, 1, len(stmtCtx2.StatsLoad.ResultCh))
+
+		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
+		require.True(t, ok1)
+		require.Equal(t, neededColumns[0], rs1)
+		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
+		require.True(t, ok2)
+		require.Equal(t, neededColumns[0], rs2)
+
+		stat = h.GetTableStats(tableInfo)
+		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+		topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+		require.Greater(t, hg.Len()+topn.Num(), 0)
+	}
 }
