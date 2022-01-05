@@ -54,7 +54,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededColumns = missingColumns
-	sc.StatsLoad.ResultCh = make(chan model.TableColumnID)
+	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(missingColumns))
 	for _, col := range missingColumns {
 		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
 		if err != nil {
@@ -350,7 +350,10 @@ func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.T
 		}
 	}()
 	// TODO failpoint
-	resultCh <- rs
+	select {
+	case resultCh <- rs:
+	default:
+	}
 }
 
 // updateCachedColumn updates the column hist to global statsCache.

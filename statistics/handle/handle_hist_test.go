@@ -15,13 +15,15 @@
 package handle_test
 
 import (
+	"testing"
 	"time"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testLoadHistSuite{})
@@ -30,34 +32,36 @@ type testLoadHistSuite struct {
 	testSuiteBase
 }
 
-func (s *testLoadHistSuite) TestConcurrentLoadHist(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestConcurrentLoadHist(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
-	oriLease := s.do.StatsHandle().Lease()
-	s.do.StatsHandle().SetLease(1)
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
 	defer func() {
-		s.do.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLease(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	tableInfo := tbl.Meta()
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
+	require.Greater(t, hg.Len()+topn.Num(), 0)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Equals, 0)
+	require.Equal(t, hg.Len()+topn.Num(), 0)
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -66,16 +70,18 @@ func (s *testLoadHistSuite) TestConcurrentLoadHist(c *C) {
 	timeout := time.Nanosecond * mathutil.MaxInt
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
-	c.Assert(rs, Equals, true)
+	require.True(t, rs)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
+	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
 
-func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestConcurrentLoadHistTimeout(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("set @@session.tidb_analyze_version=2")
@@ -83,25 +89,25 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
-	oriLease := s.do.StatsHandle().Lease()
-	s.do.StatsHandle().SetLease(1)
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
 	defer func() {
-		s.do.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLease(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
-	is := s.do.InfoSchema()
+	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	tableInfo := tbl.Meta()
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
+	require.Greater(t, hg.Len()+topn.Num(), 0)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Equals, 0)
+	require.Equal(t, hg.Len()+topn.Num(), 0)
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -109,11 +115,11 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	}
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
-	c.Assert(rs, Equals, false)
+	require.False(t, rs)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Equals, 0)
+	require.Equal(t, hg.Len()+topn.Num(), 0)
 	// wait for timeout task to be handled
 	for {
 		time.Sleep(time.Millisecond * 100)
@@ -124,5 +130,5 @@ func (s *testLoadHistSuite) TestConcurrentLoadHistTimeout(c *C) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	c.Assert(hg.Len()+topn.Num(), Greater, 0)
+	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
