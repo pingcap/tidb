@@ -433,6 +433,30 @@ const (
 	oneShotUse
 )
 
+// ReadConsistencyLevel is the level of read consistency.
+type ReadConsistencyLevel string
+
+const (
+	// ReadConsistencyStrict means read by strict consistency, default value.
+	ReadConsistencyStrict ReadConsistencyLevel = "strict"
+	// ReadConsistencyWeak means read can be weak consistency.
+	ReadConsistencyWeak ReadConsistencyLevel = "weak"
+)
+
+// IsWeak returns true only if it's a weak-consistency read.
+func (r ReadConsistencyLevel) IsWeak() bool {
+	return r == ReadConsistencyWeak
+}
+
+func validateReadConsistencyLevel(val string) error {
+	switch v := ReadConsistencyLevel(strings.ToLower(val)); v {
+	case ReadConsistencyStrict, ReadConsistencyWeak:
+		return nil
+	default:
+		return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+	}
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -465,7 +489,8 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// PreparedParams params for prepared statements
-	PreparedParams PreparedParams
+	PreparedParams    PreparedParams
+	LastUpdateTime4PC types.Time
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -473,6 +498,9 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 	//  TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
+
+	// TxnManager is used to manage txn context in session
+	TxnManager interface{}
 
 	// KVVars is the variables for KV storage.
 	KVVars *tikvstore.Variables
@@ -976,6 +1004,12 @@ type SessionVars struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	StmtStats *stmtstats.StatementStats
+
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
+
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1169,7 +1203,7 @@ func NewSessionVars() *SessionVars {
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            false,
+		enableIndexMerge:            DefTiDBEnableIndexMerge,
 		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
@@ -1211,6 +1245,7 @@ func NewSessionVars() *SessionVars {
 		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StmtStats:                   stmtstats.CreateStatementStats(),
+		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

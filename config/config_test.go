@@ -674,3 +674,24 @@ func TestConfigExample(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsLoadLimit(t *testing.T) {
+	conf := NewConfig()
+	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
+		conf.Performance.StatsLoadConcurrency = uint(concurrency)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefStatsLoadConcurrencyLimit-1, false)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit, true)
+	checkConcurrencyValid(DefMaxOfStatsLoadConcurrencyLimit+1, false)
+	conf = NewConfig()
+	checkQueueSizeValid := func(queueSize int, shouldBeValid bool) {
+		conf.Performance.StatsLoadQueueSize = uint(queueSize)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
+	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
+}

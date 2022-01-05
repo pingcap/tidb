@@ -1896,7 +1896,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expect, v.GetMysqlTime().String())
+		require.Equal(t, test.expect, v.GetString())
 	}
 
 	args := types.MakeDatums(date[0], nil, "DAY")
@@ -1938,7 +1938,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expected, v.GetMysqlTime().String())
+		require.Equal(t, test.expected, v.GetString())
 	}
 
 	testYears := []struct {
@@ -1961,7 +1961,7 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, test.expected, v.GetMysqlTime().String())
+		require.Equal(t, test.expected, v.GetString())
 	}
 
 	testOverflowYears := []struct {

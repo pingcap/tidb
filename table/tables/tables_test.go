@@ -736,3 +736,28 @@ func TestViewColumns(t *testing.T) {
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
 }
+
+func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_optimistic_untouched_flag;")
+	tk.MustExec(`create table test_optimistic_untouched_flag(c0 int, c1 varchar(20), c2 varchar(20), unique key uk(c0));`)
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, null, 'green');`)
+
+	// Insert a row with duplicated entry on the unique key, the commit should fail.
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec(`delete from test_optimistic_untouched_flag where c1 is null;`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	err := tk.ExecToErr("commit")
+	require.Error(t, err)
+
+	tk.MustExec("begin optimistic;")
+	tk.MustExec(`insert into test_optimistic_untouched_flag(c0, c1, c2) values (1, 'red', 'white');`)
+	tk.MustExec("update test_optimistic_untouched_flag set c2 = 'green' where c2 between 'purple' and 'white';")
+	err = tk.ExecToErr("commit")
+	require.Error(t, err)
+}
