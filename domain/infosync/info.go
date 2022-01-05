@@ -19,6 +19,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/helper"
 	"io"
 	"net/http"
 	"os"
@@ -103,6 +105,7 @@ type InfoSyncer struct {
 	modifyTime       time.Time
 	labelRuleManager LabelRuleManager
 	placementManager PlacementManager
+	tiflashPlacementManager TiFlashPlacementManager
 }
 
 // ServerInfo is server static information.
@@ -184,9 +187,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if etcdCli != nil {
 		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
 		is.placementManager = initPlacementManager(etcdCli.Endpoints())
+		is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli.Endpoints())
 	} else {
 		is.labelRuleManager = initLabelRuleManager([]string{})
 		is.placementManager = initPlacementManager([]string{})
+		is.tiflashPlacementManager = initTiFlashPlacementManager([]string{})
 	}
 	setGlobalInfoSyncer(is)
 	return is, nil
@@ -226,6 +231,43 @@ func initPlacementManager(addrs []string) PlacementManager {
 		return &mockPlacementManager{}
 	}
 	return &PDPlacementManager{addrs: addrs}
+}
+
+func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
+	if len(addrs) == 0 {
+		m := mockTiFlashPlacementManager{}
+		//m.tiflash = NewMockTiFlash()
+		return &m
+	}
+	return &TiFlashPDPlacementManager{addrs: addrs}
+}
+
+// GetMockTiFlash can only be used in tests to get MockTiFlash
+func GetMockTiFlash() *MockTiFlash {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		return m.tiflash
+	}
+	return nil
+}
+
+
+// SetMockTiFlash can only be used in tests to set MockTiFlash
+func SetMockTiFlash(tiflash *MockTiFlash) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		m.tiflash = tiflash
+	}
 }
 
 // GetServerInfo gets self server static information.
@@ -924,4 +966,103 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
+}
+
+// SetPlacementRule is a helper function to set placement rule.
+func SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
+}
+
+// DeletePlacementRule is to delete placement rule for certain group.
+func DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
+}
+
+// GetGroupRules to get all placement rule in a certain group.
+func GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetGroupRules(ctx, group)
+}
+
+// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+func PostAccelerateSchedule(ctx context.Context, tableID int64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
+}
+
+// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+func GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
+}
+
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetStoresStat(ctx)
+}
+
+// CloseTiFlashManager closes TiFlash manager.
+func CloseTiFlashManager(ctx context.Context) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	is.tiflashPlacementManager.Close(ctx)
+}
+
+func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id))
+	ruleNew := MakeNewRule(id, count, *locationLabels)
+	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx := context.Background()
+	for _, p := range *definitions {
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("partID", p.ID), zap.Bool("accel", accel))
+		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
+		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
+			return errors.Trace(err)
+		}
+		if accel {
+			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)
+			if e != nil {
+				return errors.Trace(e)
+			}
+		}
+	}
+	return nil
 }
