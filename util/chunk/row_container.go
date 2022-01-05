@@ -154,6 +154,12 @@ func (c *RowContainer) SpillToDisk() {
 		logutil.BgLogger().Error("rowContainer panicked", zap.String("stack", string(buf)), zap.Error(err))
 	}()
 
+	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("out of disk quota when spill")
+		}
+	})
+
 	for i := 0; i < N; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
@@ -445,6 +451,11 @@ type SortedRowContainer struct {
 		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
 		rowPtrs []RowPtr
 	}
+	errInSortingM struct {
+		sync.RWMutex
+		// errInSorting store the error in sorting
+		errInSorting error
+	}
 
 	ByItemsDesc []bool
 	// keyColumns is the column index of the by items.
@@ -513,16 +524,52 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
+
+	failpoint.Inject("sortOOM", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("out of memory quota when sort")
+		}
+
+	})
+
 	c.GetMemTracker().Consume(int64(8 * c.numRow))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
+	defer func() {
+		// may panic when call c.Sort()
+		r := recover()
+		if r == nil {
+			return
+		}
+
+		err := fmt.Errorf("%v", r)
+		buf := make([]byte, 4096)
+		stackSize := runtime.Stack(buf, false)
+		buf = buf[:stackSize]
+		logutil.BgLogger().Error("sort panicked", zap.String("stack", string(buf)), zap.Error(err))
+
+		c.errInSortingM.Lock()
+		defer c.errInSortingM.Unlock()
+		c.errInSortingM.errInSorting = err
+	}()
+
 	c.Sort()
 	c.RowContainer.SpillToDisk()
 }
 
+func (c *SortedRowContainer) getErrInSorting() error {
+	c.errInSortingM.RLock()
+	defer c.errInSortingM.RUnlock()
+	return c.errInSortingM.errInSorting
+}
+
 // Add appends a chunk into the SortedRowContainer.
 func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
+	if err := c.getErrInSorting(); err != nil {
+		return err
+	}
+
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
 	if c.ptrM.rowPtrs != nil {
@@ -533,6 +580,10 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 
 // GetSortedRow returns the row the idx pointed to.
 func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
+	if err := c.getErrInSorting(); err != nil {
+		return Row{}, err
+	}
+
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
 	ptr := c.ptrM.rowPtrs[idx]
