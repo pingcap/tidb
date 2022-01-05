@@ -937,9 +937,10 @@ func TestIssue28782(t *testing.T) {
 
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// TODO(Reminiscent): Support cache more tableDual plan.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestIssue29101(t *testing.T) {
@@ -1157,7 +1158,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 1, @b = null;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
@@ -1166,7 +1167,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
 	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
