@@ -351,6 +351,7 @@ type txnFuture struct {
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
+	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
 		return tf.store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(tf.txnScope).SetStartTs(startTS))
 	} else if config.GetGlobalConfig().Store == "unistore" {
