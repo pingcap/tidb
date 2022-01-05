@@ -27,7 +27,9 @@ func TestParseTSString(t *testing.T) {
 	_, offset := time.Now().Local().Zone()
 	ts, err = parseTSString("2018-05-11 01:42:23")
 	require.NoError(t, err)
-	require.Equal(t, uint64(400032515489792000-(offset*1000)<<18), ts)
+	//1525999343 = 2018-05-11 01:42:23 GMT
+	localTSO := ((1525999343 - offset) << 18) * 1000
+	require.Equal(t, uint64(localTSO-(offset*1000)<<18), ts)
 }
 
 func TestParseCompressionType(t *testing.T) {
