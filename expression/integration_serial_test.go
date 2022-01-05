@@ -96,7 +96,7 @@ func TestIssue17891(t *testing.T) {
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }
 
-func TestIssue31022(t *testing.T) {
+func TestIssue31174(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
@@ -105,11 +105,15 @@ func TestIssue31022(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (v varchar(254), index (v)) charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustExec("insert into t1 values ('This is a test '),(' This is a test '),('This is a test');")
-	tk.MustQuery("select * from t1 where v like 'This is a test';").Check(testkit.Rows("This is a test"))
-	tk.MustQuery("select * from t1 where v = 'This is a test';").Check(testkit.Rows("This is a test ", "This is a test"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);")
+	tk.MustExec("insert into t values('`?');")
+	// The 'like' condition can not be used to construct the range.
+	tk.MustQuery("explain format = 'brief' select * from t where a like '`%';").Check(testkit.Rows(""+
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t.a, \"`%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("select * from t where a like '`%';").Check(testkit.Rows("`?"))
 }
 
 func TestIssue20268(t *testing.T) {
