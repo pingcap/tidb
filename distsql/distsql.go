@@ -164,13 +164,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
-	option := &kv.ClientSendOption{
-		SessionMemTracker:          nil,
-		EnableCollectExecutionInfo: false,
-		EventCb:                    nil,
-		EnabledRateLimitAction:     false,
-	}
-	resp := client.Send(ctx, kvReq, vars, option)
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
