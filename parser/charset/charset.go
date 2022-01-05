@@ -69,7 +69,6 @@ var supportedCollationNames = map[string]struct{}{
 	CollationASCII:   {},
 	CollationLatin1:  {},
 	CollationBin:     {},
-	CollationGBKBin:  {},
 }
 
 // TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
