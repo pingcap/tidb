@@ -541,8 +541,8 @@ insert into t values ('abcABC一二三abcABC', 'abcABC一二三abcABC', 0xe2e2, 
 set @@tidb_enable_vectorized_expression = true;
 select hex(elt(2, f, h)), hex(elt(8, a, b, c, d, e, f, g, h)) from t;
 hex(elt(2, f, h))	hex(elt(8, a, b, c, d, e, f, g, h))
-61D2BB	61E4B880
+61D2BB	61D2BB
 set @@tidb_enable_vectorized_expression = false;
 select hex(elt(2, f, h)), hex(elt(8, a, b, c, d, e, f, g, h)) from t;
 hex(elt(2, f, h))	hex(elt(8, a, b, c, d, e, f, g, h))
-61D2BB	61E4B880
+61D2BB	61D2BB
