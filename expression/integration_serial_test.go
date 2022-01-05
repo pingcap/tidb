@@ -1498,6 +1498,18 @@ func TestIssue26662(t *testing.T) {
 		Check(testkit.Rows())
 }
 
+func TestIssue30245(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end", mysql.ErrCantAggregate3collations)
+}
+
 func TestCollationForBinaryLiteral(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
