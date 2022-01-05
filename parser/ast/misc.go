@@ -3439,8 +3439,8 @@ type TextString struct {
 }
 
 // TransformTextStrings converts a slice of TextString to strings.
-func TransformTextStrings(ts []*TextString, chs string) []string {
-	enc := charset.FindEncodingTakeUTF8AsNoop(chs)
+func TransformTextStrings(ts []*TextString, _ string) []string {
+	enc := charset.EncodingUTF8Impl
 	ret := make([]string, 0, len(ts))
 	for _, t := range ts {
 		if !t.IsBinaryLiteral {
