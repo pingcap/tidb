@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/collate"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -565,7 +566,11 @@ func enableTiDBConfig() func() {
 		// when upstream and downstream both set this value greater than default(3072)
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
 		log.Warn("set max-index-length to max(3072*4) to skip check index length in DDL")
+		collate.SetNewCollationEnabledForTest(true)
+		collate.SetCharsetFeatEnabledForTest(true)
+		log.Warn("set charset to skip check in DDL")
 	})
+
 	return restoreConfig
 }
 
