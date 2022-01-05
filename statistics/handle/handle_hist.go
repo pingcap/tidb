@@ -54,7 +54,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededColumns []
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededColumns = missingColumns
-	sc.StatsLoad.ResultCh = make(chan model.TableColumnID, len(neededColumns))
+	sc.StatsLoad.ResultCh = make(chan model.TableColumnID)
 	for _, col := range missingColumns {
 		err := h.AppendNeededColumn(col, sc.StatsLoad.ResultCh, timeout)
 		if err != nil {
@@ -155,7 +155,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 			case errExit:
 				return
 			default:
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(h.Lease() / 10)
 				continue
 			}
 		}
@@ -163,8 +163,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 }
 
 // handleOneTask handles one column task.
-func (h *Handle) handleOneTask(task *NeededColumnTask, readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (*NeededColumnTask, error) {
-	working := false
+func (h *Handle) handleOneTask(lastTask *NeededColumnTask, readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededColumnTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -172,39 +171,42 @@ func (h *Handle) handleOneTask(task *NeededColumnTask, readerCtx *statsReaderCon
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("stats loading panicked", zap.String("stack", string(buf)))
-		}
-		if working {
-			h.failWorking(task.TableColumnID)
+			err = errors.New("stats loading panicked")
 		}
 	}()
-	h.getFreshStatsReader(readerCtx, ctx)
-	if task == nil {
-		task, err := h.drainColTask(exit)
+	if lastTask == nil {
+		task, err = h.drainColTask(exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
 			}
 			return task, err
 		}
+		// to avoid duplicated handling in concurrent scenario
+		working := h.setWorking(task.TableColumnID, task.ResultCh)
+		if !working {
+			return nil, nil
+		}
+	} else {
+		task = lastTask
 	}
 	col := task.TableColumnID
-	// to avoid duplicated handling in concurrent scenario
-	working = h.setWorking(col, task.ResultCh)
-	if !working {
-		return nil, nil
-	}
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.tables[col.TableID]
 	if !ok {
 		h.writeToResultChan(task.ResultCh, col)
+		h.finishWorking(col)
 		return nil, nil
 	}
 	c, ok := tbl.Columns[col.ColumnID]
 	if !ok || c.Len() > 0 {
 		h.writeToResultChan(task.ResultCh, col)
+		h.finishWorking(col)
 		return nil, nil
 	}
 	t := time.Now()
+	// refresh statsReader to get latest stats
+	h.getFreshStatsReader(readerCtx, ctx)
 	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
 	if err != nil {
 		return task, err
@@ -229,7 +231,7 @@ func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.
 			newReader, err := h.getStatsReader(0, ctx)
 			if err != nil {
 				logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
-				time.Sleep(time.Millisecond * 10)
+				time.Sleep(h.Lease() / 10)
 			} else {
 				readerCtx.reader = newReader
 				readerCtx.createdTime = time.Now()
@@ -337,12 +339,18 @@ func (h *Handle) writeToChanWithTimeout(taskCh chan *NeededColumnTask, task *Nee
 	return nil
 }
 
-// writeToResultChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
+// writeToResultChan safe-writes with panic-recover so one write-fail will not have big impact.
 func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.TableColumnID) {
-	select {
-	case resultCh <- rs:
-	default:
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			logutil.BgLogger().Error("writeToResultChan panicked", zap.String("stack", string(buf)))
+		}
+	}()
+	// TODO failpoint
+	resultCh <- rs
 }
 
 // updateCachedColumn updates the column hist to global statsCache.
@@ -376,12 +384,6 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 	chList = []chan model.TableColumnID{}
 	h.StatsLoad.workingColMap[col] = chList
 	return true
-}
-
-func (h *Handle) failWorking(col model.TableColumnID) {
-	h.StatsLoad.Lock()
-	defer h.StatsLoad.Unlock()
-	delete(h.StatsLoad.workingColMap, col)
 }
 
 func (h *Handle) finishWorking(col model.TableColumnID) {
