@@ -17,6 +17,9 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sync"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -33,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	"reflect"
-	"sync"
 )
 
 var _ = Suite(&testColumnSuite{})
