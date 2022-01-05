@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package core_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
@@ -36,23 +37,23 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
 
 	sql := "select * from t where a in (1,2)"
 
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = Preprocess(ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := MockContext()
+	sctx := core.MockContext()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	builder, _ := NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
 	flag := uint64(0)
-	logical, err := logicalOptimize(context.TODO(), flag, plan.(LogicalPlan))
-	require.NoError(t, err)
-	_, _, err = physicalOptimize(logical, &PlanCounterDisabled)
+	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.PhysicalOptimizeTrace
 	require.NotNil(t, otrace)
