@@ -1167,7 +1167,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
 	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestPreparePlanCache4DifferentSystemVars(t *testing.T) {
