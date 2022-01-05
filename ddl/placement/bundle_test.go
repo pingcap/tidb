@@ -417,6 +417,21 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "sugar syntax: normal case 2",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us",
+			Schedule:      "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 1, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
 		name: "sugar syntax: few followers",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
