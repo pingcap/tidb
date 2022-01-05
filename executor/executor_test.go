@@ -5772,6 +5772,7 @@ func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
 		"utf8_bin utf8 83 Yes Yes 1",
 		"gbk_bin gbk 87 Yes Yes 1",
 	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
@@ -5828,6 +5829,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
 
 	tk.MustExec("create database test_gbk charset gbk;")
 	tk.MustExec("use test_gbk")
