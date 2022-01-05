@@ -236,7 +236,6 @@ func initPlacementManager(addrs []string) PlacementManager {
 func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	if len(addrs) == 0 {
 		m := mockTiFlashPlacementManager{}
-		//m.tiflash = NewMockTiFlash()
 		return &m
 	}
 	return &TiFlashPDPlacementManager{addrs: addrs}

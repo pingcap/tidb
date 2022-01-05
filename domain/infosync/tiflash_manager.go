@@ -373,8 +373,8 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 
 // HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats.
 // It currently always returns 1 Region for convenience.
-func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) *helper.PDRegionStats {
-	return &helper.PDRegionStats{
+func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegionStats {
+	return helper.PDRegionStats{
 		Count:            1,
 		EmptyCount:       1,
 		StorageSize:      1,
@@ -460,7 +460,7 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 	if m.tiflash == nil {
 		return errors.New("MockTiFlash is not accessible")
 	}
-	*stats = *m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	*stats = m.tiflash.HandleGetPDRegionRecordStats(tableID)
 	return nil
 }
 
