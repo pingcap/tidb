@@ -32,10 +32,17 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
-	MC, _ = mock.NewCluster()
-	MC.Start()
+	var err error
+	mc, err = mock.NewCluster()
+	if err != nil {
+		panic(err)
+	}
+	err = mc.Start()
+	if err != nil {
+		panic(err)
+	}
 	exitCode := m.Run()
-	MC.Stop()
+	mc.Stop()
 	if exitCode == 0 {
 		if err := goleak.Find(opts...); err != nil {
 			fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
