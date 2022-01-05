@@ -219,10 +219,10 @@ func TestTiFlashManager(t *testing.T) {
 
 	require.NoError(t, err)
 
-	// SetPlacementRule/GetGroupRules
+	// SetTiFlashPlacementRule/GetTiFlashGroupRules
 	rule := MakeNewRule(1, 2, []string{"a"})
-	require.NoError(t, SetPlacementRule(ctx, *rule))
-	rules, err := GetGroupRules(ctx, "tiflash")
+	require.NoError(t, SetTiFlashPlacementRule(ctx, *rule))
+	rules, err := GetTiFlashGroupRules(ctx, "tiflash")
 	require.Nil(t, err)
 	require.Equal(t, 1, len(rules))
 	require.Equal(t, "table-1-r", rules[0].ID)
@@ -231,26 +231,26 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, false, rules[0].Override, false)
 	require.Equal(t, placement.RuleIndexTiFlash, rules[0].Index)
 
-	// PostAccelerateSchedule
-	require.Nil(t, PostAccelerateSchedule(ctx, 1))
+	// PostTiFlashAccelerateSchedule
+	require.Nil(t, PostTiFlashAccelerateSchedule(ctx, 1))
 	z, ok := tiflash.SyncStatus[1]
 	require.Equal(t, true, ok)
 	require.Equal(t, true, z.Accel)
 
-	// GetStoresStat
-	stats, err := GetStoresStat(ctx)
+	// GetTiFlashStoresStat
+	stats, err := GetTiFlashStoresStat(ctx)
 	require.Nil(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	// DeletePlacementRule
-	require.NoError(t, DeletePlacementRule(ctx, "tiflash", rule.ID))
-	rules, err = GetGroupRules(ctx, "tiflash")
+	// DeleteTiFlashPlacementRule
+	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.Nil(t, err)
 	require.Equal(t, 0, len(rules))
 
 	// ConfigureTiFlashPDForTable
 	require.Nil(t, ConfigureTiFlashPDForTable(1, 2, &[]string{"a"}))
-	rules, err = GetGroupRules(ctx, "tiflash")
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.Nil(t, err)
 	require.Equal(t, 1, len(rules))
 
@@ -262,7 +262,7 @@ func TestTiFlashManager(t *testing.T) {
 			LessThan: []string{},
 		},
 	}, 3, &[]string{})
-	rules, err = GetGroupRules(ctx, "tiflash")
+	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.Nil(t, err)
 	// Have table 1 and 2
 	require.Equal(t, 2, len(rules))

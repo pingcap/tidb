@@ -42,17 +42,17 @@ import (
 
 // TiFlashPlacementManager manages placement settings for TiFlash.
 type TiFlashPlacementManager interface {
-	// SetPlacementRule is a helper function to set placement rule.
+	// SetTiFlashPlacementRule is a helper function to set placement rule.
 	SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error
-	// DeletePlacementRule is to delete placement rule for certain group.
+	// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
 	DeletePlacementRule(ctx context.Context, group string, ruleID string) error
-	// GetGroupRules to get all placement rule in a certain group.
+	// GetTiFlashGroupRules to get all placement rule in a certain group.
 	GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error)
-	// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+	// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
 	PostAccelerateSchedule(ctx context.Context, tableID int64) error
-	// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+	// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
 	GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error
-	// GetStoresStat gets the TiKV store information by accessing PD's api.
+	// GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 	GetStoresStat(ctx context.Context) (*helper.StoresStat, error)
 	// Close is to close TiFlashPlacementManager
 	Close(ctx context.Context)
@@ -68,7 +68,7 @@ func (m *TiFlashPDPlacementManager) Close(ctx context.Context) {
 
 }
 
-// SetPlacementRule is a helper function to set placement rule.
+// SetTiFlashPlacementRule is a helper function to set placement rule.
 func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	j, _ := json.Marshal(rule)
 	buf := bytes.NewBuffer(j)
@@ -77,31 +77,31 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in SetPlacementRule")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in SetTiFlashPlacementRule")
 	}
 	return nil
 }
 
-// DeletePlacementRule is to delete placement rule for certain group.
+// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
 func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in DeletePlacementRule")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in DeleteTiFlashPlacementRule")
 	}
 	return nil
 }
 
-// GetGroupRules to get all placement rule in a certain group.
+// GetTiFlashGroupRules to get all placement rule in a certain group.
 func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
 	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, fmt.Errorf("TiFlashPDPlacementManager returns error in GetGroupRules")
+		return nil, fmt.Errorf("TiFlashPDPlacementManager returns error in GetTiFlashGroupRules")
 	}
 
 	var rules []placement.TiFlashRule
@@ -113,7 +113,7 @@ func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group str
 	return rules, nil
 }
 
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
 func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -134,12 +134,12 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in PostAccelerateSchedule")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in PostTiFlashAccelerateSchedule")
 	}
 	return nil
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
 func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -154,7 +154,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 		return errors.Trace(err)
 	}
 	if res == nil {
-		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetPDRegionRecordStats")
+		return fmt.Errorf("TiFlashPDPlacementManager returns error in GetTiFlashPDRegionRecordStats")
 	}
 
 	err = json.Unmarshal(res, stats)
@@ -164,7 +164,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 	return nil
 }
 
-// GetStoresStat gets the TiKV store information by accessing PD's api.
+// GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	var storesStat helper.StoresStat
 	res, err := doRequest(ctx, m.addrs, pdapi.Stores, "GET", nil)
@@ -172,7 +172,7 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, fmt.Errorf("TiFlashPDPlacementManager returns error in GetStoresStat")
+		return nil, fmt.Errorf("TiFlashPDPlacementManager returns error in GetTiFlashStoresStat")
 	}
 
 	err = json.Unmarshal(res, &storesStat)
@@ -300,7 +300,7 @@ func NewMockTiFlash() *MockTiFlash {
 	return tiflash
 }
 
-// HandleSetPlacementRule is mock function for SetPlacementRule.
+// HandleSetPlacementRule is mock function for SetTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	if !tiflash.PdEnabled {
 		return errors.New("pd server is manually disabled, just quit")
@@ -337,12 +337,12 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	return nil
 }
 
-// HandleDeletePlacementRule is mock function for DeletePlacementRule.
+// HandleDeletePlacementRule is mock function for DeleteTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleDeletePlacementRule(group string, ruleID string) {
 	delete(tiflash.GlobalTiFlashPlacementRules, ruleID)
 }
 
-// HandleGetGroupRules is mock function for GetGroupRules.
+// HandleGetGroupRules is mock function for GetTiFlashGroupRules.
 func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFlashRule, error) {
 	var result = make([]placement.TiFlashRule, 0)
 	for _, item := range tiflash.GlobalTiFlashPlacementRules {
@@ -351,7 +351,7 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFla
 	return result, nil
 }
 
-// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule.
+// HandlePostAccelerateSchedule is mock function for PostTiFlashAccelerateSchedule.
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
@@ -368,7 +368,7 @@ func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	return nil
 }
 
-// HandleGetPDRegionRecordStats is mock function for GetPDRegionRecordStats.
+// HandleGetPDRegionRecordStats is mock function for GetTiFlashPDRegionRecordStats.
 // It currently always returns 1 Region for convenience.
 func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegionStats {
 	return helper.PDRegionStats{
@@ -381,7 +381,7 @@ func (tiflash *MockTiFlash) HandleGetPDRegionRecordStats(_ int64) helper.PDRegio
 	}
 }
 
-// HandleGetStoresStat is mock function for GetStoresStat.
+// HandleGetStoresStat is mock function for GetTiFlashStoresStat.
 // It returns address of our mocked TiFlash server.
 func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	return &helper.StoresStat{
@@ -407,7 +407,7 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 	}
 }
 
-// SetPlacementRule is a helper function to set placement rule.
+// SetTiFlashPlacementRule is a helper function to set placement rule.
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()
 	defer m.Unlock()
@@ -417,7 +417,7 @@ func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule
 	return m.tiflash.HandleSetPlacementRule(rule)
 }
 
-// DeletePlacementRule is to delete placement rule for certain group.
+// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
 func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
 	m.Lock()
 	defer m.Unlock()
@@ -428,7 +428,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	return nil
 }
 
-// GetGroupRules to get all placement rule in a certain group.
+// GetTiFlashGroupRules to get all placement rule in a certain group.
 func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
 	m.Lock()
 	defer m.Unlock()
@@ -438,7 +438,7 @@ func (m *mockTiFlashPlacementManager) GetGroupRules(ctx context.Context, group s
 	return m.tiflash.HandleGetGroupRules(group)
 }
 
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
 func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context, tableID int64) error {
 	m.Lock()
 	defer m.Unlock()
@@ -450,7 +450,7 @@ func (m *mockTiFlashPlacementManager) PostAccelerateSchedule(ctx context.Context
 	return m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey))
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
+// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
 func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	m.Lock()
 	defer m.Unlock()
@@ -461,7 +461,7 @@ func (m *mockTiFlashPlacementManager) GetPDRegionRecordStats(ctx context.Context
 	return nil
 }
 
-// GetStoresStat gets the TiKV store information by accessing PD's api.
+// GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 func (m *mockTiFlashPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	m.Lock()
 	defer m.Unlock()
