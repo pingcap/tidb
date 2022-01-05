@@ -120,6 +120,7 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (s *SetConfigExec) doRequest(url string) (retErr error) {
 	body := bytes.NewBufferString(s.jsonBody)
+	fmt.Println("do request json body ==", s.jsonBody)
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var s string
 		s, isNull, err = val.EvalString(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf(`"%s"`, s)
+			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
 		var i int64
