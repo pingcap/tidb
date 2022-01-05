@@ -157,8 +157,21 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 }
 
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
-	// iterate all the joined tables, and got the copresonding rows in joinedRow.
+	// iterate all the joined tables, and got the corresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		// if row[start..end] is a null row, which is possible in an outer join, we should not delete it.
+		nullRow := true
+		for _, d := range joinedRow[info.Start:info.End] {
+			if d.IsNull() {
+				continue
+			}
+			nullRow = false
+			break
+		}
+		if nullRow {
+			continue
+		}
+
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}

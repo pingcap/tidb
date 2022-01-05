@@ -761,3 +761,17 @@ func TestConstraintCheckForOptimisticUntouched(t *testing.T) {
 	err = tk.ExecToErr("commit")
 	require.Error(t, err)
 }
+
+func TestAssertion(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a (k1 int);")
+	tk.MustExec("create table b (id int primary key, k1 int);")
+	tk.MustExec("insert into a(k1) values(3);")
+	tk.MustExec("insert into b values(2, 2);")
+	tk.MustExec("insert into b values(0, 0);")
+	tk.MustExec("delete a,b from a left join b on a.k1 = b.k1")
+	tk.MustQuery("select * from b order by id").Check(testkit.Rows("0 0", "2 2"))
+}
