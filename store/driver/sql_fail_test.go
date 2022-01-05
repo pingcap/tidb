@@ -17,13 +17,13 @@ package driver
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -36,18 +36,15 @@ func TestFailBusyServerCop(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var wg util.WaitGroupWrapper
 
 	require.NoError(t, failpoint.Enable("tikvclient/rpcServerBusy", `return(true)`))
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		time.Sleep(time.Millisecond * 100)
 		require.NoError(t, failpoint.Disable("tikvclient/rpcServerBusy"))
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		rs, err := se.Execute(context.Background(), `SELECT variable_value FROM mysql.tidb WHERE variable_name="bootstrapped"`)
 		if len(rs) > 0 {
 			defer func() {
@@ -60,8 +57,7 @@ func TestFailBusyServerCop(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEqual(t, 0, req.NumRows())
 		require.Equal(t, "True", req.GetRow(0).GetString(0))
-	}()
-
+	})
 	wg.Wait()
 }
 
