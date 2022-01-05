@@ -969,7 +969,7 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // SetPlacementRule is a helper function to set placement rule.
-func SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -987,7 +987,7 @@ func DeletePlacementRule(ctx context.Context, group string, ruleID string) error
 }
 
 // GetGroupRules to get all placement rule in a certain group.
-func GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) {
+func GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
