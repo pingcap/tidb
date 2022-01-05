@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/store/helper"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"go.uber.org/zap"
-	"github.com/gorilla/mux"
 )
 
 // TiFlashPlacementManager manages placement settings for TiFlash.

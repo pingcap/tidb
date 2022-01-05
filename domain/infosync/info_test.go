@@ -256,9 +256,9 @@ func TestTiFlashManager(t *testing.T) {
 
 	// ConfigureTiFlashPDForPartitions
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
-		model.PartitionDefinition {
-			ID: 2,
-			Name: model.NewCIStr("p"),
+		model.PartitionDefinition{
+			ID:       2,
+			Name:     model.NewCIStr("p"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{})
