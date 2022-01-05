@@ -1139,6 +1139,20 @@ func TestReplace(t *testing.T) {
 	tk.MustExec("drop table t1, t2")
 }
 
+func TestReplaceWithCICollation(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a varchar(20) charset utf8mb4 collate utf8mb4_general_ci primary key);")
+	tk.MustExec("replace into t(a) values (_binary'A '),(_binary'A');")
+	tk.MustQuery("select a from t use index(primary);").Check(testkit.Rows("A"))
+	tk.MustQuery("select a from t ignore index(primary);").Check(testkit.Rows("A"))
+}
+
 func TestGeneratedColumnForInsert(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

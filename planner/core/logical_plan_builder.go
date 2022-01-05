@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -4191,8 +4190,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if err != nil {
 			return nil, err
 		}
+		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
+		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
 		if cacheData != nil {
 			sessionVars.StmtCtx.ReadFromTableCache = true
 			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
@@ -4202,16 +4202,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
 				startTS := txn.StartTS()
 				store := b.ctx.GetStore()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-						}
-					}()
-					err := cachedTable.UpdateLockForRead(ctx, store, startTS)
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
-				}()
+				cachedTable.UpdateLockForRead(ctx, store, startTS, leaseDuration)
 			}
 		}
 	}
@@ -4348,6 +4339,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TiFlashSystemTableExtractor{}
 		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
 			p.Extractor = &StatementsSummaryExtractor{}
+		case infoschema.TableTiKVRegionPeers:
+			p.Extractor = &TikvRegionPeersExtractor{}
 		}
 	}
 	return p, nil

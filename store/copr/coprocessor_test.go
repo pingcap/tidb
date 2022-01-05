@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -318,7 +319,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 	require.True(t, tasks[0].paging)
-	require.Equal(t, tasks[0].pagingSize, minPagingSize)
+	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {

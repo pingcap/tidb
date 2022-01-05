@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -296,7 +297,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
-	enc := charset.FindEncoding(ec.Charset)
+	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().Charset == ec.Charset {
 			continue
@@ -315,7 +316,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if isNull {
 				continue
 			}
-			if !charset.IsValidString(enc, str) {
+			if !enc.IsValid(hack.Slice(str)) {
 				return false
 			}
 		} else {

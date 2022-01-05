@@ -22,7 +22,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -35,7 +36,7 @@ type TopSQLCollector struct {
 	// plan_digest -> normalized plan
 	planMap map[string]string
 	// (sql + plan_digest) -> sql stats
-	sqlStatsMap map[string]*tracecpu.SQLCPUTimeRecord
+	sqlStatsMap map[string]*collector.SQLCPUTimeRecord
 	collectCnt  atomic.Int64
 }
 
@@ -44,12 +45,15 @@ func NewTopSQLCollector() *TopSQLCollector {
 	return &TopSQLCollector{
 		sqlMap:      make(map[string]string),
 		planMap:     make(map[string]string),
-		sqlStatsMap: make(map[string]*tracecpu.SQLCPUTimeRecord),
+		sqlStatsMap: make(map[string]*collector.SQLCPUTimeRecord),
 	}
 }
 
+// Start implements TopSQLReporter interface.
+func (c *TopSQLCollector) Start() {}
+
 // Collect uses for testing.
-func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) {
+func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 	defer c.collectCnt.Inc()
 	if len(stats) == 0 {
 		return
@@ -60,7 +64,7 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 		hash := c.hash(stmt)
 		stats, ok := c.sqlStatsMap[hash]
 		if !ok {
-			stats = &tracecpu.SQLCPUTimeRecord{
+			stats = &collector.SQLCPUTimeRecord{
 				SQLDigest:  stmt.SQLDigest,
 				PlanDigest: stmt.PlanDigest,
 			}
@@ -73,8 +77,11 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 	}
 }
 
+// CollectStmtStatsMap implements stmtstats.Collector.
+func (c *TopSQLCollector) CollectStmtStatsMap(_ stmtstats.StatementStatsMap) {}
+
 // GetSQLStatsBySQLWithRetry uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*tracecpu.SQLCPUTimeRecord {
+func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bool) []*collector.SQLCPUTimeRecord {
 	after := time.After(time.Second * 10)
 	for {
 		select {
@@ -91,8 +98,8 @@ func (c *TopSQLCollector) GetSQLStatsBySQLWithRetry(sql string, planIsNotNull bo
 }
 
 // GetSQLStatsBySQL uses for testing.
-func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*tracecpu.SQLCPUTimeRecord {
-	stats := make([]*tracecpu.SQLCPUTimeRecord, 0, 2)
+func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*collector.SQLCPUTimeRecord {
+	stats := make([]*collector.SQLCPUTimeRecord, 0, 2)
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
@@ -168,10 +175,15 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	}
 }
 
+// CollectCnt uses for testing.
+func (c *TopSQLCollector) CollectCnt() int64 {
+	return c.collectCnt.Load()
+}
+
 // Close implements the interface.
 func (c *TopSQLCollector) Close() {}
 
-func (c *TopSQLCollector) hash(stat tracecpu.SQLCPUTimeRecord) string {
+func (c *TopSQLCollector) hash(stat collector.SQLCPUTimeRecord) string {
 	return string(stat.SQLDigest) + string(stat.PlanDigest)
 }
 
