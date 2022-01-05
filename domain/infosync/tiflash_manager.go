@@ -269,19 +269,17 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() (*httptest.Server, stri
 		table, ok := tiflash.SyncStatus[tableID]
 		logutil.BgLogger().Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
 		if !ok {
-			b := []byte("0\n\n")
 			w.WriteHeader(http.StatusOK)
-			w.Write(b)
+			_, _ = w.Write([]byte("0\n\n"))
 			return
 		}
-		sync := table.String()
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(sync))
+		_, _ = w.Write([]byte(table.String()))
 	})
 	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
 		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(s))
+		_, _ = w.Write([]byte(s))
 	})
 	return server, statusAddr
 }
