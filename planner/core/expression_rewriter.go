@@ -1544,7 +1544,8 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
-		if er.ctxStack[i].GetType().EvalType() == types.ETString {
+		// Don't convert it if it's charset is binary. So that we don't convert 0x12 to a string.
+		if er.ctxStack[i].GetType().EvalType() == types.ETString && er.ctxStack[i].GetType().Charset != charset.CharsetBin {
 			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
 			if ok && rowFunc.FuncName.String() == ast.RowFunc {
 				continue
