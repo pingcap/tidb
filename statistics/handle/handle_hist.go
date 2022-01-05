@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -84,6 +85,11 @@ func (h *Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) bool {
 		}
 		sc.StatsLoad.NeededColumns = nil
 	}()
+	failpoint.Inject("WaitStatsLoadReturnTrue", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true)
+		}
+	})
 	resultCheckMap := map[model.TableColumnID]struct{}{}
 	for _, col := range sc.StatsLoad.NeededColumns {
 		resultCheckMap[col] = struct{}{}
