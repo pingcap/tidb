@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,7 +37,7 @@ type StatsLoad struct {
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
-	workingColMap    map[model.TableColumnID][]chan model.TableColumnID
+	WorkingColMap    map[model.TableColumnID][]chan model.TableColumnID
 }
 
 // NeededColumnTask represents one needed column with expire time.
@@ -128,14 +129,14 @@ func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.T
 
 var errExit = errors.New("Stop loading since domain is closed")
 
-type statsReaderContext struct {
+type StatsReaderContext struct {
 	reader      *statsReader
 	createdTime time.Time
 }
 
 // SubLoadWorker loads hist data for each column
 func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
-	readerCtx := &statsReaderContext{}
+	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
@@ -148,7 +149,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 	}()
 	var lastTask *NeededColumnTask
 	for {
-		task, err := h.handleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
+		task, err := h.HandleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
 		lastTask = task
 		if err != nil {
 			switch err {
@@ -162,16 +163,16 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 	}
 }
 
-// handleOneTask handles one column task.
-func (h *Handle) handleOneTask(lastTask *NeededColumnTask, readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededColumnTask, err error) {
+// HandleOneTask handles one column task.
+func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededColumnTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("stats loading panicked", zap.String("stack", string(buf)))
-			err = errors.New("stats loading panicked")
+			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.String("stack", string(buf)))
+			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
 	if lastTask == nil {
@@ -182,11 +183,6 @@ func (h *Handle) handleOneTask(lastTask *NeededColumnTask, readerCtx *statsReade
 			}
 			return task, err
 		}
-		// to avoid duplicated handling in concurrent scenario
-		working := h.setWorking(task.TableColumnID, task.ResultCh)
-		if !working {
-			return nil, nil
-		}
 	} else {
 		task = lastTask
 	}
@@ -195,18 +191,21 @@ func (h *Handle) handleOneTask(lastTask *NeededColumnTask, readerCtx *statsReade
 	tbl, ok := oldCache.tables[col.TableID]
 	if !ok {
 		h.writeToResultChan(task.ResultCh, col)
-		h.finishWorking(col)
 		return nil, nil
 	}
 	c, ok := tbl.Columns[col.ColumnID]
 	if !ok || c.Len() > 0 {
 		h.writeToResultChan(task.ResultCh, col)
-		h.finishWorking(col)
 		return nil, nil
 	}
-	t := time.Now()
+	// to avoid duplicated handling in concurrent scenario
+	working := h.setWorking(task.TableColumnID, task.ResultCh)
+	if !working {
+		return nil, nil
+	}
 	// refresh statsReader to get latest stats
 	h.getFreshStatsReader(readerCtx, ctx)
+	t := time.Now()
 	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
 	if err != nil {
 		return task, err
@@ -219,7 +218,7 @@ func (h *Handle) handleOneTask(lastTask *NeededColumnTask, readerCtx *statsReade
 	return nil, nil
 }
 
-func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
+func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
 	if readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now()) {
 		if readerCtx.reader != nil {
 			err := h.releaseStatsReader(readerCtx.reader, ctx)
@@ -245,6 +244,12 @@ func (h *Handle) getFreshStatsReader(readerCtx *statsReaderContext, ctx sqlexec.
 
 // readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
+	failpoint.Inject("mockReadStatsForOnePanic", nil)
+	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
+		}
+	})
 	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -346,10 +351,10 @@ func (h *Handle) writeToResultChan(resultCh chan model.TableColumnID, rs model.T
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.String("stack", string(buf)))
 		}
 	}()
-	// TODO failpoint
+	failpoint.Inject("mockWriteToResultChanPanic", nil)
 	select {
 	case resultCh <- rs:
 	default:
@@ -379,23 +384,29 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableColumnID) bool {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	chList, ok := h.StatsLoad.workingColMap[col]
+	chList, ok := h.StatsLoad.WorkingColMap[col]
 	if ok {
-		h.StatsLoad.workingColMap[col] = append(chList, resultCh)
+		if chList[0] == resultCh {
+			return true
+		}
+		h.StatsLoad.WorkingColMap[col] = append(chList, resultCh)
 		return false
 	}
 	chList = []chan model.TableColumnID{}
-	h.StatsLoad.workingColMap[col] = chList
+	chList = append(chList, resultCh)
+	h.StatsLoad.WorkingColMap[col] = chList
 	return true
 }
 
 func (h *Handle) finishWorking(col model.TableColumnID) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	if chList, ok := h.StatsLoad.workingColMap[col]; ok {
-		for _, ch := range chList {
+	failpoint.Inject("mockFinishWorkingPanic", nil)
+	if chList, ok := h.StatsLoad.WorkingColMap[col]; ok {
+		list := chList[1:]
+		for _, ch := range list {
 			h.writeToResultChan(ch, col)
 		}
 	}
-	delete(h.StatsLoad.workingColMap, col)
+	delete(h.StatsLoad.WorkingColMap, col)
 }

@@ -19,18 +19,14 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testLoadHistSuite{})
-
-type testLoadHistSuite struct {
-	testSuiteBase
-}
 
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
@@ -61,7 +57,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, hg.Len()+topn.Num(), 0)
+	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -107,7 +103,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, hg.Len()+topn.Num(), 0)
+	require.Equal(t, 0, hg.Len()+topn.Num())
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableColumnID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -119,7 +115,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, hg.Len()+topn.Num(), 0)
+	require.Equal(t, 0, hg.Len()+topn.Num())
 	// wait for timeout task to be handled
 	for {
 		time.Sleep(time.Millisecond * 100)
@@ -127,6 +123,89 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 			break
 		}
 	}
+	stat = h.GetTableStats(tableInfo)
+	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
+	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+	require.Greater(t, hg.Len()+topn.Num(), 0)
+}
+
+func TestConcurrentLoadNonExistHist(t *testing.T) {
+
+}
+
+func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	testKit.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tableInfo := tbl.Meta()
+	h := dom.StatsHandle()
+	stat := h.GetTableStats(tableInfo)
+	hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+	topn := stat.Columns[tableInfo.Columns[2].ID].TopN
+	require.Equal(t, 0, hg.Len()+topn.Num())
+
+	neededColumns := make([]model.TableColumnID, 1)
+	neededColumns[0] = model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[2].ID}
+	timeout := time.Nanosecond * mathutil.MaxInt
+	stmtCtx1 := &stmtctx.StatementContext{}
+	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+	stmtCtx2 := &stmtctx.StatementContext{}
+	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
+
+	readerCtx := &handle.StatsReaderContext{}
+	exitCh := make(chan struct{})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic", "panic"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic"))
+	}()
+	task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+	require.NotNil(t, err1)
+	require.NotNil(t, task1)
+	list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
+	require.True(t, ok)
+	require.Equal(t, 1, len(list))
+	require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
+
+	task2, err2 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+	require.Nil(t, err2)
+	require.Nil(t, task2)
+	list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
+	require.True(t, ok)
+	require.Equal(t, 2, len(list))
+	require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic"))
+	task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+	require.Nil(t, err3)
+	require.Nil(t, task3)
+
+	require.Equal(t, 1, len(stmtCtx1.StatsLoad.ResultCh))
+	require.Equal(t, 1, len(stmtCtx2.StatsLoad.ResultCh))
+
+	rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
+	require.True(t, ok1)
+	require.Equal(t, neededColumns[0], rs1)
+	rs2, ok2 := <-stmtCtx1.StatsLoad.ResultCh
+	require.True(t, ok2)
+	require.Equal(t, neededColumns[0], rs2)
+
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
