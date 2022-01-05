@@ -918,14 +918,14 @@ func (s *testPrepareSerialSuite) TestIssue31280(c *C) {
 
 	tk.MustExec(`prepare stmt from 'select * from UK_MU15569 where col2 >= ? and col1 is not null and col3 = ?;';`)
 
-	tk.MustExec("set @a=-32373, @b='45:50:46.85487';")
+	tk.MustExec("set @a=-32373, @b='545:50:46.85487';")
+	// The tableDual plan can not be cached.
 	res := tk.MustQuery("execute stmt using @a,@b;")
 	c.Assert(len(res.Rows()), Equals, 0)
 
 	tk.MustExec("set @a=-27225, @b='-836:46:08';")
 	res = tk.MustQuery("execute stmt using @a,@b;")
 	c.Assert(len(res.Rows()), Equals, 1)
-	// The tableDual plan will not be cached.
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a,@b;")
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
@@ -2348,7 +2348,8 @@ func (s *testPrepareSerialSuite) TestIssue30100(c *C) {
 	tk.MustExec("set @a=0;")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	// If the plan contains the tableDual, it can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {

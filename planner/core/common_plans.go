@@ -556,8 +556,10 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	// We only cache the tableDual plan when the number of vars are zero.
-	cacheTableDual := containTableDual(p) && varsNum == 0
-	if !cacheTableDual && prepared.UseCache && !stmtCtx.SkipPlanCache {
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
