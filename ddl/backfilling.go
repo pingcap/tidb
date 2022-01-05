@@ -606,12 +606,15 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
+			// TODO: skip set the timezone, it will cause data inconsistency when add index, since some reorg place using the timeUtil.SystemLocation() to do the time conversion. (need a more systemic plan)
+			// sessCtx.GetSessionVars().TimeZone = reorgInfo.ReorgMeta.Location
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 			sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+			sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:

@@ -188,7 +188,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
-			appendProjEliminateTraceStep(proj, child, opt)
+			appendDupProjEliminateTraceStep(proj, child, opt)
 		}
 	}
 
@@ -199,6 +199,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	for i, col := range proj.Schema().Columns {
 		replace[string(col.HashCode(nil))] = exprs[i].(*expression.Column)
 	}
+	appendProjEliminateTraceStep(proj, opt)
 	return p.Children()[0]
 }
 
@@ -296,10 +297,10 @@ func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
 
-func appendProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
+func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *logicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(
-			fmt.Sprintf("Proj[%v] is eliminated, Proj[%v]'s expressions changed into[", child.ID(), parent.ID()))
+			fmt.Sprintf("%v_%v is eliminated, %v_%v's expressions changed into[", child.TP(), child.ID(), parent.TP(), parent.ID()))
 		for i, expr := range parent.Exprs {
 			if i > 0 {
 				buffer.WriteString(",")
@@ -308,7 +309,19 @@ func appendProjEliminateTraceStep(parent, child *LogicalProjection, opt *logical
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
-	reason := fmt.Sprintf("Proj[%v]'s child proj[%v] is redundant", parent.ID(), child.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's child %v_%v is redundant", parent.TP(), parent.ID(), child.TP(), child.ID())
+	}
 	opt.appendStepToCurrent(child.ID(), child.TP(), reason, action)
+}
+
+func appendProjEliminateTraceStep(proj *LogicalProjection, opt *logicalOptimizeOp) {
+	reason := func() string {
+		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
+	}
+	action := func() string {
+		return fmt.Sprintf("%v_%v is eliminated", proj.TP(), proj.ID())
+	}
+	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }

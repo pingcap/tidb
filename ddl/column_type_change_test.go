@@ -797,7 +797,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
 	tk.MustExec("alter table t modify f64 varchar(30)")
 	tk.MustExec("alter table t modify b varchar(30)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// binary
 	reset(tk)
@@ -837,7 +837,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 blob")
 	tk.MustExec("alter table t modify f64 blob")
 	tk.MustExec("alter table t modify b blob")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// text
 	reset(tk)
@@ -850,7 +850,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify f32 text")
 	tk.MustExec("alter table t modify f64 text")
 	tk.MustExec("alter table t modify b text")
-	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21"))
 
 	// enum
 	reset(tk)
@@ -2284,6 +2284,7 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 }
 
 // See https://github.com/pingcap/tidb/issues/25287.
+// Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
 func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -2291,8 +2292,8 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bit(45));")
 	tk.MustExec("insert into t values (1174717);")
-	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
-	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+	tk.MustExec("alter table t modify column a varchar(31) collate utf8mb4_general_ci;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
 }
 
 func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
@@ -2304,4 +2305,50 @@ func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
 	tk.MustExec("insert into t values('0123456789abc');")
 	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
 	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Some ddl cases.
+	prepare := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare()
+	tk.MustExec("alter table t modify column a timestamp NOT NULL")
+	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+
+	prepare()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful.
+	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+
+	prepare2 := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a timestamp null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare2()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
+	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+
+	// Some dml cases.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp NOT NULL)")
+	_, err = tk.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+
+	_, err = tk.Exec("insert into t values(null)")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
 }

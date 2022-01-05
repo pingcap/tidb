@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	DefStatsLoadConcurrencyLimit = 1
+	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
+	DefMaxOfStatsLoadConcurrencyLimit = 128
+	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
+	DefStatsLoadQueueSizeLimit = 1
+	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
+	DefMaxOfStatsLoadQueueSizeLimit = 100000
 )
 
 // Valid config maps
@@ -301,6 +310,41 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+// AtomicBool is a helper type for atomic operations on a boolean value.
+type AtomicBool struct {
+	atomicutil.Bool
+}
+
+// NewAtomicBool creates an AtomicBool.
+func NewAtomicBool(v bool) *AtomicBool {
+	return &AtomicBool{*atomicutil.NewBool(v)}
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+func (b AtomicBool) MarshalText() ([]byte, error) {
+	if b.Load() {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+func (b *AtomicBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	case "true":
+		*b = AtomicBool{*atomicutil.NewBool(true)}
+	case "false":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	default:
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -320,12 +364,12 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -409,6 +453,18 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	// After a duration of this time in seconds if the server doesn't see any activity it pings
+	// the client to see if the transport is still alive.
+	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the server waits for a duration of timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GRPCKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// The number of max concurrent streams/requests on a client connection.
+	GRPCConcurrentStreams uint `toml:"grpc-concurrent-streams" json:"grpc-concurrent-streams"`
+	// Sets window size for stream. The default value is 2MB.
+	GRPCInitialWindowSize int `toml:"grpc-initial-window-size" json:"grpc-initial-window-size"`
+	// Set maximum message length in bytes that gRPC can send. `-1` means unlimited. The default value is 10MB.
+	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
 }
 
 // Performance is the performance section of the config.
@@ -435,11 +491,13 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval  string `toml:"-" json:"-"`
-	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                int    `toml:"gogc" json:"gogc"`
-	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	MemProfileInterval   string `toml:"-" json:"-"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -619,14 +677,19 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
-		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
+		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Status: Status{
-		ReportStatus:    true,
-		StatusHost:      DefStatusHost,
-		StatusPort:      DefStatusPort,
-		MetricsInterval: 15,
-		RecordQPSbyDB:   false,
+		ReportStatus:          true,
+		StatusHost:            DefStatusHost,
+		StatusPort:            DefStatusPort,
+		MetricsInterval:       15,
+		RecordQPSbyDB:         false,
+		GRPCKeepAliveTime:     10,
+		GRPCKeepAliveTimeout:  3,
+		GRPCConcurrentStreams: 1024,
+		GRPCInitialWindowSize: 2 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    10 * 1024 * 1024,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
@@ -649,10 +712,12 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease: "0s",
-		GOGC:                100,
-		EnforceMPP:          false,
-		PlanReplayerGCLease: "10m",
+		IndexUsageSyncLease:  "0s",
+		GOGC:                 100,
+		EnforceMPP:           false,
+		PlanReplayerGCLease:  "10m",
+		StatsLoadConcurrency: 5,
+		StatsLoadQueueSize:   1000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -946,6 +1011,14 @@ func (c *Config) Valid() error {
 	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
+	}
+
+	// check stats load config
+	if c.Performance.StatsLoadConcurrency < DefStatsLoadConcurrencyLimit || c.Performance.StatsLoadConcurrency > DefMaxOfStatsLoadConcurrencyLimit {
+		return fmt.Errorf("stats-load-concurrency should be [%d, %d]", DefStatsLoadConcurrencyLimit, DefMaxOfStatsLoadConcurrencyLimit)
+	}
+	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
+		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
 	// test log level

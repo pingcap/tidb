@@ -238,6 +238,14 @@ var (
 			Help:      "Bucketed histogram of all pd api execution time (s)",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
+
+	CPUProfileCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "cpu_profile_total",
+			Help:      "Counter of cpu profiling",
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

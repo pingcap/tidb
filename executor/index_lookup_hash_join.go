@@ -148,6 +148,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.cancelFunc = nil
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
@@ -168,19 +169,17 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	innerCh := make(chan *indexHashJoinTask, concurrency)
 	if e.keepOuterOrder {
 		e.taskCh = make(chan *indexHashJoinTask, concurrency)
+		// When `keepOuterOrder` is true, each task holds their own `resultCh`
+		// individually, thus we do not need a global resultCh.
+		e.resultCh = nil
+	} else {
+		e.resultCh = make(chan *indexHashJoinResult, concurrency)
 	}
+	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	e.workerWg.Add(1)
 	ow := e.newOuterWorker(innerCh)
 	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
-	if !e.keepOuterOrder {
-		e.resultCh = make(chan *indexHashJoinResult, concurrency)
-	} else {
-		// When `keepOuterOrder` is true, each task holds their own `resultCh`
-		// individually, thus we do not need a global resultCh.
-		e.resultCh = nil
-	}
-	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := 0; i < concurrency; i++ {
 		if !e.keepOuterOrder {
 			e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -313,7 +312,6 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
-		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
 		for range e.resultCh {

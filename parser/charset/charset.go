@@ -18,8 +18,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"go.uber.org/zap"
 )
 
 var (
@@ -158,11 +160,10 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 		return collation.CharsetName, collation.Name, nil
 	}
 
-	// TODO: uncomment it when issue #29697 be closed
-	// log.Warn(
-	// 	"Unable to get collation name from collation ID, return default charset and collation instead.",
-	//	zap.Int("ID", coID),
-	//	zap.Stack("stack"))
+	log.Warn(
+		"unable to get collation name from collation ID, return default charset and collation instead",
+		zap.Int("ID", coID),
+		zap.Stack("stack"))
 	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
@@ -211,7 +212,8 @@ const (
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
 
-	CollationGBKBin = "gbk_bin"
+	CollationGBKBin       = "gbk_bin"
+	CollationGBKChineseCI = "gbk_chinese_ci"
 
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"
@@ -483,9 +485,14 @@ func AddCharset(c *Charset) {
 }
 
 // RemoveCharset remove a charset.
-// Use only when adding a custom charset to the parser.
+// Use only when remove a custom charset to the parser.
 func RemoveCharset(c string) {
 	delete(charsetInfos, c)
+	for i := range supportedCollations {
+		if supportedCollations[i].Name == c {
+			supportedCollations = append(supportedCollations[:i], supportedCollations[i+1:]...)
+		}
+	}
 }
 
 // AddCollation adds a new collation.
@@ -495,12 +502,18 @@ func AddCollation(c *Collation) {
 	collationsNameMap[c.Name] = c
 
 	if _, ok := supportedCollationNames[c.Name]; ok {
-		supportedCollations = append(supportedCollations, c)
+		AddSupportedCollation(c)
 	}
 
 	if charset, ok := charsetInfos[c.CharsetName]; ok {
 		charset.Collations[c.Name] = c
 	}
+}
+
+// AddSupportedCollation adds a new collation into supportedCollations.
+// Use only when adding a custom collation to the parser.
+func AddSupportedCollation(c *Collation) {
+	supportedCollations = append(supportedCollations, c)
 }
 
 // init method always puts to the end of file.

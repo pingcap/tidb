@@ -197,12 +197,14 @@ type IndexReaderExecutor struct {
 }
 
 // Close clears all resources hold by current object.
-func (e *IndexReaderExecutor) Close() error {
+func (e *IndexReaderExecutor) Close() (err error) {
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
-	err := e.result.Close()
+	if e.result != nil {
+		err = e.result.Close()
+	}
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
@@ -287,6 +289,9 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
+	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		builder.SetIsolationLevel(kv.RC)
+	}
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -359,6 +364,7 @@ type IndexLookUpExecutor struct {
 
 	indexStreaming bool
 	tableStreaming bool
+	indexPaging    bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -553,11 +559,15 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
+		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			builder.SetIsolationLevel(kv.RC)
+		}
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetPaging(e.indexPaging).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -1250,7 +1260,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
+		!w.idxLookup.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {
