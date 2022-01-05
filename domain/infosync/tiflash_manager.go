@@ -184,7 +184,6 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 
 type mockTiFlashPlacementManager struct {
 	sync.Mutex
-	addrs   []string
 	tiflash *MockTiFlash
 }
 
