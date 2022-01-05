@@ -46,6 +46,15 @@ for BACKEND in local importer tidb; do
   check_contains "id: 1"
   check_contains "v2: 啊啊"
 
+  run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data-gbk" --config "tests/$TEST_NAME/gbk.toml"
+
+  run_sql 'SELECT count(*) from nc.gbk_source;'
+  check_contains "count(*): 3"
+
+  run_sql 'SELECT id, v from nc.gbk_source order by v limit 1;'
+  check_contains "id: 1"
+  check_contains "v2: 啊啊"
+
 done
 
 # restart with original config
