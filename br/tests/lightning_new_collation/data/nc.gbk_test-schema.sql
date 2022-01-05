@@ -1,4 +1,4 @@
-CREATE TABLE `t` (
+CREATE TABLE `gbk_test` (
       `id` int(11) DEFAULT NULL,
       `v` varchar(32) DEFAULT NULL,
       `v2` varchar(32) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
