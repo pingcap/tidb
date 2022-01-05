@@ -535,3 +535,14 @@ select crc32(a), crc32(b), crc32(c) from t;
 crc32(a)	crc32(b)	crc32(c)
 1785250883	3461331449	4092198678
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20), b blob(100), c binary(100), d json, e timestamp, f set('a一','b二','c三','d四'), g text, h enum('a一','b二','c三','d四') default 'c三') charset=gbk;
+insert into t values ('abcABC一二三abcABC', 'abcABC一二三abcABC', 0xe2e2, '{\"abcABC一二三abcABC\": \"abcABC一二三abcABC\"}', '2018-10-13', 1, 'abcABC一二三abcABC', 'a一');
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(2, f, h)), hex(elt(8, a, b, c, d, e, f, g, h)) from t;
+hex(elt(2, f, h))	hex(elt(8, a, b, c, d, e, f, g, h))
+61D2BB	61E4B880
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(2, f, h)), hex(elt(8, a, b, c, d, e, f, g, h)) from t;
+hex(elt(2, f, h))	hex(elt(8, a, b, c, d, e, f, g, h))
+61D2BB	61E4B880
