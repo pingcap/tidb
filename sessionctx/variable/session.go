@@ -2010,13 +2010,13 @@ const (
 	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
 	SlowLogCopProcAddr = "Cop_proc_addr"
 	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
-	SlowLogCopWaitAvg = "Cop_wait_avg"
+	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
 	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
-	SlowLogCopWaitP90 = "Cop_wait_p90"
+	SlowLogCopWaitP90 = "Cop_wait_p90" // #nosec G101
 	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
 	SlowLogCopWaitMax = "Cop_wait_max"
 	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
-	SlowLogCopWaitAddr = "Cop_wait_addr"
+	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogCopBackoffPrefix contains backoff information.
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
