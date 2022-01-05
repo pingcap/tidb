@@ -86,6 +86,7 @@ func EnableNewCollations() {
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
+	SetDefaultCollation(flag)
 	if flag {
 		atomic.StoreInt32(&newCollationEnabled, 1)
 		return

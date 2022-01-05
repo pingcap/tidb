@@ -14,16 +14,15 @@
 
 package collate
 
-import (
-	"github.com/pingcap/tidb/parser/charset"
-)
+import "github.com/pingcap/tidb/parser/charset"
 
 // SetDefaultCollation set the default collation for charset if new collation is not enabled.
-func SetDefaultCollation() {
-	if !NewCollationEnabled() {
-		c := &charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: true}
-		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
-		charset.AddCollation(c)
-		charset.AddSupportedCollation(c)
+func SetDefaultCollation(flag bool) {
+	if flag {
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
+	} else {
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
 	}
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKBin].IsDefault = !flag
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKChineseCI].IsDefault = flag
 }
