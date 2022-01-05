@@ -55,6 +55,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}
 	a.register(stats)
 	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
+	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), time.Millisecond)
 	total := StatementStatsMap{}
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
@@ -62,6 +63,7 @@ func Test_aggregator_register_collect(t *testing.T) {
 	a.aggregate()
 	assert.NotEmpty(t, total)
 	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {

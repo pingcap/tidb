@@ -53,8 +53,10 @@ func testKeyTable(t *testing.T, collations []string, tests []keyTable) {
 }
 
 func TestUTF8CollatorCompare(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
 	SetCharsetFeatEnabledForTest(true)
 	defer SetCharsetFeatEnabledForTest(false)
+	defer SetNewCollationEnabledForTest(false)
 	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "gbk_bin", "gbk_chinese_ci"}
 	tests := []compareTable{
 		{"a", "b", []int{-1, -1, -1, -1, -1, -1}},
@@ -75,8 +77,10 @@ func TestUTF8CollatorCompare(t *testing.T) {
 }
 
 func TestUTF8CollatorKey(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
 	SetCharsetFeatEnabledForTest(true)
 	defer SetCharsetFeatEnabledForTest(false)
+	defer SetNewCollationEnabledForTest(false)
 	collations := []string{"binary", "utf8mb4_bin", "utf8mb4_general_ci", "utf8mb4_unicode_ci", "gbk_bin", "gbk_chinese_ci"}
 	tests := []keyTable{
 		{"a", [][]byte{{0x61}, {0x61}, {0x0, 0x41}, {0x0E, 0x33}, {0x61}, {0x41}}},
@@ -132,6 +136,7 @@ func TestRewriteAndRestoreCollationID(t *testing.T) {
 }
 
 func TestGetCollator(t *testing.T) {
+	SetCharsetFeatEnabledForTest(false)
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &binCollator{}, GetCollator("binary"))
@@ -175,6 +180,8 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollatorByID(2048))
 	require.IsType(t, &binCollator{}, GetCollatorByID(9999))
 
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
 	SetCharsetFeatEnabledForTest(true)
 	defer SetCharsetFeatEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))

@@ -108,11 +108,13 @@ const (
 )
 
 const (
-	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
+	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
 	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeNoErr   = OpDecode | opSkipError
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 

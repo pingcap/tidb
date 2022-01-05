@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/israce"
@@ -1035,11 +1036,10 @@ func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+		idx := i
+		wg.Run(func() {
 			tk := testkit.NewTestKitWithInit(c, s.store)
 			for j := 0; j < 10; j++ {
 				k := strconv.Itoa(idx*100 + j)
@@ -1062,7 +1062,7 @@ func (s *testSuiteP1) TestAllocateContinuousRowID(c *C) {
 					last = v
 				}
 			}
-		}(i)
+		})
 	}
 	wg.Wait()
 }

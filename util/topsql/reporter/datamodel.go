@@ -20,10 +20,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/collector"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
@@ -49,7 +49,7 @@ import (
 //     - records: { sqlPlanDigest => record | sqlPlanDigest => record | ... }
 //     - evicted: { sqlPlanDigest | sqlPlanDigest | ... }
 //
-// cpuRecords: [ tracecpu.SQLCPUTimeRecord | tracecpu.SQLCPUTimeRecord | ... ]
+// cpuRecords: [ collector.SQLCPUTimeRecord | collector.SQLCPUTimeRecord | ... ]
 //
 // normalizeSQLMap: { sqlDigest => normalizedSQL | sqlDigest => normalizedSQL | ... }
 //
@@ -84,12 +84,11 @@ func zeroTsItem() tsItem {
 // toProto converts the tsItem to the corresponding protobuf representation.
 func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 	return &tipb.TopSQLRecordItem{
-		TimestampSec:    i.timestamp,
-		CpuTimeMs:       i.cpuTimeMs,
-		StmtExecCount:   i.stmtStats.ExecCount,
-		StmtKvExecCount: i.stmtStats.KvStatsItem.KvExecCount,
-		// TODO: add duration
-		// StmtDurationSumNs: i.stmtStats.DurationSumNs,
+		TimestampSec:      i.timestamp,
+		CpuTimeMs:         i.cpuTimeMs,
+		StmtExecCount:     i.stmtStats.ExecCount,
+		StmtKvExecCount:   i.stmtStats.KvStatsItem.KvExecCount,
+		StmtDurationSumNs: i.stmtStats.SumDurationNs,
 		// Convert more indicators here.
 	}
 }
@@ -149,7 +148,7 @@ type record struct {
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
-	listCap := variable.TopSQLVariable.ReportIntervalSeconds.Load()/variable.TopSQLVariable.PrecisionSeconds.Load() + 1
+	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
 	if listCap > maxTsItemsCapacity {
 		listCap = maxTsItemsCapacity
 	}
@@ -497,29 +496,15 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
-// compactToTopNAndOthers returns the largest N records, other records will be packed and appended to the end.
-func (c *collecting) compactToTopNAndOthers(n int) records {
+// getReportRecords returns all records, others record will be packed and appended to the end.
+func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	// Fetch TopN records.
-	var evicted records
-	rs, evicted = rs.topN(n)
-	if others != nil {
-		// Sort the records by timestamp to fix the affect of time jump backward.
-		sort.Sort(others)
-	} else {
-		others = newRecord(nil, nil)
-	}
-	for _, evict := range evicted {
-		e := evict // Avoid implicit memory aliasing in for loop.
-		others.merge(&e)
-	}
-	if others.totalCPUTimeMs > 0 {
-		// append others which summarize all evicted item's cpu-time.
+	if others != nil && others.totalCPUTimeMs > 0 {
 		rs = append(rs, *others)
 	}
 	return rs
@@ -537,8 +522,8 @@ func (c *collecting) take() *collecting {
 	return r
 }
 
-// cpuRecords is a sortable list of tracecpu.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
-type cpuRecords []tracecpu.SQLCPUTimeRecord
+// cpuRecords is a sortable list of collector.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
+type cpuRecords []collector.SQLCPUTimeRecord
 
 func (rs cpuRecords) Len() int {
 	return len(rs)
@@ -586,7 +571,7 @@ func newNormalizedSQLMap() *normalizedSQLMap {
 // register saves the relationship between sqlDigest and normalizedSQL.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	if m.length.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedSQLCounter.Inc()
 		return
 	}
@@ -646,7 +631,7 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
-	if m.length.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
