@@ -87,6 +87,75 @@ func (s *testPlanSuite) TestSingleRuleTraceStep(c *C) {
 		assertRuleSteps []assertTraceStep
 	}{
 		{
+			sql:            "select count(1) from t join (select count(1) from t where false) as tmp;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "Aggregation_8's columns[Column#25,test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_8's aggregation functions[firstrow(Column#25),firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a)] have been pruned",
+				},
+				{
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Projection_6's columns[Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a,Column#25] have been pruned",
+				},
+				{
+					assertAction: "Aggregation_5's aggregation functions[firstrow(test.t.i_date),firstrow(test.t.h),firstrow(test.t.g),firstrow(test.t.f),firstrow(test.t.e_str),firstrow(test.t.d_str),firstrow(test.t.c_str),firstrow(test.t.e),firstrow(test.t.d),firstrow(test.t.c),firstrow(test.t.b),firstrow(test.t.a),count(1)] have been pruned",
+				},
+				{
+					assertAction: "TableDual_4's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c,test.t.b,test.t.a] have been pruned",
+				},
+				{
+					assertAction: "Join_7's columns[Column#28,test.t.a] have been pruned",
+				},
+			},
+		},
+		{
+			sql:            "select a from t where b > 5;",
+			flags:          []uint64{flagPrunColumns},
+			assertRuleName: "column_prune",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertReason: "",
+					assertAction: "DataSource_1's columns[test.t.i_date,test.t.h,test.t.g,test.t.f,test.t.e_str,test.t.d_str,test.t.c_str,test.t.e,test.t.d,test.t.c] have been pruned",
+				},
+			},
+		},
+		{
+			sql:            "select * from t as t1 where t1.a < (select sum(t2.a) from t as t2 where t2.b = t1.b);",
+			flags:          []uint64{flagDecorrelate, flagBuildKeyInfo, flagPrunColumns},
+			assertRuleName: "decorrelate",
+			assertRuleSteps: []assertTraceStep{
+				{
+					assertAction: "MaxOneRow_7 removed from plan tree",
+					assertReason: "",
+				},
+				{
+					assertAction: "Selection_4 removed from plan tree",
+					assertReason: "Selection_4's conditions have been pushed into Apply_8",
+				},
+				{
+					assertAction: "Apply_8 simplified into Join_8",
+					assertReason: "Join_8 hasn't any corelated column, thus the inner plan is non-correlated",
+				},
+				{
+					assertAction: "Aggregation_5 pulled up as Join_8's parent, and Join_8's join type becomes left outer join",
+					assertReason: "Aggregation_5's functions haven't any group by items and Join_8's join type isn't inner join or left outer join, and hasn't any conditions",
+				},
+				{
+					assertAction: "Projection_6 is moved as Aggregation_5's parent",
+					assertReason: "Join_8's join type is left outer join, not semi join",
+				},
+			},
+		},
+		{
 			sql:            "select * from t as t1 join t as t2 on t1.a = t2.a where t1.a < 1;",
 			flags:          []uint64{flagPredicatePushDown, flagBuildKeyInfo, flagPrunColumns},
 			assertRuleName: "predicate_push_down",
