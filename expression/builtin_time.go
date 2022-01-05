@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -5773,6 +5774,16 @@ func (b *builtinAddStringAndStringSig) evalString(row chunk.Row) (result string,
 		}
 		return "", true, err
 	}
+
+	check := arg1Str
+	_, check, err = parser.Number(parser.Space0(check))
+	if err == nil {
+		check, err = parser.Char(check, '-')
+		if strings.Compare(check, "") != 0 && err == nil {
+			return "", true, nil
+		}
+	}
+
 	if isDuration(arg0) {
 		result, err = strDurationAddDuration(sc, arg0, arg1)
 		if err != nil {
