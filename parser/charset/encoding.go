@@ -114,6 +114,7 @@ const (
 	OpEncodeNoErr   = OpEncode | opSkipError
 	OpEncodeReplace = opFromUTF8 | opTruncateReplace | opCollectTo
 	OpDecode        = opToUTF8 | opTruncateTrim | opCollectTo
+	OpDecodeNoErr   = OpDecode | opSkipError
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
 
