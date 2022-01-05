@@ -59,3 +59,24 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 	tk.MustGetErrMsg("create table t (a blob default 0xE4BDA0E5A5BD81);",
 		"[ddl:1101]BLOB/TEXT/JSON column 'a' can't have a default value")
 }
+
+// https://github.com/pingcap/tidb/issues/30740.
+func TestDefaultValueInEnum(t *testing.T) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	// The value 0x91 should not cause panic.
+	tk.MustExec("create table t(a enum('a', 0x91) charset gbk);")
+	tk.MustExec("insert into t values (1), (2);")                 // Use 1-base index to locate the value.
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "")) // 0x91 is truncate.
+	tk.MustExec("drop table t;")
+	tk.MustGetErrMsg("create table t(a set('a', 0x91, '') charset gbk);",
+		"[types:1291]Column 'a' has duplicated value '' in SET")
+	// Test valid gbk string value in enum.
+	tk.MustExec("create table t (a enum('a', 0xC4E3BAC3) charset gbk);")
+	tk.MustExec("insert into t values (1), (2);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
+}
