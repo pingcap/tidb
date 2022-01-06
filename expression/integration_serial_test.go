@@ -180,11 +180,12 @@ func TestCollationBasic(t *testing.T) {
 	tk.MustExec("create table t(a char(10))")
 	tk.MustExec("insert into t values ('a')")
 	tk.MustQuery("select * from t where a in ('b' collate utf8mb4_general_ci, 'A', 3)").Check(testkit.Rows("a"))
-	// These test cases may not the same as MySQL, but it's more reasonable.
-	tk.MustQuery("select ('a', 'a') in (('A' collate utf8mb4_general_ci, 'A' collate utf8mb4_general_ci));").Check(testkit.Rows("1"))
-	tk.MustQuery("select ('a', 'a') in (('A' collate utf8mb4_general_ci, 'A' collate utf8mb4_bin));").Check(testkit.Rows("0"))
-	tk.MustQuery("select ('a', 'a') in (('A' collate utf8mb4_general_ci, 'A' collate utf8mb4_general_ci), ('b', 'b'));").Check(testkit.Rows("1"))
-	tk.MustQuery("select ('a', 'a') in (('A' collate utf8mb4_general_ci, 'A' collate utf8mb4_bin), ('b', 'b'));").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`COL2` tinyint(16) DEFAULT NULL);")
+	tk.MustExec("insert into t values(0);")
+	tk.MustQuery("select * from t WHERE COL2 IN (0xfc);").Check(testkit.Rows())
+	tk.MustQuery("select * from t WHERE COL2 = 0xfc;").Check(testkit.Rows())
 }
 
 func TestWeightString(t *testing.T) {
