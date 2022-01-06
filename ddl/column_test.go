@@ -1166,8 +1166,6 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 func TestModifyColumn(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
