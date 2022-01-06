@@ -268,20 +268,22 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			d.updateDataEncoding(columns[i].Charset, columns[i].Type)
+			d.updateDataEncoding(columns[i].Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
-			d.updateDataEncoding(columns[i].Charset, columns[i].Type)
+			d.updateDataEncoding(columns[i].Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			d.updateDataEncoding(columns[i].Charset, columns[i].Type)
+			d.updateDataEncoding(columns[i].Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(columns[i].Charset, columns[i].Type)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
@@ -348,15 +350,13 @@ func (d *resultEncoder) clean() {
 	d.buffer = nil
 }
 
-func (d *resultEncoder) updateDataEncoding(chsID uint16, tp byte) {
+func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
 	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
-	// The collation of JSON type is always binary.
-	// To compatible with MySQL, here we treat it as utf-8.
-	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID && tp != mysql.TypeJSON
+	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 
 func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
@@ -450,7 +450,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			d.updateDataEncoding(col.Charset, col.Type)
+			d.updateDataEncoding(col.Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
@@ -458,13 +458,15 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 			dur := row.GetDuration(i, int(col.Decimal))
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
-			d.updateDataEncoding(col.Charset, col.Type)
+			d.updateDataEncoding(col.Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			d.updateDataEncoding(col.Charset, col.Type)
+			d.updateDataEncoding(col.Charset)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			d.updateDataEncoding(col.Charset, col.Type)
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
 			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
