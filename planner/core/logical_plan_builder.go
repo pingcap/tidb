@@ -4505,15 +4505,15 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 // the storage of cte needs to be reset for each outer row.
 // It's better to handle this in CTEExec.Close(), but cte storage is closed when SQL is finished.
 func setIsInApplyForCTE(p LogicalPlan) {
-	for _, child := range p.Children() {
-		switch cte := child.(type) {
-		case *LogicalCTE:
-			cte.cte.IsInApply = true
-			setIsInApplyForCTE(cte.cte.seedPartLogicalPlan)
-			if cte.cte.recursivePartLogicalPlan != nil {
-				setIsInApplyForCTE(cte.cte.recursivePartLogicalPlan)
-			}
-		default:
+	switch x := p.(type) {
+	case *LogicalCTE:
+		x.cte.IsInApply = true
+		setIsInApplyForCTE(x.cte.seedPartLogicalPlan)
+		if x.cte.recursivePartLogicalPlan != nil {
+			setIsInApplyForCTE(x.cte.recursivePartLogicalPlan)
+		}
+	default:
+		for _, child := range p.Children() {
 			setIsInApplyForCTE(child)
 		}
 	}
