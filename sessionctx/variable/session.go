@@ -433,6 +433,30 @@ const (
 	oneShotUse
 )
 
+// ReadConsistencyLevel is the level of read consistency.
+type ReadConsistencyLevel string
+
+const (
+	// ReadConsistencyStrict means read by strict consistency, default value.
+	ReadConsistencyStrict ReadConsistencyLevel = "strict"
+	// ReadConsistencyWeak means read can be weak consistency.
+	ReadConsistencyWeak ReadConsistencyLevel = "weak"
+)
+
+// IsWeak returns true only if it's a weak-consistency read.
+func (r ReadConsistencyLevel) IsWeak() bool {
+	return r == ReadConsistencyWeak
+}
+
+func validateReadConsistencyLevel(val string) error {
+	switch v := ReadConsistencyLevel(strings.ToLower(val)); v {
+	case ReadConsistencyStrict, ReadConsistencyWeak:
+		return nil
+	default:
+		return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+	}
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -719,9 +743,6 @@ type SessionVars struct {
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
-	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
-	EnableAlterPlacement bool
-
 	// EnablePlacementChecks indicates whether a user can check validation of placement.
 	EnablePlacementChecks bool
 
@@ -985,6 +1006,12 @@ type SessionVars struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	StmtStats *stmtstats.StatementStats
+
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
+
+	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
+	StatsLoadSyncWait int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1209,7 +1236,6 @@ func NewSessionVars() *SessionVars {
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
-		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),
@@ -1227,6 +1253,7 @@ func NewSessionVars() *SessionVars {
 		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StmtStats:                   stmtstats.CreateStatementStats(),
+		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
