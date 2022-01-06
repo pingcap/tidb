@@ -1469,7 +1469,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
-func (s *session) ParseWithParams(ctx context.Context, isInternalParam bool, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (s *session) ParseWithParams(ctx context.Context, forceUTF8SQL bool, sql string, args ...interface{}) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlexec.EscapeSQL(sql, args...)
@@ -1478,19 +1478,17 @@ func (s *session) ParseWithParams(ctx context.Context, isInternalParam bool, sql
 		}
 	}
 
-	internal := s.isInternal() || isInternalParam
+	internal := s.isInternal()
 
 	var stmts []ast.StmtNode
 	var warns []error
-	var parseStartTime time.Time
-	if internal {
+	parseStartTime := time.Now()
+	if internal || forceUTF8SQL {
 		// Do no respect the settings from clients, if it is for internal usage.
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		parseStartTime = time.Now()
 		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
