@@ -41,6 +41,12 @@ import (
 	"go.uber.org/atomic"
 )
 
+func init() {
+	// Reduce the time cost for test cases.
+	restore.ScanRegionAttemptTimes = 2
+	splitRetryTimes = 2
+}
+
 type testClient struct {
 	mu           sync.RWMutex
 	stores       map[uint64]*metapb.Store
@@ -566,7 +572,7 @@ func TestBatchSplitByRangesNoValidKeysOnce(t *testing.T) {
 }
 
 func TestBatchSplitByRangesNoValidKeys(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, ".*no valid key.*", defaultHook{})
+	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, "no valid key", defaultHook{})
 }
 
 type reportAfterSplitHook struct {
