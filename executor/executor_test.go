@@ -9010,6 +9010,7 @@ func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
