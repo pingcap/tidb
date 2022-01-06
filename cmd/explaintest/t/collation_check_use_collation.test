@@ -34,6 +34,9 @@ select * from t where 'B' collate utf8mb4_bin in (a);
 select * from t where 'B' collate utf8mb4_bin in (a, b);
 select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
 select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+select * from t where 1 in (a);
+select * from t where 2 in (a);
+select * from t where 1 in (a, 0);
 
 # set part
 drop table if exists t;
@@ -48,6 +51,9 @@ select * from t where 'B' collate utf8mb4_bin in (a);
 select * from t where 'B' collate utf8mb4_bin in (a, b);
 select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
 select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+select * from t where 1 in (a);
+select * from t where 2 in (a);
+select * from t where 1 in (a, 0);
 
 # check build range
 drop table if exists tbl_2;
