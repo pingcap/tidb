@@ -408,7 +408,6 @@ func (tiflash *MockTiFlash) HandleGetStoresStat() *helper.StoresStat {
 }
 
 // SetPlacementRule is a helper function to set placement rule.
-
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()
 	defer m.Unlock()

@@ -802,7 +802,6 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
-
 	writeData(w, replicaInfos)
 }
 

@@ -2749,7 +2749,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	}
 
 	s.SetValue(sessionctx.Initing, true)
-
 	bootstrap(s)
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)

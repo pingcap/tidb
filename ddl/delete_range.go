@@ -235,7 +235,6 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				return errors.Trace(err)
 			}
 			startKey, endKey := r.Range()
-
 			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),

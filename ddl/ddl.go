@@ -189,9 +189,9 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers           map[workerType]*worker
-	sessPool          *sessionPool
-	delRangeMgr       delRangeManager
+	workers     map[workerType]*worker
+	sessPool    *sessionPool
+	delRangeMgr delRangeManager
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -308,9 +308,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:               ctx,
-		ddlCtx:            ddlCtx,
-		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		ctx:        ctx,
+		ddlCtx:     ddlCtx,
+		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
 
 	return d

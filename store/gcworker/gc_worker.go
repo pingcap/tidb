@@ -198,16 +198,6 @@ const (
 	gcTimeout                 = 5 * time.Minute
 )
 
-// SetGcSafePointCacheInterval can modify gc interval for test.
-func SetGcSafePointCacheInterval(interval time.Duration) {
-	gcSafePointCacheInterval = interval
-}
-
-// GetGcSafePointCacheInterval returns gc interval.
-func GetGcSafePointCacheInterval() time.Duration {
-	return gcSafePointCacheInterval
-}
-
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	logutil.Logger(ctx).Info("[gc worker] start",
 		zap.String("uuid", w.uuid))
@@ -1910,11 +1900,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
-			return
-		}
-	case model.ActionDropSchema:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropSchema:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
