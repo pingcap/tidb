@@ -256,10 +256,6 @@ func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *mode
 	if placementPolicyRef != nil {
 		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
 		if !ok {
-			if !ctx.GetSessionVars().EnablePlacementChecks {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
-				return fallbackPlacementPolicyRef, fallbackDirectPlacementOpts, nil
-			}
 			return nil, nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
 		}
 		placementPolicyRef.ID = policy.ID

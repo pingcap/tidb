@@ -743,9 +743,6 @@ type SessionVars struct {
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
-	// EnablePlacementChecks indicates whether a user can check validation of placement.
-	EnablePlacementChecks bool
-
 	// PlacementMode the placement mode we use
 	//   strict: Check placement settings strictly in ddl operations
 	//   ignore: Ignore all placement settings in ddl operations
@@ -1250,7 +1247,6 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
-		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StmtStats:                   stmtstats.CreateStatementStats(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
