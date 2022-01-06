@@ -153,6 +153,7 @@ func TestCollectAndEvicted(t *testing.T) {
 		ds.Close()
 		tsr.Close()
 	}()
+	ts := uint64(time.Now().Unix())
 	populateCache(tsr, 0, maxSQLNum*2, 2)
 
 	agentServer.WaitCollectCnt(1, time.Second*10)
@@ -169,7 +170,7 @@ func TestCollectAndEvicted(t *testing.T) {
 			id = n
 		}
 		require.Len(t, req.Items, 1)
-		require.Equal(t, uint64(2), req.Items[0].TimestampSec)
+		require.Greater(t, req.Items[0].TimestampSec, ts)
 		if id == 0 {
 			// test for others
 			require.Nil(t, req.SqlDigest)
@@ -220,7 +221,7 @@ func TestCollectAndTopN(t *testing.T) {
 		ds.Close()
 		tsr.Close()
 	}()
-	ts := time.Now().Unix()
+	ts := uint64(time.Now().Unix())
 	records := []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 1, 1),
 		newSQLCPUTimeRecord(tsr, 2, 2),
@@ -424,7 +425,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	topsqlstate.EnableTopSQL()
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	tsr.Start()
-	ts := time.Now().Unix()
+	ts := uint64(time.Now().Unix())
 	defer tsr.Close()
 
 	var chs []chan *ReportData
@@ -469,7 +470,7 @@ func TestMultipleDataSinks(t *testing.T) {
 	for i := 0; i < 7; i += 2 {
 		tsr.Deregister(dss[i])
 	}
-	ts = time.Now().Unix()
+	ts = uint64(time.Now().Unix())
 	records = []collector.SQLCPUTimeRecord{
 		newSQLCPUTimeRecord(tsr, 4, 5),
 	}
