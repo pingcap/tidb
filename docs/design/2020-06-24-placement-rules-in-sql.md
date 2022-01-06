@@ -458,18 +458,16 @@ When placement policies are specified, they should be validated for correctness:
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
 4. Specifying both direct placement rules (`{FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
 
-#### Skipping Policy Validation
+#### Ignore placement settings
 
-It should be possible to skip policy validation. This can be seen as similar to skipping foreign key checks, which is often used by logical dumpers:
+It should be possible to ignore placement options in ddl when restoring a tidb cluster and user does not want to restore placement.
 
-```sql
-SET FOREIGN_KEY_CHECKS=0;
-SET PLACEMENT_CHECKS=0;
+The system variable `TIDB_PLACEMENT_MODE` can control whether to ignore placement options in ddl or not. It has two values:
 
-CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
-```
+* STRICT: The default value. It means that we should check all placement settings strictly in ddl operations.
+* IGNORE: It means tidb should ignore all placement settings in ddl operations.
 
-If a table is imported when `PLACEMENT_CHECKS` is `OFF`, and the placement policy does not validate, then the same rules of fallback apply as in the case `DROP PLACEMENT POLICY` (where policy is still in use).
+If a table is imported when `TIDB_PLACEMENT_MODE` is `IGNORE`, it is equivalent to importing a table without any placement options.
 
 #### Ambiguous and edge cases
 
