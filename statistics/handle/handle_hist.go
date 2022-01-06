@@ -129,6 +129,7 @@ func (h *Handle) AppendNeededColumn(c model.TableColumnID, resultCh chan model.T
 
 var errExit = errors.New("Stop loading since domain is closed")
 
+// StatsReaderContext exported for testing
 type StatsReaderContext struct {
 	reader      *statsReader
 	createdTime time.Time
