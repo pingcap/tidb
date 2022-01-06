@@ -108,7 +108,6 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
-var _ = SerialSuites(&testSuiteWithCliBaseCharsetNoNewCollation{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -331,6 +330,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -3441,32 +3441,6 @@ type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
 }
 
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetNewCollationEnabledForTest(false)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
-type testSuiteWithCliBaseCharsetNoNewCollation struct {
-	testSuiteWithCliBase
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5753,7 +5727,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5776,6 +5750,8 @@ func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5841,6 +5817,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5866,6 +5844,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -8116,45 +8096,6 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 	for _, t := range SQLs {
 		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	}
-
-	SQLs = []string{
-		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
-		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
-	}
-	for _, t := range SQLs {
-		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	}
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(v1 datetime, v2 datetime(3))")
-	tk.MustExec("insert ignore into t values(0,0)")
-
-	SQLs = []string{
-		`select YEAR(v1), YEAR(v2) from t`,
-		`select MONTH(v1), MONTH(v2) from t`,
-		`select DAYOFMONTH(v1), DAYOFMONTH(v2) from t`,
-		`select QUARTER(v1), QUARTER(v2) from t`,
-		`select EXTRACT(DAY FROM v1), EXTRACT(DAY FROM v2) from t`,
-		`select EXTRACT(MONTH FROM v1), EXTRACT(MONTH FROM v2) from t`,
-		`select EXTRACT(YEAR FROM v1), EXTRACT(YEAR FROM v2) from t`,
-		`select EXTRACT(WEEK FROM v1), EXTRACT(WEEK FROM v2) from t`,
-		`select EXTRACT(QUARTER FROM v1), EXTRACT(QUARTER FROM v2) from t`,
-	}
-	for _, t := range SQLs {
-		tk.MustQuery(t).Check(testkit.Rows("0 0"))
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	}
-
-	SQLs = []string{
-		`select DAYOFWEEK(v1), DAYOFWEEK(v2) from t`,
-		`select DAYOFYEAR(v1), DAYOFYEAR(v2) from t`,
-	}
-	for _, t := range SQLs {
-		tk.MustQuery(t).Check(testkit.Rows("<nil> <nil>"))
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
 	}
 
 	SQLs = []string{

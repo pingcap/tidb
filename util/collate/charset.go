@@ -14,26 +14,12 @@
 
 package collate
 
-import (
-	"github.com/pingcap/tidb/parser/charset"
-)
+import "github.com/pingcap/tidb/parser/charset"
 
-var (
-	enableCharsetFeat bool
-)
-
-// EnableNewCharset enables the charset feature.
-func EnableNewCharset() {
-	enableCharsetFeat = true
-	addCharset()
-}
-
-// SetCharsetFeatEnabledForTest set charset feature enabled. Only used in test.
-// It will also enable or disable new collation.
-func SetCharsetFeatEnabledForTest(flag bool) {
-	enableCharsetFeat = flag
+// switchDefaultCollation switch the default collation for charset according to the new collation config.
+func switchDefaultCollation(flag bool) {
 	if flag {
-		addCharset()
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
 	} else {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
 	}
