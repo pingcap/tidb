@@ -19,12 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tests := []struct {
@@ -62,8 +59,6 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/30740.
 func TestDefaultValueInEnum(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
