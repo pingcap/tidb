@@ -215,6 +215,11 @@
             "info": {
                 "writes": [
                     {
+                        "type": 1,
+                        "start_ts": 423158426542538752,
+                        "commit_ts": 423158426543587328
+                    },
+                    {
                         "start_ts": 423158426542538752,
                         "commit_ts": 423158426543587328,
                         "short_value": "gAACAAAAAQMDAAQAYWFhZA=="
