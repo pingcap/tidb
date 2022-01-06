@@ -516,6 +516,12 @@ func AddSupportedCollation(c *Collation) {
 	supportedCollations = append(supportedCollations, c)
 }
 
+// AddSupportedCollation adds a new collation into supportedCollations.
+// Use only when adding a custom collation to the parser.
+func AddSupportedCollation(c *Collation) {
+	supportedCollations = append(supportedCollations, c)
+}
+
 // init method always puts to the end of file.
 func init() {
 	for _, c := range collations {

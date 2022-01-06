@@ -35,37 +35,8 @@ func SetCharsetFeatEnabledForTest(flag bool) {
 	if flag {
 		addCharset()
 	} else {
-		removeCharset()
+		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
 	}
-}
-
-// CharsetFeatEnabled return true if charset feature is enabled.
-func CharsetFeatEnabled() bool {
-	return enableCharsetFeat
-}
-
-func addCharset() {
-	if NewCollationEnabled() {
-		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKChineseCI, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
-		charset.AddCollation(&charset.Collation{ID: 28, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKChineseCI, IsDefault: true})
-		charset.AddCollation(&charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: false})
-
-		newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
-		newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
-		newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
-		newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
-	} else {
-		charset.AddCharset(&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2})
-		charset.AddCollation(&charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: true})
-		charset.AddSupportedCollation(&charset.Collation{ID: 87, CharsetName: charset.CharsetGBK, Name: charset.CollationGBKBin, IsDefault: true})
-	}
-}
-
-func removeCharset() {
-	charset.RemoveCharset(charset.CharsetGBK)
-	delete(newCollatorMap, charset.CollationGBKBin)
-	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKBin))
-
-	delete(newCollatorMap, charset.CollationGBKChineseCI)
-	delete(newCollatorIDMap, CollationName2ID(charset.CollationGBKChineseCI))
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKBin].IsDefault = !flag
+	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKChineseCI].IsDefault = flag
 }
