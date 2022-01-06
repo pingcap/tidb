@@ -934,6 +934,48 @@ func (s *testPrepareSerialSuite) TestIssue31280(c *C) {
 	c.Assert(res.Rows(), DeepEquals, res1.Rows())
 }
 
+func (s *testPrepareSerialSuite) TestIssue31375(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MULTI15844STROBJSTROBJ;")
+	tk.MustExec("CREATE TABLE `IDT_MULTI15844STROBJSTROBJ` (" +
+		"`COL1` enum('bb','aa') DEFAULT NULL," +
+		"`COL2` smallint(41) DEFAULT NULL," +
+		"`COL3` year(4) DEFAULT NULL," +
+		"KEY `U_M_COL4` (`COL1`,`COL2`)," +
+		"KEY `U_M_COL5` (`COL3`,`COL2`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MULTI15844STROBJSTROBJ values('bb', -16994, 1987);")
+
+	tk.MustExec(`prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM IDT_MULTI15844STROBJSTROBJ t1 LEFT JOIN IDT_MULTI15844STROBJSTROBJ t2 ON t1.col1 = t2.col1 WHERE t1.col2 BETWEEN ? AND ? AND t1.col1 >= ?;';`)
+
+	tk.MustExec("set @a=752400293960, @b=258241896853, @c='none';")
+	// The tableDual plan can not be cached.
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+
+	tk.MustExec("set @a=-170756280585, @b=3756, @c='aa';")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("bb -16994 1987"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a,@b,@c;")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 // nolint:unused
 func readGaugeInt(g prometheus.Gauge) int {
 	ch := make(chan prometheus.Metric, 1)
