@@ -109,7 +109,7 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 }
 
 // Compare supposed rule, and we actually get from TableInfo
-func isRuleMatch(rule placement.Rule, startKey string, endKey string, count int, labels []string) bool {
+func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, count int, labels []string) bool {
 	// Compute startKey
 	if rule.StartKeyHex == startKey && rule.EndKeyHex == endKey {
 		ok := false
@@ -145,7 +145,7 @@ func isRuleMatch(rule placement.Rule, startKey string, endKey string, count int,
 	return true
 }
 
-func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) bool {
+func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.TiFlashRule) bool {
 	for _, r := range s.tiflash.GlobalTiFlashPlacementRules {
 		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
 			return true

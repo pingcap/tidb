@@ -300,7 +300,6 @@ func NewMockTiFlash() *MockTiFlash {
 	return tiflash
 }
 
-
 // HandleSetPlacementRule is mock function for SetTiFlashPlacementRule.
 func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) error {
 	if !tiflash.PdEnabled {
@@ -352,6 +351,7 @@ func (tiflash *MockTiFlash) HandleGetGroupRules(group string) ([]placement.TiFla
 	return result, nil
 }
 
+// HandlePostAccelerateSchedule is mock function for PostAccelerateSchedule
 func (tiflash *MockTiFlash) HandlePostAccelerateSchedule(endKey string) error {
 	tableID := helper.GetTiFlashTableIDFromEndKey(endKey)
 
