@@ -16,8 +16,8 @@ package collate
 
 import "github.com/pingcap/tidb/parser/charset"
 
-// SetDefaultCollation set the default collation for charset according to the new collation config.
-func SetDefaultCollation(flag bool) {
+// switchDefaultCollation switch the default collation for charset according to the new collation config.
+func switchDefaultCollation(flag bool) {
 	if flag {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
 	} else {
