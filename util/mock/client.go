@@ -17,8 +17,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/trxevents"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in
@@ -29,6 +27,10 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
+<<<<<<< HEAD
 func (c *Client) Send(ctx context.Context, req *kv.Request, kv *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimit bool, eventCb trxevents.EventCallback) kv.Response {
+=======
+func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, option *kv.ClientSendOption) kv.Response {
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	return c.MockResponse
 }

@@ -35,6 +35,7 @@ type RegionInfo struct {
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
+<<<<<<< HEAD:store/tikv/batch_request_sender.go
 	*RegionRequestSender
 }
 
@@ -42,6 +43,17 @@ type RegionBatchRequestSender struct {
 func NewRegionBatchRequestSender(cache *RegionCache, client Client) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
 		RegionRequestSender: NewRegionRequestSender(cache, client),
+=======
+	*tikv.RegionRequestSender
+	enableCollectExecutionInfo bool
+}
+
+// NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
+	return &RegionBatchRequestSender{
+		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
+		enableCollectExecutionInfo: enableCollectExecutionInfo,
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282):store/copr/batch_request_sender.go
 	}
 }
 
@@ -57,8 +69,13 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *RPCCont
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
+<<<<<<< HEAD:store/tikv/batch_request_sender.go
 	if ss.Stats != nil {
 		RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+=======
+	if ss.Stats != nil && ss.enableCollectExecutionInfo {
+		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282):store/copr/batch_request_sender.go
 	}
 	if err != nil {
 		cancel()

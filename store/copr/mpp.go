@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/logutil"
@@ -135,6 +140,8 @@ type mppIterator struct {
 	vars *kv.Variables
 
 	mu sync.Mutex
+
+	enableCollectExecutionInfo bool
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -220,7 +227,11 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
+<<<<<<< HEAD
 		sender := tikv.NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
+=======
+		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
@@ -461,6 +472,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
+<<<<<<< HEAD
 		store:      c.store,
 		tasks:      dispatchReqs,
 		finishCh:   make(chan struct{}),
@@ -468,6 +480,17 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, di
 		respChan:   make(chan *mppResponse, 4096),
 		startTs:    dispatchReqs[0].StartTs,
 		vars:       vars,
+=======
+		store:                      c.store,
+		tasks:                      dispatchReqs,
+		finishCh:                   make(chan struct{}),
+		cancelFunc:                 cancelFunc,
+		respChan:                   make(chan *mppResponse, 4096),
+		startTs:                    dispatchReqs[0].StartTs,
+		vars:                       vars,
+		needTriggerFallback:        needTriggerFallback,
+		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	}
 	go iter.run(ctxChild)
 	return iter

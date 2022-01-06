@@ -63,10 +63,21 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
+<<<<<<< HEAD
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+=======
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+	eventCb := option.EventCb
+	enabledRateLimitAction := option.EnabledRateLimitAction
+	sessionMemTracker := option.SessionMemTracker
+	vars, ok := variables.(*tikv.Variables)
+	if !ok {
+		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
+	}
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars)
+		return c.sendBatch(ctx, req, vars, option)
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
@@ -116,7 +127,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx, enabledRateLimitAction)
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
 	return it
 }
 
@@ -277,7 +288,8 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	actionOnExceed *rateLimitAction
+	actionOnExceed             *rateLimitAction
+	enableCollectExecutionInfo bool
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -387,12 +399,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
+<<<<<<< HEAD
 			taskCh:          taskCh,
 			wg:              &it.wg,
 			store:           it.store,
@@ -404,6 +417,20 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
+=======
+			taskCh:                     taskCh,
+			wg:                         &it.wg,
+			store:                      it.store,
+			req:                        it.req,
+			respChan:                   it.respChan,
+			finishCh:                   it.finishCh,
+			vars:                       it.vars,
+			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+			memTracker:                 it.memTracker,
+			replicaReadSeed:            it.replicaReadSeed,
+			actionOnExceed:             it.actionOnExceed,
+			enableCollectExecutionInfo: enableCollectExecutionInfo,
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 		}
 		go worker.run(ctx)
 	}
@@ -903,47 +930,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	if resp.detail == nil {
-		resp.detail = new(CopRuntimeStats)
-	}
-	resp.detail.Stats = worker.Stats
-	worker.Stats = nil
-	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		backoffName := backoff.String()
-		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		resp.detail.CalleeAddress = rpcCtx.Addr
-	}
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
-	sd := &execdetails.ScanDetail{}
-	td := execdetails.TimeDetail{}
-	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
-		// Take values in `ExecDetailsV2` first.
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
-		}
-	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
-			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
-			}
-		}
-	}
-	resp.detail.ScanDetail = sd
-	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -972,6 +960,70 @@ func (worker *copIteratorWorker) handleCopResponse(bo *tikv.Backoffer, rpcCtx *t
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+	defer func() {
+		worker.kvclient.Stats = nil
+	}()
+	if !worker.enableCollectExecutionInfo {
+		return
+	}
+	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("shouldn't reachable")
+		}
+	})
+	if resp.detail == nil {
+		resp.detail = new(CopRuntimeStats)
+	}
+<<<<<<< HEAD
+	resp.detail.Stats = worker.Stats
+	worker.Stats = nil
+=======
+	resp.detail.Stats = worker.kvclient.Stats
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	}
+	if rpcCtx != nil {
+		resp.detail.CalleeAddress = rpcCtx.Addr
+	}
+<<<<<<< HEAD
+	resp.respTime = costTime
+	sd := &execdetails.ScanDetail{}
+	td := execdetails.TimeDetail{}
+=======
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
+	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		// Take values in `ExecDetailsV2` first.
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			sd.MergeFromScanDetailV2(scanDetailV2)
+		}
+	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+			if scanDetail.Write != nil {
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
+			}
+		}
+	}
+	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 }
 
 // CopRuntimeStats contains execution detail information.

@@ -330,10 +330,22 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
+<<<<<<< HEAD
 	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
+=======
+	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
+}
+
+// ClientSendOption wraps options during Client Send
+type ClientSendOption struct {
+	SessionMemTracker          *memory.Tracker
+	EnabledRateLimitAction     bool
+	EventCb                    trxevents.EventCallback
+	EnableCollectExecutionInfo bool
 }
 
 // ReqTypes.

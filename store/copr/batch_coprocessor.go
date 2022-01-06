@@ -402,7 +402,11 @@ func buildBatchCopTasks(bo *tikv.Backoffer, store *tikv.KVStore, ranges *tikv.Ke
 	}
 }
 
+<<<<<<< HEAD
 func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+=======
+func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) kv.Response {
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
@@ -413,6 +417,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{err}
 	}
 	it := &batchCopIterator{
+<<<<<<< HEAD
 		store:        c.store.KVStore,
 		req:          req,
 		finishCh:     make(chan struct{}),
@@ -420,6 +425,14 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		memTracker:   req.MemTracker,
 		ClientHelper: tikv.NewClientHelper(c.store.KVStore, util.NewTSSet(5), false),
 		rpcCancel:    tikv.NewRPCanceller(),
+=======
+		store:                      c.store.kvStore,
+		req:                        req,
+		finishCh:                   make(chan struct{}),
+		vars:                       vars,
+		rpcCancel:                  tikv.NewRPCanceller(),
+		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
@@ -451,6 +464,8 @@ type batchCopIterator struct {
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
+
+	enableCollectExecutionInfo bool
 }
 
 func (b *batchCopIterator) run(ctx context.Context) {
@@ -552,9 +567,17 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 	return buildBatchCopTasks(bo, b.store, tikv.NewKeyRanges(ranges), b.req.StoreType, nil, 0)
 }
 
+<<<<<<< HEAD
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := tikv.NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos []*coprocessor.RegionInfo
+=======
+const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
+
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
+	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
 			RegionId: ri.Region.GetID(),
@@ -640,11 +663,30 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	resp := batchCopResponse{
+=======
+	if len(response.RetryRegions) > 0 {
+		logutil.BgLogger().Info("multiple regions are stale and need to be refreshed", zap.Int("region size", len(response.RetryRegions)))
+		for idx, retry := range response.RetryRegions {
+			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
+			logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
+			b.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			if idx >= 10 {
+				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
+				break
+			}
+		}
+		return
+	}
+
+	resp := &batchCopResponse{
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 		pbResp: response,
 		detail: new(CopRuntimeStats),
 	}
 
+<<<<<<< HEAD
 	backoffTimes := bo.GetBackoffTimes()
 	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
@@ -657,6 +699,10 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *tikv.Backoffer, response *
 	resp.detail.CalleeAddress = task.storeAddr
 
 	b.sendToRespCh(&resp)
+=======
+	b.handleCollectExecutionInfo(bo, resp, task)
+	b.sendToRespCh(resp)
+>>>>>>> 2bbeebd0d... store: forbid collecting info if enable-collect-execution-info disabled (#31282)
 
 	return
 }
@@ -668,4 +714,19 @@ func (b *batchCopIterator) sendToRespCh(resp *batchCopResponse) (exit bool) {
 		exit = true
 	}
 	return
+}
+
+func (b *batchCopIterator) handleCollectExecutionInfo(bo *Backoffer, resp *batchCopResponse, task *batchCopTask) {
+	if !b.enableCollectExecutionInfo {
+		return
+	}
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = task.storeAddr
 }
