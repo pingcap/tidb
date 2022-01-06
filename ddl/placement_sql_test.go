@@ -498,7 +498,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 	// create table in ignore mode
 	tk.MustExec("create table t3(id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t3")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options are ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -531,7 +531,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 
 	// add partition in ignore mode
 	tk.MustExec("alter table t2 add partition (partition p2 values less than(10000) placement policy p1)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options are ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
@@ -540,7 +540,7 @@ func (s *testDBSuite6) TestPlacementMode(c *C) {
 		" PARTITION `p1` VALUES LESS THAN (1000),\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	tk.MustExec("alter table t2 add partition (partition p3 values less than(100000) placement policy p3)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement options are ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
