@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -445,14 +444,6 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		return nil, err
 	}
 
-	for idx := range partitions {
-		def := &partitions[idx]
-		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return partitions, nil
 }
 
@@ -463,9 +454,6 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
 	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
 	// when policy x is altered.
-	ignorePlacement := ctx.GetSessionVars().PlacementMode == variable.PlacementModeIgnore
-	hasPlacement := false
-
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
@@ -474,11 +462,6 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
 			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
 			ast.TableOptionPlacementVoterConstraints:
-			hasPlacement = true
-			if ignorePlacement {
-				continue
-			}
-
 			if partition.DirectPlacementOpts == nil {
 				partition.DirectPlacementOpts = &model.PlacementSettings{}
 			}
@@ -487,21 +470,10 @@ func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.P
 				return err
 			}
 		case ast.TableOptionPlacementPolicy:
-			hasPlacement = true
-			if ignorePlacement {
-				continue
-			}
-
 			partition.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(opt.StrValue),
 			}
 		}
-	}
-
-	if ignorePlacement && hasPlacement {
-		ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
-		))
 	}
 
 	return nil

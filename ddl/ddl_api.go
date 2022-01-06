@@ -89,10 +89,8 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 
-	dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, nil, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dbInfo.PlacementPolicyRef = placementPolicyRef
+	dbInfo.DirectPlacementOpts = directPlacementOpts
 
 	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
 }
@@ -122,6 +120,23 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	if err := checkCharsetAndCollation(dbInfo.Charset, dbInfo.Collate); err != nil {
 		return errors.Trace(err)
+	}
+
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+		if dbInfo.PlacementPolicyRef != nil || dbInfo.DirectPlacementOpts != nil {
+			dbInfo.PlacementPolicyRef = nil
+			dbInfo.DirectPlacementOpts = nil
+			sessVars.StmtCtx.AppendNote(errors.New(
+				fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			))
+		}
+	} else {
+		var err error
+		dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// FIXME: support `tryRetainID`.
@@ -182,7 +197,15 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore {
+		sessVars.StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+		return nil
+	}
+
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -204,7 +227,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Alter table placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		))
 		return nil
 	}
@@ -224,7 +247,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, tb.Meta().PlacementPolicyRef, tb.Meta().DirectPlacementOpts)
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -243,7 +266,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 	return errors.Trace(err)
 }
 
-func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings, fallbackPlacementPolicyRef *model.PolicyRefInfo, fallbackDirectPlacementOpts *model.PlacementSettings) (*model.PolicyRefInfo, *model.PlacementSettings, error) {
+func checkAndNormalizePlacement(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.PolicyRefInfo, *model.PlacementSettings, error) {
 	if placementPolicyRef != nil && directPlacementOpts != nil {
 		return nil, nil, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
 	}
@@ -1924,19 +1947,6 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 			tbInfo.DirectPlacementOpts = directPlacementOpts
 		}
 	}
-	tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, placementPolicyRef, directPlacementOpts)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if tbInfo.Partition != nil {
-		for _, partition := range tbInfo.Partition.Definitions {
-			partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts, nil, nil)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-	}
 
 	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
@@ -2049,6 +2059,20 @@ func (d *ddl) createTableWithInfoJob(
 		sessVars.StmtCtx.AppendNote(errors.New(
 			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		))
+	} else {
+		tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if tbInfo.Partition != nil {
+			for _, partition := range tbInfo.Partition.Definitions {
+				partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
 	}
 
 	var oldViewTblID int64
@@ -3395,6 +3419,21 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			return nil
 		}
 		return errors.Trace(err)
+	}
+
+	sessVars := ctx.GetSessionVars()
+	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
+		sessVars.StmtCtx.AppendNote(errors.New(
+			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+		))
+	} else {
+		for idx := range partInfo.Definitions {
+			def := &partInfo.Definitions[idx]
+			def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	job := &model.Job{
@@ -6573,7 +6612,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		sessVars.StmtCtx.AppendNote(errors.New(
-			fmt.Sprintf("Alter table partition placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			fmt.Sprintf("Placement options are ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		))
 		return nil
 	}
@@ -6592,8 +6631,7 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ptPlacementPolicyRef, ptPlacementSettings := tblInfo.Partition.GetPlacementByID(partitionID)
-	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings, ptPlacementPolicyRef, ptPlacementSettings)
+	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6636,17 +6674,28 @@ func removeTablePlacement(tbInfo *model.TableInfo) bool {
 		hasPlacementSettings = true
 	}
 
-	if tbInfo.Partition != nil {
-		for i := range tbInfo.Partition.Definitions {
-			def := &tbInfo.Partition.Definitions[i]
-			if def.PlacementPolicyRef != nil {
-				def.PlacementPolicyRef = nil
-				hasPlacementSettings = true
-			}
-			if def.DirectPlacementOpts != nil {
-				def.DirectPlacementOpts = nil
-				hasPlacementSettings = true
-			}
+	if removePartitionPlacement(tbInfo.Partition) {
+		hasPlacementSettings = true
+	}
+
+	return hasPlacementSettings
+}
+
+func removePartitionPlacement(partInfo *model.PartitionInfo) bool {
+	if partInfo == nil {
+		return false
+	}
+
+	hasPlacementSettings := false
+	for i := range partInfo.Definitions {
+		def := &partInfo.Definitions[i]
+		if def.PlacementPolicyRef != nil {
+			def.PlacementPolicyRef = nil
+			hasPlacementSettings = true
+		}
+		if def.DirectPlacementOpts != nil {
+			def.DirectPlacementOpts = nil
+			hasPlacementSettings = true
 		}
 	}
 	return hasPlacementSettings
