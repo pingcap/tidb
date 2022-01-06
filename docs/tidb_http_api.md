@@ -231,6 +231,21 @@
     }
     ```
 
+    *Hint: The meaning of the MVCC operation type:*
+
+    ```protobuf
+    enum Op {
+	Put = 0;
+	Del = 1;
+	Lock = 2;
+	Rollback = 3;
+	// insert operation has a constraint that key should not exist before.
+	Insert = 4;
+	PessimisticLock = 5;
+	CheckNotExists = 6;
+    }
+    ```
+
 1. Get MVCC Information of the first key in the table with a specified start ts
 
     ```shell
