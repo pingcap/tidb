@@ -108,7 +108,6 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
-var _ = SerialSuites(&testSuiteWithCliBaseCharsetNoNewCollation{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -3440,26 +3439,6 @@ type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
 }
 
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-}
-
-type testSuiteWithCliBaseCharsetNoNewCollation struct {
-	testSuiteWithCliBase
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-}
-
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5746,7 +5725,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
