@@ -34,7 +34,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	registerHook()
 	domain.RunAutoAnalyze = false
 	config.UpdateGlobal(func(conf *config.Config) {

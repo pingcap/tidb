@@ -1077,6 +1077,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
 	}
 
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		// This is not meant to be understand by other components, so it's not written as /*T![cached] */
+		// For all external components, cached table is just a normal table.
+		fmt.Fprintf(buf, " /* CACHED ON */")
+	}
+
 	// add direct placement info here
 	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
