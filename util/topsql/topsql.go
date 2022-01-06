@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -41,25 +44,39 @@ var (
 	singleTargetDataSink *reporter.SingleTargetDataSink
 )
 
+func init() {
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = remoteReporter
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+}
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+	globalTopSQLReport.Start()
+	singleTargetDataSink.Start()
 
-	globalTopSQLReport = remoteReporter
+	stmtstats.RegisterCollector(globalTopSQLReport)
+	stmtstats.SetupAggregator()
+}
 
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
-	tracecpu.GlobalSQLCPUProfiler.Run()
+// SetupTopSQLForTest sets up the global top-sql reporter, it's exporting for test.
+func SetupTopSQLForTest(r reporter.TopSQLReporter) {
+	globalTopSQLReport = r
+}
+
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
+func RegisterPubSubServer(s *grpc.Server) {
+	if register, ok := globalTopSQLReport.(reporter.DataSinkRegisterer); ok {
+		service := reporter.NewTopSQLPubSubService(register)
+		tipb.RegisterTopSQLPubSubServer(s, service)
+	}
 }
 
 // Close uses to close and release the top sql resource.
 func Close() {
-	if singleTargetDataSink != nil {
-		singleTargetDataSink.Close()
-	}
-	if globalTopSQLReport != nil {
-		globalTopSQLReport.Close()
-	}
+	singleTargetDataSink.Close()
+	globalTopSQLReport.Close()
+	stmtstats.CloseAggregator()
 }
 
 // AttachSQLInfo attach the sql information info top sql.
@@ -72,7 +89,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
 	}
-	ctx = tracecpu.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
 	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
@@ -120,14 +137,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
-	if c == nil {
-		return
-	}
-	topc, ok := c.(reporter.TopSQLReporter)
-	if ok {
-		topc.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
-	}
+	globalTopSQLReport.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
@@ -136,12 +146,5 @@ func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
 		return
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
-	if c == nil {
-		return
-	}
-	topc, ok := c.(reporter.TopSQLReporter)
-	if ok {
-		topc.RegisterPlan(planDigest, normalizedBinaryPlan)
-	}
+	globalTopSQLReport.RegisterPlan(planDigest, normalizedBinaryPlan)
 }

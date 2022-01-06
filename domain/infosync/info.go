@@ -236,7 +236,6 @@ func initPlacementManager(addrs []string) PlacementManager {
 func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 	if len(addrs) == 0 {
 		m := mockTiFlashPlacementManager{}
-		//m.tiflash = NewMockTiFlash()
 		return &m
 	}
 	return &TiFlashPDPlacementManager{addrs: addrs}
@@ -255,7 +254,6 @@ func GetMockTiFlash() *MockTiFlash {
 	}
 	return nil
 }
-
 
 // SetMockTiFlash can only be used in tests to set MockTiFlash
 func SetMockTiFlash(tiflash *MockTiFlash) {
@@ -898,7 +896,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
-			info.StartTimestamp = 1282967700000
+			info.StartTimestamp = 1282967700
 			info.Labels = map[string]string{
 				"foo": "bar",
 			}
@@ -968,8 +966,8 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
 
-// SetPlacementRule is a helper function to set placement rule.
-func SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+// SetTiFlashPlacementRule is a helper function to set placement rule.
+func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -977,8 +975,8 @@ func SetPlacementRule(ctx context.Context, rule placement.Rule) error {
 	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
 }
 
-// DeletePlacementRule is to delete placement rule for certain group.
-func DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
+// DeleteTiFlashPlacementRule is to delete placement rule for certain group.
+func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -986,8 +984,8 @@ func DeletePlacementRule(ctx context.Context, group string, ruleID string) error
 	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
-// GetGroupRules to get all placement rule in a certain group.
-func GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) {
+// GetTiFlashGroupRules to get all placement rule in a certain group.
+func GetTiFlashGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -995,8 +993,8 @@ func GetGroupRules(ctx context.Context, group string) ([]placement.Rule, error) 
 	return is.tiflashPlacementManager.GetGroupRules(ctx, group)
 }
 
-// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
-func PostAccelerateSchedule(ctx context.Context, tableID int64) error {
+// PostTiFlashAccelerateSchedule sends `regions/accelerate-schedule` request.
+func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -1004,8 +1002,8 @@ func PostAccelerateSchedule(ctx context.Context, tableID int64) error {
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
+// GetTiFlashPDRegionRecordStats is a helper function calling `/stats/region`.
+func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PDRegionStats) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -1013,8 +1011,8 @@ func GetPDRegionRecordStats(ctx context.Context, tableID int64, stats *helper.PD
 	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
 }
 
-// GetStoresStat gets the TiKV store information by accessing PD's api.
-func GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
+// GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
+func GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1031,6 +1029,7 @@ func CloseTiFlashManager(ctx context.Context) {
 	is.tiflashPlacementManager.Close(ctx)
 }
 
+// ConfigureTiFlashPDForTable configures pd rule for unpartitioned tables.
 func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1045,6 +1044,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 	return nil
 }
 
+// ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
 func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {

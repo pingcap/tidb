@@ -380,7 +380,6 @@ func TestVariableExpr(t *testing.T) {
 		{"@``", "@``"},
 		{"@", "@``"},
 		{"@@``", "@@``"},
-		{"@@", "@@``"},
 		{"@@var", "@@`var`"},
 		{"@@global.b='foo'", "@@GLOBAL.`b`=_UTF8MB4'foo'"},
 		{"@@session.'C'", "@@SESSION.`c`"},

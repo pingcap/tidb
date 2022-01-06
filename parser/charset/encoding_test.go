@@ -49,12 +49,19 @@ func TestEncoding(t *testing.T) {
 	}{
 		{"一二三", "涓?簩涓?", false}, // MySQL reports '涓?簩涓'.
 		{"一二三123", "涓?簩涓?23", false},
+		{"测试", "娴嬭瘯", true},
 		{"案1案2", "妗?妗?", false},
 		{"焊䏷菡釬", "鐒婁彿鑿￠嚞", true},
 		{"鞍杏以伊位依", "闉嶆潖浠ヤ紛浣嶄緷", true},
 		{"移維緯胃萎衣謂違", "绉荤董绶?儍钀庤。璎傞仌", false},
 		{"仆仂仗仞仭仟价伉佚估", "浠嗕粋浠椾粸浠?粺浠蜂級浣氫及", false},
 		{"佝佗佇佶侈侏侘佻佩佰侑佯", "浣濅綏浣囦蕉渚堜緩渚樹交浣╀桨渚戜蒋", true},
+		{"\x80", "?", false},
+		{"\x80a", "?", false},
+		{"\x80aa", "?a", false},
+		{"aa\x80ab", "aa?b", false},
+		{"a你好\x80a测试", "a浣犲ソ?娴嬭瘯", false},
+		{"aa\x80", "aa?", false},
 	}
 	for _, tc := range GBKCases {
 		cmt := fmt.Sprintf("%v", tc)
@@ -75,6 +82,10 @@ func TestEncoding(t *testing.T) {
 		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
 		{"🀁", "?", false},
 		{"valid_string_🀁", "valid_string_?", false},
+		{"€", "?", false},
+		{"€a", "?a", false},
+		{"a€aa", "a?aa", false},
+		{"aaa€", "aaa?", false},
 	}
 	for _, tc := range utf8Cases {
 		cmt := fmt.Sprintf("%v", tc)
@@ -133,9 +144,8 @@ func TestEncodingValidate(t *testing.T) {
 			enc = charset.EncodingUTF8MB3StrictImpl
 		}
 		strBytes := []byte(tc.str)
-		ok := charset.IsValid(enc, strBytes)
-		require.Equal(t, tc.ok, ok, msg)
-		replace, _ := enc.Transform(nil, strBytes, charset.OpReplace)
+		require.Equal(t, tc.ok, enc.IsValid(strBytes), msg)
+		replace, _ := enc.Transform(nil, strBytes, charset.OpReplaceNoErr)
 		require.Equal(t, tc.expected, string(replace), msg)
 	}
 }

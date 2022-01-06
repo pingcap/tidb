@@ -92,16 +92,12 @@ const (
 	defaultEngineMemCacheSize              = 512 * units.MiB
 	defaultLocalWriterMemCacheSize         = 128 * units.MiB
 
-	maxRetryTimes           = 4
-	defaultRetryBackoffTime = 100 * time.Millisecond
-	pdStores                = "/pd/api/v1/stores"
-
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -342,6 +338,10 @@ type MaxError struct {
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case int64:
+		// ignore val that is smaller than 0
+		if val < 0 {
+			val = 0
+		}
 		cfg.Syntax.Store(0)
 		cfg.Charset.Store(math.MaxInt64)
 		cfg.Type.Store(val)
@@ -527,6 +527,7 @@ type TikvImporter struct {
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
