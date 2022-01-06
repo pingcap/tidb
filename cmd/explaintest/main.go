@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -56,18 +55,6 @@ func init() {
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
 	flag.BoolVar(&collationDisable, "collation-disable", false, "run collation related-test with new-collation disabled")
-
-	c := &charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-	}
-	charset.AddCharset(c)
-	for _, coll := range charset.GetCollations() {
-		if strings.EqualFold(coll.CharsetName, c.Name) {
-			charset.AddCollation(coll)
-		}
-	}
 }
 
 var mdb *sql.DB
