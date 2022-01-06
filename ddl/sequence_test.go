@@ -1103,4 +1103,9 @@ func TestDdl_AlterSequenceIssue31265(t *testing.T) {
 	tk.MustExec("create sequence cache_to_nocache_seq;")
 	tk.MustExec("alter sequence cache_to_nocache_seq nocache;")
 	tk.MustQuery("show create sequence cache_to_nocache_seq;").Check(testkit.Rows("cache_to_nocache_seq CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 nocache nocycle ENGINE=InnoDB"))
+
+	tk.MustExec("create sequence nocache_to_cache_seq nocache;")
+	tk.MustExec("alter sequence cache_to_nocache_seq cache 10;")
+	tk.MustQuery("show create sequence cache_to_nocache_seq;").Check(testkit.Rows("cache_to_nocache_seq CREATE SEQUENCE `cache_to_nocache_seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 10 nocycle ENGINE=InnoDB"))
+
 }
