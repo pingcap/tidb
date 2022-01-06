@@ -65,7 +65,7 @@ b	d
 你好	{"测试": "你好"}
 select hex(b), hex(d) from t;
 hex(b)	hex(d)
-E4BDA0E5A5BD	7B22B2E2CAD4223A2022C4E3BAC3227D
+E4BDA0E5A5BD	7B22E6B58BE8AF95223A2022E4BDA0E5A5BD227D
 show charset;
 Charset	Description	Default collation	Maxlen
 ascii	US ASCII	ascii_bin	1
@@ -87,3 +87,11 @@ utf8_unicode_ci	utf8	192		Yes	1
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 utf8mb4_general_ci	utf8mb4	45		Yes	1
 utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+drop table t;
+set names gbk;
+set character_set_connection = utf8mb4;
+create table t(j json, b blob, s1 varchar(255) collate binary, s2 varchar(255), st set('{"点赞": "你好"}'), en enum('{"点赞": "你好"}'));
+insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}');
+select * from t;
+j	b	s1	s2	st	en
+{"点赞": "你好"}	{"鐐硅禐": "浣犲ソ"}	{"鐐硅禐": "浣犲ソ"}	{"点赞": "你好"}	{"点赞": "你好"}	{"点赞": "你好"}
