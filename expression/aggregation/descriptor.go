@@ -110,6 +110,7 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	for i, byItem := range a.OrderByItems {
 		clone.OrderByItems[i] = byItem.Clone()
 	}
+	clone.Mode = a.Mode
 	return &clone
 }
 

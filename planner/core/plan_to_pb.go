@@ -50,7 +50,6 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	for _, aggFunc := range p.AggFuncs {
 		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
 	}
-	aggExec.AggFuncMode = aggregation.AggFunctionModeToPB(p.AggFuncMode)
 	executorID := ""
 	if storeType == kv.TiFlash {
 		var err error

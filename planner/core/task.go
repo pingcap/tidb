@@ -1579,6 +1579,13 @@ type AggInfo struct {
 // partialIsCop means whether partial agg is a cop task.
 func BuildFinalModeAggregation(
 	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	defer func() {
+		if partial != nil {
+			for _, f := range partial.AggFuncs {
+				f.Mode = aggregation.Partial1Mode
+			}
+		}
+	}()
 
 	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
@@ -1900,7 +1907,6 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	p.GroupByItems = partialPref.GroupByItems
 	p.schema = partialPref.Schema
 	partialAgg := p.self
-	partialAgg.(*basePhysicalAgg).AggFuncMode = aggregation.Partial1Mode
 	// Create physical "final" aggregation.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	if p.tp == plancodec.TypeStreamAgg {
