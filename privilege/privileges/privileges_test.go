@@ -271,7 +271,7 @@ func TestShowGrants(t *testing.T) {
 	require.Len(t, gs, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	mustExec(t, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -280,7 +280,17 @@ func TestShowGrants(t *testing.T) {
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Add another db privilege to the same db and test again.
+	mustExec(t, se, `GRANT Delete ON test1.* TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
+		`GRANT DELETE,INDEX ON test1.* TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	mustExec(t, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
@@ -289,7 +299,7 @@ func TestShowGrants(t *testing.T) {
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add table scope privileges
 	mustExec(t, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
@@ -300,13 +310,33 @@ func TestShowGrants(t *testing.T) {
 		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
 		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected))
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Revoke the db privilege of `test` and test again. See issue #30855.
+	mustExec(t, se, `REVOKE SELECT ON test.* FROM 'show'@'localhost'`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
+		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	// Add another table privilege and test again.
+	mustExec(t, se, `GRANT Select ON test.test TO  'show'@'localhost';`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 3)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
+		`GRANT SELECT,UPDATE ON test.test TO 'show'@'localhost'`}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Expected behavior: Usage still exists after revoking all privileges
 	mustExec(t, se, `REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost'`)
-	mustExec(t, se, `REVOKE Select on test.* FROM 'show'@'localhost'`)
 	mustExec(t, se, `REVOKE ALL ON test1.* FROM 'show'@'localhost'`)
-	mustExec(t, se, `REVOKE UPDATE on test.test FROM 'show'@'localhost'`)
+	mustExec(t, se, `REVOKE UPDATE, SELECT on test.test FROM 'show'@'localhost'`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
 	require.Len(t, gs, 1)
@@ -2506,17 +2536,16 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
-
 }
 
 func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
@@ -2595,7 +2624,6 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	}()
 	tk.MustExec("CREATE DATABASE placement_rule_db")
 	tk.MustExec("USE placement_rule_db")
-	tk.Session().GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
 	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
