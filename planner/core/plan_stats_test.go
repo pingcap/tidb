@@ -298,62 +298,20 @@ func TestIssues31237(t *testing.T) {
 	}()
 	tk.MustExec("analyze table t")
 	tk.MustExec("analyze table pt")
-	testCases := []struct {
-		sql  string
-		skip bool
-	}{
-		{ // DataSource
-			sql: "select * from t where c>1",
-		},
-		{ // PartitionTable
-			sql: "select * from pt where a < 15 and c > 1",
-		},
-		{ // Join
-			sql: "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",
-		},
-		{ // Apply
-			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
-		},
-		{ // > Any
-			sql: "select * from t where t.b > any(select d from t where t.c > 2)",
-		},
-		{ // in
-			sql: "select * from t where t.b in (select d from t where t.c > 2)",
-		},
-		{ // not in
-			sql: "select * from t where t.b not in (select d from t where t.c > 2)",
-		},
-		{ // exists
-			sql: "select * from t t1 where exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-		},
-		{ // not exists
-			sql: "select * from t t1 where not exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-		},
-		{ // CTE
-			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-		},
-		{ // recursive CTE
-			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
-		},
-	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/WaitStatsLoadReturnTrue", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/WaitStatsLoadReturnTrue"))
 	}()
-	for _, testCase := range testCases {
-		if testCase.skip {
-			continue
-		}
-		is := dom.InfoSchema()
-		dom.StatsHandle().Clear() // clear statsCache
-		require.NoError(t, dom.StatsHandle().Update(is))
-		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
-		require.NoError(t, err)
-		err = executor.ResetContextOfStmt(ctx, stmt)
-		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
-		require.NoError(t, err)
-		_, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-	}
+	is := dom.InfoSchema()
+	dom.StatsHandle().Clear() // clear statsCache
+	require.NoError(t, dom.StatsHandle().Update(is))
+	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
+	require.NoError(t, err)
+	err = executor.ResetContextOfStmt(ctx, stmt)
+	require.NoError(t, err)
+	_, _, err = planner.Optimize(context.TODO(), ctx, stmt, is)
+	require.NoError(t, err)
+	_, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
 }
