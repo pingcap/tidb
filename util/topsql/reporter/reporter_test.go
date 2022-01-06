@@ -23,7 +23,9 @@ import (
 
 	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -470,6 +472,43 @@ func TestMultipleDataSinks(t *testing.T) {
 		default:
 		}
 	}
+}
+
+func TestReporterWorker(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	r.Start()
+	defer r.Close()
+
+	ds := newMockDataSink2()
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{{
+		SQLDigest:  []byte("S1"),
+		PlanDigest: []byte("P1"),
+		CPUTimeMs:  1,
+	}})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     1,
+			SumDurationNs: 1,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+		},
+	})
+
+	time.Sleep(3 * time.Second)
+
+	assert.Len(t, ds.data, 1)
+	assert.Len(t, ds.data[0].DataRecords, 1)
+	assert.Equal(t, []byte("S1"), ds.data[0].DataRecords[0].SqlDigest)
+	assert.Equal(t, []byte("P1"), ds.data[0].DataRecords[0].PlanDigest)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
