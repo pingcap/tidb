@@ -1161,6 +1161,8 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 }
 
 func (s *testColumnSuite) TestModifyColumn(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetCharsetFeatEnabledForTest(true)
 	defer collate.SetCharsetFeatEnabledForTest(false)
 	d, err := testNewDDLAndStart(
