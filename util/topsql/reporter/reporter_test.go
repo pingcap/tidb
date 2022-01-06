@@ -375,6 +375,7 @@ func TestCollectCapacity(t *testing.T) {
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
 	tsr.Collect(genRecord(20000))
+	time.Sleep(2 * time.Second)
 	require.Equal(t, 5001, len(tsr.collecting.records))
 	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
 	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
