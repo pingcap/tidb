@@ -624,7 +624,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 const cacheTableWriteLease = 5 * time.Second
 
 func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid)
+	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
@@ -854,6 +854,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		}
 		return err
 	}
+	s.updateStatsDeltaToCollector()
+	return nil
+}
+
+func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
 		for _, item := range mapper {
@@ -862,7 +867,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
@@ -2612,9 +2616,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if newCollationEnabled {
 		collate.EnableNewCollations()
 	}
-	if cfg.Experimental.EnableNewCharset {
-		collate.EnableNewCharset()
-	}
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
 	if err != nil {
@@ -2973,6 +2974,8 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	s.updateStatsDeltaToCollector()
 
 	return s.NewTxn(ctx)
 }
