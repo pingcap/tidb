@@ -185,7 +185,7 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	// We need the up-to-date information about TiFlash stores.
 	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
-	tikvStats, err := infosync.GetStoresStat(context.Background())
+	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -280,7 +280,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			logutil.BgLogger().Info("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tb.ID", tb.ID))
 
 			var stats helper.PDRegionStats
-			if err := infosync.GetPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
+			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
 				return allReplicaReady, errors.Trace(err)
 			}
 			regionCount := stats.Count
@@ -376,11 +376,11 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
-	allRulesArr, err := infosync.GetGroupRules(c, "tiflash")
+	allRulesArr, err := infosync.GetTiFlashGroupRules(c, "tiflash")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allRules := make(map[string]placement.Rule)
+	allRules := make(map[string]placement.TiFlashRule)
 	for _, r := range allRulesArr {
 		allRules[r.ID] = r
 	}
@@ -411,7 +411,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 	// Remove rules of non-existing table
 	for _, v := range allRules {
 		logutil.BgLogger().Info("Remove TiFlash rule", zap.String("id", v.ID))
-		if err := infosync.DeletePlacementRule(c, "tiflash", v.ID); err != nil {
+		if err := infosync.DeleteTiFlashPlacementRule(c, "tiflash", v.ID); err != nil {
 			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", v.ID))
 		}
 	}
