@@ -2595,7 +2595,6 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	}()
 	tk.MustExec("CREATE DATABASE placement_rule_db")
 	tk.MustExec("USE placement_rule_db")
-	tk.Session().GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
 	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
