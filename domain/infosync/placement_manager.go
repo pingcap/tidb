@@ -18,10 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/util/pdapi"
 	"path"
 	"sync"
+
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/util/pdapi"
 )
 
 // PlacementManager manages placement settings
