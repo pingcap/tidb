@@ -1554,6 +1554,9 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 				continue
 			}
 			tp := er.ctxStack[i].GetType().Clone()
+			if er.ctxStack[i].GetType().Hybrid() && expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString {
+				tp = types.NewFieldType(mysql.TypeVarString)
+			}
 			tp.Charset, tp.Collate = coll.Charset, coll.Collation
 			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
 			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)

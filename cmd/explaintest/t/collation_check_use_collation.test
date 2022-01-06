@@ -19,5 +19,35 @@ select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci f
 select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
 
+## Check rewrite in expression
+
+# enum part
+drop table if exists t;
+create table t(a enum('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+drop table if exists t;
+create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+select * from t where 'B' collate utf8mb4_bin in (a);
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+
+# set part
+drop table if exists t;
+create table t(a set('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+drop table if exists t;
+create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+select * from t where 'B' collate utf8mb4_bin in (a);
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+
 # cleanup environment
 use test
