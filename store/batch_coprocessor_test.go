@@ -73,8 +73,6 @@ func TestStoreErr(t *testing.T) {
 	}()
 
 	tk := testkit.NewTestKit(t, store)
-	dom := domain.GetDomain(tk.Session())
-	ddl.DisableTiFlashPoll(dom.DDL())
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
@@ -112,7 +110,6 @@ func TestStoreSwitchPeer(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	dom := domain.GetDomain(tk.Session())
-	ddl.DisableTiFlashPoll(dom.DDL())
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")

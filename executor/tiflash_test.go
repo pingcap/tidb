@@ -77,7 +77,6 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	ddl.DisableTiFlashPoll(s.dom.DDL())
 	s.dom.SetStatsUpdating(true)
 }
 

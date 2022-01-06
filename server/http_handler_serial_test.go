@@ -273,7 +273,6 @@ func TestTiFlashReplica(t *testing.T) {
 	// Disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table DDL.
 	ddl.EmulatorGCDisable()
-	ddl.DisableTiFlashPoll(ts.domain.DDL())
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')

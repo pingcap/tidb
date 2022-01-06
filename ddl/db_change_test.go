@@ -77,7 +77,6 @@ func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	ddl.DisableTiFlashPoll(s.dom.DDL())
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create database test_db_state default charset utf8 default collate utf8_bin")

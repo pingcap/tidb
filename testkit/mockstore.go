@@ -41,7 +41,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store)
-	ddl.DisableTiFlashPoll(dom.DDL())
 	return store, dom, clean
 }
 

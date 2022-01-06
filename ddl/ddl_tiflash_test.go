@@ -95,7 +95,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	//s.tiflash = infosync.GetMockTiFlash()
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
-	ddl.EnableTiFlashPoll(s.dom.DDL())
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick = 60
 }

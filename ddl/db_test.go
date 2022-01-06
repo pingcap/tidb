@@ -119,7 +119,6 @@ func setUpSuite(s *testDBSuite, c *C) {
 
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	ddl.DisableTiFlashPoll(s.dom.DDL())
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	s.ctx = s.s.(sessionctx.Context)
