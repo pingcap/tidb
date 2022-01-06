@@ -82,30 +82,13 @@ func TestGetDefaultCollation(t *testing.T) {
 	charsetNum := 0
 	for _, collate := range collations {
 		if collate.IsDefault {
-			if desc, ok := charsetInfos[collate.CharsetName]; ok {
+			if desc, ok := CharacterSetInfos[collate.CharsetName]; ok {
 				require.Equal(t, desc.DefaultCollation, collate.Name)
 				charsetNum += 1
 			}
 		}
 	}
-	require.Equal(t, len(charsetInfos), charsetNum)
-}
-
-func TestSupportedCollations(t *testing.T) {
-	// All supportedCollation are defined from their names
-	require.Equal(t, len(supportedCollationNames), len(supportedCollationNames))
-
-	// The default collations of supported charsets is the subset of supported collations
-	for _, desc := range GetSupportedCharsets() {
-		found := false
-		for _, c := range GetSupportedCollations() {
-			if desc.DefaultCollation == c.Name {
-				found = true
-				break
-			}
-		}
-		require.Truef(t, found, "Charset [%v] is supported but its default collation [%v] is not.", desc.Name, desc.DefaultCollation)
-	}
+	require.Equal(t, len(CharacterSetInfos), charsetNum)
 }
 
 func TestGetCharsetDesc(t *testing.T) {
