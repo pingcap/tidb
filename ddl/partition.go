@@ -447,7 +447,7 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 	return partitions, nil
 }
 
-func setPartitionPlacementFromOptions(ctx sessionctx.Context, partition *model.PartitionDefinition, options []*ast.TableOption) error {
+func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
 	// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
 	// For example:
 	// t placement policy x (p1 placement policy y, p2)
@@ -492,7 +492,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			def := defs[i]
 			definitions[i].Name = def.Name
 			definitions[i].Comment, _ = def.Comment()
-			if err := setPartitionPlacementFromOptions(ctx, &definitions[i], def.Options); err != nil {
+			if err := setPartitionPlacementFromOptions(&definitions[i], def.Options); err != nil {
 				return nil, err
 			}
 		}
@@ -531,7 +531,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			Comment: comment,
 		}
 
-		if err = setPartitionPlacementFromOptions(ctx, &piDef, def.Options); err != nil {
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
 			return nil, err
 		}
 
@@ -595,7 +595,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			Comment: comment,
 		}
 
-		if err = setPartitionPlacementFromOptions(ctx, &piDef, def.Options); err != nil {
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
 			return nil, err
 		}
 
