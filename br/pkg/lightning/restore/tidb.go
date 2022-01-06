@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 
-	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 )
 
@@ -62,24 +60,6 @@ var defaultImportVariablesTiDB = map[string]string{
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
-}
-
-// getSQLErrCode returns error code if err is a mysql error
-func getSQLErrCode(err error) (terror.ErrCode, bool) {
-	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
-	if !ok {
-		return -1, false
-	}
-
-	return terror.ErrCode(mysqlErr.Number), true
-}
-
-func isUnknownSystemVariableErr(err error) bool {
-	code, ok := getSQLErrCode(err)
-	if !ok {
-		return strings.Contains(err.Error(), "Unknown system variable")
-	}
-	return code == mysql.ErrUnknownSystemVariable
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
