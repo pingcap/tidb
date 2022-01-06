@@ -251,7 +251,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		idx += 1
 	}
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), sql.String())
+	stmt, err := exec.ParseWithParams(context.TODO(), true, sql.String())
 	if err != nil {
 		return err
 	}

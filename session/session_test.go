@@ -4378,7 +4378,7 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 	exec := se.(sqlexec.RestrictedSQLExecutor)
