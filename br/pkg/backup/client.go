@@ -887,7 +887,7 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
-func doBackup(
+func doSendBackup(
 	ctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
@@ -923,7 +923,9 @@ func doBackup(
 	if err != nil {
 		return err
 	}
-	defer bCli.CloseSend()
+	defer func() {
+		_ = bCli.CloseSend()
+	}()
 
 	for {
 		resp, err := bCli.Recv()
@@ -968,28 +970,28 @@ func SendBackup(
 	}
 
 	var errReset error
+	var errBackup error
 
 	for retry := 0; retry < backupRetryTimes; retry++ {
 		logutil.CL(ctx).Info("try backup",
 			zap.Int("retry time", retry),
 		)
-		err := doBackup(ctx, client, req, respFn)
-		if isRetryableError(err) {
-			time.Sleep(3 * time.Second)
-			client, errReset = resetFn()
-			if errReset != nil {
-				return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
-					"please check the tikv status", storeID)
+		errBackup = doSendBackup(ctx, client, req, respFn)
+		if errBackup != nil {
+			if isRetryableError(errBackup) {
+				time.Sleep(3 * time.Second)
+				client, errReset = resetFn()
+				if errReset != nil {
+					return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
+						"please check the tikv status", storeID)
+				}
+				continue
 			}
-			continue
-		}
-		if err == nil {
+			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
+			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
+		} else {
 			// finish backup
 			break
-		} else {
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID),
-				zap.Int("retry time", retry))
-			return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
 	}
 	return nil
