@@ -1039,12 +1039,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	defer func() { c.Assert(failpoint.Disable(failpointName), IsNil) }()
 	tk.MustQuery("select * from t where a=2")
 
+	// sum_cop_task_num is always 0 if tidb_enable_collect_execution_info disabled
 	sql = "select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys, " +
 		"max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions, " +
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t100    \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
@@ -1066,7 +1067,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
-		"Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 			"\tIndexLookUp_10    \troot     \t100    \t\n" +
 			"\t├─IndexRangeScan_8\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 			"\t└─TableRowIDScan_9\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
@@ -1116,7 +1117,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
@@ -1135,7 +1136,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		"max_prewrite_regions, avg_affected_rows, query_sample_text, plan " +
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
-	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
+	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10    \troot     \t1000   \t\n" +
 		"\t├─IndexRangeScan_8\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableRowIDScan_9\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
