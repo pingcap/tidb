@@ -524,7 +524,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		joinResult.err = errors.New("mockIndexHashJoinInnerWorkerErr")
 	})
 	// When task.keepOuterOrder is TRUE (resultCh != iw.resultCh):
-	//   - the last joinResult will be handled when the a task has been processed,
+	//   - the last joinResult will be handled when the task has been processed,
 	//     thus we DO NOT need to check it here again.
 	//   - we DO NOT check the error here neither, because:
 	//     - if the error is from task.err, the main thread will check the error of each task
