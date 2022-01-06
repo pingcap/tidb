@@ -1023,6 +1023,7 @@ type basePhysicalAgg struct {
 
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
+	AggFuncMode aggregation.AggFunctionMode
 	MppRunMode       AggMppRunMode
 	MppPartitionCols []*property.MPPPartitionColumn
 }

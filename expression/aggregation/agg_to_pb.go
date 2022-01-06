@@ -107,6 +107,22 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct}
 }
 
+func AggFunctionModeToPB(mode AggFunctionMode) (pbMode *tipb.AggFunctionMode){
+	switch mode {
+	case CompleteMode:
+		*pbMode = tipb.AggFunctionMode_CompleteMode
+	case FinalMode:
+		*pbMode = tipb.AggFunctionMode_FinalMode
+	case Partial1Mode:
+		*pbMode = tipb.AggFunctionMode_Partial1Mode
+	case Partial2Mode:
+		*pbMode = tipb.AggFunctionMode_Partial2Mode
+	case DedupMode:
+		*pbMode = tipb.AggFunctionMode_DedupMode
+	}
+	return pbMode
+}
+
 // PBExprToAggFuncDesc converts pb to aggregate function.
 func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
 	var name string

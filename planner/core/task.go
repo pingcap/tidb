@@ -1900,6 +1900,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	p.GroupByItems = partialPref.GroupByItems
 	p.schema = partialPref.Schema
 	partialAgg := p.self
+	partialAgg.(*basePhysicalAgg).AggFuncMode = aggregation.Partial1Mode
 	// Create physical "final" aggregation.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	if p.tp == plancodec.TypeStreamAgg {
