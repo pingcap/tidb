@@ -123,8 +123,8 @@ func (s *testPlanSuite) TestImplicitCastNotNullFlag(c *C) {
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	c.Assert(err, IsNil)
 	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args
-	castNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
-	c.Assert(castNullFlag, Equals, 0)
+	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
+	c.Assert(castNotNullFlag, Equals, 0)
 }
 
 func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
