@@ -23,9 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -170,26 +169,29 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str []byte, i int) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	var strval strings.Builder
-	for j := 0; j < 6; j++ {
-		if len(str) > (i + j) {
-			if str[i+j] > unicode.MaxASCII {
-				fmt.Fprintf(&strval, "\\x%X", str[i+j])
-			} else {
-				strval.WriteRune(rune(str[i+j]))
-			}
+// convertToIncorrectStringErr converts ErrInvalidCharacterString to ErrTruncatedWrongValueForField.
+// The first argument is the invalid character in bytes.
+func convertToIncorrectStringErr(err error, colName string) error {
+	inErr, ok := errors.Cause(err).(*errors.Error)
+	if !ok {
+		return err
+	}
+	args := inErr.Args()
+	if len(args) != 2 {
+		return err
+	}
+	invalidStrHex, ok := args[1].(string)
+	if !ok {
+		return err
+	}
+	var res strings.Builder
+	for i := 0; i < len(invalidStrHex); i++ {
+		if i%2 == 0 {
+			res.WriteString("\\x")
 		}
+		res.WriteByte(invalidStrHex[i])
 	}
-	if len(str) > i+6 {
-		strval.WriteString(`...`)
-	}
-	// TODO: Add 'at row %d'
-	err := ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", strval.String(), col.Name)
-	logutil.BgLogger().Error("incorrect string value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	err = sc.HandleTruncate(err)
-	return err
+	return ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", res.String(), colName)
 }
 
 // handleZeroDatetime handles Timestamp/Datetime/Date zero date and invalid dates.
@@ -314,6 +316,10 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
+	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
+		err = convertToIncorrectStringErr(err, col.Name.O)
+		logutil.BgLogger().Error("incorrect string value",
+			zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	}
 
 	err = sc.HandleTruncate(err)
@@ -327,58 +333,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
 	}
-
-	err = validateStringDatum(ctx, &val, &casted, col)
-	if forceIgnoreTruncate {
-		err = nil
-	}
 	return casted, err
-}
-
-func validateStringDatum(ctx sessionctx.Context, origin, casted *types.Datum, col *model.ColumnInfo) error {
-	// Only strings are need to validate.
-	if !types.IsString(col.Tp) {
-		return nil
-	}
-	fromBinary := origin.Kind() == types.KindBinaryLiteral ||
-		(origin.Kind() == types.KindString && origin.Collation() == charset.CollationBin)
-	toBinary := types.IsTypeBlob(col.Tp) || col.Charset == charset.CharsetBin
-	if fromBinary && toBinary {
-		return nil
-	}
-	enc := charset.FindEncoding(col.Charset)
-	// Skip utf8 check if possible.
-	if enc.Tp() == charset.EncodingTpUTF8 && ctx.GetSessionVars().SkipUTF8Check {
-		return nil
-	}
-	// Skip ascii check if possible.
-	if enc.Tp() == charset.EncodingTpASCII && ctx.GetSessionVars().SkipASCIICheck {
-		return nil
-	}
-	if col.Charset == charset.CharsetUTF8 && config.GetGlobalConfig().CheckMb4ValueInUTF8 {
-		// Use a strict mode implementation. 4 bytes characters are invalid.
-		enc = charset.EncodingUTF8MB3StrictImpl
-	}
-	if fromBinary {
-		src := casted.GetBytes()
-		encBytes, err := enc.Transform(nil, src, charset.OpDecode)
-		if err != nil {
-			casted.SetBytesAsString(encBytes, charset.CollationUTF8MB4, 0)
-			nSrc := charset.CountValidBytesDecode(enc, src)
-			return handleWrongCharsetValue(ctx, col, src, nSrc)
-		}
-		casted.SetBytesAsString(encBytes, charset.CollationUTF8MB4, 0)
-		return nil
-	}
-	// Check if the string is valid in the given column charset.
-	str := casted.GetBytes()
-	if !charset.IsValid(enc, str) {
-		replace, _ := enc.Transform(nil, str, charset.OpReplace)
-		casted.SetBytesAsString(replace, charset.CollationUTF8MB4, 0)
-		nSrc := charset.CountValidBytes(enc, str)
-		return handleWrongCharsetValue(ctx, col, str, nSrc)
-	}
-	return nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
