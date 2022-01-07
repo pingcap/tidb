@@ -108,7 +108,6 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
-var _ = SerialSuites(&testSuiteWithCliBaseCharsetNoNewCollation{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -329,6 +328,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -3439,32 +3439,6 @@ type testSuiteWithCliBaseCharset struct {
 	testSuiteWithCliBase
 }
 
-func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetNewCollationEnabledForTest(false)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
-type testSuiteWithCliBaseCharsetNoNewCollation struct {
-	testSuiteWithCliBase
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) SetUpSuite(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	s.testSuiteWithCliBase.SetUpSuite(c)
-}
-
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TearDownSuite(c *C) {
-	s.testSuiteWithCliBase.TearDownSuite(c)
-	collate.SetCharsetFeatEnabledForTest(false)
-}
-
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5751,7 +5725,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
-func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureWithoutNewCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5774,6 +5748,8 @@ func (s *testSuiteWithCliBaseCharsetNoNewCollation) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
@@ -5839,6 +5815,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -5864,6 +5842,8 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -9547,6 +9527,7 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -9807,4 +9788,19 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(fields, HasLen, test.fields)
 	}
+}
+
+// Details at https://github.com/pingcap/tidb/issues/31038
+func (s *testSerialSuite) TestFix31038(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = false
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t123")
+	tk.MustExec("create table t123 (id int);")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
+	tk.MustQuery("select * from t123;")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
 }
