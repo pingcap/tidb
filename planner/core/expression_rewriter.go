@@ -1522,8 +1522,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 }
 
 // deriveCollationForIn derives collation for in expression.
-func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) []*expression.ExprCollation {
-	coll := make([]*expression.ExprCollation, 0, colLen)
+// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
+func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkLen int, args []expression.Expression) *expression.ExprCollation {
 	if colLen == 1 {
 		// a in (x, y, z) => coll[0]
 		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
@@ -1531,46 +1531,39 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, elemCnt int, stkL
 		if er.err != nil {
 			return nil
 		}
-		coll = append(coll, coll2)
-	} else {
-		// (a, b, c) in ((x1, x2, x3), (y1, y2, y3), (z1, z2, z3)) => coll[0], coll[1], coll[2]
-		for i := 0; i < colLen; i++ {
-			args := make([]expression.Expression, 0, elemCnt)
-			for j := stkLen - elemCnt - 1; j < stkLen; j++ {
-				rowFunc, _ := er.ctxStack[j].(*expression.ScalarFunction)
-				args = append(args, rowFunc.GetArgs()[i])
-			}
-			coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
-			er.err = err
-			if er.err != nil {
-				return nil
-			}
-			coll = append(coll, coll2)
-		}
+		return coll2
 	}
-	return coll
+	return nil
 }
 
 // castCollationForIn casts collation info for arguments in the `in clause` to make sure the used collation is correct after we
 // rewrite it to equal expression.
-func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll []*expression.ExprCollation) {
+func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll *expression.ExprCollation) {
+	// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
+	if colLen != 1 {
+		return
+	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
-		if colLen == 1 && er.ctxStack[i].GetType().EvalType() == types.ETString {
+		if er.ctxStack[i].GetType().EvalType() == types.ETString {
+			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
+			if ok && rowFunc.FuncName.String() == ast.RowFunc {
+				continue
+			}
+			// Don't convert it if it's charset is binary. So that we don't convert 0x12 to a string.
+			if er.ctxStack[i].GetType().Collate == coll.Collation {
+				continue
+			}
 			tp := er.ctxStack[i].GetType().Clone()
-			tp.Charset, tp.Collate = coll[0].Charset, coll[0].Collation
-			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
-			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
-		} else {
-			rowFunc, _ := er.ctxStack[i].(*expression.ScalarFunction)
-			for j := 0; j < colLen; j++ {
-				if er.ctxStack[i].GetType().EvalType() != types.ETString {
+			if er.ctxStack[i].GetType().Hybrid() {
+				if expression.GetAccurateCmpType(er.ctxStack[stkLen-elemCnt-1], er.ctxStack[i]) == types.ETString {
+					tp = types.NewFieldType(mysql.TypeVarString)
+				} else {
 					continue
 				}
-				tp := rowFunc.GetArgs()[j].GetType().Clone()
-				tp.Charset, tp.Collate = coll[j].Charset, coll[j].Collation
-				rowFunc.GetArgs()[j] = expression.BuildCastFunction(er.sctx, rowFunc.GetArgs()[j], tp)
-				rowFunc.GetArgs()[j].SetCoercibility(expression.CoercibilityExplicit)
 			}
+			tp.Charset, tp.Collate = coll.Charset, coll.Collation
+			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
+			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		}
 	}
 }
