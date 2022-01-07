@@ -6,22 +6,22 @@ CREATE TABLE `t` (
 CREATE TABLE `t1` (
 `a` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL
 );
-insert into t values ("a");
-insert into t1 values ("A");
+insert into t values ("A");
+insert into t1 values ("a");
 select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
 a_col
-a
+A
 select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
 a_col
 select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
 a_col
-a
+A
 select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
 a_col
-a
+A
 select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
 a_col
-a
+A
 drop table if exists t;
 create table t(a enum('a', 'b'), b varchar(20));
 insert into t values ("a", "b");
@@ -30,9 +30,11 @@ a	b
 a	b
 drop table if exists t;
 create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
 insert into t values ("B", "b");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
+b	c
 b	b
 select * from t where 'B' collate utf8mb4_bin in (a);
 a	b
@@ -42,11 +44,13 @@ select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
 a	b
+b	c
 b	b
 select * from t where 1 in (a);
 a	b
 select * from t where 2 in (a);
 a	b
+b	c
 b	b
 select * from t where 1 in (a, 0);
 a	b
@@ -58,9 +62,11 @@ a	b
 a	b
 drop table if exists t;
 create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
 insert into t values ("B", "b");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
+b	c
 b	b
 select * from t where 'B' collate utf8mb4_bin in (a);
 a	b
@@ -70,11 +76,13 @@ select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
 a	b
+b	c
 b	b
 select * from t where 1 in (a);
 a	b
 select * from t where 2 in (a);
 a	b
+b	c
 b	b
 select * from t where 1 in (a, 0);
 a	b
