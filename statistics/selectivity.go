@@ -358,7 +358,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				if c, ok := cond.(*expression.Constant); ok {
 					if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{cond}) {
 						if c.Value.IsNull() {
-							// constant == 0
+							// constant is null
 							continue
 						}
 						if isTrue, err := c.Value.ToBool(sc); err == nil {
