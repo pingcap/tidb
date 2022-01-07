@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -158,15 +157,6 @@ func (ts *TiDBStatement) Close() error {
 			return err
 		}
 	} else {
-		if core.PreparedPlanCacheEnabled() {
-			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
-			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
-			if !ok {
-				return errors.Errorf("invalid CachedPrepareStmt type")
-			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
-		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))

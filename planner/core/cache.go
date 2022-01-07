@@ -68,7 +68,7 @@ func PreparedPlanCacheEnabled() bool {
 type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
-	pstmtID              uint32
+	normalizedSQL        string
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -90,7 +90,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = append(key.hash, hack.Slice(key.normalizedSQL)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -108,24 +108,8 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 	return key.hash
 }
 
-// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
-// so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
-	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
-	if !isPsStmtKey {
-		return
-	}
-	psStmtKey.pstmtID = pstmtID
-	psStmtKey.schemaVersion = schemaVersion
-	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
-	for k, v := range isolationReadEngines {
-		psStmtKey.isolationReadEngines[k] = v
-	}
-	psStmtKey.hash = psStmtKey.hash[:0]
-}
-
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, normalizedSQL string, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -133,7 +117,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	key := &pstmtPlanCacheKey{
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
+		normalizedSQL:        normalizedSQL,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
