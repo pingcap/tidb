@@ -2192,3 +2192,98 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
 	tk.MustExec("drop table if exists t;")
 }
+<<<<<<< HEAD
+=======
+
+// See https://github.com/pingcap/tidb/issues/25287.
+// Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
+func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bit(45));")
+	tk.MustExec("insert into t values (1174717);")
+	tk.MustExec("alter table t modify column a varchar(31) collate utf8mb4_general_ci;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1174717"))
+}
+
+func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250));")
+	tk.MustExec("insert into t values('0123456789abc');")
+	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
+	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Some ddl cases.
+	prepare := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare()
+	tk.MustExec("alter table t modify column a timestamp NOT NULL")
+	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+
+	prepare()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful.
+	_, err := tk.Exec("alter table t change column a a1 time NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
+
+	prepare2 := func() {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a timestamp null)")
+		tk.MustExec("insert into t values()")
+		tk.MustQuery("select * from t").Check(testkit.Rows("<nil>"))
+	}
+
+	prepare2()
+	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
+	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+
+	// Some dml cases.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp NOT NULL)")
+	_, err = tk.Exec("insert into t values()")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
+
+	_, err = tk.Exec("insert into t values(null)")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
+	// issue #31372
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	prepare := func(createTableStmt string) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableStmt)
+		tk.MustExec("insert into t values (36.4), (24.1);")
+	}
+
+	prepare("create table t (a float(6,2));")
+	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+}
+>>>>>>> 4763a702c... ddl: reorganize in conversion between double and float (#31431)
