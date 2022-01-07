@@ -3119,4 +3119,8 @@ func (s *partitionTableSuite) TestIssue26251(c *C) {
 		// Unexpected, test fail.
 		c.Fail()
 	}
+
+	// Clean up
+	<-ch
+	tk2.MustExec("rollback")
 }
