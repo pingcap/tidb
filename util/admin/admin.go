@@ -123,9 +123,15 @@ func IsJobRollbackable(job *model.Job) bool {
 	return true
 }
 
-// MayNeedBackfill returns whether the action type may need to backfill the data.
-func MayNeedBackfill(tp model.ActionType) bool {
-	return tp == model.ActionAddIndex || tp == model.ActionAddPrimaryKey || tp == model.ActionModifyColumn
+// JobNeedBackFill is used by admin package. It will be initialized ddl package.
+var JobNeedBackFill func(job *model.Job, t *meta.Meta, s kv.Storage) bool = needBackFillForTest
+
+func needBackFillForTest(job *model.Job, t *meta.Meta, s kv.Storage) bool {
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
+		return true
+	}
+	return false
 }
 
 // CancelJobs cancels the DDL jobs.
@@ -177,7 +183,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if MayNeedBackfill(job.Type) {
+			if JobNeedBackFill(job, t, nil) {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {

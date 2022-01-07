@@ -18,7 +18,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
@@ -78,4 +82,33 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustExec("create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
+}
+
+func TestModifyColumnBackFill(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int, b char(65));")
+	tk.MustExec("insert into t values (1, '123');")
+
+	lastJobNeedReorg := false
+	d := domain.GetDomain(tk.Session()).DDL()
+	d.SetHook(&ddl.TestDDLCallback{
+		OnJobUpdatedExported: func(job *model.Job) {
+			if job.Type == model.ActionModifyColumn &&
+				job.SchemaState == model.StateWriteReorganization {
+				lastJobNeedReorg = true
+			}
+		},
+	})
+	lastJobNeedReorg = false
+	tk.MustExec("alter table t modify column a bigint;")
+	require.False(t, lastJobNeedReorg)
+	lastJobNeedReorg = false
+	tk.MustExec("alter table t modify column b char(255);")
+	require.False(t, lastJobNeedReorg)
+	lastJobNeedReorg = false
+	tk.MustExec("alter table t modify column a varchar(100);")
+	require.True(t, lastJobNeedReorg)
 }
