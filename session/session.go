@@ -318,7 +318,6 @@ func (s *session) cleanRetryInfo() {
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
 	}
-
 }
 
 func (s *session) Status() uint16 {
