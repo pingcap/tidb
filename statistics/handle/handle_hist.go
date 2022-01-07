@@ -31,8 +31,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// TableColumnIDCombina contains chan model.TableColumnID and Exit channel
-type TableColumnIDCombina struct {
+// TableColumnIDCombine contains chan model.TableColumnID and Exit channel
+type TableColumnIDCombine struct {
 	ResultCh chan model.TableColumnID
 	ExitCh   chan struct{}
 }
@@ -43,7 +43,7 @@ type StatsLoad struct {
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask
-	workingColMap    map[model.TableColumnID][]TableColumnIDCombina
+	workingColMap    map[model.TableColumnID][]TableColumnIDCombine
 }
 
 // NeededColumnTask represents one needed column with expire time.
@@ -369,11 +369,11 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 	defer h.StatsLoad.Unlock()
 	chList, ok := h.StatsLoad.workingColMap[col]
 	if ok {
-		h.StatsLoad.workingColMap[col] = append(chList, TableColumnIDCombina{ResultCh: resultCh, ExitCh: exitCh})
+		h.StatsLoad.workingColMap[col] = append(chList, TableColumnIDCombine{ResultCh: resultCh, ExitCh: exitCh})
 		return false
 	}
-	chList = []TableColumnIDCombina{}
-	chList = append(chList, TableColumnIDCombina{ResultCh: resultCh, ExitCh: exitCh})
+	chList = []TableColumnIDCombine{}
+	chList = append(chList, TableColumnIDCombine{ResultCh: resultCh, ExitCh: exitCh})
 	h.StatsLoad.workingColMap[col] = chList
 	return true
 }

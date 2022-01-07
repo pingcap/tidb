@@ -226,7 +226,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.workingColMap = map[model.TableColumnID][]TableColumnIDCombina{}
+	handle.StatsLoad.workingColMap = map[model.TableColumnID][]TableColumnIDCombine{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
