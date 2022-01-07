@@ -176,6 +176,92 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	CheckTableAvailable(s.dom, c, 1, []string{})
 }
 
+// Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
+func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
+	_, _, cluster, err := unistore.New("")
+	for _, store := range s.cluster.GetAllStores() {
+		cluster.AddStore(store.Id, store.Address, store.Labels...)
+	}
+
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	// Disable emulator GC, otherwise delete range will be automatically called.
+	ddl.EmulatorGCDisable()
+
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("drop table if exists ddltiflashp")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("create table ddltiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
+
+	total := 0
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	total += 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
+	total += 3
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	lessThan := 40
+	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflashp ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
+	total += 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("alter table ddltiflashp truncate partition p1")
+	total += 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	// Now gc will trigger, and will remove dropped partition.
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+	total -= 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("alter table ddltiflashp drop partition p2")
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+	total -= 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("truncate table ddltiflash")
+	total += 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+	total -= 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+
+	tk.MustExec("drop table ddltiflash")
+	total -= 1
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
+}
+
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -355,16 +441,17 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 
 	tk.MustExec("truncate table ddltiflashp")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-	CheckTableAvailable(s.dom, c, 1, []string{})
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflashp")
 
 	tk.MustExec("drop table if exists ddltiflash2")
 	tk.MustExec("create table ddltiflash2(z int)")
+	tk.MustExec("alter table ddltiflash2 set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	// Should get schema right now
 
 	tk.MustExec("truncate table ddltiflash2")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
-	CheckTableAvailable(s.dom, c, 1, []string{})
+	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflash2")
 }
 
 // TiFlash Table shall be eventually available, even with lots of small table created.

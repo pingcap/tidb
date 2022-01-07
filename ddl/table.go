@@ -649,7 +649,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 				return ver, errors.Trace(err)
 			}
 		} else {
-			if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
 				logutil.BgLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
