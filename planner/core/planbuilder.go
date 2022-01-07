@@ -955,8 +955,8 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
-	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
+func genTiFlashPath(tblInfo *model.TableInfo) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash}
 	fillContentForTablePath(tiFlashPath, tblInfo)
 	return tiFlashPath
 }
@@ -1024,8 +1024,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	} else if !tblInfo.TiFlashReplica.Available {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
 	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes

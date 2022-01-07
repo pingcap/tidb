@@ -54,9 +54,6 @@ type AccessPath struct {
 
 	IsDNFCond bool
 
-	// IsTiFlashGlobalRead indicates whether this path is a remote read path for tiflash
-	IsTiFlashGlobalRead bool
-
 	// IsIntHandlePath indicates whether this path is table path.
 	IsIntHandlePath    bool
 	IsCommonHandlePath bool

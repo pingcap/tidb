@@ -2116,7 +2116,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
 		StoreType:       path.StoreType,
-		IsGlobalRead:    path.IsTiFlashGlobalRead,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)
@@ -2166,9 +2165,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
-	if ts.IsGlobalRead {
-		cost += rowCount * sessVars.GetNetworkFactor(ds.tableInfo) * rowSize
-	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
 		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
