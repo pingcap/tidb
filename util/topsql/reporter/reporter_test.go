@@ -504,6 +504,57 @@ func TestMultipleDataSinks(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestReporterWorker(t *testing.T) {
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
+
+	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
+	r.Start()
+	defer r.Close()
+
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
+	err := r.Register(ds)
+	assert.NoError(t, err)
+
+	r.Collect(nil)
+	r.Collect([]collector.SQLCPUTimeRecord{{
+		SQLDigest:  []byte("S1"),
+		PlanDigest: []byte("P1"),
+		CPUTimeMs:  1,
+	}})
+	r.CollectStmtStatsMap(nil)
+	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
+		stmtstats.SQLPlanDigest{
+			SQLDigest:  "S1",
+			PlanDigest: "P1",
+		}: &stmtstats.StatementStatsItem{
+			ExecCount:     1,
+			SumDurationNs: 1,
+			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},
+		},
+	})
+
+	var data *ReportData
+	select {
+	case data = <-ch:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 1)
+	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
+}
+
+func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
+	ts, ds := setupRemoteTopSQLReporter(maxStatementsNum, interval)
+	populateCache(ts, 0, maxStatementsNum, 1)
+	return ts, ds
+}
+
+>>>>>>> f7663a881... topsql: fix data race in reporter test (#31440)
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120, ":23333")
 	for i := 0; i < b.N; i++ {
