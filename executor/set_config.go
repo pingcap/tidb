@@ -120,7 +120,6 @@ func (s *SetConfigExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (s *SetConfigExec) doRequest(url string) (retErr error) {
 	body := bytes.NewBufferString(s.jsonBody)
-	fmt.Println("do request json body ==", s.jsonBody)
 	req, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		return err
