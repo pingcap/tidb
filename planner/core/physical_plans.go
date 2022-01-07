@@ -764,8 +764,8 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 
 	// on which store the join executes.
-	storeTp          kv.StoreType
-	mppShuffleJoin   bool
+	storeTp        kv.StoreType
+	mppShuffleJoin bool
 }
 
 // Clone implements PhysicalPlan interface.

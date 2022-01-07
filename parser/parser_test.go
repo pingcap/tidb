@@ -3687,7 +3687,7 @@ func TestOptimizerHints(t *testing.T) {
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 3)
+	require.Len(t, hints, 2)
 	require.Equal(t, "broadcast_join", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
