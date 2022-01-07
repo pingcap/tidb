@@ -301,7 +301,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					}
 				}
 			},
-			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialIndexWorker"),
+			e.handleHandlesFetcherPanic(ctx, fetchCh, "partialIndexWorker"),
 		)
 	}()
 
@@ -387,7 +387,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					}
 				}
 			},
-			e.handleHandlesFetcherPanic(ctx, e.resultCh, "partialTableWorker"),
+			e.handleHandlesFetcherPanic(ctx, fetchCh, "partialTableWorker"),
 		)
 	}()
 	return nil
@@ -443,6 +443,9 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
+		failpoint.Inject("partialTableWorkerError", func() {
+			err = errors.New("inject an error for partialTableWorker")
+		})
 		if err != nil {
 			w.syncErr(ctx, fetchCh, err)
 			return count, err
@@ -605,7 +608,7 @@ func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
-func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context, resultCh chan<- *lookupTableTask, worker string) func(r interface{}) {
+func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context, ch chan<- *lookupTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
 			return
@@ -615,7 +618,7 @@ func (e *IndexMergeReaderExecutor) handleHandlesFetcherPanic(ctx context.Context
 		logutil.Logger(ctx).Error(err4Panic.Error())
 		doneCh := make(chan error, 1)
 		doneCh <- err4Panic
-		resultCh <- &lookupTableTask{
+		ch <- &lookupTableTask{
 			doneCh: doneCh,
 		}
 	}
@@ -651,11 +654,11 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	distinctHandles := make(map[int64]*kv.HandleMap)
 	for task := range fetchCh {
 		if task.err != nil {
-			// Tell main routine to finish.
+			// Tell main routine to finish. And continue drain fetchCh.
 			task.doneCh = make(chan error, 1)
 			task.doneCh <- task.err
 			resultCh <- task
-			break
+			continue
 		}
 		start := time.Now()
 		handles := task.handles
@@ -753,6 +756,9 @@ func (w *partialIndexWorker) fetchHandles(
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
+		failpoint.Inject("partialIndexWorkerError", func() {
+			err = errors.New("inject an error for partialIndexWorker")
+		})
 		if err != nil {
 			w.syncErr(ctx, fetchCh, err)
 			return count, err

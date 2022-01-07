@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
@@ -169,4 +170,23 @@ func (s *testSuite1) TestPartitionTableRandomIndexMerge(c *C) {
 		result := tk.MustQuery("select * from tnormal where " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ USE_INDEX_MERGE(tpk, a, b) */ * from tpk where " + cond).Sort().Check(result)
 	}
+}
+
+func (s *testSuite1) TestIndexMergePanicAndError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int, c2 int, primary key(c1), key(c2));")
+	sql := "select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10;"
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/partialIndexWorkerError", "return"), IsNil)
+	err := tk.QueryToErr(sql)
+	c.Assert(err, NotNil) // verify errors are not be ignored
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/partialIndexWorkerError"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/partialTableWorkerError", "return"), IsNil)
+	err = tk.QueryToErr(sql)
+	c.Assert(err, NotNil) // verify errors are not be ignored
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/partialTableWorkerError"), IsNil)
 }
