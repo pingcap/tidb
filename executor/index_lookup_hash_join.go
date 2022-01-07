@@ -572,6 +572,9 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
+		if iw.lookup.finished.Load().(bool) {
+			return
+		}
 	OUTER:
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
@@ -607,11 +610,6 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
 }
 
-<<<<<<< HEAD
-func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}) {
-	if r != nil {
-		iw.resultCh <- &indexHashJoinResult{err: errors.Errorf("%v", r)}
-=======
 func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(resultCh chan *indexHashJoinResult, err error) {
 	defer func() {
 		iw.wg.Done()
@@ -619,9 +617,7 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(resultCh chan
 	}()
 	if err != nil {
 		resultCh <- &indexHashJoinResult{err: err}
->>>>>>> c27f8f697... executor: return error as expected when indexHashJoin occur error or panic in handleTask (#31323)
 	}
-	iw.wg.Done()
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
@@ -648,10 +644,6 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
-<<<<<<< HEAD
-	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task, h) }, iw.handleHashJoinInnerWorkerPanic)
-	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
-=======
 	go util.WithRecovery(
 		func() {
 			iw.lookup.workerWg.Add(1)
@@ -666,7 +658,6 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		},
 	)
 	err = iw.fetchInnerResults(ctx, task.lookUpJoinTask)
->>>>>>> c27f8f697... executor: return error as expected when indexHashJoin occur error or panic in handleTask (#31323)
 	iw.wg.Wait()
 	// check error after wg.Wait to make sure error message can be sent to
 	// resultCh even if panic happen in buildHashTableForOuterResult.
