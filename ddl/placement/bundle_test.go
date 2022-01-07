@@ -352,7 +352,7 @@ func (s *testBundleSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	bundle.Rules = append(rules1, rules2...)
 
-	c.Assert(bundle.String(), Equals, `{"group_id":"TiDB_DDL_1","group_index":0,"group_override":false,"rules":[{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":3,"label_constraints":[{"key":"zone","op":"in","values":["sh"]}],"location_labels":["region","zone","rack","host"]},{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":4,"label_constraints":[{"key":"zone","op":"notIn","values":["sh"]},{"key":"zone","op":"in","values":["bj"]}],"location_labels":["region","zone","rack","host"]}]}`)
+	c.Assert(bundle.String(), Equals, "{\"group_id\":\"TiDB_DDL_1\",\"group_index\":0,\"group_override\":false,\"rules\":[{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":3,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"sh\"]}]},{\"group_id\":\"\",\"id\":\"\",\"start_key\":\"\",\"end_key\":\"\",\"role\":\"voter\",\"count\":4,\"label_constraints\":[{\"key\":\"zone\",\"op\":\"notIn\",\"values\":[\"sh\"]},{\"key\":\"zone\",\"op\":\"in\",\"values\":[\"bj\"]}]}]}")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/placement/MockMarshalFailure", `return(true)`), IsNil)
 	defer func() {
@@ -413,6 +413,21 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: normal case 2",
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us",
+			Schedule:      "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 1, NewConstraintsDirect()),
 		},
 	})
 
@@ -517,11 +532,11 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "sh",
 			Regions:       "bj,sh",
-			Followers:     5,
+			Followers:     4,
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			NewRule(Voter, 4, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "sh"),
 			)),
 			NewRule(Follower, 2, NewConstraintsDirect(
@@ -534,7 +549,6 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		name: "direct syntax: normal case 1",
 		input: &model.PlacementSettings{
 			Constraints: "[+region=us]",
-			Followers:   2,
 		},
 		output: []*Rule{
 			NewRule(Leader, 1, NewConstraintsDirect(
@@ -669,6 +683,27 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Followers:         2,
 		},
 		err: ErrInvalidConstraintsFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect()),
+			NewRule(Learner, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: learner dict constraints, with count",
+		input: &model.PlacementSettings{
+			LearnerConstraints: `{"+region=us": 2}`,
+			Learners:           4,
+		},
+		err: ErrInvalidConstraintsRelicas,
 	})
 
 	for _, t := range tests {

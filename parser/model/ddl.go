@@ -94,12 +94,14 @@ const (
 	ActionAlterCacheTable               ActionType = 57
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
+	ActionCreateTables                  ActionType = 60
 )
 
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
+	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",
 	ActionDropColumn:                    "drop column",
@@ -194,6 +196,15 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.TableInfo = tblInfo
 }
 
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	for i, info := range tblInfos {
+		h.MultipleTableInfos[i] = info
+	}
+}
+
 // Clean cleans history information.
 func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
@@ -211,7 +222,13 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *time.Location                   `json:"time_location"`
+	Location      *TimeZone                        `json:"time_zone"`
+}
+
+// TimeZone represents a single time zone.
+type TimeZone struct {
+	Name   string
+	Offset int // seconds east of UTC
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.

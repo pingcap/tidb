@@ -58,7 +58,7 @@ func (param *MySQLConnectParam) ToDSN() string {
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+		dsn += fmt.Sprintf("&%s='%s'", k, url.QueryEscape(v))
 	}
 
 	return dsn

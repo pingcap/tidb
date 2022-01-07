@@ -211,6 +211,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			return errors.Trace(err)
 		}
 	}
+	s.ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(s.chk.NumRows()))
 	return nil
 }
 
