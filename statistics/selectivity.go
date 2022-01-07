@@ -356,9 +356,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				}
 				// where {"0" / 0 / "false" / false / null} or A or B ... the '0' constant item should be ignored.
 				if c, ok := cond.(*expression.Constant); ok {
-					if d, err1 := c.Eval(chunk.Row{}); err1 == nil {
-						if dc, err2 := d.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeDouble)); err2 == nil {
-							if dc.GetFloat64() == 0 || dc.IsNull() {
+					if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{cond}) {
+						if c.Value.IsNull() {
+							// constant == 0
+							continue
+						}
+						if isTrue, err := c.Value.ToBool(sc); err == nil {
+							if isTrue == 0 {
 								// constant == 0
 								continue
 							}
