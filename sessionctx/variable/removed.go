@@ -25,6 +25,7 @@ var removedSysVars = map[string]string{
 	TiDBEnableAlterPlacement:       "alter placement is now always enabled",
 	TiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
 	TiDBSlowLogMasking:             "use tidb_redact_log instead",
+	TiDBOptBCJ:                     "use tidb_allow_mpp instead",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed
