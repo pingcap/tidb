@@ -22,6 +22,7 @@ importer=""
 tidb_server=""
 portgenerator=""
 explain_test_log="./explain-test.out"
+explain_test_disable_new_collation_log="./explain-test-disable-new-collation.out"
 tests=""
 record=0
 record_case=""
@@ -263,12 +264,12 @@ fi
 kill -9 $SERVER_PID
 
 echo "run collation tests when new-collation disabled"
-echo "start tidb-server, log file: $explain_test_log"
+echo "start tidb-server, log file: $explain_test_disable_new_collation_log"
 if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store tikv -path "${TIKV_PATH}" > $explain_test_disable_new_collation_log 2>&1 &
     SERVER_PID=$!
 else
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store unistore -path "" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store unistore -path "" > $explain_test_disable_new_collation_log 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"
@@ -277,7 +278,7 @@ sleep 5
 
 if [ $record -eq 1 ]; then
     if [ "$record_case" = 'all' ]; then
-        echo "record all cases"
+        echo "record all collation cases"
         $explain_test -port "$port" -status "$status" --record --log-level=error --collation-disable=true
     else
         echo "record result for case: \"$record_case\""
@@ -285,7 +286,7 @@ if [ $record -eq 1 ]; then
     fi
 elif [ $create -eq 1 ]; then
     if [ "$create_case" = 'all' ]; then
-        echo "create all cases"
+        echo "create all collation cases"
         $explain_test -port "$port" -status "$status" --create --log-level=error --collation-disable=true
     else
         echo "create result for case: \"$create_case\""
@@ -293,7 +294,7 @@ elif [ $create -eq 1 ]; then
     fi
 else
     if [ -z "$tests" ]; then
-        echo "run all explain test cases"
+        echo "run all collation explain test cases"
     else
         echo "run explain test cases: $tests"
     fi
