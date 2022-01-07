@@ -60,9 +60,9 @@ func (e *encodingASCII) IsValid(src []byte) bool {
 	return true
 }
 
-func (e *encodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingASCII) Transform(dest *RCow, src []byte, op Op) (*RCow, error) {
 	if e.IsValid(src) {
-		return src, nil
+		return &RCow{buf: src, reusable: false}, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)
 }

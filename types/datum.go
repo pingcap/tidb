@@ -193,7 +193,7 @@ func (d *Datum) GetBinaryStringEncoded() string {
 	}
 	enc := charset.FindEncodingTakeUTF8AsNoop(coll.CharsetName)
 	replace, _ := enc.Transform(nil, d.GetBytes(), charset.OpEncodeNoErr)
-	return string(hack.String(replace))
+	return replace.String()
 }
 
 // GetBinaryStringDecoded gets the string value decoded with given charset.
@@ -203,7 +203,7 @@ func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string)
 		return d.GetString(), nil
 	}
 	trim, err := enc.Transform(nil, d.GetBytes(), charset.OpDecode)
-	return string(hack.String(trim)), err
+	return trim.String(), err
 }
 
 // GetStringWithCheck gets the string and checks if it is valid in a given charset.
@@ -215,7 +215,7 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 	str := d.GetBytes()
 	if !enc.IsValid(str) {
 		replace, err := enc.Transform(nil, str, charset.OpReplace)
-		return string(hack.String(replace)), err
+		return replace.String(), err
 	}
 	return d.GetString(), nil
 }

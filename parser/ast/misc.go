@@ -3447,7 +3447,7 @@ func TransformTextStrings(ts []*TextString, chs string) []string {
 			ret = append(ret, t.Value)
 		} else {
 			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
-			ret = append(ret, charset.HackString(r))
+			ret = append(ret, r.String())
 		}
 	}
 	return ret

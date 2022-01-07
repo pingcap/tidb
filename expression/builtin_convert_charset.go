@@ -94,7 +94,7 @@ func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNu
 	tp := b.args[0].GetType()
 	enc := charset.FindEncoding(tp.Charset)
 	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpEncode)
-	return string(ret), false, err
+	return ret.String(), false, err
 }
 
 func (b *builtinInternalToBinarySig) vectorized() bool {
@@ -113,7 +113,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	}
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
-	var encodedBuf []byte
+	var encodedBuf *charset.RCow
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -123,7 +123,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 		if err != nil {
 			return err
 		}
-		result.AppendBytes(encodedBuf)
+		result.AppendBytes(encodedBuf.ConstBytes())
 	}
 	return nil
 }
@@ -176,7 +176,7 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 		strHex := fmt.Sprintf("%X", val)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 	}
-	return string(ret), false, err
+	return ret.String(), false, err
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -194,7 +194,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.Charset)
-	var encBuf []byte
+	encBuf := &charset.RCow{}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -207,7 +207,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 			strHex := fmt.Sprintf("%X", str)
 			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 		}
-		result.AppendBytes(encBuf)
+		result.AppendBytes(encBuf.ConstBytes())
 	}
 	return nil
 }

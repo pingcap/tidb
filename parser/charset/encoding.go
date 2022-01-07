@@ -60,6 +60,36 @@ var encodingMap = map[string]Encoding{
 	CharsetASCII:   EncodingASCIIImpl,
 }
 
+type RCow struct {
+	buf      []byte
+	reusable bool
+}
+
+func (r *RCow) Bytes() []byte {
+	if r.reusable {
+		return r.buf
+	}
+
+	dest := make([]byte, len(r.buf))
+	copy(dest, r.buf)
+	return dest
+}
+
+func (r *RCow) ConstBytes() []byte {
+	return r.buf
+}
+
+func (r *RCow) String() string {
+	if r.reusable {
+		return HackString(r.buf)
+	}
+	return string(r.buf)
+}
+
+func newRCow(cap int) *RCow {
+	return &RCow{buf: make([]byte, 0, cap), reusable: true}
+}
+
 // Encoding provide encode/decode functions for a string with a specific charset.
 type Encoding interface {
 	// Name is the name of the encoding.
@@ -75,7 +105,7 @@ type Encoding interface {
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
-	Transform(dest, src []byte, op Op) ([]byte, error)
+	Transform(dest *RCow, src []byte, op Op) (*RCow, error)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.

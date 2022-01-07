@@ -95,7 +95,7 @@ func TestSQLEncode(t *testing.T) {
 			enc := charset.FindEncoding(test.chs)
 			result, err := enc.Transform(nil, []byte(test.origin.(string)), charset.OpEncode)
 			require.NoError(t, err)
-			require.Equal(t, types.NewCollationStringDatum(string(result), test.chs), d)
+			require.Equal(t, types.NewCollationStringDatum(result.String(), test.chs), d)
 		} else {
 			result := types.NewDatum(test.origin)
 			require.Equal(t, result.GetBytes(), d.GetBytes())
@@ -166,7 +166,8 @@ func TestAESEncrypt(t *testing.T) {
 
 	// Test GBK String
 	enc := charset.FindEncoding("gbk")
-	gbkStr, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
+	gbkStrCow, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
+	gbkStr := gbkStrCow.String()
 	gbkTests := []struct {
 		mode   string
 		chs    string
@@ -238,7 +239,7 @@ func TestAESDecrypt(t *testing.T) {
 	// Test GBK String
 	enc := charset.FindEncoding("gbk")
 	r, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
-	gbkStr := string(r)
+	gbkStr := r.String()
 	gbkTests := []struct {
 		mode   string
 		chs    string

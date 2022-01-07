@@ -31,14 +31,17 @@ func TestEncoding(t *testing.T) {
 	e, _ := charset.Lookup("gbk")
 	gbkEncodedTxt, _, err := transform.Bytes(e.NewEncoder(), txt)
 	require.NoError(t, err)
-	result, err := enc.Transform(nil, gbkEncodedTxt, charset.OpDecode)
+	resultCow, err := enc.Transform(nil, gbkEncodedTxt, charset.OpDecode)
+	result := resultCow.ConstBytes()
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
-	gbkEncodedTxt2, err := enc.Transform(nil, txt, charset.OpEncode)
+	gbkEncodedTxt2Cow, err := enc.Transform(nil, txt, charset.OpEncode)
+	gbkEncodedTxt2 := gbkEncodedTxt2Cow.ConstBytes()
 	require.NoError(t, err)
 	require.Equal(t, gbkEncodedTxt2, gbkEncodedTxt)
-	result, err = enc.Transform(nil, gbkEncodedTxt2, charset.OpDecode)
+	resultCow, err = enc.Transform(nil, gbkEncodedTxt2, charset.OpDecode)
+	result = resultCow.ConstBytes()
 	require.NoError(t, err)
 	require.Equal(t, txt, result)
 
@@ -71,7 +74,7 @@ func TestEncoding(t *testing.T) {
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, string(result), cmt)
+		require.Equal(t, tc.result, result.String(), cmt)
 	}
 
 	utf8Cases := []struct {
@@ -95,7 +98,7 @@ func TestEncoding(t *testing.T) {
 		} else {
 			require.Error(t, err, cmt)
 		}
-		require.Equal(t, tc.result, string(result), cmt)
+		require.Equal(t, tc.result, result.String(), cmt)
 	}
 }
 
@@ -146,6 +149,6 @@ func TestEncodingValidate(t *testing.T) {
 		strBytes := []byte(tc.str)
 		require.Equal(t, tc.ok, enc.IsValid(strBytes), msg)
 		replace, _ := enc.Transform(nil, strBytes, charset.OpReplaceNoErr)
-		require.Equal(t, tc.expected, string(replace), msg)
+		require.Equal(t, tc.expected, replace.String(), msg)
 	}
 }

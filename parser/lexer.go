@@ -154,7 +154,7 @@ func (s *Scanner) convert2System(tok int, lit string) (int, string) {
 		s.AppendWarn(err)
 	}
 
-	return tok, charset.HackString(utf8Lit)
+	return tok, utf8Lit.String()
 }
 
 // convert2Connection convert lit from client encoding to connection encoding.
@@ -173,9 +173,9 @@ func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
 
 	// It is definitely valid if `client` is the same with `connection`, so just transform if they are not the same.
 	if s.client.Tp() != s.connection.Tp() {
-		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplaceNoErr)
+		utf8Lit, _ = s.connection.Transform(nil, utf8Lit.ConstBytes(), charset.OpReplaceNoErr)
 	}
-	return tok, charset.HackString(utf8Lit)
+	return tok, utf8Lit.String()
 }
 
 func (s *Scanner) getNextToken() int {

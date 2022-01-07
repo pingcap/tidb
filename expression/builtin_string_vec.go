@@ -682,7 +682,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		return nil
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
-	var encBuf []byte
+	var encBuf *charset.RCow
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
 			result.AppendNull()
@@ -691,7 +691,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		exprI := expr.GetBytes(i)
 		if !enc.IsValid(exprI) {
 			encBuf, _ = enc.Transform(encBuf, exprI, charset.OpReplaceNoErr)
-			result.AppendBytes(encBuf)
+			result.AppendBytes(encBuf.ConstBytes())
 		} else {
 			result.AppendBytes(exprI)
 		}
@@ -713,7 +713,7 @@ func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 		return false
 	}
 	enc := charset.FindEncoding(chs)
-	var encBuf []byte
+	var encBuf *charset.RCow
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
 			result.AppendNull()
@@ -723,7 +723,7 @@ func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 		if err != nil {
 			result.AppendNull()
 		} else {
-			result.AppendBytes(encBuf)
+			result.AppendBytes(encBuf.ConstBytes())
 		}
 		continue
 	}
@@ -2077,8 +2077,7 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 	}
 
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
-	var x [4]byte
-	encBuf := x[:]
+	var encBuf *charset.RCow
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2094,7 +2093,7 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 			continue
 		}
 		// Only the first character is considered.
-		i64s[i] = calcOrd(encBuf[:len(enc.Peek(encBuf))])
+		i64s[i] = calcOrd(encBuf.ConstBytes()[:len(enc.Peek(encBuf.ConstBytes()))])
 	}
 	return nil
 }
@@ -2279,7 +2278,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	for i := 0; i < l-1; i++ {
 		bufint[i] = buf[i].Int64s()
 	}
-	var resultBytes []byte
+	var resultBytes *charset.RCow
 	enc := charset.FindEncoding(b.tp.Charset)
 	hasStrictMode := b.ctx.GetSessionVars().StrictSQLMode
 	for i := 0; i < n; i++ {
@@ -2299,7 +2298,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 				continue
 			}
 		}
-		result.AppendString(string(resultBytes))
+		result.AppendString(resultBytes.String())
 	}
 	return nil
 }

@@ -1142,17 +1142,17 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		// Convert charset binary -> utf8. If it meets error, NULL is returned.
 		enc := charset.FindEncoding(resultTp.Charset)
 		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpDecodeReplace)
-		return string(ret), err != nil, nil
+		return ret.String(), err != nil, nil
 	} else if types.IsBinaryStr(resultTp) {
 		// Convert charset utf8 -> binary.
 		enc := charset.FindEncoding(argTp.Charset)
 		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpEncode)
-		return string(ret), false, err
+		return ret.String(), false, err
 	}
 	enc := charset.FindEncoding(resultTp.Charset)
 	if !enc.IsValid(hack.Slice(expr)) {
 		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplaceNoErr)
-		return string(replace), false, nil
+		return replace.String(), false, nil
 	}
 	return expr, false, nil
 }
@@ -2417,7 +2417,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 			return "", true, nil
 		}
 	}
-	return string(res), false, nil
+	return res.String(), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -2893,7 +2893,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return calcOrd(strBytes[:1]), false, nil
 	}
 	// Only the first character is considered.
-	return calcOrd(res[:len(enc.Peek(res))]), false, nil
+	return calcOrd(res.ConstBytes()[:len(enc.Peek(res.ConstBytes()))]), false, nil
 }
 
 func calcOrd(leftMost []byte) int64 {
