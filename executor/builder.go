@@ -2217,6 +2217,9 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 }
 
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+	if task.V2Options != nil {
+		opts = task.V2Options.FilledOpts
+	}
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
@@ -2633,6 +2636,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		wg:           &sync.WaitGroup{},
 		opts:         v.Opts,
+		OptionsMap:   v.OptionsMap,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
@@ -3932,6 +3936,9 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
+	if builder.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		reqBuilderWithRange.SetIsolationLevel(kv.RC)
+	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
@@ -4650,19 +4657,9 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	// 2. Build tables to store intermediate results.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
+	// iterOutTbl will be constructed in CTEExec.Open().
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
-	var iterOutTbl cteutil.Storage
-
-	if v.RecurPlan != nil {
-		// For non-recursive CTE, the result will be put into resTbl directly.
-		// So no need to build iterOutTbl.
-		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-		if err := iterOutTbl.OpenAndRef(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
@@ -4711,13 +4708,13 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		recursiveExec: recursiveExec,
 		resTbl:        resTbl,
 		iterInTbl:     iterInTbl,
-		iterOutTbl:    iterOutTbl,
 		chkIdx:        0,
 		isDistinct:    v.CTE.IsDistinct,
 		sel:           sel,
 		hasLimit:      v.CTE.HasLimit,
 		limitBeg:      v.CTE.LimitBeg,
 		limitEnd:      v.CTE.LimitEnd,
+		isInApply:     v.CTE.IsInApply,
 	}
 }
 

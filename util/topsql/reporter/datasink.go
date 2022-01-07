@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -43,7 +43,7 @@ type DataSinkRegisterer interface {
 
 // ReportData contains data that reporter sends to the agent.
 type ReportData struct {
-	// DataRecords contains the compactToTopNAndOthers records []tipb.TopSQLRecord and the `others`
+	// DataRecords contains the topN records of each second and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
 	SQLMetas    []tipb.SQLMeta
@@ -85,7 +85,7 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 		}
 		r.dataSinks[dataSink] = struct{}{}
 		if len(r.dataSinks) > 0 {
-			variable.TopSQLVariable.Enable.Store(true)
+			topsqlstate.EnableTopSQL()
 		}
 		return nil
 	}
@@ -101,7 +101,7 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	default:
 		delete(r.dataSinks, dataSink)
 		if len(r.dataSinks) == 0 {
-			variable.TopSQLVariable.Enable.Store(false)
+			topsqlstate.DisableTopSQL()
 		}
 	}
 }
