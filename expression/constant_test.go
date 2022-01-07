@@ -57,17 +57,14 @@ func newString(value string, collation string) *Constant {
 }
 
 func newFunction(funcName string, args ...Expression) Expression {
-	return newFunctionWithType(funcName, mysql.TypeLonglong, args...)
+	return newFunctionWithType(funcName, types.NewFieldType(mysql.TypeLonglong), args...)
 }
 
-func newFunctionWithType(funcName string, tp byte, args ...Expression) Expression {
-	ft := types.NewFieldType(tp)
-	return NewFunctionInternal(mock.NewContext(), funcName, ft, args...)
+func newFunctionWithType(funcName string, tp *types.FieldType, args ...Expression) Expression {
+	return NewFunctionInternal(mock.NewContext(), funcName, tp, args...)
 }
 
 func TestConstantPropagation(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -194,8 +191,6 @@ func TestConstantPropagation(t *testing.T) {
 }
 
 func TestConstantFolding(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		condition Expression
 		result    string
@@ -232,22 +227,53 @@ func TestConstantFolding(t *testing.T) {
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		condition Expression
 		result    string
 	}{
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
-				InternalFuncToBinary, mysql.TypeVarchar,
+				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
 				newString("中文", "gbk_bin"))),
 			result: "4",
 		},
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
-				InternalFuncToBinary, mysql.TypeVarchar,
+				InternalFuncToBinary, types.NewFieldType(mysql.TypeVarchar),
 				newString("中文", "utf8mb4_bin"))),
 			result: "6",
+		},
+		{
+			condition: newFunction(ast.Concat, newFunctionWithType(
+				InternalFuncFromBinary, types.NewFieldType(mysql.TypeVarchar),
+				newString("中文", "binary"))),
+			result: "中文",
+		},
+		{
+			condition: newFunction(ast.Concat,
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+				newString("中文", "gbk_bin"),
+			),
+			result: "一中文",
+		},
+		{
+			condition: newFunction(ast.Concat,
+				newString("中文", "gbk_bin"),
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+			),
+			result: "中文一",
+		},
+		// The result is binary charset, so gbk constant will convert to binary which is \xd6\xd0\xce\xc4.
+		{
+			condition: newFunction(ast.Concat,
+				newString("中文", "gbk_bin"),
+				newString("\xd2\xbb", "binary"),
+			),
+			result: "\xd6\xd0\xce\xc4\xd2\xbb",
 		},
 	}
 	for _, tt := range tests {
@@ -257,8 +283,6 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	testTime := time.Now()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -325,8 +349,6 @@ func TestDeferredParamNotNull(t *testing.T) {
 }
 
 func TestDeferredExprNotNull(t *testing.T) {
-	t.Parallel()
-
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
@@ -402,8 +424,6 @@ func TestDeferredExprNotNull(t *testing.T) {
 }
 
 func TestVectorizedConstant(t *testing.T) {
-	t.Parallel()
-
 	// fixed-length type with/without Sel
 	for _, cst := range []*Constant{
 		{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)},
@@ -459,8 +479,6 @@ func TestVectorizedConstant(t *testing.T) {
 }
 
 func TestGetTypeThreadSafe(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),

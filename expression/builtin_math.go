@@ -24,7 +24,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/ast"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1023,7 +1023,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
+		sig = &builtinRandSig{bt, ctx.GetSessionVars().Rng}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1039,7 +1039,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeed(seed)}
+		sig = &builtinRandSig{bt, utilMath.NewWithSeed(seed)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1050,12 +1050,11 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinRandSig struct {
 	baseBuiltinFunc
-	mu       *sync.Mutex
-	mysqlRng *MysqlRng
+	mysqlRng *utilMath.MysqlRng
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, mu: b.mu}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -1063,9 +1062,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
-	b.mu.Lock()
 	res := b.mysqlRng.Gen()
-	b.mu.Unlock()
 	return res, false, nil
 }
 
@@ -1089,11 +1086,11 @@ func (b *builtinRandWithSeedFirstGenSig) evalReal(row chunk.Row) (float64, bool,
 	// b.args[0] is promised to be a non-constant(such as a column name) in
 	// builtinRandWithSeedFirstGenSig, the seed is initialized with the value for each
 	// invocation of RAND().
-	var rng *MysqlRng
+	var rng *utilMath.MysqlRng
 	if !isNull {
-		rng = NewWithSeed(seed)
+		rng = utilMath.NewWithSeed(seed)
 	} else {
-		rng = NewWithSeed(0)
+		rng = utilMath.NewWithSeed(0)
 	}
 	return rng.Gen(), false, nil
 }

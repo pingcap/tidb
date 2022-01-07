@@ -33,7 +33,8 @@ var (
 	newCollationEnabled int32
 
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
-	binCollatorInstance = &binCollator{}
+	binCollatorInstance              = &binCollator{}
+	binCollatorInstanceSliceWithLen1 = []Collator{binCollatorInstance}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
@@ -85,6 +86,7 @@ func EnableNewCollations() {
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
+	switchDefaultCollation(flag)
 	if flag {
 		atomic.StoreInt32(&newCollationEnabled, 1)
 		return
@@ -143,11 +145,13 @@ func GetCollator(collate string) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
-			logutil.BgLogger().Warn(
-				"Unable to get collator by name, use binCollator instead.",
-				zap.String("name", collate),
-				zap.Stack("stack"))
-			return newCollatorMap["utf8mb4_bin"]
+			if collate != "" {
+				logutil.BgLogger().Warn(
+					"Unable to get collator by name, use binCollator instead.",
+					zap.String("name", collate),
+					zap.Stack("stack"))
+			}
+			return newCollatorMap[charset.CollationUTF8MB4]
 		}
 		return ctor
 	}
@@ -157,6 +161,18 @@ func GetCollator(collate string) Collator {
 // GetBinaryCollator gets the binary collator, it is often used when we want to apply binary compare.
 func GetBinaryCollator() Collator {
 	return binCollatorInstance
+}
+
+// GetBinaryCollatorSlice gets the binary collator slice with len n.
+func GetBinaryCollatorSlice(n int) []Collator {
+	if n == 1 {
+		return binCollatorInstanceSliceWithLen1
+	}
+	collators := make([]Collator, n)
+	for i := 0; i < n; i++ {
+		collators[i] = binCollatorInstance
+	}
+	return collators
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
@@ -321,6 +337,36 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4
 }
 
+// CollationToProto converts collation from string to int32(used by protocol).
+func CollationToProto(c string) int32 {
+	if coll, err := charset.GetCollationByName(c); err == nil {
+		return RewriteNewCollationIDIfNeeded(int32(coll.ID))
+	}
+	v := RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
+}
+
+// ProtoToCollation converts collation from int32(used by protocol) to string.
+func ProtoToCollation(c int32) string {
+	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
+	if err == nil {
+		return coll.Name
+	}
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return mysql.DefaultCollationName
+}
+
 func init() {
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
@@ -345,4 +391,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCSCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCSCollator{}
+	newCollatorMap[charset.CollationGBKBin] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
+	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
 }

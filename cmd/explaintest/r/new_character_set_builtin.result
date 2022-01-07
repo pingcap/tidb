@@ -1,3 +1,5 @@
+set names utf8mb4;
+set @@sql_mode = '';
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
@@ -81,6 +83,12 @@ hex(convert('1' using gbk))	convert('1' using gbk)
 select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
 hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
 3F	?
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+hex(convert(0xe240 using gbk))	convert(0xe240 using gbk)
+E240	釦
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+hex(convert(0x1e240 using gbk))	convert(0x1e240 using gbk)
+01E240	釦
 select convert(a using binary), convert(convert(a using gbk) using binary) from t;
 convert(a using binary)	convert(convert(a using gbk) using binary)
 中文	����
@@ -117,6 +125,12 @@ hex(convert('1' using gbk))	convert('1' using gbk)
 select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
 hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
 3F	?
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+hex(convert(0xe240 using gbk))	convert(0xe240 using gbk)
+E240	釦
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+hex(convert(0x1e240 using gbk))	convert(0x1e240 using gbk)
+01E240	釦
 select convert(a using binary) from t;
 convert(a using binary)
 中文
@@ -232,8 +246,8 @@ insert into t values ('65'), ('123456'), ('123456789');
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦		�@
+[	[	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -241,8 +255,8 @@ set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦		�@
+[	[	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -286,3 +300,249 @@ select ord(a), ord(b), ord(c) from t;
 ord(a)	ord(b)	ord(c)
 14989485	54992	228
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一', '一', 0xe4b880);
+insert into t values ('一', '一', 0xd2bb);
+insert into t values ('一', '一', 0xe4ba8c);
+insert into t values ('一', '一', 0xb6fe);
+set @@tidb_enable_vectorized_expression = true;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+hex(concat(a, c))	hex(concat(b, c))
+E4B880E4B8800000000000000000000000000000000000	D2BBE4B8800000000000000000000000000000000000
+E4B880D2BB000000000000000000000000000000000000	D2BBD2BB000000000000000000000000000000000000
+E4B880E4BA8C0000000000000000000000000000000000	D2BBE4BA8C0000000000000000000000000000000000
+E4B880B6FE000000000000000000000000000000000000	D2BBB6FE000000000000000000000000000000000000
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+hex(concat(a, 0xe4b880))	hex(concat(b, 0xd2bb))
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+select a = 0xe4b880, b = 0xd2bb from t;
+a = 0xe4b880	b = 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = c, b = c from t;
+a = c	b = c
+0	0
+0	0
+0	0
+0	0
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+hex(insert(a, 1, 2, 0xe4ba8c))	hex(insert(b, 1, 2, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+hex(insert(a, 1, 2, c))	hex(insert(b, 1, 2, c))
+E4B880000000000000000000000000000000000080	E4B8800000000000000000000000000000000000
+D2BB00000000000000000000000000000000000080	D2BB000000000000000000000000000000000000
+E4BA8C000000000000000000000000000000000080	E4BA8C0000000000000000000000000000000000
+B6FE00000000000000000000000000000000000080	B6FE000000000000000000000000000000000000
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+hex(lpad(a, 5, 0xe4ba8c))	hex(lpad(b, 5, 0xb6fe))
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+hex(lpad(a, 5, c))	hex(lpad(b, 5, c))
+E4B8E4B880	E4B880D2BB
+D2BBE4B880	D2BB00D2BB
+E4BAE4B880	E4BA8CD2BB
+B6FEE4B880	B6FE00D2BB
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+hex(rpad(a, 5, 0xe4ba8c))	hex(rpad(b, 5, 0xb6fe))
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+hex(rpad(a, 5, c))	hex(rpad(b, 5, c))
+E4B880E4B8	D2BBE4B880
+E4B880D2BB	D2BBD2BB00
+E4B880E4BA	D2BBE4BA8C
+E4B880B6FE	D2BBB6FE00
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+hex(elt(2, a, 0xe4ba8c))	hex(elt(2, b, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+hex(elt(2, a, c))	hex(elt(2, b, c))
+E4B8800000000000000000000000000000000000	E4B8800000000000000000000000000000000000
+D2BB000000000000000000000000000000000000	D2BB000000000000000000000000000000000000
+E4BA8C0000000000000000000000000000000000	E4BA8C0000000000000000000000000000000000
+B6FE000000000000000000000000000000000000	B6FE000000000000000000000000000000000000
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+hex(instr(a, 0xe4b880))	hex(instr(b, 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+hex(position(a in 0xe4b880))	hex(position(b in 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select a like 0xe4b880, b like 0xd2bb from t;
+a like 0xe4b880	b like 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = 0xb6fe from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select b = 0xe4ba8c from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+select concat(a, 0xb6fe) from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select concat(b, 0xe4ba8c) from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+set @@tidb_enable_vectorized_expression = false;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+hex(concat(a, c))	hex(concat(b, c))
+E4B880E4B8800000000000000000000000000000000000	D2BBE4B8800000000000000000000000000000000000
+E4B880D2BB000000000000000000000000000000000000	D2BBD2BB000000000000000000000000000000000000
+E4B880E4BA8C0000000000000000000000000000000000	D2BBE4BA8C0000000000000000000000000000000000
+E4B880B6FE000000000000000000000000000000000000	D2BBB6FE000000000000000000000000000000000000
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+hex(concat(a, 0xe4b880))	hex(concat(b, 0xd2bb))
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+E4B880E4B880	D2BBD2BB
+select a = 0xe4b880, b = 0xd2bb from t;
+a = 0xe4b880	b = 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = c, b = c from t;
+a = c	b = c
+0	0
+0	0
+0	0
+0	0
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+hex(insert(a, 1, 2, 0xe4ba8c))	hex(insert(b, 1, 2, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+hex(insert(a, 1, 2, c))	hex(insert(b, 1, 2, c))
+E4B880000000000000000000000000000000000080	E4B8800000000000000000000000000000000000
+D2BB00000000000000000000000000000000000080	D2BB000000000000000000000000000000000000
+E4BA8C000000000000000000000000000000000080	E4BA8C0000000000000000000000000000000000
+B6FE00000000000000000000000000000000000080	B6FE000000000000000000000000000000000000
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+hex(lpad(a, 5, 0xe4ba8c))	hex(lpad(b, 5, 0xb6fe))
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+E4BA8CE4BA8CE4BA8CE4BA8CE4B880	B6FEB6FEB6FEB6FED2BB
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+hex(lpad(a, 5, c))	hex(lpad(b, 5, c))
+E4B8E4B880	E4B880D2BB
+D2BBE4B880	D2BB00D2BB
+E4BAE4B880	E4BA8CD2BB
+B6FEE4B880	B6FE00D2BB
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+hex(rpad(a, 5, 0xe4ba8c))	hex(rpad(b, 5, 0xb6fe))
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+E4B880E4BA8CE4BA8CE4BA8CE4BA8C	D2BBB6FEB6FEB6FEB6FE
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+hex(rpad(a, 5, c))	hex(rpad(b, 5, c))
+E4B880E4B8	D2BBE4B880
+E4B880D2BB	D2BBD2BB00
+E4B880E4BA	D2BBE4BA8C
+E4B880B6FE	D2BBB6FE00
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+hex(elt(2, a, 0xe4ba8c))	hex(elt(2, b, 0xb6fe))
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+E4BA8C	B6FE
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+hex(elt(2, a, c))	hex(elt(2, b, c))
+E4B8800000000000000000000000000000000000	E4B8800000000000000000000000000000000000
+D2BB000000000000000000000000000000000000	D2BB000000000000000000000000000000000000
+E4BA8C0000000000000000000000000000000000	E4BA8C0000000000000000000000000000000000
+B6FE000000000000000000000000000000000000	B6FE000000000000000000000000000000000000
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+hex(instr(a, 0xe4b880))	hex(instr(b, 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+hex(position(a in 0xe4b880))	hex(position(b in 0xd2bb))
+1	1
+1	1
+1	1
+1	1
+select a like 0xe4b880, b like 0xd2bb from t;
+a like 0xe4b880	b like 0xd2bb
+1	1
+1	1
+1	1
+1	1
+select a = 0xb6fe from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select b = 0xe4ba8c from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+select concat(a, 0xb6fe) from t;
+Error 3854: Cannot convert string 'B6FE' from binary to utf8mb4
+select concat(b, 0xe4ba8c) from t;
+Error 3854: Cannot convert string 'E4BA8C' from binary to gbk
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = true;
+select crc32(a), crc32(b), crc32(c) from t;
+crc32(a)	crc32(b)	crc32(c)
+1785250883	3461331449	4092198678
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+hex(elt(1, a, b))	hex(elt(1, a, 0x12))
+61D2BB	61D2BB

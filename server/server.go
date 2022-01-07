@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -100,6 +101,7 @@ var (
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
+	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -509,11 +511,17 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		// Some keep alive services will send request to TiDB and disconnect immediately.
-		// So we only record metrics.
-		metrics.HandShakeErrorCounter.Inc()
-		terror.Log(errors.Trace(err))
-		terror.Log(errors.Trace(conn.Close()))
+		if errors.Cause(err) == io.EOF {
+			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		} else {
+			metrics.HandShakeErrorCounter.Inc()
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Warn("Server.onConn handshake", zap.Error(err),
+					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		}
+		terror.Log(conn.Close())
 		return
 	}
 

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -1213,14 +1214,10 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			}
 		}
 		// The converted result must be same as original datum.
-		// Compare them based on the dVal's type.
-		cmp, err := dVal.CompareDatum(stmtCtx, &d)
-		if err != nil {
+		cmp, err := dVal.Compare(stmtCtx, &d, collate.GetCollator(col.Collate))
+		if err != nil || cmp != 0 {
 			return nil, false
-		} else if cmp != 0 {
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), true
 		}
-
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
@@ -1235,8 +1232,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 		return nil
 	}
 	// The converted result must be same as original datum.
-	// Compare them based on the dVal's type.
-	cmp, err := dVal.CompareDatum(stmtCtx, d)
+	cmp, err := dVal.Compare(stmtCtx, d, collate.GetCollator(col.Collate))
 	if err != nil || cmp != 0 {
 		return nil
 	}
