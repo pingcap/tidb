@@ -6685,7 +6685,8 @@ func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	}
 
 	if tbInfo.Partition != nil {
-		for _, partition := range tbInfo.Partition.Definitions {
+		for i := range tbInfo.Partition.Definitions {
+			partition := &tbInfo.Partition.Definitions[i]
 			partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts)
 			if err != nil {
 				return err
@@ -6705,7 +6706,8 @@ func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionI
 	}
 
 	var err error
-	for _, partition := range partInfo.Definitions {
+	for i := range partInfo.Definitions {
+		partition := &partInfo.Definitions[i]
 		partition.PlacementPolicyRef, partition.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, partition.PlacementPolicyRef, partition.DirectPlacementOpts)
 		if err != nil {
 			return err
