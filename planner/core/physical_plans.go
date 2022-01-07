@@ -118,11 +118,7 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join, ok := curPlan.(*PhysicalHashJoin)
-			if !ok {
-				return nil
-			}
-			curPlan = join.children[1-join.globalChildIndex]
+			return nil
 		}
 	}
 }
@@ -771,7 +767,6 @@ type PhysicalHashJoin struct {
 
 	// on which store the join executes.
 	storeTp          kv.StoreType
-	globalChildIndex int
 	mppShuffleJoin   bool
 }
 
