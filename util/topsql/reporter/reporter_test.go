@@ -481,7 +481,8 @@ func TestReporterWorker(t *testing.T) {
 	r.Start()
 	defer r.Close()
 
-	ds := newMockDataSink2()
+	ch := make(chan *ReportData, 1)
+	ds := newMockDataSink(ch)
 	err := r.Register(ds)
 	assert.NoError(t, err)
 
@@ -505,10 +506,16 @@ func TestReporterWorker(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	assert.Len(t, ds.data, 1)
-	assert.Len(t, ds.data[0].DataRecords, 1)
-	assert.Equal(t, []byte("S1"), ds.data[0].DataRecords[0].SqlDigest)
-	assert.Equal(t, []byte("P1"), ds.data[0].DataRecords[0].PlanDigest)
+	var data *ReportData
+	select {
+	case data = <-ch:
+	default:
+		require.Fail(t, "no data in ch")
+	}
+
+	assert.Len(t, data.DataRecords, 1)
+	assert.Equal(t, []byte("S1"), data.DataRecords[0].SqlDigest)
+	assert.Equal(t, []byte("P1"), data.DataRecords[0].PlanDigest)
 }
 
 func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mockDataSink2) {
