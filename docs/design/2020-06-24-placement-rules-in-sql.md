@@ -79,6 +79,14 @@ A `PLACEMENT POLICY` allows administrators to better keep track of usage. This c
 CREATE PLACEMENT POLICY `standardplacement` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"
 ```
 
+In this context, "REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
+- `host` and `hosts`: expected to be the same physical machine or hypervisor.
+- `rack` and `racks`: similar to host; a group of machines that are physically close together and may suffer from many of the same failures.
+- `zone` and `zones`: similar to an AWS zone; much larger degree of blast radius isolation from a rack, but still vulnerable to issues such as a natural disaster.
+- `region` and `regions`: expected to be distributed far enough apart that there is isolation from disasters.
+
+To use additional labels not in this list, see "Advanced Placement" below.
+
 Creating a new table with the `PLACEMENT POLICY` assigned:
 
 ```sql
@@ -415,6 +423,8 @@ CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
 ```
 
 If a table is imported when `tidb_placement_mode='IGNORE'`, and the placement policy does not validate, then the same rules of fallback apply as in the case `DROP PLACEMENT POLICY` (where policy is still in use).
+
+The default value for `tidb_placement_mode` is `STRICT`. The option is an enum, and in future we may add support for a `WARN` mode.
 
 #### Ambiguous and edge cases
 
