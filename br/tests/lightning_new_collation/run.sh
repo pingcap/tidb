@@ -53,7 +53,7 @@ for BACKEND in local importer tidb; do
 
   run_sql 'SELECT id, v from nc.gbk_source order by v limit 1;'
   check_contains "id: 1"
-  check_contains "v2: 啊啊"
+  check_contains "v: 啊啊"
 
 done
 
