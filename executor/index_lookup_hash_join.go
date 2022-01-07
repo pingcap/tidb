@@ -572,6 +572,9 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
+		if iw.lookup.finished.Load().(bool) {
+			return
+		}
 	OUTER:
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
@@ -608,10 +611,13 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 }
 
 func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(resultCh chan *indexHashJoinResult, err error) {
+	defer func() {
+		iw.wg.Done()
+		iw.lookup.workerWg.Done()
+	}()
 	if err != nil {
 		resultCh <- &indexHashJoinResult{err: err}
 	}
-	iw.wg.Done()
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
@@ -639,7 +645,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg.Add(1)
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
-		func() { iw.buildHashTableForOuterResult(ctx, task, h) },
+		func() {
+			iw.lookup.workerWg.Add(1)
+			iw.buildHashTableForOuterResult(ctx, task, h)
+		},
 		func(r interface{}) {
 			var err error
 			if r != nil {
