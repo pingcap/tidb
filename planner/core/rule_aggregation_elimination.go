@@ -208,9 +208,6 @@ func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetT
 	if arg.GetType().Equal(targetTp) {
 		return arg
 	}
-	if !mysql.HasNotNullFlag(arg.GetType().Flag) {
-		targetTp.Flag &= ^mysql.NotNullFlag
-	}
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
