@@ -49,7 +49,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
@@ -95,7 +95,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
@@ -155,7 +155,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
@@ -202,11 +202,11 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
 		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-		require.NotNil(t, err1)
+		require.Error(t, err1)
 		require.NotNil(t, task1)
 		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
 		require.True(t, ok)
-		require.Equal(t, 1, len(list))
+		require.Len(t, list, 1)
 		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
 
 		task2, err2 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
@@ -214,16 +214,16 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.Nil(t, task2)
 		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
 		require.True(t, ok)
-		require.Equal(t, 2, len(list))
+		require.Len(t, list, 2)
 		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
-		require.Nil(t, err3)
+		require.NoError(t, err3)
 		require.Nil(t, task3)
 
-		require.Equal(t, 1, len(stmtCtx1.StatsLoad.ResultCh))
-		require.Equal(t, 1, len(stmtCtx2.StatsLoad.ResultCh))
+		require.Len(t, stmtCtx1.StatsLoad.ResultCh, 1)
+		require.Len(t, stmtCtx2.StatsLoad.ResultCh, 1)
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
