@@ -172,7 +172,7 @@ func TestRangeProperties(t *testing.T) {
 	require.Equal(t, cases[0].key, props[0].Key)
 	// Largest key in props.
 	require.Equal(t, cases[len(cases)-1].key, props[len(props)-1].Key)
-	require.Equal(t, 7, len(props))
+	require.Len(t, props, 7)
 
 	a := props.get([]byte("a"))
 	require.Equal(t, uint64(1), a.Size)
@@ -309,7 +309,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 		if i == 0 {
 			require.Equal(t, 1, len(level))
 		} else {
-			require.Equal(t, 0, len(level))
+			require.Empty(t, level)
 		}
 	}
 
@@ -520,7 +520,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	resp.Error = &errorpb.Error{Message: "unknown error"}
 	retryType, _, err = local.isIngestRetryable(ctx, resp, region, metas)
 	require.Equal(t, retryNone, retryType)
-	require.Equal(t, "non-retryable error: unknown error", err.Error())
+	require.EqualError(t, err, "non-retryable error: unknown error")
 }
 
 type testIngester struct{}
