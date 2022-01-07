@@ -305,25 +305,20 @@ func (s *session) cleanRetryInfo() {
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
 	var preparedAst *ast.Prepared
-	if planCacheEnabled {
-		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-			if ok {
-				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
-			}
-		}
-	}
-	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+	for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
+			if preparedPointer, ok := s.sessionVars.PreparedStmts[stmtID]; ok {
+				preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+				if ok {
+					preparedAst = preparedObj.PreparedAst
+					cacheKey = plannercore.NewPSTMTPlanCacheKey(s.sessionVars, preparedObj.NormalizedSQL, preparedAst.SchemaVersion)
+					s.PreparedPlanCache().Delete(cacheKey)
+				}
 			}
-			s.PreparedPlanCache().Delete(cacheKey)
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
 	}
+
 }
 
 func (s *session) Status() uint16 {
