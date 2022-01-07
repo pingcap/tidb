@@ -2353,18 +2353,24 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
 }
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromFloatToDouble(c *C) {
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenFloatAndDouble(c *C) {
 	// issue #31372
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	prepare := func() {
+	prepare := func(createTableStmt string) {
 		tk.MustExec("drop table if exists t;")
-		tk.MustExec("create table t (a float(6,2));")
+		tk.MustExec(createTableStmt)
 		tk.MustExec("insert into t values (36.4), (24.1);")
 	}
 
-	prepare()
+	prepare("create table t (a float(6,2));")
 	tk.MustExec("alter table t modify a double(6,2)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+
+	prepare("create table t (a double(6,2));")
+	tk.MustExec("alter table t modify a double(6,1)")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
+	tk.MustExec("alter table t modify a float(6,1)")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("36.4", "24.1"))
 }
