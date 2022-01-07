@@ -237,10 +237,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column) error
+	PruneColumns([]*expression.Column, *logicalOptimizeOp) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -250,7 +250,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *physicalOptimizeOp) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -259,7 +259,7 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
@@ -308,7 +308,7 @@ type LogicalPlan interface {
 	canPushToCop(store kv.StoreType) bool
 
 	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace(p Plan) *tracing.LogicalPlanTrace
+	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -382,10 +382,10 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 }
 
 // buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace(plan Plan) *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: plan.ExplainInfo()}
+func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
+	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
 	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace(child))
+		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
 	}
 	return planTrace
 }
@@ -593,11 +593,11 @@ func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	if len(p.children) == 0 {
 		return nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols, opt)
 }
 
 // basePlan implements base Plan interface.

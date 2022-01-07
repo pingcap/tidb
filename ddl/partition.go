@@ -187,6 +187,13 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
 
+	// tblInfo do not include added partitions, so we should add them first
+	tblInfo = tblInfo.Clone()
+	p := *tblInfo.Partition
+	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
+	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	tblInfo.Partition = &p
+
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
@@ -1551,7 +1558,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, true, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
