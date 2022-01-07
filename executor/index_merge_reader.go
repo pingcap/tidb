@@ -290,7 +290,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
 					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
-						worker.syncErr(e.resultCh, err)
+						worker.syncErr(ctx, fetchCh, err)
 						return
 					}
 				}
@@ -401,7 +401,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 
 				if e.isCorColInPartialFilters[workID] {
 					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
-						worker.syncErr(e.resultCh, err)
+						worker.syncErr(ctx, fetchCh, err)
 						return
 					}
 					partialTableReader.dagPB = e.dagPBs[workID]
