@@ -475,7 +475,7 @@ func TestMultipleDataSinks(t *testing.T) {
 }
 
 func TestReporterWorker(t *testing.T) {
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(3)
 
 	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc)
 	r.Start()
@@ -504,12 +504,10 @@ func TestReporterWorker(t *testing.T) {
 		},
 	})
 
-	time.Sleep(3 * time.Second)
-
 	var data *ReportData
 	select {
 	case data = <-ch:
-	default:
+	case <-time.After(5 * time.Second):
 		require.Fail(t, "no data in ch")
 	}
 
