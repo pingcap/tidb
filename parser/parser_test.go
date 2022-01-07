@@ -3682,7 +3682,7 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
 	// TEST BROADCAST_JOIN
-	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4), BROADCAST_JOIN_LOCAL(t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
@@ -3697,10 +3697,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Tables, 2)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
-
-	require.Equal(t, "broadcast_join_local", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 1)
-	require.Equal(t, "t2", hints[2].Tables[0].TableName.L)
 
 	// Test TIDB_INLJ
 	stmt, _, err = p.Parse("select /*+ TIDB_INLJ(t1, T2), tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

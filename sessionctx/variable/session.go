@@ -583,9 +583,6 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowBCJ means allow broadcast join.
-	AllowBCJ bool
-
 	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
 	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
 	// size exceeds the broadcast threshold
@@ -1169,7 +1166,6 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
-		AllowBCJ:                    false,
 		AllowCartesianBCJ:           DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,

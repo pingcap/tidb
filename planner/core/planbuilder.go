@@ -89,7 +89,6 @@ type tableHintInfo struct {
 	indexNestedLoopJoinTables
 	sortMergeJoinTables         []hintTableInfo
 	broadcastJoinTables         []hintTableInfo
-	broadcastJoinPreferredLocal []hintTableInfo
 	hashJoinTables              []hintTableInfo
 	indexHintList               []indexHintInfo
 	tiflashTables               []hintTableInfo
@@ -197,22 +196,6 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 		return nil
 	}
 	return hintTableInfos
-}
-
-// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
-func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
-	alias := extractTableAlias(p, blockOffset)
-	if alias != nil {
-		tableNames := make([]*hintTableInfo, 1)
-		tableNames[0] = alias
-		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
-	}
-	for _, c := range p.Children() {
-		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
-			return true
-		}
-	}
-	return false
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
