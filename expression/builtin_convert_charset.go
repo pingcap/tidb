@@ -266,8 +266,6 @@ var convertActionMap = map[funcProp][]string{
 		ast.CharLength, ast.CharacterLength, ast.FromBase64, ast.Lcase, ast.Left, ast.LoadFile,
 		ast.Lower, ast.LTrim, ast.Mid, ast.Ord, ast.Quote, ast.Repeat, ast.Reverse, ast.Right,
 		ast.RTrim, ast.Soundex, ast.Substr, ast.Substring, ast.Ucase, ast.Unhex, ast.Upper, ast.WeightString,
-		/* args are independent, no implicit conversion */
-		ast.Elt,
 	},
 	funcPropBinAware: {
 		/* result is binary-aware */
@@ -279,7 +277,7 @@ var convertActionMap = map[funcProp][]string{
 	funcPropAuto: {
 		/* string functions */ ast.Concat, ast.ConcatWS, ast.ExportSet, ast.Field, ast.FindInSet,
 		ast.InsertFunc, ast.Instr, ast.Lpad, ast.Locate, ast.Lpad, ast.MakeSet, ast.Position,
-		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim,
+		ast.Replace, ast.Rpad, ast.SubstringIndex, ast.Trim, ast.Elt,
 		/* operators */
 		ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.If, ast.Ifnull, ast.In,
 		ast.Case, ast.Cast,
