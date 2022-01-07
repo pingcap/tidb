@@ -56,11 +56,11 @@ func (b encodingBase) IsValid(src []byte) bool {
 	return isValid
 }
 
-func (b encodingBase) Transform(dest *RCow, src []byte, op Op) (result *RCow, err error) {
+func (b encodingBase) Transform(dest *ROW, src []byte, op Op) (result *ROW, err error) {
 	if dest == nil || !dest.reusable {
 		dest = newRCow(len(src))
 	}
-	dest.buf = dest.buf[:0]
+	dest.buffer = dest.buffer[:0]
 	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
 		if !ok {
 			if err == nil && (op&opSkipError == 0) {
@@ -70,14 +70,14 @@ func (b encodingBase) Transform(dest *RCow, src []byte, op Op) (result *RCow, er
 				return false
 			}
 			if op&opTruncateReplace != 0 {
-				dest.buf = append(dest.buf, '?')
+				dest.buffer = append(dest.buffer, '?')
 				return true
 			}
 		}
 		if op&opCollectFrom != 0 {
-			dest.buf = append(dest.buf, from...)
+			dest.buffer = append(dest.buffer, from...)
 		} else if op&opCollectTo != 0 {
-			dest.buf = append(dest.buf, to...)
+			dest.buffer = append(dest.buffer, to...)
 		}
 		return true
 	})

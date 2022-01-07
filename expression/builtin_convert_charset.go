@@ -113,7 +113,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	}
 	enc := charset.FindEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
-	var encodedBuf *charset.RCow
+	var encodedBuf *charset.ROW
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -123,7 +123,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 		if err != nil {
 			return err
 		}
-		result.AppendBytes(encodedBuf.ConstBytes())
+		result.AppendBytes(encodedBuf.Bytes())
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.Charset)
-	encBuf := &charset.RCow{}
+	var encBuf *charset.ROW
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -207,7 +207,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 			strHex := fmt.Sprintf("%X", str)
 			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 		}
-		result.AppendBytes(encBuf.ConstBytes())
+		result.AppendBytes(encBuf.Bytes())
 	}
 	return nil
 }

@@ -317,7 +317,7 @@ type resultEncoder struct {
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
-	buffer *charset.RCow
+	buffer *charset.ROW
 
 	isBinary     bool
 	isNull       bool
@@ -384,7 +384,7 @@ func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
 	// The buffer will be reused.
-	return d.buffer.ConstBytes()
+	return d.buffer.Bytes()
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {

@@ -167,7 +167,7 @@ func TestAESEncrypt(t *testing.T) {
 	// Test GBK String
 	enc := charset.FindEncoding("gbk")
 	gbkStrCow, _ := enc.Transform(nil, []byte("你好"), charset.OpEncode)
-	gbkStr := gbkStrCow.String()
+	gbkStr := gbkStrCow.Bytes()
 	gbkTests := []struct {
 		mode   string
 		chs    string

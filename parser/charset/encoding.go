@@ -60,34 +60,30 @@ var encodingMap = map[string]Encoding{
 	CharsetASCII:   EncodingASCIIImpl,
 }
 
-type RCow struct {
-	buf      []byte
+// ROW is a reuse-on-write bytes, used in `Encoding.Transform`, the internal buffer can be reused only the
+// reusable is true. If not, we should alloc a new buffer.
+type ROW struct {
+	buffer   []byte
 	reusable bool
 }
 
-func (r *RCow) Bytes() []byte {
+// Bytes return the under bytes array in ROW without copy.
+func (r *ROW) Bytes() []byte {
+	return r.buffer
+}
+
+// String return a string.
+func (r *ROW) String() string {
+	// no need to copy.
 	if r.reusable {
-		return r.buf
+		return HackString(r.buffer)
 	}
-
-	dest := make([]byte, len(r.buf))
-	copy(dest, r.buf)
-	return dest
+	// coped automatic.
+	return string(r.buffer)
 }
 
-func (r *RCow) ConstBytes() []byte {
-	return r.buf
-}
-
-func (r *RCow) String() string {
-	if r.reusable {
-		return HackString(r.buf)
-	}
-	return string(r.buf)
-}
-
-func newRCow(cap int) *RCow {
-	return &RCow{buf: make([]byte, 0, cap), reusable: true}
+func newRCow(cap int) *ROW {
+	return &ROW{buffer: make([]byte, 0, cap), reusable: true}
 }
 
 // Encoding provide encode/decode functions for a string with a specific charset.
@@ -105,7 +101,7 @@ type Encoding interface {
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
-	Transform(dest *RCow, src []byte, op Op) (*RCow, error)
+	Transform(dest *ROW, src []byte, op Op) (*ROW, error)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.

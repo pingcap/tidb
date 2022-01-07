@@ -51,6 +51,6 @@ func (e *encodingLatin1) Tp() EncodingTp {
 	return EncodingTpLatin1
 }
 
-func (e *encodingLatin1) Transform(dest *RCow, src []byte, op Op) (*RCow, error) {
-	return &RCow{buf: src, reusable: false}, nil
+func (e *encodingLatin1) Transform(dest *ROW, src []byte, op Op) (*ROW, error) {
+	return &ROW{buffer: src, reusable: false}, nil
 }

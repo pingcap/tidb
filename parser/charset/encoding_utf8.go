@@ -84,9 +84,9 @@ func (e *encodingUTF8) IsValid(src []byte) bool {
 }
 
 // Transform implements Encoding interface.
-func (e *encodingUTF8) Transform(dest *RCow, src []byte, op Op) (*RCow, error) {
+func (e *encodingUTF8) Transform(dest *ROW, src []byte, op Op) (*ROW, error) {
 	if e.IsValid(src) {
-		return &RCow{buf: src, reusable: false}, nil
+		return &ROW{buffer: src, reusable: false}, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)
 }
@@ -127,9 +127,9 @@ func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh 
 }
 
 // Transform implements Encoding interface.
-func (e *encodingUTF8MB3Strict) Transform(dest *RCow, src []byte, op Op) (*RCow, error) {
+func (e *encodingUTF8MB3Strict) Transform(dest *ROW, src []byte, op Op) (*ROW, error) {
 	if e.IsValid(src) {
-		return &RCow{buf: src, reusable: false}, nil
+		return &ROW{buffer: src, reusable: false}, nil
 	}
 	return e.encodingBase.Transform(dest, src, op)
 }

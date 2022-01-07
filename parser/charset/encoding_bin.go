@@ -61,6 +61,6 @@ func (e *encodingBin) Foreach(src []byte, op Op, fn func(from, to []byte, ok boo
 	}
 }
 
-func (e *encodingBin) Transform(dest *RCow, src []byte, op Op) (*RCow, error) {
-	return &RCow{buf: src, reusable: false}, nil
+func (e *encodingBin) Transform(dest *ROW, src []byte, op Op) (*ROW, error) {
+	return &ROW{buffer: src, reusable: false}, nil
 }

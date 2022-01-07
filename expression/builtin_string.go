@@ -2893,7 +2893,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return calcOrd(strBytes[:1]), false, nil
 	}
 	// Only the first character is considered.
-	return calcOrd(res.ConstBytes()[:len(enc.Peek(res.ConstBytes()))]), false, nil
+	return calcOrd(res.Bytes()[:len(enc.Peek(res.Bytes()))]), false, nil
 }
 
 func calcOrd(leftMost []byte) int64 {
