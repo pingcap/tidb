@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/failpoint"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
