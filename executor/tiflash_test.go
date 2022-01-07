@@ -757,6 +757,7 @@ func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
 }
 
