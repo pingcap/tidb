@@ -148,6 +148,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 			}
 		}
 	}()
+	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
 	var lastTask *NeededColumnTask
 	for {
 		task, err := h.HandleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
@@ -285,7 +286,7 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 	return colHist, nil
 }
 
-// drainColTask will hang until a column task can return.
+// drainColTask will hang until a column task can return, and either task or error will be returned.
 func (h *Handle) drainColTask(exit chan struct{}) (*NeededColumnTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
@@ -387,7 +388,7 @@ func (h *Handle) setWorking(col model.TableColumnID, resultCh chan model.TableCo
 	chList, ok := h.StatsLoad.WorkingColMap[col]
 	if ok {
 		if chList[0] == resultCh {
-			return true
+			return true // just return for duplicate setWorking
 		}
 		h.StatsLoad.WorkingColMap[col] = append(chList, resultCh)
 		return false
