@@ -2524,9 +2524,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	if !la.canPushToCop(kv.TiKV) {
 		taskTypes = []property.TaskType{property.RootTaskType}
-		if canPushDownToTiFlash {
-			taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
-		}
 	}
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)

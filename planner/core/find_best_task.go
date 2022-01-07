@@ -637,21 +637,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			if path.StoreType == kv.TiFlash {
-				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-				if !path.IsTiFlashGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			} else {
-				if !path.IsTiFlashGlobalRead && !prop.IsFlashProp() {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			}
-			if currentCandidate == nil {
-				continue
-			}
+			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
