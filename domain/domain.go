@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -89,6 +90,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
+	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -333,6 +335,22 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
+}
+
+// ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
+func (do *Domain) ExpiredTimeStamp4PC() types.Time {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	return do.expiredTimeStamp4PC
+}
+
+// SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
+func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	do.expiredTimeStamp4PC = time
 }
 
 // DDL gets DDL from domain.
@@ -712,6 +730,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
 		renewLeaseCh:        make(chan func(), 10),
+		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -1277,6 +1296,16 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+	statsHandle := do.StatsHandle()
+	for i, ctx := range ctxList {
+		statsHandle.StatsLoad.SubCtxs[i] = ctx
+		do.wg.Add(1)
+		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+	}
+}
+
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
@@ -1371,6 +1400,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		loadFeedbackTicker.Stop()
@@ -1420,6 +1450,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+			}
+		case <-dumpColStatsUsageTicker.C:
+			err := statsHandle.DumpColStatsUsageToKV()
+			if err != nil {
+				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
 		}
 	}

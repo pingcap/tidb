@@ -159,14 +159,14 @@ func getNotNullFullRange() []*point {
 // So we need to set it to MaxInt64.
 func FullIntRange(isUnsigned bool) []*Range {
 	if isUnsigned {
-		return []*Range{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
+		return []*Range{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
 	}
-	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // FullRange is [null, +∞) for Range.
 func FullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // FullNotNullRange is (-∞, +∞) for Range.
@@ -176,7 +176,7 @@ func FullNotNullRange() []*Range {
 
 // NullRange is [null, null] for Range.
 func NullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}}}
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // builder is the range builder struct.
@@ -185,12 +185,12 @@ type builder struct {
 	sc  *stmtctx.StatementContext
 }
 
-func (r *builder) build(expr expression.Expression) []*point {
+func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn(x)
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x)
+		return r.buildFromScalarFunc(x, collator)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -568,9 +568,6 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			hasNull = true
 			continue
 		}
-		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
-			dt.SetString(dt.GetString(), colCollate)
-		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
@@ -597,6 +594,9 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
+		}
+		if expr.GetArgs()[0].GetType().EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType().Collate) // refine the string like what we did in builder.buildFromBinOp
 		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
@@ -765,16 +765,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
-	_, coll := expr.CharsetAndCollation()
-	collator := collate.GetCollator(coll)
+func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]), collator)
+		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]), collator)
+		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:

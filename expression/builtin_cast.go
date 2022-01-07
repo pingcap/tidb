@@ -284,12 +284,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 	bf.tp = c.tp
-	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
-		// When cast from binary to some other charsets, we should check if the binary is valid or not.
-		// so we build a from_binary function to do this check.
-		ft := args[0].GetType().Clone()
-		ft.Charset, ft.Collate = c.tp.Charset, c.tp.Collate
-		bf.args[0] = BuildFromBinaryFunction(ctx, args[0], ft)
+	if args[0].GetType().Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -318,6 +313,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETString:
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
+		// so we build a from_binary function to do this check.
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.Charset, Collation: c.tp.Collate}, c.funcName)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -1293,6 +1291,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	res, err = types.ParseTime(sc, val, b.tp.Tp, int8(b.tp.Decimal))
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
+	}
+	if res.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
