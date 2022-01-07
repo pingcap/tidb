@@ -14,14 +14,16 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
 )
 
 // node is the struct implements Node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
-	text   string
-	offset int
+	utf8Text string
+	text     string
+	offset   int
 }
 
 // SetOriginTextPosition implements Node interface.
@@ -35,12 +37,22 @@ func (n *node) OriginTextPosition() int {
 }
 
 // SetText implements Node interface.
-func (n *node) SetText(text string) {
+func (n *node) SetText(enc charset.Encoding, text string) {
+	if enc == nil {
+		enc = charset.EncodingBinImpl
+	}
+	utf8Lit, _ := enc.Transform(nil, charset.HackSlice(text), charset.OpDecodeReplace)
+	n.utf8Text = charset.HackString(utf8Lit)
 	n.text = text
 }
 
 // Text implements Node interface.
 func (n *node) Text() string {
+	return n.utf8Text
+}
+
+// OriginalText implements Node interface.
+func (n *node) OriginalText() string {
 	return n.text
 }
 
