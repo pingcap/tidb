@@ -122,7 +122,7 @@ func (s *testPlanSuite) TestImplicitCastNotNullFlag(c *C) {
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	c.Assert(err, IsNil)
-	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args
+	// AggFuncs[0] is count; AggFuncs[1] is bit_and, args[0] is return type of the implicit cast
 	castNotNullFlag := (p.(*LogicalProjection).children[0].(*LogicalSelection).children[0].(*LogicalAggregation).AggFuncs[1].Args[0].GetType().Flag) & mysql.NotNullFlag
 	c.Assert(castNotNullFlag, Equals, 0)
 }
