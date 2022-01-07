@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -385,4 +386,87 @@ func (s *testSuite) TestFix29401(c *C) {
   KEY f (f)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
 	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
+}
+
+func (s *testSuite) TestSharIndexPlan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists test3, test5")
+	tk.MustExec("create table test3(id int primary key clustered, a int, b int," +
+		" unique key uk_expr((tidb_shard(a)),a))")
+	tk.MustExec("create table test5(id int primary key clustered, a int, b int," +
+		" unique key uk_expr((tidb_shard(a)),a,b))")
+	tk.MustQuery("explain format=brief select * from test3 where a=100").Check(testkit.Rows(
+		"Projection 1.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Point_Get 1.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) "))
+
+	tk.MustQuery("explain format=brief select * from test3 where a=100 and (b = 100 or b = 200)").Check(testkit.Rows(
+		"Projection 0.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Selection 0.00 root  or(eq(test.test3.b, 100), eq(test.test3.b, 200))",
+		"  └─Point_Get 1.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) "))
+
+	tk.MustQuery("explain format=brief select * from test3 where tidb_shard(a) = 8").Check(testkit.Rows(
+		"Projection 10.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─IndexLookUp 10.00 root  ",
+		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:test3, "+
+			"index:uk_expr(tidb_shard(`a`), a) range:[8,8], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:test3 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format=brief select * from test3 where a=100 or b = 200").Check(testkit.Rows(
+		"Projection 8000.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Selection 8000.00 root  or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), eq(test.test3.b, 200))",
+		"  └─TableReader 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:test3 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format=brief select * from test3 where a=100 or a = 300").Check(testkit.Rows(
+		"Projection 2.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Batch_Point_Get 2.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) keep order:false, desc:false"))
+
+	tk.MustQuery("explain format=brief select * from test3 where a=100 or a = 300 or a > 997").Check(testkit.Rows(
+		"Projection 8000.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Selection 8000.00 root  or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), "+
+			"or(and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)), gt(test.test3.a, 997)))",
+		"  └─TableReader 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:test3 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format=brief select * from test3   where ((a=100 and b = 100) or a = 200) and b = 300").Check(testkit.Rows(
+		"Projection 0.01 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─TableReader 0.01 root  data:Selection",
+		"  └─Selection 0.01 cop[tikv]  eq(test.test3.b, 300), or(0, eq(test.test3.a, 200))",
+		"    └─TableFullScan 10000.00 cop[tikv] table:test3 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format=brief select * from test3 where a = b").Check(testkit.Rows(
+		"Projection 8000.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─TableReader 8000.00 root  data:Selection",
+		"  └─Selection 8000.00 cop[tikv]  eq(test.test3.a, test.test3.b)",
+		"    └─TableFullScan 10000.00 cop[tikv] table:test3 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain format=brief select * from test3 where a = b and b = 100").Check(testkit.Rows(
+		"Projection 0.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Selection 0.00 root  eq(test.test3.b, 100)",
+		"  └─Point_Get 1.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) "))
+
+	tk.MustQuery("explain format=brief select * from test5 where a=100 and b = 100").Check(testkit.Rows(
+		"Projection 1.00 root  test.test5.id, test.test5.a, test.test5.b",
+		"└─Point_Get 1.00 root table:test5, index:uk_expr(tidb_shard(`a`), a, b) "))
+
+	tk.MustQuery("explain format=brief select * from test5 where (a=100 and b = 100) or  (a=200 and b = 200)").Check(testkit.Rows(
+		"Projection 2.00 root  test.test5.id, test.test5.a, test.test5.b",
+		"└─Batch_Point_Get 2.00 root table:test5, index:uk_expr(tidb_shard(`a`), a, b) keep order:false, desc:false"))
+
+	tk.MustQuery("explain format=brief select a+b from test5 where (a, b) in ((100, 100), (200, 200))").Check(testkit.Rows(
+		"Projection 2.00 root  plus(test.test5.a, test.test5.b)->Column#5",
+		"└─Batch_Point_Get 2.00 root table:test5, index:uk_expr(tidb_shard(`a`), a, b) keep order:false, desc:false"))
+
+	tk.MustQuery("explain format=brief SELECT * FROM test3 WHERE a IN (100)").Check(testkit.Rows(
+		"Projection 1.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Point_Get 1.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) "))
+
+	tk.MustQuery("explain format=brief SELECT * FROM test3 WHERE a IN (100, 200, 300)").Check(testkit.Rows(
+		"Projection 3.00 root  test.test3.id, test.test3.a, test.test3.b",
+		"└─Batch_Point_Get 3.00 root table:test3, index:uk_expr(tidb_shard(`a`), a) keep order:false, desc:false"))
 }

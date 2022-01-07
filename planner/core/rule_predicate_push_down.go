@@ -33,6 +33,8 @@ import (
 
 type ppdSolver struct{}
 
+// exprPrefixAdder is the wrapper struct to add tidb_shard(x) = val for `OrigConds`
+// `cols` is the index columns for a unique shard index
 type exprPrefixAdder struct {
 	sctx      sessionctx.Context
 	OrigConds []expression.Expression
@@ -741,7 +743,7 @@ func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalS
 	opt.appendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
 
-// AddPrefix4ShardIndexes Add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
+// AddPrefix4ShardIndexes add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
 // It transforms the sql "SELECT * FROM test WHERE a = 10" to
 // "SELECT * FROM test WHERE tidb_shard(a) = val AND a = 10", val is the value of tidb_shard(10).
 // It also transforms the sql "SELECT * FROM test WHERE a IN (10, 20, 30)" to
@@ -754,16 +756,20 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 	}
 
 	var err error
-	newConds := make([]expression.Expression, 0, len(conds))
-	newConds = append(newConds, conds...)
+	newConds := conds
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() || !path.IsUkShardIndex() {
+		if !path.IsUkShardIndexPath {
 			continue
 		}
 		newConds, err = ds.addExprPrefixCond(sc, path, newConds)
 		if err != nil {
-			logutil.BgLogger().Error("Add tidb_shard expression failed", zap.Error(err))
+			logutil.BgLogger().Error("Add tidb_shard expression failed",
+				zap.Error(err),
+				zap.Uint64("connection id", sc.GetSessionVars().ConnectionID),
+				zap.String("database name", ds.DBName.L),
+				zap.String("table name", ds.tableInfo.Name.L),
+				zap.String("index name", path.Index.Name.L))
 			return conds
 		}
 	}

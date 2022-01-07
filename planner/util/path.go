@@ -65,8 +65,8 @@ type AccessPath struct {
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
-	// maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
-	IsShardIndexPath bool
+	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
+	IsUkShardIndexPath bool
 }
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
@@ -273,12 +273,4 @@ func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
 		return ExtractCol2Len(path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
-}
-
-// IsUkShardIndex if unique index and the first field is tidb_shard() return true
-func (path *AccessPath) IsUkShardIndex() bool {
-	if path.Index.Unique && path.IsShardIndexPath {
-		return true
-	}
-	return false
 }
