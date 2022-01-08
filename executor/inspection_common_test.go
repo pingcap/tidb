@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 )
 
-func (s *inspectionSummarySuite) TestInspectionRules(t *testing.T) {
+func TestInspectionRules(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.store)
 
 	inspectionCount := len(executor.InspectionRules)
