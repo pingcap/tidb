@@ -108,19 +108,16 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
-// GetTableScan exports the tableScan that contained in tablePlan.
-func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
-	curPlan := p.tablePlan
-	for {
-		chCnt := len(curPlan.Children())
-		if chCnt == 0 {
-			return curPlan.(*PhysicalTableScan)
-		} else if chCnt == 1 {
-			curPlan = curPlan.Children()[0]
-		} else {
-			return nil
+// GetTableScans exports the tableScan that contained in tablePlan.
+func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
+	tableScans := make([]*PhysicalTableScan, 0, 1)
+	for _, tablePlan := range p.TablePlans {
+		tableScan, ok := tablePlan.(*PhysicalTableScan)
+		if ok {
+			tableScans = append(tableScans, tableScan)
 		}
 	}
+	return tableScans
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.

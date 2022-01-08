@@ -1443,12 +1443,12 @@
           "Projection 2.00 root  test.table_1.id, Column#4, Column#5",
           "└─TableReader 2.00 root  data:ExchangeSender",
           "  └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 2.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#13, 0), 1, Column#13), decimal(20,0) BINARY))->Column#4, div(Column#5, cast(case(eq(Column#14, 0), 1, Column#14), decimal(20,0) BINARY))->Column#5, test.table_1.id",
-          "      └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:sum(Column#15)->Column#13, funcs:sum(Column#16)->Column#4, funcs:sum(Column#17)->Column#14, funcs:sum(Column#18)->Column#5, funcs:firstrow(test.table_1.id)->test.table_1.id",
+          "    └─Projection 2.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#8, 0), 1, Column#8), decimal(20,0) BINARY))->Column#4, div(Column#5, cast(case(eq(Column#9, 0), 1, Column#9), decimal(20,0) BINARY))->Column#5, test.table_1.id",
+          "      └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:sum(Column#10)->Column#8, funcs:sum(Column#11)->Column#4, funcs:sum(Column#12)->Column#9, funcs:sum(Column#13)->Column#5, funcs:firstrow(test.table_1.id)->test.table_1.id",
           "        └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
           "          └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.id, collate: binary]",
-          "            └─HashAgg 2.00 batchCop[tiflash]  group by:Column#29, funcs:count(Column#25)->Column#15, funcs:sum(Column#26)->Column#16, funcs:count(Column#27)->Column#17, funcs:sum(Column#28)->Column#18",
-          "              └─Projection 2.00 batchCop[tiflash]  plus(test.table_1.value, 1)->Column#25, plus(test.table_1.value, 1)->Column#26, test.table_1.value, test.table_1.value, test.table_1.id",
+          "            └─HashAgg 2.00 batchCop[tiflash]  group by:Column#24, funcs:count(Column#20)->Column#10, funcs:sum(Column#21)->Column#11, funcs:count(Column#22)->Column#12, funcs:sum(Column#23)->Column#13",
+          "              └─Projection 2.00 batchCop[tiflash]  plus(test.table_1.value, 1)->Column#20, plus(test.table_1.value, 1)->Column#21, test.table_1.value, test.table_1.value, test.table_1.id",
           "                └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
         ]
       }
