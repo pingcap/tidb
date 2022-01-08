@@ -1196,16 +1196,17 @@ func TestCoprocessorPriority(t *testing.T) {
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	expectRows := testkit.Rows(
 		"ascii_bin ascii 65 Yes Yes 1",
 		"binary binary 63 Yes Yes 1",
+		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
 		"latin1_bin latin1 47 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
