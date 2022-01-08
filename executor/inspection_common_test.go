@@ -18,16 +18,17 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInspectionRules(t *testing.T) {
-	tk := testkit.NewTestKit(t, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
+	tk := testkit.NewTestKit(t, store)
 	inspectionCount := len(executor.InspectionRules)
 	summaryCount := len(executor.InspectionSummaryRules)
 	var cases = []struct {
