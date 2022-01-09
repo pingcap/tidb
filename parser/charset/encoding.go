@@ -13,6 +13,8 @@
 
 package charset
 
+import "bytes"
+
 // Make sure all of them implement Encoding interface.
 var (
 	_ Encoding = &encodingUTF8{}
@@ -75,7 +77,7 @@ type Encoding interface {
 	// Foreach iterates the characters in in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
-	Transform(dest, src []byte, op Op) ([]byte, error)
+	Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error)
 	// ToUpper change a string to uppercase.
 	ToUpper(src string) string
 	// ToLower change a string to lowercase.
