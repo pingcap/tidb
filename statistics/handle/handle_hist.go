@@ -165,7 +165,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 	}
 }
 
-// HandleOneTask handles one column task.
+// HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
 func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededColumnTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
