@@ -69,7 +69,7 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
 	hash := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetBindRecord(originalSQL, hash, db)
+	oldRecord := h.GetBindRecord(hash, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {

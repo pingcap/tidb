@@ -443,7 +443,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 		return nil, "", err
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, hash, "")
+	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
 			return bindRecord, metrics.ScopeSession, nil
