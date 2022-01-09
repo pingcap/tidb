@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestBuildTasks(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -155,7 +155,6 @@ func TestBuildTasks(t *testing.T) {
 }
 
 func TestSplitRegionRanges(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -218,7 +217,6 @@ func TestSplitRegionRanges(t *testing.T) {
 }
 
 func TestRebuild(t *testing.T) {
-	t.Parallel()
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -292,7 +290,6 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 }
 
 func TestBuildPagingTasks(t *testing.T) {
-	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -322,7 +319,7 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 	require.True(t, tasks[0].paging)
-	require.Equal(t, tasks[0].pagingSize, minPagingSize)
+	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
@@ -345,7 +342,6 @@ func toRange(r *KeyRanges) []kv.KeyRange {
 }
 
 func TestCalculateRetry(t *testing.T) {
-	t.Parallel()
 	worker := copIteratorWorker{}
 
 	// split in one range
@@ -404,7 +400,6 @@ func TestCalculateRetry(t *testing.T) {
 }
 
 func TestCalculateRemain(t *testing.T) {
-	t.Parallel()
 	worker := copIteratorWorker{}
 
 	// split in one range

@@ -841,6 +841,7 @@ const (
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONPath                                       = 3143
+	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
@@ -1055,6 +1056,7 @@ const (
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
 	ErrOptOnCacheTable                    = 8242
+	ErrHTTPServiceError                   = 8243
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

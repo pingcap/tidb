@@ -500,6 +500,10 @@ func TestVarsutil(t *testing.T) {
 	warn := v.StmtCtx.GetWarnings()[0]
 	require.Error(t, warn.Err)
 	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
+
+	err = SetSessionSystemVar(v, TiDBTableCacheLease, "123")
+	require.Error(t, err)
+	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
 }
 
 func TestValidate(t *testing.T) {
@@ -593,7 +597,6 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -622,7 +625,6 @@ func TestValidate(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -681,7 +683,6 @@ func TestValidateStmtSummary(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)

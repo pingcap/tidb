@@ -549,7 +549,7 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
-	// in predicate push down and used only in partition pruning.
+	// in predicate push down and used in partition pruning/index merge.
 	allConds []expression.Expression
 
 	statisticTable *statistics.Table
@@ -726,7 +726,6 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
@@ -744,7 +743,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
 		}
@@ -785,7 +784,6 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
 	var err error
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.TableFilters = conds
 	var pkCol *expression.Column
@@ -848,7 +846,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.Ranges)
+	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(ds.ctx, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
@@ -858,7 +856,6 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
@@ -900,7 +897,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
 		}
@@ -1287,10 +1284,11 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag  uint64
-	HasLimit bool
-	LimitBeg uint64
-	LimitEnd uint64
+	optFlag   uint64
+	HasLimit  bool
+	LimitBeg  uint64
+	LimitEnd  uint64
+	IsInApply bool
 }
 
 // LogicalCTE is for CTE.
@@ -1309,6 +1307,9 @@ type LogicalCTETable struct {
 	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
+
+	// seedSchema is only used in columnStatsUsageCollector to get column mapping
+	seedSchema *expression.Schema
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
