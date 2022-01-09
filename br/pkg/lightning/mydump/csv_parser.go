@@ -552,12 +552,6 @@ func (parser *CSVParser) ReadColumns() error {
 	return nil
 }
 
-var newLineASCIISet = makeByteSet([]byte{'\r', '\n'})
-
-func indexOfNewLine(b []byte) int {
-	return IndexAnyByte(b, &newLineASCIISet)
-}
-
 // ReadUntilTerminator seeks the file until the terminator token is found, and
 // returns the file offset beyond the terminator.
 // This function is used in strict-format dividing a CSV file.
