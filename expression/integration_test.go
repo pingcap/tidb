@@ -6990,19 +6990,23 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
 }
 
-func (s *testIntegrationSuite) TestIssue29708(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
 	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
-	c.Assert(err, NotNil)
+	require.NotNil(t, err)
 	tk.MustQuery("select * from t1").Check(nil)
 
 	// test vectorized build-in function
 	tk.MustExec("insert into t1 (a) values ('a'),('b');")
 	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
-	c.Assert(err, NotNil)
+	require.NotNil(t, err)
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{"a"},
 		{"b"},
@@ -7010,7 +7014,7 @@ func (s *testIntegrationSuite) TestIssue29708(c *C) {
 
 	// test cast
 	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
-	c.Assert(err, NotNil)
+	require.NotNil(t, err)
 	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
 		{"a"},
 		{"b"},
