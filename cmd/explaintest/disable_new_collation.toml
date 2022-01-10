@@ -23,5 +23,4 @@ status-host = "127.0.0.1"
 stats-lease = "0"
 
 [experimental]
-enable-new-charset = true
 allow-expression-index = true

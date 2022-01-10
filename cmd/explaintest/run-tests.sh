@@ -22,7 +22,6 @@ importer=""
 tidb_server=""
 portgenerator=""
 explain_test_log="./explain-test.out"
-explain_test_disable_new_collation_log="./explain-test-disable-new-collation.out"
 tests=""
 record=0
 record_case=""
@@ -264,12 +263,12 @@ fi
 kill -9 $SERVER_PID
 
 echo "run collation tests when new-collation disabled"
-echo "start tidb-server, log file: $explain_test_disable_new_collation_log"
+echo "start tidb-server, log file: $explain_test_log"
 if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store tikv -path "${TIKV_PATH}" > $explain_test_disable_new_collation_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store tikv -path "${TIKV_PATH}" >> $explain_test_log 2>&1 &
     SERVER_PID=$!
 else
-    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store unistore -path "" > $explain_test_disable_new_collation_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config disable_new_collation.toml -store unistore -path "" >> $explain_test_log 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"
