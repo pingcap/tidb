@@ -49,6 +49,10 @@ const (
 	RejectStoreMaxCheckInterval = 2 * time.Second
 )
 
+var (
+	ScanRegionAttemptTimes = 30
+)
+
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
 	client SplitClient
@@ -454,7 +458,7 @@ type scanRegionBackoffer struct {
 
 func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
-		attempt: 30,
+		attempt: ScanRegionAttemptTimes,
 	}
 }
 

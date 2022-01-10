@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -1745,11 +1744,9 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 
 	threads := 8
 	loops := 1
-	wg := sync.WaitGroup{}
-	wg.Add(threads)
+	var wg util.WaitGroupWrapper
 
 	insertFunc := func() {
-		defer wg.Done()
 		newTk := testkit.NewTestKitWithInit(c, s.store)
 		newTk.MustExec("begin")
 		for i := 0; i < loops; i++ {
@@ -1762,7 +1759,7 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	}
 
 	for i := 0; i < threads; i++ {
-		go insertFunc()
+		wg.Run(insertFunc)
 	}
 	wg.Wait()
 }

@@ -1468,3 +1468,55 @@ func (e *TikvRegionPeersExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	return s
 }
+
+// ColumnsTableExtractor is used to extract some predicates of columns table.
+type ColumnsTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	TableSchema set.StringSet
+
+	TableName set.StringSet
+	// ColumnName represents all column name we should filter in memtable.
+	ColumnName set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
+	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
+	e.ColumnName = columnName
+	e.TableName = tableName
+	e.TableSchema = tableSchema
+	return remained
+}
+
+func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema:[%s], ", extractStringFromStringSet(e.TableSchema)))
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table_name:[%s], ", extractStringFromStringSet(e.TableName)))
+	}
+	if len(e.ColumnName) > 0 {
+		r.WriteString(fmt.Sprintf("column_name:[%s], ", extractStringFromStringSet(e.ColumnName)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
