@@ -4971,7 +4971,6 @@ func (d *ddl) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, 
 func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	is := d.infoCache.GetLatest()
 	tb, ok := is.TableByID(physicalID)
-
 	if !ok {
 		tb, _, _ = is.FindTableByPartitionID(physicalID)
 		if tb == nil {
@@ -4979,7 +4978,6 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		}
 	}
 	tbInfo := tb.Meta()
-
 	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
 		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
 		return nil
