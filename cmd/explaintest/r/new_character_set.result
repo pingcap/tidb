@@ -87,6 +87,16 @@ utf8_unicode_ci	utf8	192		Yes	1
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 utf8mb4_general_ci	utf8mb4	45		Yes	1
 utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+set names utf8mb4;
+drop table if exists t;
+create table t(a blob, b char(10));
+insert into t values (0x61, 'å•Š');
+insert into t values (0x61, 'ä¸€');
+set names gbk;
+select * from t;
+a	b
+a	°¡
+a	Ò»
 drop table t;
 set names gbk;
 set character_set_connection = utf8mb4;
