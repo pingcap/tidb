@@ -37,6 +37,8 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
@@ -252,7 +254,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			origSock := s.cfg.Socket
+			idx := strings.LastIndex(origSock, ".")
+			if idx >= 0 {
+				s.cfg.Socket = origSock[:idx] + "-" + strconv.FormatInt(time.Now().Unix(), 10) + "." + origSock[idx+1:]
+			} else {
+				s.cfg.Socket = origSock + "-" + strconv.FormatInt(time.Now().Unix(), 10)
+			}
+			logutil.BgLogger().Error("failed to cleanup socket", zap.Error(err), zap.String("new-socket", s.cfg.Socket))
 		}
 
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
