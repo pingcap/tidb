@@ -141,6 +141,22 @@ func (s *testPartitionPruneSuit) TestRangeColumnPartitionPruningForIn(c *C) {
 		"└─TableReader 20.00 root  data:Selection",
 		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo"))
+
+	// for other types, the in-pruning shouldn't be working for safety
+	tk.MustExec(`create table t3 (a varchar(10)) partition by range columns(a) (
+		partition p0 values less than ("aaa"),
+		partition p1 values less than ("bbb"),
+		partition p2 values less than ("ccc"))`)
+	tk.MustQuery(`explain format='brief' select a from t3 where a in ('aaa', 'aab')`).Check(testkit.Rows("PartitionUnion 60.00 root  ",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p0 keep order:false, stats:pseudo",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p1 keep order:false, stats:pseudo",
+		"└─TableReader 20.00 root  data:Selection",
+		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t3.a, \"aaa\", \"aab\")",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t3, partition:p2 keep order:false, stats:pseudo"))
 }
 
 func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
