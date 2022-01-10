@@ -227,8 +227,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
-
 	preparedObj := &plannercore.CachedPrepareStmt{
+		PreparedDB:          e.ctx.GetSessionVars().CurrentDB,
 		PreparedAst:         prepared,
 		PreparedStmtText:    prepared.Stmt.Text(),
 		VisitInfos:          destBuilder.GetVisitInfo(),
@@ -316,7 +316,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, preparedObj.PreparedStmtText, prepared.SchemaVersion,
+			vars, preparedObj.PreparedDB, preparedObj.PreparedStmtText, prepared.SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)

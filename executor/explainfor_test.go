@@ -1428,6 +1428,7 @@ func (s *testPrepareSerialSuite) TestValidity4PlanCache(c *C) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	// The schema version has changed.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
@@ -1439,7 +1440,7 @@ func (s *testPrepareSerialSuite) TestValidity4PlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func (s *testPrepareSerialSuite) TestListPartition4PlanCache(c *C) {

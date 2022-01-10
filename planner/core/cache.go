@@ -109,13 +109,13 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, db string, preparedStmtText string, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &pstmtPlanCacheKey{
-		database:             sessionVars.CurrentDB,
+		database:             db,
 		connID:               sessionVars.ConnectionID,
 		preparedStmtText:     preparedStmtText,
 		schemaVersion:        schemaVersion,
@@ -183,6 +183,7 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
+	PreparedDB          string
 	PreparedAst         *ast.Prepared
 	PreparedStmtText    string
 	VisitInfos          []visitInfo
