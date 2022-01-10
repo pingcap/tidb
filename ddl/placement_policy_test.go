@@ -732,7 +732,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
 	po := testGetPolicyByName(c, tk.Se, "x", true)
 	c.Assert(po, NotNil)
-	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL"))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int) placement policy \"x\"")
