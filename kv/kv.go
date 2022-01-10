@@ -30,6 +30,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -237,10 +238,18 @@ type Transaction interface {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
+	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
+}
+
+// ClientSendOption wraps options during Client Send
+type ClientSendOption struct {
+	SessionMemTracker          *memory.Tracker
+	EnabledRateLimitAction     bool
+	EventCb                    trxevents.EventCallback
+	EnableCollectExecutionInfo bool
 }
 
 // ReqTypes.
@@ -335,8 +344,10 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
-	// ResourceGroupTag indicates the kv request task group.
-	ResourceGroupTag []byte
+	// ResourceGroupTagger indicates the kv request task group tagger.
+	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	// Paging indicates whether the request is a paging request.
+	Paging bool
 }
 
 const (

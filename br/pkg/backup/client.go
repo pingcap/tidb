@@ -180,14 +180,9 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 			"there may be some backup files in the path already, "+
 			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.MetaFile)
 	}
-	exist, err = bc.storage.FileExists(ctx, metautil.LockFile)
+	err = CheckBackupStorageIsLocked(ctx, bc.storage)
 	if err != nil {
-		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
-	}
-	if exist {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file exists in %v, "+
-			"there may be some backup files in the path already, "+
-			"please specify a correct backup directory!", bc.storage.URI()+"/"+metautil.LockFile)
+		return err
 	}
 	bc.backend = backend
 	return nil
@@ -196,6 +191,29 @@ func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
 func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
+}
+
+// CheckBackupStorageIsLocked checks whether backups is locked.
+// which means we found other backup progress already write
+// some data files into the same backup directory or cloud prefix.
+func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
+	exist, err := s.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
+	}
+	if exist {
+		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			// should return error to break the walkDir when found lock file and other .sst files.
+			if strings.HasSuffix(path, ".sst") {
+				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+
+					"there are some backup files in the path already, "+
+					"please specify a correct backup directory!", s.URI()+"/"+metautil.LockFile)
+			}
+			return nil
+		})
+		return err
+	}
+	return nil
 }
 
 // BuildTableRanges returns the key ranges encompassing the entire table,
@@ -363,7 +381,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 	case model.ActionCreatePlacementPolicy,
 		model.ActionAlterPlacementPolicy,
 		model.ActionDropPlacementPolicy,
-		model.ActionAlterTablePartitionPolicy,
+		model.ActionAlterTablePartitionPlacement,
 		model.ActionModifySchemaDefaultPlacement,
 		model.ActionAlterTablePlacement,
 		model.ActionAlterTableAttributes,
@@ -416,7 +434,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			if err != nil {
 				return errors.Trace(err)
 			}
-			metaWriter.Send(jobBytes, metautil.AppendDDL)
+			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			count++
 		}
 	}
@@ -452,7 +473,13 @@ func (bc *Client) BackupRanges(
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
 			err := bc.BackupRange(elctx, sk, ek, req, metaWriter, progressCallBack)
 			if err != nil {
-				return errors.Trace(err)
+				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
+				if errors.Cause(err) == context.Canceled {
+					return errors.SuspendStack(err)
+				} else {
+					return errors.Trace(err)
+				}
+
 			}
 			return nil
 		})
@@ -719,7 +746,7 @@ func OnBackupResponse(
 		if lockErr := v.KvError.Locked; lockErr != nil {
 			// Try to resolve lock.
 			log.Warn("backup occur kv error", zap.Reflect("error", v))
-			msBeforeExpired, _, err1 := lockResolver.ResolveLocks(
+			msBeforeExpired, err1 := lockResolver.ResolveLocks(
 				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 			if err1 != nil {
 				return nil, 0, errors.Trace(err1)
@@ -927,7 +954,6 @@ backupLoop:
 				zap.Int("retry time", retry))
 			return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
-		defer bcli.CloseSend()
 
 		for {
 			resp, err := bcli.Recv()
@@ -935,6 +961,7 @@ backupLoop:
 				if errors.Cause(err) == io.EOF { // nolint:errorlint
 					logutil.CL(ctx).Info("backup streaming finish",
 						zap.Int("retry-time", retry))
+					_ = bcli.CloseSend()
 					break backupLoop
 				}
 				if isRetryableError(err) {
@@ -942,11 +969,14 @@ backupLoop:
 					// current tikv is unavailable
 					client, errReset = resetFn()
 					if errReset != nil {
+						_ = bcli.CloseSend()
 						return errors.Annotatef(errReset, "failed to reset recv connection on store:%d "+
 							"please check the tikv status", storeID)
 					}
+					_ = bcli.CloseSend()
 					break
 				}
+				_ = bcli.CloseSend()
 				return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to connect to store: %d with retry times:%d", storeID, retry)
 			}
 
@@ -956,6 +986,7 @@ backupLoop:
 				logutil.Key("small-range-end-key", resp.GetEndKey()))
 			err = respFn(resp)
 			if err != nil {
+				_ = bcli.CloseSend()
 				return errors.Trace(err)
 			}
 		}

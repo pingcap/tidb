@@ -284,7 +284,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 	bf.tp = c.tp
-	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+	if args[0].GetType().Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
@@ -292,6 +292,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
+		if bf.tp.Flen == types.UnspecifiedLength {
+			bf.tp.Flen = args[0].GetType().Flen
+		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
@@ -310,6 +313,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETString:
+		// When cast from binary to some other charsets, we should check if the binary is valid or not.
+		// so we build a from_binary function to do this check.
+		bf.args[0] = HandleBinaryLiteral(ctx, args[0], &ExprCollation{Charset: c.tp.Charset, Collation: c.tp.Collate}, c.funcName)
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
@@ -1286,6 +1292,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if res.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
@@ -1816,6 +1825,17 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 		ctx.SetValue(inUnionCastContext, nil)
 	}()
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// BuildCastCollationFunction builds a ScalarFunction which casts the collation.
+func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *ExprCollation) Expression {
+	if expr.GetType().Collate == ec.Collation {
+		return expr
+	}
+	tp := expr.GetType().Clone()
+	tp.Charset, tp.Collate = ec.Charset, ec.Collation
+	newExpr := BuildCastFunction(ctx, expr, tp)
+	return newExpr
 }
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.

@@ -666,6 +666,7 @@ import (
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	placement             "PLACEMENT"
 	plan                  "PLAN"
+	planCache             "PLAN_CACHE"
 	position              "POSITION"
 	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
@@ -685,6 +686,7 @@ import (
 	subDate               "SUBDATE"
 	sum                   "SUM"
 	substring             "SUBSTRING"
+	target                "TARGET"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
 	tls                   "TLS"
@@ -735,6 +737,7 @@ import (
 	statsBuckets               "STATS_BUCKETS"
 	statsHealthy               "STATS_HEALTHY"
 	statsTopN                  "STATS_TOPN"
+	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	telemetry                  "TELEMETRY"
 	telemetryID                "TELEMETRY_ID"
 	tidb                       "TIDB"
@@ -1018,6 +1021,7 @@ import (
 	FuncDatetimePrec                       "Function datetime precision"
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
+	StatementScope                         "The scope of statement"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -1191,6 +1195,7 @@ import (
 	TableSampleUnitOpt                     "table sample unit optional"
 	TableToTable                           "rename table to table"
 	TableToTableList                       "rename table to table by list"
+	TextString                             "text string item"
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
@@ -1389,7 +1394,6 @@ import (
 	StringName                      "string literal or identifier"
 	StringNameOrBRIEOptionKeyword   "string literal or identifier or keyword used for BRIE options"
 	Symbol                          "Constraint Symbol"
-	TextString                      "text string item"
 
 %precedence empty
 %precedence as
@@ -1399,8 +1403,6 @@ import (
 %precedence sqlBigResult
 %precedence sqlSmallResult
 %precedence sqlCache sqlNoCache
-%precedence lowerThanIntervalKeyword
-%precedence interval
 %precedence next
 %precedence lowerThanValueKeyword
 %precedence value
@@ -1453,6 +1455,7 @@ import (
 %precedence lowerThanNot
 %right not not2
 %right collate
+%left interval
 %right encryption
 %left labels
 %precedence quick
@@ -1523,7 +1526,12 @@ DirectPlacementOption:
 	}
 |	"FOLLOWERS" EqOpt LengthNum
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("FOLLOWERS must be positive"))
+			return 1
+		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: cnt}
 	}
 |	"VOTERS" EqOpt LengthNum
 	{
@@ -3712,7 +3720,7 @@ CreateTableStmt:
 		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
 		stmt.Select = $11.(*ast.CreateTableStmt).Select
 		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
 				stmt.OnCommitDelete = $12.(bool)
@@ -3729,7 +3737,7 @@ CreateTableStmt:
 			TemporaryKeyword: $2.(ast.TemporaryKeyword),
 		}
 		if ($7 != nil && tmp.TemporaryKeyword != ast.TemporaryGlobal) || (tmp.TemporaryKeyword == ast.TemporaryGlobal && $7 == nil) {
-			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE|PRESERVE ROWS must appear together"))
+			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if tmp.TemporaryKeyword == ast.TemporaryGlobal {
 				tmp.OnCommitDelete = $7.(bool)
@@ -4546,6 +4554,16 @@ TraceStmt:
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$3.SetText(string(parser.src[startOffset:]))
+	}
+|	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:            $6,
+			TracePlan:       true,
+			TracePlanTarget: $5,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$6.SetText(string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -6069,6 +6087,7 @@ TiDBKeyword:
 |	"STATS_TOPN"
 |	"STATS_BUCKETS"
 |	"STATS_HEALTHY"
+|	"HISTOGRAMS_IN_FLIGHT"
 |	"TELEMETRY"
 |	"TELEMETRY_ID"
 |	"TIDB"
@@ -6111,6 +6130,7 @@ NotKeywordToken:
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
+|	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
@@ -6126,6 +6146,7 @@ NotKeywordToken:
 |	"VARIANCE"
 |	"VAR_POP"
 |	"VAR_SAMP"
+|	"TARGET"
 |	"TIMESTAMPADD"
 |	"TIMESTAMPDIFF"
 |	"TOKUDB_DEFAULT"
@@ -6440,7 +6461,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6464,7 +6485,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6480,7 +6501,7 @@ Literal:
 			yylex.AppendError(ast.ErrUnknownCharacterSet.GenWithStack("Unsupported character introducer: '%-.64s'", $1))
 			return 1
 		}
-		expr := ast.NewValueExpr($2, parser.charset, parser.collation)
+		expr := ast.NewValueExpr($2, $1, co)
 		tp := expr.GetType()
 		tp.Charset = $1
 		tp.Collate = co
@@ -6735,7 +6756,7 @@ SimpleExpr:
 	{
 		$$ = &ast.UnaryOperationExpr{Op: opcode.Not2, V: $2}
 	}
-|	SubSelect
+|	SubSelect %prec neg
 |	'(' Expression ')'
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
@@ -6920,7 +6941,7 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL" %prec lowerThanIntervalKeyword
+|	"INTERVAL"
 |	"FORMAT"
 |	"LEFT"
 |	"MICROSECOND"
@@ -9151,6 +9172,29 @@ SubSelect:
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
+|	'(' SubSelect ')'
+	{
+		subQuery := $2.(*ast.SubqueryExpr).Query
+		isRecursive := true
+		// remove redundant brackets like '((select 1))'
+		for isRecursive {
+			if _, isRecursive = subQuery.(*ast.SubqueryExpr); isRecursive {
+				subQuery = subQuery.(*ast.SubqueryExpr).Query
+			}
+		}
+		switch rs := subQuery.(type) {
+		case *ast.SelectStmt:
+			endOffset := parser.endOffset(&yyS[yypt])
+			parser.setLastSelectFieldText(rs, endOffset)
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		case *ast.SetOprStmt:
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		}
+	}
 
 // See https://dev.mysql.com/doc/refman/8.0/en/innodb-locking-reads.html
 SelectLockOpt:
@@ -9701,7 +9745,7 @@ VariableAssignment:
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	"LOCAL" VariableName EqOrAssignmentEq Expression
+|	"LOCAL" VariableName EqOrAssignmentEq SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
@@ -10110,6 +10154,13 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminResetTelemetryID,
+		}
+	}
+|	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp:             ast.AdminFlushPlanCache,
+			StatementScope: $3.(ast.StatementScope),
 		}
 	}
 
@@ -10631,6 +10682,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"HISTOGRAMS_IN_FLIGHT"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowHistogramsInFlight}
+	}
 |	"COLUMN_STATS_USAGE"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
@@ -10687,6 +10742,23 @@ GlobalScope:
 |	"SESSION"
 	{
 		$$ = false
+	}
+
+StatementScope:
+	{
+		$$ = ast.StatementScopeSession
+	}
+|	"GLOBAL"
+	{
+		$$ = ast.StatementScopeGlobal
+	}
+|	"INSTANCE"
+	{
+		$$ = ast.StatementScopeInstance
+	}
+|	"SESSION"
+	{
+		$$ = ast.StatementScopeSession
 	}
 
 OptFull:
@@ -11659,7 +11731,9 @@ StringType:
 |	"ENUM" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
 		x := types.NewFieldType(mysql.TypeEnum)
-		x.Elems = $3.([]string)
+		elems := $3.([]*ast.TextString)
+		opt := $5.(*ast.OptBinary)
+		x.Elems = ast.TransformTextStrings(elems, opt.Charset)
 		fieldLen := -1 // enum_flen = max(ele_flen)
 		for i := range x.Elems {
 			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
@@ -11668,7 +11742,6 @@ StringType:
 			}
 		}
 		x.Flen = fieldLen
-		opt := $5.(*ast.OptBinary)
 		x.Charset = opt.Charset
 		if opt.IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11678,14 +11751,15 @@ StringType:
 |	"SET" '(' TextStringList ')' OptCharsetWithOptBinary
 	{
 		x := types.NewFieldType(mysql.TypeSet)
-		x.Elems = $3.([]string)
+		elems := $3.([]*ast.TextString)
+		opt := $5.(*ast.OptBinary)
+		x.Elems = ast.TransformTextStrings(elems, opt.Charset)
 		fieldLen := len(x.Elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
 		for i := range x.Elems {
 			x.Elems[i] = strings.TrimRight(x.Elems[i], " ")
 			fieldLen += len(x.Elems[i])
 		}
 		x.Flen = fieldLen
-		opt := $5.(*ast.OptBinary)
 		x.Charset = opt.Charset
 		if opt.IsBinary {
 			x.Flag |= mysql.BinaryFlag
@@ -11992,23 +12066,26 @@ StringList:
 
 TextString:
 	stringLit
+	{
+		$$ = &ast.TextString{Value: $1}
+	}
 |	hexLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 |	bitLit
 	{
-		$$ = $1.(ast.BinaryLiteral).ToString()
+		$$ = &ast.TextString{Value: $1.(ast.BinaryLiteral).ToString(), IsBinaryLiteral: true}
 	}
 
 TextStringList:
 	TextString
 	{
-		$$ = []string{$1}
+		$$ = []*ast.TextString{$1.(*ast.TextString)}
 	}
 |	TextStringList ',' TextString
 	{
-		$$ = append($1.([]string), $3)
+		$$ = append($1.([]*ast.TextString), $3.(*ast.TextString))
 	}
 
 StringName:

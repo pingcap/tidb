@@ -1206,7 +1206,7 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row c
 		}
 		exprs = append(exprs, newExpr) // nozero
 	}
-	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.TargetCol.RetType, cwc.colLength)
+	ranges, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength)
 	if err != nil {
 		return nil, err
 	}
@@ -1453,7 +1453,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		var ranges, nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
-			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
+			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
 			if err != nil {
 				return false, err
 			}
@@ -1538,6 +1538,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				HighVal:     make([]types.Datum, pointLength, pointLength+1),
 				LowExclude:  colRan.LowExclude,
 				HighExclude: colRan.HighExclude,
+				Collators:   make([]collate.Collator, pointLength, pointLength+1),
 			}
 			ran.LowVal = append(ran.LowVal, colRan.LowVal[0])
 			ran.HighVal = append(ran.HighVal, colRan.HighVal[0])
@@ -1546,13 +1547,15 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	} else if haveExtraCol {
 		// Reserve a position for the last col.
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength+1),
-			HighVal: make([]types.Datum, pointLength+1),
+			LowVal:    make([]types.Datum, pointLength+1),
+			HighVal:   make([]types.Datum, pointLength+1),
+			Collators: make([]collate.Collator, pointLength+1),
 		})
 	} else {
 		ranges = append(ranges, &ranger.Range{
-			LowVal:  make([]types.Datum, pointLength),
-			HighVal: make([]types.Datum, pointLength),
+			LowVal:    make([]types.Datum, pointLength),
+			HighVal:   make([]types.Datum, pointLength),
+			Collators: make([]collate.Collator, pointLength),
 		})
 	}
 	sc := ijHelper.join.ctx.GetSessionVars().StmtCtx
@@ -1562,16 +1565,20 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			continue
 		}
 		exprs := []expression.Expression{eqAndInFuncs[j]}
-		oneColumnRan, err := ranger.BuildColumnRange(exprs, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		oneColumnRan, err := ranger.BuildColumnRange(exprs, ijHelper.join.ctx, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
 		if err != nil {
 			return nil, false, err
 		}
 		if len(oneColumnRan) == 0 {
 			return nil, true, nil
 		}
+		if sc.MemTracker != nil {
+			sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
+		}
 		for _, ran := range ranges {
 			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
 			ran.HighVal[i] = oneColumnRan[0].HighVal[0]
+			ran.Collators[i] = oneColumnRan[0].Collators[0]
 		}
 		curRangeLen := len(ranges)
 		for ranIdx := 1; ranIdx < len(oneColumnRan); ranIdx++ {
@@ -1580,7 +1587,11 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 				newRange := ranges[oldRangeIdx].Clone()
 				newRange.LowVal[i] = oneColumnRan[ranIdx].LowVal[0]
 				newRange.HighVal[i] = oneColumnRan[ranIdx].HighVal[0]
+				newRange.Collators[i] = oneColumnRan[0].Collators[0]
 				newRanges = append(newRanges, newRange)
+			}
+			if sc.MemTracker != nil && len(newRanges) != 0 {
+				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(newRanges[0].LowVal, len(newRanges)))
 			}
 			ranges = append(ranges, newRanges...)
 		}

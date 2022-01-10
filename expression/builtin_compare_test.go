@@ -29,7 +29,6 @@ import (
 )
 
 func TestCompareFunctionWithRefine(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
@@ -84,7 +83,6 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
@@ -170,7 +168,6 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCoalesce(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	cases := []struct {
@@ -216,7 +213,6 @@ func TestCoalesce(t *testing.T) {
 }
 
 func TestIntervalFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -274,11 +270,12 @@ func TestIntervalFunc(t *testing.T) {
 
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
+	decG := &types.MyDecimal{}
+	decL := &types.MyDecimal{}
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
@@ -290,6 +287,14 @@ func TestGreatestLeastFunc(t *testing.T) {
 		isNil            bool
 		getErr           bool
 	}{
+		{
+			[]interface{}{int64(-9223372036854775808), uint64(9223372036854775809)},
+			decG.FromUint(9223372036854775809), decL.FromInt(-9223372036854775808), false, false,
+		},
+		{
+			[]interface{}{uint64(9223372036854775808), uint64(9223372036854775809)},
+			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
+		},
 		{
 			[]interface{}{1, 2, 3, 4},
 			int64(4), int64(1), false, false,
@@ -345,6 +350,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 		{
 			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
 			"905969664", "1990-06-16 17:22:56.005534", false, false,
+		},
+		{
+			[]interface{}{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
+			"20:00:00", "105969664", false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)

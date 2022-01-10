@@ -18,8 +18,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"go.uber.org/zap"
 )
 
 var (
@@ -50,13 +52,14 @@ var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
-// All the supported charsets should be in the following table.
-var charsetInfos = map[string]*Charset{
+// CharacterSetInfos: All the supported charsets should be in the following table.
+var CharacterSetInfos = map[string]*Charset{
 	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
 	CharsetASCII:   {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
 	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
 	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
+	CharsetGBK:     {CharsetGBK, CollationGBKBin, make(map[string]*Collation), "Chinese Internal Code Specification", 2},
 }
 
 // All the names supported collations should be in the following table.
@@ -66,12 +69,22 @@ var supportedCollationNames = map[string]struct{}{
 	CollationASCII:   {},
 	CollationLatin1:  {},
 	CollationBin:     {},
+	CollationGBKBin:  {},
+}
+
+// TiFlashSupportedCharsets is a map which contains TiFlash supports charsets.
+var TiFlashSupportedCharsets = map[string]struct{}{
+	CharsetUTF8:    {},
+	CharsetUTF8MB4: {},
+	CharsetASCII:   {},
+	CharsetLatin1:  {},
+	CharsetBin:     {},
 }
 
 // GetSupportedCharsets gets descriptions for all charsets supported so far.
 func GetSupportedCharsets() []*Charset {
-	charsets := make([]*Charset, 0, len(charsetInfos))
-	for _, ch := range charsetInfos {
+	charsets := make([]*Charset, 0, len(CharacterSetInfos))
+	for _, ch := range CharacterSetInfos {
 		charsets = append(charsets, ch)
 	}
 
@@ -133,7 +146,7 @@ func GetDefaultCharsetAndCollate() (string, string) {
 
 // GetCharsetInfo returns charset and collation for cs as name.
 func GetCharsetInfo(cs string) (*Charset, error) {
-	if c, ok := charsetInfos[strings.ToLower(cs)]; ok {
+	if c, ok := CharacterSetInfos[strings.ToLower(cs)]; ok {
 		return c, nil
 	}
 
@@ -149,11 +162,10 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 		return collation.CharsetName, collation.Name, nil
 	}
 
-	// TODO: uncomment it when issue #29697 be closed
-	// log.Warn(
-	// 	"Unable to get collation name from collation ID, return default charset and collation instead.",
-	//	zap.Int("ID", coID),
-	//	zap.Stack("stack"))
+	log.Warn(
+		"unable to get collation name from collation ID, return default charset and collation instead",
+		zap.Int("ID", coID),
+		zap.Stack("stack"))
 	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
@@ -202,7 +214,8 @@ const (
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
 
-	CollationGBKBin = "gbk_bin"
+	CollationGBKBin       = "gbk_bin"
+	CollationGBKChineseCI = "gbk_chinese_ci"
 
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"
@@ -270,7 +283,7 @@ var collations = []*Collation{
 	{25, "greek", "greek_general_ci", true},
 	{26, "cp1250", "cp1250_general_ci", true},
 	{27, "latin2", "latin2_croatian_ci", false},
-	{28, "gbk", "gbk_chinese_ci", true},
+	{28, "gbk", "gbk_chinese_ci", false},
 	{29, "cp1257", "cp1257_lithuanian_ci", false},
 	{30, "latin5", "latin5_turkish_ci", true},
 	{31, "latin1", "latin1_german2_ci", false},
@@ -328,7 +341,7 @@ var collations = []*Collation{
 	{84, "big5", "big5_bin", false},
 	{85, "euckr", "euckr_bin", false},
 	{86, "gb2312", "gb2312_bin", false},
-	{87, "gbk", "gbk_bin", false},
+	{87, "gbk", "gbk_bin", true},
 	{88, "sjis", "sjis_bin", false},
 	{89, "tis620", "tis620_bin", false},
 	{90, "ucs2", "ucs2_bin", false},
@@ -470,13 +483,18 @@ var collations = []*Collation{
 // AddCharset adds a new charset.
 // Use only when adding a custom charset to the parser.
 func AddCharset(c *Charset) {
-	charsetInfos[c.Name] = c
+	CharacterSetInfos[c.Name] = c
 }
 
 // RemoveCharset remove a charset.
-// Use only when adding a custom charset to the parser.
+// Use only when remove a custom charset to the parser.
 func RemoveCharset(c string) {
-	delete(charsetInfos, c)
+	delete(CharacterSetInfos, c)
+	for i := range supportedCollations {
+		if supportedCollations[i].Name == c {
+			supportedCollations = append(supportedCollations[:i], supportedCollations[i+1:]...)
+		}
+	}
 }
 
 // AddCollation adds a new collation.
@@ -486,12 +504,18 @@ func AddCollation(c *Collation) {
 	collationsNameMap[c.Name] = c
 
 	if _, ok := supportedCollationNames[c.Name]; ok {
-		supportedCollations = append(supportedCollations, c)
+		AddSupportedCollation(c)
 	}
 
-	if charset, ok := charsetInfos[c.CharsetName]; ok {
+	if charset, ok := CharacterSetInfos[c.CharsetName]; ok {
 		charset.Collations[c.Name] = c
 	}
+}
+
+// AddSupportedCollation adds a new collation into supportedCollations.
+// Use only when adding a custom collation to the parser.
+func AddSupportedCollation(c *Collation) {
+	supportedCollations = append(supportedCollations, c)
 }
 
 // init method always puts to the end of file.

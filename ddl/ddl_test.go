@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -112,6 +113,12 @@ func testCreateStore(c *C, name string) kv.Storage {
 	return store
 }
 
+func testCreateStoreT(t *testing.T, name string) kv.Storage {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	return store
+}
+
 func testNewContext(d *ddl) sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
@@ -126,6 +133,17 @@ func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
+	return ver
+}
+
+func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.GetSchemaVersion()
+	require.NoError(t, err)
 	return ver
 }
 
@@ -144,6 +162,16 @@ func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
 	c.Assert(t1.PKIsHandle, DeepEquals, t2.PKIsHandle)
 	c.Assert(t1.Comment, DeepEquals, t2.Comment)
 	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
+}
+
+func checkEqualTableT(t *testing.T, t1, t2 *model.TableInfo) {
+	require.Equal(t, t1.ID, t2.ID)
+	require.Equal(t, t1.Name, t2.Name)
+	require.Equal(t, t1.Charset, t2.Charset)
+	require.Equal(t, t1.Collate, t2.Collate)
+	require.EqualValues(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.EqualValues(t, t1.Comment, t2.Comment)
+	require.EqualValues(t, t1.AutoIncID, t2.AutoIncID)
 }
 
 func checkHistoryJob(c *C, job *model.Job) {
@@ -167,6 +195,29 @@ func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJo
 	// for handling schema job
 	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
 	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	// only for creating schema job
+	if args.db != nil && len(args.tblIDs) == 0 {
+		return
+	}
+}
+
+func checkHistoryJobArgsT(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	tt := meta.NewMeta(txn)
+	historyJob, err := tt.GetHistoryDDLJob(id)
+	require.NoError(t, err)
+	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
+
+	if args.tbl != nil {
+		require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
+		checkEqualTableT(t, historyJob.BinlogInfo.TableInfo, args.tbl)
+		return
+	}
+
+	// for handling schema job
+	require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
+	require.EqualValues(t, args.db, historyJob.BinlogInfo.DBInfo)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return

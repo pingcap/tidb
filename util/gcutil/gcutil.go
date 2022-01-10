@@ -72,7 +72,7 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.Background(), selectVariableValueSQL, "tikv_gc_safe_point")
+	stmt, err := exec.ParseWithParams(context.Background(), true, selectVariableValueSQL, "tikv_gc_safe_point")
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

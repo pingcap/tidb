@@ -40,7 +40,6 @@ import (
 )
 
 func TestAggregation(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -481,7 +480,6 @@ func TestAggregation(t *testing.T) {
 }
 
 func TestAggPrune(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -509,7 +507,6 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestGroupConcatAggr(t *testing.T) {
-	t.Parallel()
 	var err error
 	// issue #5411
 	store, clean := testkit.CreateMockStore(t)
@@ -655,17 +652,7 @@ func TestGroupConcatAggr(t *testing.T) {
 	rows.Check(testkit.Rows("01234567", "12345"))
 }
 
-func fillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
-}
-
 func TestSelectDistinct(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -680,7 +667,6 @@ func TestSelectDistinct(t *testing.T) {
 }
 
 func TestAggPushDown(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -711,7 +697,6 @@ func TestAggPushDown(t *testing.T) {
 }
 
 func TestOnlyFullGroupBy(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -826,7 +811,6 @@ func TestOnlyFullGroupBy(t *testing.T) {
 }
 
 func TestIssue16279(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -840,7 +824,6 @@ func TestIssue16279(t *testing.T) {
 }
 
 func TestIssue24676(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -858,7 +841,6 @@ func TestIssue24676(t *testing.T) {
 }
 
 func TestAggPushDownPartitionTable(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -893,7 +875,6 @@ func TestAggPushDownPartitionTable(t *testing.T) {
 }
 
 func TestIssue13652(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -910,7 +891,6 @@ func TestIssue13652(t *testing.T) {
 }
 
 func TestIssue14947(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -922,7 +902,6 @@ func TestIssue14947(t *testing.T) {
 }
 
 func TestHaving(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -950,7 +929,6 @@ func TestHaving(t *testing.T) {
 }
 
 func TestIssue26496(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -963,7 +941,6 @@ func TestIssue26496(t *testing.T) {
 }
 
 func TestAggEliminator(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -980,7 +957,6 @@ func TestAggEliminator(t *testing.T) {
 }
 
 func TestClusterIndexMaxMinEliminator(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -997,7 +973,6 @@ func TestClusterIndexMaxMinEliminator(t *testing.T) {
 }
 
 func TestMaxMinFloatScalaFunc(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1011,7 +986,6 @@ func TestMaxMinFloatScalaFunc(t *testing.T) {
 }
 
 func TestBuildProjBelowAgg(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1027,7 +1001,6 @@ func TestBuildProjBelowAgg(t *testing.T) {
 }
 
 func TestInjectProjBelowTopN(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1049,7 +1022,6 @@ func TestInjectProjBelowTopN(t *testing.T) {
 }
 
 func TestFirstRowEnum(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1063,7 +1035,6 @@ func TestFirstRowEnum(t *testing.T) {
 }
 
 func TestAggJSON(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1116,7 +1087,6 @@ func TestAggJSON(t *testing.T) {
 }
 
 func TestIssue10099(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1129,7 +1099,6 @@ func TestIssue10099(t *testing.T) {
 }
 
 func TestIssue10098(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1141,7 +1110,6 @@ func TestIssue10098(t *testing.T) {
 }
 
 func TestIssue10608(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1157,8 +1125,6 @@ func TestIssue10608(t *testing.T) {
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1189,7 +1155,6 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 }
 
 func TestPR15242ShallowCopy(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1207,7 +1172,6 @@ func TestPR15242ShallowCopy(t *testing.T) {
 }
 
 func TestIssue15690(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1261,7 +1225,6 @@ func TestIssue15690(t *testing.T) {
 }
 
 func TestIssue15958(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1275,7 +1238,6 @@ func TestIssue15958(t *testing.T) {
 }
 
 func TestIssue17216(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1290,7 +1252,6 @@ func TestIssue17216(t *testing.T) {
 }
 
 func TestHashAggRuntimeStat(t *testing.T) {
-	t.Parallel()
 	partialInfo := &executor.AggWorkerInfo{
 		Concurrency: 5,
 		WallTime:    int64(time.Second * 20),
@@ -1349,7 +1310,6 @@ func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
 }
 
 func TestParallelStreamAggGroupConcat(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1397,7 +1357,6 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 }
 
 func TestIssue20658(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1473,8 +1432,116 @@ func TestIssue20658(t *testing.T) {
 	}
 }
 
+func TestIssue23277(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(a tinyint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a smallint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a mediumint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a int(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a bigint(1));")
+	tk.MustExec("insert into t values (-120), (127);")
+	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
+	tk.MustExec("drop table t;")
+}
+
+func TestAvgDecimal(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
+	tk.MustExec("drop table td;")
+}
+
+// https://github.com/pingcap/tidb/issues/23314
+func TestIssue23314(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
+	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
+	res := tk.MustQuery("select col1 from t1 group by col1")
+	res.Check(testkit.Rows("16:40:20.01"))
+}
+
+func TestAggInDisk(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
+	tk.MustExec("set tidb_hashagg_partial_concurrency = 1;")
+	tk.MustExec("set tidb_mem_quota_query = 4194304")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	sql := "insert into t values (0)"
+	for i := 1; i <= 200; i++ {
+		sql += fmt.Sprintf(",(%v)", i)
+	}
+	sql += ";"
+	tk.MustExec(sql)
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") {
+			require.False(t, strings.Contains(disk, "0 Bytes"))
+			require.True(t, strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"))
+		}
+	}
+
+	// Add code cover
+	// Test spill chunk. Add a line to avoid tmp spill chunk is always full.
+	tk.MustExec("insert into t values(0)")
+	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4040100.0000"))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+}
+
 func TestRandomPanicAggConsume(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1529,52 +1596,4 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		}
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
-}
-
-func TestIssue23277(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-
-	tk.MustExec("create table t(a tinyint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a smallint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a mediumint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a int(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a bigint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-}
-
-// https://github.com/pingcap/tidb/issues/23314
-func TestIssue23314(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
-	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
-	res := tk.MustQuery("select col1 from t1 group by col1")
-	res.Check(testkit.Rows("16:40:20.01"))
 }

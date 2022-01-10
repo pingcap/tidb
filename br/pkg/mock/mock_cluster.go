@@ -6,10 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +25,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
 	"go.uber.org/zap"
 )
 
@@ -39,68 +37,60 @@ type Cluster struct {
 	kv.Storage
 	*server.TiDBDriver
 	*domain.Domain
-	DSN      string
-	PDClient pd.Client
+	DSN        string
+	PDClient   pd.Client
+	HttpServer *http.Server
 }
 
 // NewCluster create a new mock cluster.
 func NewCluster() (*Cluster, error) {
+	cluster := &Cluster{}
+
 	pprofOnce.Do(func() {
 		go func() {
 			// Make sure pprof is registered.
 			_ = pprof.Handler
 			addr := "0.0.0.0:12235"
 			log.Info("start pprof", zap.String("addr", addr))
-			if e := http.ListenAndServe(addr, nil); e != nil {
+			cluster.HttpServer = &http.Server{Addr: addr}
+			if e := cluster.HttpServer.ListenAndServe(); e != nil {
 				log.Warn("fail to start pprof", zap.String("addr", addr), zap.Error(e))
 			}
 		}()
 	})
 
-	var mockCluster testutils.Cluster
 	storage, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
-			mockCluster = c
+			cluster.Cluster = c
 		}),
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	cluster.Storage = storage
+
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &Cluster{
-		Storage:  storage,
-		Cluster:  mockCluster,
-		Domain:   dom,
-		PDClient: storage.(tikv.Storage).GetRegionCache().PDClient(),
-	}, nil
+	cluster.Domain = dom
+
+	cluster.PDClient = storage.(tikv.Storage).GetRegionCache().PDClient()
+	return cluster, nil
 }
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	statusURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	// choose a random available port
+	l1, _ := net.Listen("tcp", "127.0.0.1:")
+	statusPort := l1.Addr().(*net.TCPAddr).Port
 
-	addrURL, err := url.Parse(tempurl.Alloc())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
+	// choose a random available port
+	l2, _ := net.Listen("tcp", "127.0.0.1:")
+	addrPort := l2.Addr().(*net.TCPAddr).Port
 
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
@@ -110,17 +100,20 @@ func (mock *Cluster) Start() error {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
+	// close port for next listen in NewServer
+	l1.Close()
+	l2.Close()
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err != nil {
+		if err1 := svr.Run(); err1 != nil {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 
@@ -130,10 +123,13 @@ func (mock *Cluster) Stop() {
 		mock.Domain.Close()
 	}
 	if mock.Storage != nil {
-		mock.Storage.Close()
+		_ = mock.Storage.Close()
 	}
 	if mock.Server != nil {
 		mock.Server.Close()
+	}
+	if mock.HttpServer != nil {
+		_ = mock.HttpServer.Close()
 	}
 }
 
@@ -178,7 +174,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
-		resp, err := http.Get(statusURL) // nolint:noctx
+		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
 			// Ignore errors.
 			_, _ = io.ReadAll(resp.Body)

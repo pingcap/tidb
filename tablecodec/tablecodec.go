@@ -1300,21 +1300,23 @@ func TruncateIndexValue(v *types.Datum, idxCol *model.IndexColumn, tblCol *model
 	if notStringType {
 		return
 	}
-	originalKind := v.Kind()
-	isUTF8Charset := tblCol.Charset == charset.CharsetUTF8 || tblCol.Charset == charset.CharsetUTF8MB4
-	if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
-		rs := bytes.Runes(v.GetBytes())
+	colValue := v.GetBytes()
+	if tblCol.Charset == charset.CharsetBin || tblCol.Charset == charset.CharsetASCII {
+		// Count character length by bytes if charset is binary or ascii.
+		if len(colValue) > idxCol.Length {
+			// truncate value and limit its length
+			if v.Kind() == types.KindBytes {
+				v.SetBytes(colValue[:idxCol.Length])
+			} else {
+				v.SetString(v.GetString()[:idxCol.Length], tblCol.Collate)
+			}
+		}
+	} else if utf8.RuneCount(colValue) > idxCol.Length {
+		// Count character length by characters for other rune-based charsets, they are all internally encoded as UTF-8.
+		rs := bytes.Runes(colValue)
 		truncateStr := string(rs[:idxCol.Length])
 		// truncate value and limit its length
 		v.SetString(truncateStr, tblCol.Collate)
-		if v.Kind() == types.KindBytes {
-			v.SetBytes(v.GetBytes())
-		}
-	} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
-		v.SetBytes(v.GetBytes()[:idxCol.Length])
-		if originalKind == types.KindString {
-			v.SetString(v.GetString(), tblCol.Collate)
-		}
 	}
 }
 
