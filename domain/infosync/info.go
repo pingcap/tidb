@@ -1066,4 +1066,3 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	}
 	return nil
 }
-

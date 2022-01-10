@@ -1900,7 +1900,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropSchema:
+	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
