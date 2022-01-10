@@ -223,7 +223,7 @@ type DDLReorgMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZone                        `json:"time_zone"`
-	NeedBackfill  bool                             `json:need_backfill`
+	NeedBackfill  bool                             `json:"need_backfill"`
 }
 
 // TimeZone represents a single time zone.
