@@ -292,24 +292,16 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 
 type inputDecoder struct {
 	encoding charset.Encoding
-
-	buffer []byte
 }
 
 func newInputDecoder(chs string) *inputDecoder {
 	return &inputDecoder{
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   nil,
 	}
 }
 
-// clean prevents the inputDecoder from holding too much memory.
-func (i *inputDecoder) clean() {
-	i.buffer = nil
-}
-
 func (i *inputDecoder) decodeInput(src []byte) []byte {
-	result, err := i.encoding.Transform(i.buffer, src, charset.OpDecode)
+	result, err := i.encoding.Transform(nil, src, charset.OpDecode)
 	if err != nil {
 		return src
 	}
@@ -325,7 +317,7 @@ type resultEncoder struct {
 	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
-	buffer []byte
+	buffer *bytes.Buffer
 
 	isBinary     bool
 	isNull       bool
@@ -337,7 +329,7 @@ func newResultEncoder(chs string) *resultEncoder {
 	return &resultEncoder{
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   nil,
+		buffer:   &bytes.Buffer{},
 		isBinary: chs == charset.CharsetBinary,
 		isNull:   len(chs) == 0,
 	}
@@ -386,13 +378,11 @@ func (d *resultEncoder) encodeData(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
-	var err error
-	d.buffer, err = enc.Transform(d.buffer, src, charset.OpEncode)
+	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
-	// The buffer will be reused.
-	return d.buffer
+	return data
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
