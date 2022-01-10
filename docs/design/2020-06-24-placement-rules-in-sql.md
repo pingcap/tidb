@@ -71,7 +71,7 @@ CREATE PLACEMENT POLICY policyName [placementOptions];
 CREATE TABLE t1 (a INT) PLACEMENT POLICY=policyName;
 ```
 
-An earlier version of this proposal featured the ability to assign placementOptions directly to objects (tables or partitions). **This is no longer supported**.
+An earlier, experimental, version of this proposal featured the ability to assign placementOptions directly to objects (tables or partitions). **This is no longer supported**.
 
 A `PLACEMENT POLICY` allows administrators to better keep track of usage. This can be seen as similar to how complex environments will use `ROLES` for management instead of directly assigning privileges to users. For example:
 
