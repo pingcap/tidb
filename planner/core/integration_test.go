@@ -5170,6 +5170,15 @@ func (s *testIntegrationSuite) TestIndexMergeWithCorrelatedColumns(c *C) {
 
 }
 
+func (s *testIntegrationSuite) TestIssue31035(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 longtext, c2 decimal(37, 4), unique key(c1(10)), unique key(c2));")
+	tk.MustExec("insert into t1 values('眐', -962541614831459.7458);")
+	tk.MustQuery("select * from t1 order by c2 + 10;").Check(testkit.Rows("眐 -962541614831459.7458"))
+}
+
 func (s *testIntegrationSuite) TestIssue20510(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
