@@ -144,6 +144,26 @@ func isRuleMatch(rule placement.TiFlashRule, startKey string, endKey string, cou
 	return true
 }
 
+func ChangeGCSafePoint(tk *testkit.TestKit, t time.Time, enable string, lifeTime string) {
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	lastSafePoint := t.Format(gcTimeFormat)
+	s := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	s = fmt.Sprintf(s, lastSafePoint)
+	tk.MustExec(s)
+	s = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_enable','%[1]s','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	s = fmt.Sprintf(s, enable)
+	tk.MustExec(s)
+	s = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_life_time','%[1]s','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	s = fmt.Sprintf(s, lifeTime)
+	tk.MustExec(s)
+}
+
 func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.TiFlashRule) bool {
 	for _, r := range s.tiflash.GlobalTiFlashPlacementRules {
 		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
@@ -165,12 +185,10 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	// Disable emulator GC.
 	ddl.EmulatorGCDisable()
 	tk.MustExec("drop table if exists ddltiflash")
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	lastSafePoint := time.Now().Add(0 - 3000*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec(fmt.Sprintf(safePointSQL, lastSafePoint))
+	ChangeGCSafePoint(tk, time.Now(), "false", "10m0s")
+	defer func() {
+		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
+	}()
 	tk.MustExec("flashback table ddltiflash")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
@@ -203,6 +221,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
 	}()
 
+	// Clean all rules
+	s.tiflash.GlobalTiFlashPlacementRules = make(map[string]placement.TiFlashRule)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("drop table if exists ddltiflashp")
@@ -488,12 +508,10 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	c.Assert(res, Equals, true)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	lastSafePoint := time.Now().Add(0 + 3*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec(fmt.Sprintf(safePointSQL, lastSafePoint))
+	ChangeGCSafePoint(tk, time.Now().Add(+ 3 * time.Second), "true", "10m0s")
+	defer func() {
+		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
+	}()
 
 	originValue := ddl.PullTiFlashPdTick
 	ddl.PullTiFlashPdTick = 1

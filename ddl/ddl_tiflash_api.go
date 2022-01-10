@@ -245,7 +245,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
-	// Missing/Removed pd rule handling.
+	// Sync pd rules.
 	handlePd := pollTiFlashContext.HandlePdCounter%PullTiFlashPdTick == 0
 	if handlePd {
 		if err := HandlePlacementRuleRoutine(ctx, d, tableList); err != nil {
@@ -361,7 +361,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	return nil
 }
 
-// HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules, and add all missing rules.
+// HandlePlacementRuleRoutine fetch all rules from pd, remove all obsolete rules.
 // It handles rare situation, when we fail to alter pd rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFlashReplicaStatus) error {
 	c := context.Background()
@@ -400,9 +400,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		if _, ok := allRules[ruleID]; !ok {
 			// Mostly because of a previous failure of setting pd rule.
 			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
-			if e := infosync.ConfigureTiFlashPDForTable(tb.ID, tb.Count, &tb.LocationLabels); e != nil {
-				logutil.BgLogger().Warn("ConfigureTiFlashPDForTable fails", zap.Error(err))
-			}
 		}
 		// For every existing table, we do not remove their rules.
 		delete(allRules, ruleID)
