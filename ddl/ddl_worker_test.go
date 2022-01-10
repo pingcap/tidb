@@ -132,6 +132,8 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
 	// This DDL request is a add index DDL job.
 	job.Type = model.ActionAddIndex
+	job.ReorgMeta = model.NewDDLReorgMeta()
+	job.ReorgMeta.NeedBackfill = true
 	d.asyncNotifyWorker(job)
 	select {
 	case <-d.workers[addIdxWorker].ddlJobCh:
@@ -160,6 +162,7 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
 	job.Type = model.ActionCreateTable
+	job.ReorgMeta.NeedBackfill = false
 	d1.asyncNotifyWorker(job)
 	testCheckOwner(c, d1, false)
 	select {
@@ -1631,7 +1634,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 					break
 				}
 				if qLen1+qLen2 == jobCnt {
-					if qLen2 != 6 {
+					if qLen2 != 5 {
 						checkErr = errors.Errorf("add index jobs cnt %v != 6", qLen2)
 					}
 					break
