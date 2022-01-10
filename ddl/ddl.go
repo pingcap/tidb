@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -508,7 +507,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	}
 
 	var worker *worker
-	if admin.JobNeedBackfill(job) {
+	if job.NeedBackfill() {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]

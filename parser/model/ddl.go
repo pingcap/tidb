@@ -319,6 +319,14 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
+func (job *Job) NeedBackfill() bool {
+	if job.ReorgMeta == nil {
+		// This should only happen in tests.
+		return true
+	}
+	return job.ReorgMeta.NeedBackfill
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.

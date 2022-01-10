@@ -123,22 +123,6 @@ func IsJobRollbackable(job *model.Job) bool {
 	return true
 }
 
-// JobNeedBackfill checks whether a job need to backfill data.
-func JobNeedBackfill(job *model.Job) bool {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return true
-	case model.ActionModifyColumn:
-		if job.ReorgMeta != nil {
-			return job.ReorgMeta.NeedBackfill
-		}
-		// This should only happen in tests.
-		return true
-	default:
-		return false
-	}
-}
-
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -188,7 +172,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if JobNeedBackfill(job) {
+			if job.NeedBackfill() {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
