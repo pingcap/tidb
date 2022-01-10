@@ -290,6 +290,32 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 	return buffer, nil
 }
 
+type inputDecoder struct {
+	encoding *charset.Encoding
+
+	buffer []byte
+}
+
+func newInputDecoder(chs string) *inputDecoder {
+	return &inputDecoder{
+		encoding: charset.NewEncoding(chs),
+		buffer:   nil,
+	}
+}
+
+// clean prevents the inputDecoder from holding too much memory.
+func (i *inputDecoder) clean() {
+	i.buffer = nil
+}
+
+func (i *inputDecoder) decodeInput(src []byte) []byte {
+	result, err := i.encoding.Decode(i.buffer, src)
+	if err != nil {
+		return src
+	}
+	return result
+}
+
 type resultEncoder struct {
 	// chsName and encoding are unchanged after the initialization from
 	// session variable @@character_set_results.
