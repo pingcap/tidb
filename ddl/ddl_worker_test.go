@@ -1476,7 +1476,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
+	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true}}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
@@ -1485,7 +1485,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
+	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true}}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
@@ -1494,7 +1494,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
+	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true}}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
@@ -1503,7 +1503,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
+	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true}}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job10)
@@ -1512,7 +1512,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
+	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true}}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job12)
@@ -1635,7 +1635,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 				}
 				if qLen1+qLen2 == jobCnt {
 					if qLen2 != 5 {
-						checkErr = errors.Errorf("add index jobs cnt %v != 6", qLen2)
+						checkErr = errors.Errorf("add index jobs cnt %v != 5", qLen2)
 					}
 					break
 				}
