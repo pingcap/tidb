@@ -4860,25 +4860,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	// We should check this first, in order to avoid creating redundant DDL jobs.
-	tblInfo := tb.Meta()
-	// Must set placement rule before the ActionSetTiFlashReplica job is in queue.
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
-		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
-			return errors.Trace(e)
-		}
-		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
-		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
-			return errors.Trace(e)
-		}
-	} else {
-		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
-		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
-			return errors.Trace(e)
-		}
-	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,

@@ -44,10 +44,10 @@ import (
 )
 
 type tiflashDDLTestSuite struct {
-	store        kv.Storage
-	dom          *domain.Domain
-	tiflash      *infosync.MockTiFlash
-	cluster      *unistore.Cluster
+	store   kv.Storage
+	dom     *domain.Domain
+	tiflash *infosync.MockTiFlash
+	cluster *unistore.Cluster
 }
 
 var _ = SerialSuites(&tiflashDDLTestSuite{})

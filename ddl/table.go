@@ -1045,6 +1045,25 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// We should check this first, in order to avoid creating redundant DDL jobs.
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	} else {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 
 	if replicaInfo.Count > 0 {
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
