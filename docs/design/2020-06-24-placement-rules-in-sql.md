@@ -79,7 +79,7 @@ A `PLACEMENT POLICY` allows administrators to better keep track of usage. This c
 CREATE PLACEMENT POLICY `standardplacement` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"
 ```
 
-In this context, "REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
+In this context, "PRIMARY_REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
 - `host` and `hosts`: expected to be the same physical machine or hypervisor.
 - `rack` and `racks`: similar to host; a group of machines that are physically close together and may suffer from many of the same failures.
 - `zone` and `zones`: similar to an AWS zone; much larger degree of blast radius isolation from a rack, but still vulnerable to issues such as a natural disaster.
