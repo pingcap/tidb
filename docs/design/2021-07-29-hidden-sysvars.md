@@ -39,7 +39,6 @@ There are currently ~20 hidden system variables:
 | tidb_enable_pipelined_window_function | ‘Pipelined window function’ feature | #1 Stable |
 | tidb_enable_change_multi_schema | ‘Change multi schema in one statement’ feature. | #3 In Development Feature |
 | tidb_enable_point_get_cache | ‘point get cache’ feature | #2 Experimental |
-| tidb_enable_alter_placement | placement rules in SQL feature | #3 In Development Feature |
 | tidb_enable_extended_stats | ‘extended stats’ feature | #2 Experimental |
 | tidb_partition_prune_mode | Is partition prune mode dynamic or static | #2 Experimental |
 | tidb_enable_async_commit | Support Async Commit PRD  | #1 Stable |

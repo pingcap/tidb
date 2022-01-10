@@ -37,7 +37,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	count := 200
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {
-		stmt, err := se.ParseWithParamsInternal(context.Background(), "select * from mysql.user limit 1")
+		stmt, err := se.ParseWithParams(context.Background(), true, "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
 	}

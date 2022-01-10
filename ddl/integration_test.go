@@ -19,12 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tests := []struct {
@@ -62,8 +59,6 @@ func TestDefaultValueIsBinaryString(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/30740.
 func TestDefaultValueInEnum(t *testing.T) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -73,10 +68,14 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2);")                 // Use 1-base index to locate the value.
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "")) // 0x91 is truncate.
 	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a enum('a', 0x91)) charset gbk;") // Test for table charset.
+	tk.MustExec("insert into t values (1), (2);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("a", ""))
+	tk.MustExec("drop table t;")
 	tk.MustGetErrMsg("create table t(a set('a', 0x91, '') charset gbk);",
 		"[types:1291]Column 'a' has duplicated value '' in SET")
-	// Test valid gbk string value in enum.
-	tk.MustExec("create table t (a enum('a', 0xC4E3BAC3) charset gbk);")
+	// Test valid utf-8 string value in enum. Note that the binary literal only can be decoded to utf-8.
+	tk.MustExec("create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
 }
