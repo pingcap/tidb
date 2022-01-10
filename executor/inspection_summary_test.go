@@ -48,8 +48,8 @@ func TestInspectionSummary(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	require.Nil(t, failpoint.Enable(fpName, "return"))
-	defer func() { require.Nil(t, failpoint.Disable(fpName)) }()
+	require.NoError(t, failpoint.Enable(fpName, "return"))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 	datetime := func(s string) types.Time {
 		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp)
