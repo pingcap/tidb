@@ -194,11 +194,11 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				pollTiFlashContext.TiFlashStores[store.Store.ID] = store
-				logutil.BgLogger().Debug("Find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+				logutil.BgLogger().Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 			}
 		}
 	}
-	logutil.BgLogger().Info("updateTiFlashStores finished", zap.Int("count", len(pollTiFlashContext.TiFlashStores)))
+	logutil.BgLogger().Info("updateTiFlashStores finished", zap.Int("TiFlash store count", len(pollTiFlashContext.TiFlashStores)))
 	return nil
 }
 
