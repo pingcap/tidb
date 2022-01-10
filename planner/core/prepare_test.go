@@ -1135,6 +1135,40 @@ func (s *testPlanSerialSuite) TestIssue29303(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue31056(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int, b int)`)
+	tk.MustExec(`prepare stmt from 'select * from t where a > ? and b = 2';`)
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	tk.MustExec(`prepare stmt1 from 'select * from t where a > 1 and b = ?';`)
+	tk.MustExec("set @b = 2;")
+	tk.MustExec("execute stmt1 using @b;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`prepare stmt2 from 'select * from t where a > ? and b = 2';`)
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt2 using @a;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func (s *testPlanSerialSuite) TestIssue28942(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
