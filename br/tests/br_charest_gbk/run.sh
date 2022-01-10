@@ -89,7 +89,7 @@ run_sql "SELECT hex(a) from $DB.测试;"
 check_contains "C4E3BAC3"
 run_sql "SELECT * from $DB.t;"
 check_contains "你"
-check_contains "测试1"
+check_contains "测试"
 check_contains "娴嬭瘯"
 
 # Test BR DDL query string
