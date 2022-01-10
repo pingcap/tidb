@@ -3904,4 +3904,81 @@ func (s *testIntegrationSuite) TestIssue24095(c *C) {
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
+<<<<<<< HEAD
+=======
+
+}
+
+func (s *testIntegrationSuite) TestIssue20510(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("CREATE TABLE t1 (a int PRIMARY KEY, b int)")
+	tk.MustExec("CREATE TABLE t2 (a int PRIMARY KEY, b int)")
+	tk.MustExec("INSERT INTO t1 VALUES (1,1), (2,1), (3,1), (4,2)")
+	tk.MustExec("INSERT INTO t2 VALUES (1,2), (2,2)")
+
+	tk.MustQuery("explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));").Check(testkit.Rows(
+		"Selection 8000.00 root  not(plus(0, and(eq(test.t1.a, 30), eq(test.t2.b, 1))))",
+		"└─MergeJoin 10000.00 root  left outer join, left key:test.t1.a, right key:test.t2.a",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(istrue_with_null(plus(0, and(eq(test.t2.a, 30), eq(test.t2.b, 1)))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"))
+	tk.MustQuery("SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));").Check(testkit.Rows(
+		"1 1 1 2",
+		"2 1 2 2",
+		"3 1 <nil> <nil>",
+		"4 2 <nil> <nil>",
+	))
+}
+
+func (s *testIntegrationSuite) TestIssue31035(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 longtext, c2 decimal(37, 4), unique key(c1(10)), unique key(c2));")
+	tk.MustExec("insert into t1 values('眐', -962541614831459.7458);")
+	tk.MustQuery("select * from t1 order by c2 + 10;").Check(testkit.Rows("眐 -962541614831459.7458"))
+}
+
+// TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
+// Close https://github.com/pingcap/tidb/issues/31096
+func (s *testIntegrationSuite) TestDNFCondSelectivityWithConst(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1(a int, b int, c int);")
+	testKit.MustExec("insert into t1 value(10,10,10)")
+	for i := 0; i < 7; i++ {
+		testKit.MustExec("insert into t1 select * from t1")
+	}
+	testKit.MustExec("insert into t1 value(1,1,1)")
+	testKit.MustExec("analyze table t1")
+
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), eq(test.t1.b, 1))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where null or a=1 or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or false or b=1;").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows("TableReader_7 1.99 root  data:Selection_6]\n" +
+		"[└─Selection_6 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(1, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustQuery("explain select * from t1 where a=1 or b=1 or 1=1;").Check(testkit.Rows("TableReader_7 129.00 root  data:Selection_6]\n" +
+		"[└─Selection_6 129.00 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 1))]\n" +
+		"[  └─TableFullScan_5 129.00 cop[tikv] table:t1 keep order:false"))
+	testKit.MustExec("drop table if exists t1")
+>>>>>>> 4baab3cf1... planner: fix bug caused by wrong column indice in NominalSort's sort item (#31324)
 }
