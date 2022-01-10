@@ -382,7 +382,6 @@ func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
-	// The buffer will be reused.
 	return data
 }
 
