@@ -329,7 +329,7 @@ func newResultEncoder(chs string) *resultEncoder {
 	return &resultEncoder{
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
-		buffer:   nil,
+		buffer:   &bytes.Buffer{},
 		isBinary: chs == charset.CharsetBinary,
 		isNull:   len(chs) == 0,
 	}
