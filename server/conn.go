@@ -1113,10 +1113,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
 				var startTS uint64
-				if cc.ctx != nil && cc.ctx.TxnInfo() != nil {
-					startTS = cc.ctx.TxnInfo().StartTS
-				} else {
-					startTS = 0
+				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
+					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
