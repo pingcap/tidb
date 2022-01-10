@@ -295,6 +295,9 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
+	PIDs                   []int64
+	KeyRangesForPartitions [][]KeyRange
+
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.

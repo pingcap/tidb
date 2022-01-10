@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -92,6 +93,10 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 
 type mppAddr struct {
 	addr string
+}
+
+func (m *mppAddr) GetTableRegions() []*coprocessor.TableRegions {
+	return nil
 }
 
 func (m *mppAddr) GetAddress() string {
@@ -378,14 +383,14 @@ func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Contex
 	}
 
 	req := &kv.MPPBuildTaskRequestForPartition{KeyRanges: allKVRanges, PartitionIDs: allPartitionsIDs}
-	metas, regionInfoForPartitions, err := e.ctx.GetMPPClient().ConstructMPPTasksForPartition(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasksForPartition(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
-	for i, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, TableIDs: allPartitionsIDs, PartitionTableRegions: regionInfoForPartitions[i]}
+	for _, meta := range metas {
+		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, TableIDs: allPartitionsIDs}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil

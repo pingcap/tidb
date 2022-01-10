@@ -49,7 +49,8 @@ type batchCopTask struct {
 	cmdType   tikvrpc.CmdType
 	ctx       *tikv.RPCContext
 
-	regionInfos []RegionInfo
+	regionInfos           []RegionInfo
+	PartitionTableRegions []*coprocessor.TableRegions
 }
 
 type batchCopResponse struct {
@@ -519,7 +520,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -618,6 +619,38 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 				zap.Int("task len", len(batchTasks)))
 		}
 		metrics.TxnRegionsNumHistogramWithBatchCoprocessor.Observe(float64(len(batchTasks)))
+
+		// generate tableRegions for batchCopTasks
+		if partitionIDs != nil {
+			for _, copTask := range batchTasks {
+				tableRegions := make([]*coprocessor.TableRegions, len(partitionIDs))
+				// init
+				for j, pid := range partitionIDs {
+					tableRegions[j] = &coprocessor.TableRegions{
+						PhysicalTableId: pid,
+					}
+				}
+				// fill
+				for _, ri := range copTask.regionInfos {
+					tableRegions[ri.PartitionID].Regions = append(tableRegions[ri.PartitionID].Regions,
+						&coprocessor.RegionInfo{
+							RegionId: ri.Region.GetID(),
+							RegionEpoch: &metapb.RegionEpoch{
+								ConfVer: ri.Region.GetConfVer(),
+								Version: ri.Region.GetVer(),
+							},
+							Ranges: ri.Ranges.ToPBRanges(),
+						})
+				}
+				// clear empty table region
+				for j := len(tableRegions) - 1; j >= 0; j-- {
+					if len(tableRegions[j].Regions) == 0 {
+						tableRegions = append(tableRegions[:j], tableRegions[j+1:]...)
+					}
+				}
+				copTask.PartitionTableRegions = tableRegions
+			}
+		}
 		return batchTasks, nil
 	}
 }
@@ -629,7 +662,17 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, []*KeyRanges{ranges}, req.StoreType, nil, 0, false, 0)
+
+	keyRanges := []*KeyRanges{ranges}
+	if req.PIDs != nil {
+		// For Partition Table Scan
+		keyRanges = keyRanges[:0]
+		for _, key := range req.KeyRangesForPartitions {
+			keyRanges = append(keyRanges, NewKeyRanges(key))
+		}
+	}
+
+	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, req.PIDs)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -764,14 +807,32 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []kv.KeyRange
-	for _, ri := range batchTask.regionInfos {
-		ri.Ranges.Do(func(ran *kv.KeyRange) {
-			ranges = append(ranges, *ran)
-		})
+	if batchTask.regionInfos != nil {
+		var ranges []kv.KeyRange
+		for _, ri := range batchTask.regionInfos {
+			ri.Ranges.Do(func(ran *kv.KeyRange) {
+				ranges = append(ranges, *ran)
+			})
+		}
+		ret, err := buildBatchCopTasks(bo, b.store, []*KeyRanges{NewKeyRanges(ranges)}, b.req.StoreType, nil, 0, false, 0, nil)
+		return ret, err
+	} else {
+		// Retry Partition Table Scan
+		var keyRanges = make([]*KeyRanges, len(batchTask.PartitionTableRegions))
+		var pid []int64
+		for _, trs := range batchTask.PartitionTableRegions {
+			pid = append(pid, trs.PhysicalTableId)
+			ranges := make([]kv.KeyRange, len(trs.Regions))
+			for _, ri := range batchTask.regionInfos {
+				ri.Ranges.Do(func(ran *kv.KeyRange) {
+					ranges = append(ranges, *ran)
+				})
+			}
+			keyRanges = append(keyRanges, NewKeyRanges(ranges))
+		}
+		ret, err := buildBatchCopTasks(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid)
+		return ret, err
 	}
-	ret, err := buildBatchCopTasks(bo, b.store, []*KeyRanges{NewKeyRanges(ranges)}, b.req.StoreType, nil, 0, false, 0)
-	return ret, err
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
@@ -791,11 +852,15 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	}
 
 	copReq := coprocessor.BatchRequest{
-		Tp:        b.req.Tp,
-		StartTs:   b.req.StartTs,
-		Data:      b.req.Data,
-		SchemaVer: b.req.SchemaVar,
-		Regions:   regionInfos,
+		Tp:           b.req.Tp,
+		StartTs:      b.req.StartTs,
+		Data:         b.req.Data,
+		SchemaVer:    b.req.SchemaVar,
+		Regions:      regionInfos,
+		TableRegions: task.GetTableRegions(),
+	}
+	if copReq.TableRegions != nil {
+		copReq.Regions = nil
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{

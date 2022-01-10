@@ -51,6 +51,10 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+func (c *batchCopTask) GetTableRegions() []*coprocessor.TableRegions {
+	return c.PartitionTableRegions
+}
+
 func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 	resultTasks := make([]kv.MPPTaskMeta, 0)
 	for _, s := range c.store.GetRegionCache().GetTiFlashStores() {
@@ -68,7 +72,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		return c.selectAllTiFlashStore(), nil
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, []*KeyRanges{ranges}, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
+	tasks, err := buildBatchCopTasks(bo, c.store, []*KeyRanges{ranges}, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -80,54 +84,25 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 }
 
 // ConstructMPPTasksForPartition receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasksForPartition(ctx context.Context, req *kv.MPPBuildTaskRequestForPartition, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, [][]*coprocessor.TableRegions, error) {
+func (c *MPPClient) ConstructMPPTasksForPartition(ctx context.Context, req *kv.MPPBuildTaskRequestForPartition, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
-		return c.selectAllTiFlashStore(), nil, nil
+		return c.selectAllTiFlashStore(), nil
 	}
 	rangess := make([]*KeyRanges, len(req.KeyRanges))
 	for i, ranges := range req.KeyRanges {
 		rangess[i] = NewKeyRanges(ranges)
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store, rangess, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
+	tasks, err := buildBatchCopTasks(bo, c.store, rangess, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, req.PartitionIDs)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	mppTasks := make([]kv.MPPTaskMeta, 0, len(tasks))
 	for _, copTask := range tasks {
 		mppTasks = append(mppTasks, copTask)
 	}
-	// generate tableRegions for mppTasks
-	tableRegions := make([][]*coprocessor.TableRegions, len(mppTasks))
-	for i, copTask := range tasks {
-		tableRegions[i] = make([]*coprocessor.TableRegions, len(req.PartitionIDs))
-		// init
-		for j, pid := range req.PartitionIDs {
-			tableRegions[i][j] = &coprocessor.TableRegions{
-				PhysicalTableId: pid,
-			}
-		}
-		// fill
-		for _, ri := range copTask.regionInfos {
-			tableRegions[i][ri.PartitionID].Regions = append(tableRegions[i][ri.PartitionID].Regions,
-				&coprocessor.RegionInfo{
-					RegionId: ri.Region.GetID(),
-					RegionEpoch: &metapb.RegionEpoch{
-						ConfVer: ri.Region.GetConfVer(),
-						Version: ri.Region.GetVer(),
-					},
-					Ranges: ri.Ranges.ToPBRanges(),
-				})
-		}
-		// clear empty table region
-		for j := len(tableRegions[i]) - 1; j >= 0; j-- {
-			if len(tableRegions[i][j].Regions) == 0 {
-				tableRegions[i] = append(tableRegions[i][:j], tableRegions[i][j+1:]...)
-			}
-		}
-	}
-	return mppTasks, tableRegions, nil
+	return mppTasks, nil
 }
 
 // mppResponse wraps mpp data packet.
@@ -268,7 +243,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Timeout:      60,
 		SchemaVer:    req.SchemaVar,
 		Regions:      regionInfos,
-		TableRegions: req.PartitionTableRegions,
+		TableRegions: req.Meta.GetTableRegions(),
 	}
 	if mppReq.TableRegions != nil {
 		mppReq.Regions = nil
