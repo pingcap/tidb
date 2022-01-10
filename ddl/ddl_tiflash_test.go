@@ -508,7 +508,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	c.Assert(res, Equals, true)
 
 	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
-	ChangeGCSafePoint(tk, time.Now().Add(+ 3 * time.Second), "true", "10m0s")
+	ChangeGCSafePoint(tk, time.Now().Add(+3*time.Second), "true", "10m0s")
 	defer func() {
 		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
 	}()

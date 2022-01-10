@@ -446,7 +446,7 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	require.NoError(t, err)
 	err = helper.ComputeTiFlashStatus(br2, &regionReplica)
 	require.NoError(t, err)
-	require.Equal(t, len(regionReplica), 1)
+	require.Equal(t, len(regionReplica), 2)
 	v, ok := regionReplica[1009]
 	require.Equal(t, v, 1)
 	require.Equal(t, ok, true)
