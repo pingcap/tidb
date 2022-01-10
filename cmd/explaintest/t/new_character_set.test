@@ -48,3 +48,11 @@ select b, d from t;
 select hex(b), hex(d) from t;
 show charset;
 show collation;
+
+set names utf8mb4;
+drop table if exists t;
+create table t(a blob, b char(10));
+insert into t values (0x61, '啊');
+insert into t values (0x61, '一');
+set names gbk;
+select * from t;
