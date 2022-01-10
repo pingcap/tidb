@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-
 	"github.com/stretchr/testify/require"
 )
 
