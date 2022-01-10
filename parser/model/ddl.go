@@ -321,8 +321,9 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 
 func (job *Job) NeedBackfill() bool {
 	if job.ReorgMeta == nil {
-		// This should only happen in tests.
-		return true
+		// For the job types other than add index, add primary key or modify column,
+		// the job.ReorgMeta is nil.
+		return false
 	}
 	return job.ReorgMeta.NeedBackfill
 }

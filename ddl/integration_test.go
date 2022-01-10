@@ -84,31 +84,38 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
 }
 
-func TestModifyColumnBackFill(t *testing.T) {
+func TestDDLStatementsBackFill(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int, b char(65));")
-	tk.MustExec("insert into t values (1, '123');")
-
-	lastJobNeedReorg := false
-	d := domain.GetDomain(tk.Session()).DDL()
-	d.SetHook(&ddl.TestDDLCallback{
+	needBackfill := false
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().SetHook(&ddl.TestDDLCallback{
+		Do: dom,
 		OnJobUpdatedExported: func(job *model.Job) {
-			if job.Type == model.ActionModifyColumn &&
-				job.SchemaState == model.StateWriteReorganization {
-				lastJobNeedReorg = true
+			if job.NeedBackfill() {
+				needBackfill = true
 			}
 		},
 	})
-	lastJobNeedReorg = false
-	tk.MustExec("alter table t modify column a bigint;")
-	require.False(t, lastJobNeedReorg)
-	lastJobNeedReorg = false
-	tk.MustExec("alter table t modify column b char(255);")
-	require.False(t, lastJobNeedReorg)
-	lastJobNeedReorg = false
-	tk.MustExec("alter table t modify column a varchar(100);")
-	require.True(t, lastJobNeedReorg)
+	tk.MustExec("create table t (a int, b char(65));")
+	tk.MustExec("insert into t values (1, '123');")
+	testCases := []struct {
+		ddlSQL               string
+		expectedNeedBackfill bool
+	}{
+		{"alter table t modify column a bigint;", false},
+		{"alter table t modify column b char(255);", false},
+		{"alter table t modify column a varchar(100);", true},
+		{"create table t1 (a int, b int);", false},
+		{"alter table t1 add index idx_a(a);", true},
+		{"alter table t1 add primary key(b) nonclustered;", true},
+		{"alter table t1 drop primary key;", false},
+	}
+	for _, tc := range testCases {
+		needBackfill = false
+		tk.MustExec(tc.ddlSQL)
+		require.Equal(t, tc.expectedNeedBackfill, needBackfill, tc)
+	}
 }
