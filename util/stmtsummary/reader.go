@@ -245,8 +245,8 @@ const (
 	SumCopTaskNumStr                = "SUM_COP_TASK_NUM"
 	MaxCopProcessTimeStr            = "MAX_COP_PROCESS_TIME"
 	MaxCopProcessAddressStr         = "MAX_COP_PROCESS_ADDRESS"
-	MaxCopWaitTimeStr               = "MAX_COP_WAIT_TIME"
-	MaxCopWaitAddressStr            = "MAX_COP_WAIT_ADDRESS"
+	MaxCopWaitTimeStr               = "MAX_COP_WAIT_TIME"    // #nosec G101
+	MaxCopWaitAddressStr            = "MAX_COP_WAIT_ADDRESS" // #nosec G101
 	AvgProcessTimeStr               = "AVG_PROCESS_TIME"
 	MaxProcessTimeStr               = "MAX_PROCESS_TIME"
 	AvgWaitTimeStr                  = "AVG_WAIT_TIME"
