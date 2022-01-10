@@ -508,7 +508,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	}
 
 	var worker *worker
-	if jobNeedBackFill(job, nil, d.store) {
+	if admin.JobNeedBackfill(job) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
@@ -517,56 +517,6 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 		asyncNotify(worker.ddlJobCh)
 	} else {
 		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
-	}
-}
-
-func jobNeedBackFill(job *model.Job, t *meta.Meta, s kv.Storage) bool {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		return true
-	case model.ActionModifyColumn:
-		var newCol *model.ColumnInfo
-		var oldColName *model.CIStr
-		err := job.DecodeArgs(&newCol, &oldColName)
-		if err != nil {
-			logutil.BgLogger().Error("decode modify column job args failed in jobNeedBackFill",
-				zap.Int64("job ID", job.ID),
-				zap.Error(err))
-			return false
-		}
-		var oldCol *model.ColumnInfo
-		if t == nil {
-			err = kv.RunInNewTxn(context.Background(), s, false,
-				func(ctx context.Context, txn kv.Transaction) error {
-					t = meta.NewMeta(txn)
-					return nil
-				})
-			if err != nil || t == nil {
-				logutil.BgLogger().Error("decode modify column job args failed in jobNeedBackFill",
-					zap.Int64("job ID", job.ID),
-					zap.Bool("meta is nil", t == nil),
-					zap.Error(err))
-				return false
-			}
-		}
-		tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-		if err != nil {
-			logutil.BgLogger().Error("decode modify column job args failed in jobNeedBackFill",
-				zap.Int64("job ID", job.ID),
-				zap.Error(err))
-			return false
-		}
-		oldCol = model.FindColumnInfo(tblInfo.Columns, oldColName.L)
-		if oldCol == nil || newCol == nil {
-			logutil.BgLogger().Error("column is nil in jobNeedBackFill",
-				zap.Stringer("oldCol", oldCol),
-				zap.Stringer("newCol", newCol),
-				zap.Int64("job ID", job.ID))
-			return false
-		}
-		return needChangeColumnData(oldCol, newCol)
-	default:
-		return false
 	}
 }
 
@@ -776,7 +726,6 @@ func init() {
 	if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
 		RunInGoTest = true
 	}
-	admin.JobNeedBackFill = jobNeedBackFill
 }
 
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs

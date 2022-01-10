@@ -1708,7 +1708,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 				generalJobID := int64(0)
 				for _, job := range finishedJobs {
 					// check jobs' order.
-					if admin.JobNeedBackFill(job, m, nil) {
+					if admin.JobNeedBackfill(job) {
 						c.Assert(job.ID, Greater, backfillJobID)
 						backfillJobID = job.ID
 					} else {
