@@ -946,18 +946,26 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 }
 
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var tablePath *util.AccessPath
+	var primaryIdxPath *util.AccessPath
 	for _, path := range paths {
+		if path.StoreType == kv.TiFlash {
+			continue
+		}
 		if path.IsTablePath() {
-			tablePath = path
+			primaryIdxPath = path
 			continue
 		}
 		if path.Index.Name.L == idxName.L {
 			return path
 		}
 	}
+<<<<<<< HEAD
 	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
 		return tablePath
+=======
+	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
+		return primaryIdxPath
+>>>>>>> 8dfad92a0... planner: fix tikv table path wrongly pruned when forcing primary index and tiflash replica exists (#31509)
 	}
 	return nil
 }
