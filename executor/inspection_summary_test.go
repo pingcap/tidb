@@ -97,7 +97,7 @@ func TestInspectionSummary(t *testing.T) {
 	rs, err = tk.Session().Execute(ctx, "select * from information_schema.inspection_summary where metrics_name = 'tidb_qps'")
 	require.NoError(t, err)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount(), "unexpected warnings: %+v", tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 	result.Check(testkit.Rows(
 		"query-summary tidb-0 tidb_qps Query, Error <nil> 1 1 1 TiDB query processing numbers per second",
 		"query-summary tidb-0 tidb_qps Query, OK <nil> 0 0 0 TiDB query processing numbers per second",
