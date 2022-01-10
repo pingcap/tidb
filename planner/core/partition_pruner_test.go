@@ -125,6 +125,22 @@ func (s *testPartitionPruneSuit) TestRangeColumnPartitionPruningForIn(c *C) {
 	tk.MustExec(`insert into t1 values (4, "2020-11-28")`)
 	tk.MustQuery(`select id from t1 where dt in ('2020-11-27','2020-11-28') order by id`).Check(testkit.Rows("3", "4"))
 	tk.MustQuery(`select id from t1 where dt in ('2020-11-26','2020-11-25','2020-11-28') order by id`).Check(testkit.Rows("1", "2", "4"))
+
+	// int
+	tk.MustExec(`create table t2 (a int) partition by range columns(a) (
+		partition p0 values less than (0),
+		partition p1 values less than (10),
+		partition p2 values less than (20))`)
+	tk.MustExec(`insert into t2 values (-1), (1), (11), (null)`)
+	tk.MustQuery(`select a from t2 where a in (-1, 1) order by a`).Check(testkit.Rows("-1", "1"))
+	tk.MustQuery(`select a from t2 where a in (1, 11, null) order by a`).Check(testkit.Rows("1", "11"))
+	tk.MustQuery(`explain format='brief' select a from t2 where a in (-1, 1)`).Check(testkit.Rows("PartitionUnion 40.00 root  ",
+		"├─TableReader 20.00 root  data:Selection",
+		"│ └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
+		"│   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+		"└─TableReader 20.00 root  data:Selection",
+		"  └─Selection 20.00 cop[tikv]  in(test_range_col_in.t2.a, -1, 1)",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo"))
 }
 
 func (s *testPartitionPruneSuit) TestListPartitionPruner(c *C) {
