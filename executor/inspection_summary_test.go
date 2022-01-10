@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestValidInspectionSummaryRules(t *testing.T) {
 	for rule, tbls := range executor.InspectionSummaryRules {
 		tables := set.StringSet{}
