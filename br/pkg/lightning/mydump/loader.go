@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"context"
+	"net/url"
 	"path/filepath"
 	"sort"
 
@@ -290,8 +291,22 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 			return nil
 		}
 
+		schemaName, err := url.QueryUnescape(res.Schema)
+		if err != nil {
+			log.L().Warn("decode schema name failed, skip decode and use the origin", zap.String("schema", res.Schema),
+				zap.String("path", path))
+			schemaName = res.Schema
+		}
+
+		tableName, err := url.QueryUnescape(res.Name)
+		if err != nil {
+			log.L().Warn("decode table name failed, skip decode and use the origin", zap.String("table", res.Name),
+				zap.String("path", path))
+			tableName = res.Name
+		}
+
 		info := FileInfo{
-			TableName: filter.Table{Schema: res.Schema, Name: res.Name},
+			TableName: filter.Table{Schema: schemaName, Name: tableName},
 			FileMeta:  SourceFileMeta{Path: path, Type: res.Type, Compression: res.Compression, SortKey: res.Key, FileSize: size},
 		}
 

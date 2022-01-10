@@ -1024,6 +1024,12 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	if cfg.TiDB.Port <= 0 {
 		return errors.New("invalid `tidb.port` setting")
 	}
+	// remove the http(s) schema and we will fill it depend on the tls settings.
+	if strings.HasPrefix(cfg.TiDB.PdAddr, "https://") {
+		cfg.TiDB.PdAddr = cfg.TiDB.PdAddr[8:]
+	} else if strings.HasPrefix(cfg.TiDB.PdAddr, "http://") {
+		cfg.TiDB.PdAddr = cfg.TiDB.PdAddr[7:]
+	}
 	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
 		return errors.New("invalid `tidb.pd-addr` setting")
 	}
