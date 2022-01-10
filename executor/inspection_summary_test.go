@@ -28,21 +28,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+
 func TestValidInspectionSummaryRules(t *testing.T) {
 	for rule, tbls := range executor.InspectionSummaryRules {
 		tables := set.StringSet{}
-		for _, t := range tbls {
-			require.False(t, tables.Exist(t), "duplicate table name: %v in rule: %v", t, rule)
-			tables.Insert(t)
+		for _, tbl := range tbls {
+			require.False(t, tables.Exist(tbl), "duplicate table name: %v in rule: %v", tbl, rule)
+			tables.Insert(tbl)
 
-			_, found := infoschema.MetricTableMap[t]
-			require.True(t, found, "metric table %v not define", t)
+			_, found := infoschema.MetricTableMap[tbl]
+			require.True(t, found, "metric table %v not define", tbl)
 		}
 	}
 }
 
 func TestInspectionSummary(t *testing.T) {
-	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
