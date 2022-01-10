@@ -387,7 +387,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.PreparedAst.Stmt.Text(), prepared.SchemaVersion)
+		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.NormalizedSQL, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
@@ -485,7 +485,7 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.PreparedAst.Stmt.Text(), prepared.SchemaVersion)
+			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), preparedStmt.NormalizedSQL, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
