@@ -340,7 +340,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParamsInternal(w.ddlJobCtx, sql, tblInfo.ID)
+	stmt, err := executor.ParseWithParams(w.ddlJobCtx, true, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
