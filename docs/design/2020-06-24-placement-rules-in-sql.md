@@ -409,7 +409,6 @@ When placement policies are specified, they should be validated for correctness:
 1. The `FOLLOWERS` count should respect raft quorum expectations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environments, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
-4. Specifying both direct placement rules (`{FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
 
 #### Skipping Policy Validation
 
@@ -462,14 +461,14 @@ The semantics of partitioning are different to the default database policy. When
 
 ```sql
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY='companystandardpolicy'
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
   PARTITION p1 VALUES LESS THAN (2005),
   PARTITION p2 VALUES LESS THAN (2010),
   PARTITION p3 VALUES LESS THAN (2015),
   PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
- )
-PLACEMENT POLICY='companystandardpolicy';
+ );
 ```
 
 In this example, partition `p0` uses the policy `storeonhdd`, partition `p4` uses the policy `storeonfastssd` and the remaining partitions use the policy `companystandardpolicy`. Assuming the following `ALTER TABLE` statement is executed, only partitions `p1`-`p3` will be updated:
@@ -525,18 +524,20 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
 ALTER TABLE t1 PLACEMENT POLICY="xyz";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY="xyz"
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT POLICY="xyz";
+ );
 
 ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT;
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY="xyz"
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000),
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT POLICY="xyz";
+ );
  
 ```
 
@@ -824,6 +825,7 @@ CREATE PLACEMENT POLICY storeonfastssd CONSTRAINTS="[+disk=ssd]";
 CREATE PLACEMENT POLICY storeonhdd CONSTRAINTS="[+disk=hdd]";
 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY='companystandardpolicy'
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
   PARTITION p1 VALUES LESS THAN (2005),
@@ -831,7 +833,7 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
   PARTITION p3 VALUES LESS THAN (2015),
   PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
  )
-PLACEMENT POLICY='companystandardpolicy';
+;
 ```
 
 ### Optimization: Multi-tenancy / control of shared resources
