@@ -44,13 +44,16 @@ run_sql "CREATE TABLE $DB.测试 ( \
 run_sql "INSERT INTO $DB.测试 VALUES ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');"
 run_sql "INSERT INTO $DB.测试 VALUES ('你好123', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');"
 
-run_sql "CREATE TABLE $DB.测试2 ( \
+run_sql "CREATE TABLE $DB.t ( \
   YCSB_KEY varchar(64) NOT NULL, \
   FIELD0 varchar(1) DEFAULT NULL, \
   PRIMARY KEY (YCSB_KEY) \
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk;"
 
-run_sql "INSERT INTO $DB.测试2 VALUES (\"测试\", \"你\");"
+run_sql "INSERT INTO $DB.t VALUES (\"测试\", \"你\");"
+run_sql "SET NAMES gbk;"
+run_sql "INSERT INTO $DB.t VALUES (\"测试\", \"a\");"
+run_sql "SET NAMES default;"
 
 # backup db
 echo "backup start..."
@@ -81,20 +84,15 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
-meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
-if [ "$meta_count" -ne "2" ];then
-    echo "TEST: [$TEST_NAME] failed!"
-    exit 1
-fi
-
 run_sql "SELECT * from $DB.测试;"
-check_contains "你好123"
 check_contains "{\"测试\": \"你好\"}"
+check_contains "你好123"
 run_sql "SELECT hex(a) from $DB.测试;"
-check_contaions "C4E3BAC3"
-run_sql "SELECT * from $DB.测试2;"
+check_contains "C4E3BAC3"
+run_sql "SELECT * from $DB.t;"
 check_contains "你"
 check_contains "测试"
+check_contains "娴嬭瘯"
 
 # Test BR DDL query string
 echo "testing DDL query..."
