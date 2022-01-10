@@ -124,7 +124,11 @@ func (s *testPartitionPruneSuit) TestRangeColumnPartitionPruningForIn(c *C) {
 	tk.MustExec(`insert into t1 values (3, "2020-11-27")`)
 	tk.MustExec(`insert into t1 values (4, "2020-11-28")`)
 	tk.MustQuery(`select id from t1 where dt in ('2020-11-27','2020-11-28') order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,'2020-11-28') order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,20201128) order by id`).Check(testkit.Rows("3", "4"))
+	tk.MustQuery(`select id from t1 where dt in (20201127,20201128,null) order by id`).Check(testkit.Rows("3", "4"))
 	tk.MustQuery(`select id from t1 where dt in ('2020-11-26','2020-11-25','2020-11-28') order by id`).Check(testkit.Rows("1", "2", "4"))
+	tk.MustQuery(`select id from t1 where dt in ('2020-11-26','wrong','2020-11-28') order by id`).Check(testkit.Rows("2", "4"))
 
 	// int
 	tk.MustExec(`create table t2 (a int) partition by range columns(a) (
