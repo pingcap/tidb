@@ -75,6 +75,7 @@ type parallelCPUProfiler struct {
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
 
+	profileData  *ProfileData
 	lastDataSize int
 
 	started bool
@@ -133,12 +134,15 @@ func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
 		return
 	}
 	p.Lock()
+	isFirst := len(p.cs) == 0
 	p.cs[ch] = struct{}{}
 	p.Unlock()
 
-	select {
-	case p.notifyRegister <- struct{}{}:
-	default:
+	if isFirst {
+		select {
+		case p.notifyRegister <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -155,6 +159,7 @@ func (p *parallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(DefProfileDuration)
 	defer func() {
 		checkTicker.Stop()
+		pprof.StopCPUProfile()
 		p.wg.Done()
 	}()
 	for {
@@ -169,29 +174,25 @@ func (p *parallelCPUProfiler) profilingLoop() {
 }
 
 func (p *parallelCPUProfiler) doProfiling() {
+	if p.profileData != nil {
+		pprof.StopCPUProfile()
+		p.lastDataSize = p.profileData.Data.Len()
+		p.sendToConsumers()
+	}
+
 	if p.consumersCount() == 0 {
 		return
 	}
 
 	capacity := (p.lastDataSize/4096 + 1) * 4096
-	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
-	err := pprof.StartCPUProfile(data.Data)
+	p.profileData = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
+	err := pprof.StartCPUProfile(p.profileData.Data)
 	if err != nil {
-		data.Error = err
+		p.profileData.Error = err
 		// notify error as soon as possible
-		p.sendToConsumers(data)
+		p.sendToConsumers()
 		return
 	}
-
-	// wait 1 second
-	select {
-	case <-p.ctx.Done():
-	case <-time.After(DefProfileDuration):
-	}
-
-	pprof.StopCPUProfile()
-	p.lastDataSize = data.Data.Len()
-	p.sendToConsumers(data)
 }
 
 func (p *parallelCPUProfiler) consumersCount() int {
@@ -201,14 +202,15 @@ func (p *parallelCPUProfiler) consumersCount() int {
 	return n
 }
 
-func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
+func (p *parallelCPUProfiler) sendToConsumers() {
 	p.Lock()
 	for c := range p.cs {
 		select {
-		case c <- data:
+		case c <- p.profileData:
 		default:
 			// ignore
 		}
 	}
+	p.profileData = nil
 	p.Unlock()
 }
