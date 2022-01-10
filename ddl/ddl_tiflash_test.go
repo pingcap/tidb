@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http/httptest"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -47,8 +46,6 @@ import (
 type tiflashDDLTestSuite struct {
 	store        kv.Storage
 	dom          *domain.Domain
-	pdHTTPServer *httptest.Server
-	pdMockAddr   string
 	tiflash      *infosync.MockTiFlash
 	cluster      *unistore.Cluster
 }
@@ -196,7 +193,7 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
 func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
-	_, _, cluster, err := unistore.New("")
+	_, _, cluster, _ := unistore.New("")
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
