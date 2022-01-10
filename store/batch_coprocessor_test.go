@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -78,7 +77,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := testGetTableByName(t, tk.Session(), "test", "t")
 
-	err := dom.DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")
@@ -109,13 +108,12 @@ func TestStoreSwitchPeer(t *testing.T) {
 	}()
 
 	tk := testkit.NewTestKit(t, store)
-	dom := domain.GetDomain(tk.Session())
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := testGetTableByName(t, tk.Session(), "test", "t")
 
-	err := dom.DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")
