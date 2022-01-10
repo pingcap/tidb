@@ -248,6 +248,8 @@ SHOW PLACEMENT LIKE 'POLICY standardpol%';
 
 This will match for `PLACEMENT POLICY` names such as `standardpolicy`.
 
+The `scheduling_state` is one of `SCHEDULED`, `INPROGRESS`, or `PENDING`. `PENDING` means the placement rule is valid, but might not be able to be scheduled based on the current topology of the cluster.
+
 ### Updates to Existing Syntax
 
 #### CREATE DATABASE / ALTER DATABASE
