@@ -70,7 +70,6 @@ const (
 	ErrorOnDup = "error"
 
 	defaultDistSQLScanConcurrency     = 15
-	distSQLScanConcurrencyPerStore    = 4
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
@@ -88,7 +87,7 @@ const (
 	//
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
-	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
+	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
 	defaultEngineMemCacheSize              = 512 * units.MiB
 	defaultLocalWriterMemCacheSize         = 128 * units.MiB
 
