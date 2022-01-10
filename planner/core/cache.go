@@ -68,7 +68,7 @@ func PreparedPlanCacheEnabled() bool {
 type pstmtPlanCacheKey struct {
 	database             string
 	connID               uint64
-	normalizedSQL        string
+	preparedStmtText     string
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -90,7 +90,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = append(key.hash, hack.Slice(key.normalizedSQL)...)
+		key.hash = append(key.hash, hack.Slice(key.preparedStmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -109,7 +109,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
-func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, normalizedSQL string, schemaVersion int64) kvcache.Key {
+func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, preparedStmtText string, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
@@ -117,7 +117,7 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, normalizedSQL strin
 	key := &pstmtPlanCacheKey{
 		database:             sessionVars.CurrentDB,
 		connID:               sessionVars.ConnectionID,
-		normalizedSQL:        normalizedSQL,
+		preparedStmtText:     preparedStmtText,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -184,6 +184,7 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
+	PreparedStmtText    string
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}
