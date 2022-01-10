@@ -1049,6 +1049,7 @@ func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Ex
 			return pruner.fullRange()
 		}
 
+		// convert all elements to EQ-exprs and prune them one by one
 		sf, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
 		if err != nil {
 			return pruner.fullRange()
