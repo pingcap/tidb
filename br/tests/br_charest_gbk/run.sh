@@ -31,14 +31,14 @@ rm -rf $PROGRESS_FILE
 run_sql "CREATE DATABASE $DB;"
 
 run_sql "CREATE TABLE $DB.测试 ( \
-    `a` char(20) DEFAULT NULL, \
-    `b` tinyblob, \
-    `c` binary(100) DEFAULT NULL, \
-    `d` json DEFAULT NULL, \
-    `e` timestamp NULL DEFAULT NULL, \
-    `f` set('a一','b二','c三','d四') DEFAULT NULL, \
-    `g` text, \
-    `h` enum('a一','b二','c三','d四') DEFAULT 'c三' \
+    a char(20) DEFAULT NULL, \
+    b tinyblob, \
+    c binary(100) DEFAULT NULL, \
+    d json DEFAULT NULL, \
+    e timestamp NULL DEFAULT NULL, \
+    f set('a一','b二','c三','d四') DEFAULT NULL, \
+    g text, \
+    h enum('a一','b二','c三','d四') DEFAULT 'c三' \
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;"
 
 run_sql "INSERT INTO $DB.测试 VALUES ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');"
