@@ -35,6 +35,8 @@ const (
 	RuleIndexTable = 40
 	// RuleIndexPartition is the index for a rule of partition.
 	RuleIndexPartition = 80
+	// RuleIndexTiFlash is the index for a rule of TiFlash.
+	RuleIndexTiFlash = 120
 )
 
 const (

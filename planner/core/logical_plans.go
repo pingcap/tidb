@@ -1284,10 +1284,11 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag  uint64
-	HasLimit bool
-	LimitBeg uint64
-	LimitEnd uint64
+	optFlag   uint64
+	HasLimit  bool
+	LimitBeg  uint64
+	LimitEnd  uint64
+	IsInApply bool
 }
 
 // LogicalCTE is for CTE.
@@ -1307,7 +1308,7 @@ type LogicalCTETable struct {
 	name         string
 	idForStorage int
 
-	// seedSchema is only used in predicateColumnCollector to get column mapping
+	// seedSchema is only used in columnStatsUsageCollector to get column mapping
 	seedSchema *expression.Schema
 }
 

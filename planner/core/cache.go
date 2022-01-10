@@ -216,6 +216,8 @@ type CachedPrepareStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+	NormalizedSQL4PC    string
+	SQLDigest4PC        string
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

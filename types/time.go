@@ -39,6 +39,8 @@ const (
 	TimeFormat = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
+	// UTCTimeFormat is used to parse and format gotime.
+	UTCTimeFormat = "2006-01-02 15:04:05 UTC"
 )
 
 const (
@@ -1988,7 +1990,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning {
+		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning && sc.NoZeroDate {
 			switch tp {
 			case mysql.TypeTimestamp:
 				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
@@ -2556,7 +2558,8 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		if (length == 8) || (length == 6) {
+		// "20129" will be parsed to 2020-12-09, which is date format.
+		if (length == 8) || (length == 6) || (length == 5) {
 			return true
 		}
 	case 3:

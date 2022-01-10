@@ -2190,6 +2190,7 @@ func TestIdentifier(t *testing.T) {
 		{`select .78'123'`, true, "SELECT 0.78 AS `123`"},
 		{"select .78`123`", true, "SELECT 0.78 AS `123`"},
 		{`select .78"123"`, true, "SELECT 0.78 AS `123`"},
+		{"select 111 as \xd6\xf7", true, "SELECT 111 AS `??`"},
 	}
 	RunTest(t, table, false)
 }
@@ -5092,6 +5093,14 @@ func TestDDLStatements(t *testing.T) {
 	createTableStr = `CREATE TABLE t (c_double double(10, 2))`
 	_, _, err = p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20))`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.EqualError(t, err, "line 1 column 70 near \"\"GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together ")
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20)) on commit preserve rows`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.NoError(t, err)
 }
 
 func TestAnalyze(t *testing.T) {
@@ -6413,18 +6422,30 @@ func TestGBKEncoding(t *testing.T) {
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
 
-	utf8SQL := "select '芢' from `玚`;"
-	sql, err = encoder.String(utf8SQL)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(sql, gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
-	require.NoError(t, err)
-
-	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
 }
 
 type gbkEncodingChecker struct {
@@ -6467,20 +6488,9 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 
 func TestCharsetIntroducer(t *testing.T) {
 	p := parser.New()
-	// `_gbk` is treated as an identifier.
-	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.NoError(t, err)
-
-	charset.AddCharset(&charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-		Desc:             "gbk",
-		Maxlen:           2,
-	})
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
-	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
