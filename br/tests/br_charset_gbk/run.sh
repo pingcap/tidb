@@ -79,7 +79,7 @@ check_contains "娴嬭瘯"
 
 # Test BR DDL query string
 echo "testing DDL query..."
-run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE TABLE.*CHARSET.*GBK'
+run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE TABLE.*CHARSET=gbk'
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE DATABASE'
 
 run_sql "DROP DATABASE $DB;"
