@@ -340,7 +340,7 @@ func (op *physicalOptimizeOp) setBest(lp LogicalPlan, pp PhysicalPlan, prop stri
 	traceInfo.BestTask = &tracing.PhysicalPlanTrace{ID: pp.ID(), TP: pp.TP(), Info: pp.ExplainInfo(), Cost: pp.Cost()}
 }
 
-func (op *physicalOptimizeOp) appendCandidate(logicalPlan *baseLogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PhysicalPlanTrace {
+func (op *physicalOptimizeOp) appendCandidate(logicalPlan LogicalPlan, physicalPlan PhysicalPlan, prop string) *tracing.PhysicalPlanTrace {
 	if op == nil || op.tracer == nil {
 		return nil
 	}
@@ -844,7 +844,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
-			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate)
+			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -931,9 +931,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			if allRangeIsPoint {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
-					pointGetTask = ds.convertToPointGet(prop, candidate)
+					pointGetTask = ds.convertToPointGet(prop, candidate, opt)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName, opt)
 				}
 				if !pointGetTask.invalid() {
 					cntPlan += 1
@@ -957,9 +957,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 			var tblTask task
 			if ds.SampleInfo != nil {
-				tblTask, err = ds.convertToSampleTable(prop, candidate)
+				tblTask, err = ds.convertToSampleTable(prop, candidate, opt)
 			} else {
-				tblTask, err = ds.convertToTableScan(prop, candidate)
+				tblTask, err = ds.convertToTableScan(prop, candidate, opt)
 			}
 			if err != nil {
 				return nil, 0, err
@@ -980,7 +980,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if ds.preferStoreType&preferTiFlash != 0 {
 			continue
 		}
-		idxTask, err := ds.convertToIndexScan(prop, candidate)
+		idxTask, err := ds.convertToIndexScan(prop, candidate, opt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1020,10 +1020,16 @@ func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bo
 	return false
 }
 
-func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
 	if prop.TaskTp != property.RootTaskType || !prop.IsEmpty() {
 		return invalidTask, nil
 	}
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	path := candidate.path
 	var totalCost float64
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
@@ -1108,7 +1114,7 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 	return true
 }
 
-func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
+func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath, opt *physicalOptimizeOp) (
 	tablePlan PhysicalPlan, partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	overwritePartialTableScanSchema(ds, ts)
@@ -1308,7 +1314,13 @@ func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.Sta
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
-func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
@@ -1814,7 +1826,13 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 }
 
 // convertToTableScan converts the DataSource to table scan.
-func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
@@ -1891,7 +1909,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	return task, nil
 }
 
-func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
@@ -1915,7 +1939,13 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	}, nil
 }
 
-func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -1999,10 +2029,16 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *ast.ColumnName) task {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *ast.ColumnName, opt *physicalOptimizeOp) (task task) {
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
+	defer func() {
+		candidate := opt.appendCandidate(ds, task.plan(), prop.String())
+		if candidate != nil {
+			candidate.SetCost(task.plan().Cost())
+		}
+	}()
 	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
