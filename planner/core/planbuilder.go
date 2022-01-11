@@ -908,13 +908,8 @@ func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *
 			return path
 		}
 	}
-<<<<<<< HEAD
 	if isPrimaryIndex(idxName) && (tblInfo.PKIsHandle || tblInfo.IsCommonHandle) {
-		return tablePath
-=======
-	if isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 		return primaryIdxPath
->>>>>>> 8dfad92a0... planner: fix tikv table path wrongly pruned when forcing primary index and tiflash replica exists (#31509)
 	}
 	return nil
 }
