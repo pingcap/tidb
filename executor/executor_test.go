@@ -6637,16 +6637,14 @@ func (s *testSuite1) TestPartitionHashCode(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`create table t(c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`)
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			tk1 := testkit.NewTestKitWithInit(c, s.store)
 			for i := 0; i < 5; i++ {
 				tk1.MustExec("select * from t")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -9527,6 +9525,7 @@ func (s *testSuiteP1) TestIssue29412(c *C) {
 }
 
 func (s *testSerialSuite) TestIssue28650(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
@@ -9787,4 +9786,19 @@ func (s *testSerialSuite) TestIssue30971(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(fields, HasLen, test.fields)
 	}
+}
+
+// Details at https://github.com/pingcap/tidb/issues/31038
+func (s *testSerialSuite) TestFix31038(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableCollectExecutionInfo = false
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t123")
+	tk.MustExec("create table t123 (id int);")
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
+	tk.MustQuery("select * from t123;")
+	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
 }
