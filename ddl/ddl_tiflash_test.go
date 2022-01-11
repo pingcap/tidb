@@ -291,9 +291,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	total -= 1
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
-	for _, e := range s.tiflash.GlobalTiFlashPlacementRules {
-		fmt.Printf("A %v \n", e.ID)
-	}
 	c.Assert(len(s.tiflash.GlobalTiFlashPlacementRules), Equals, total)
 }
 
