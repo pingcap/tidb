@@ -1,0 +1,21 @@
+# These tests test the aggregate function's behavior according to collation.
+
+# prepare database
+create database collation_agg_func;
+use collation_agg_func;
+
+# group_concat()
+create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
+insert into test.t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def ');
+select group_concat(value order by 1) from t;
+select group_concat(value) from t;
+select upper(group_concat(distinct value order by 1)) from t;
+select upper(group_concat(distinct value)) from t;
+
+
+
+
+# cleanup environment
+drop database collation_agg_func;
+use test
+
