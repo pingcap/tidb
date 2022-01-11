@@ -84,9 +84,8 @@ type IndexLookUpJoin struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
-	stats           *indexLookUpJoinRuntimeStats
-	ctxCancelReason atomic.Value
-	finished        *atomic.Value
+	stats    *indexLookUpJoinRuntimeStats
+	finished *atomic.Value
 }
 
 type outerCtx struct {
