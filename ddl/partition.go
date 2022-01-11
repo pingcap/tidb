@@ -1207,9 +1207,6 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			}
 		}
 	}
-	for _, p := range newPartitions {
-		logutil.BgLogger().Debug("HAVE NEW", zap.Int64("id", p.ID), zap.Int64("db", job.SchemaID), zap.Int64("tb", job.TableID))
-	}
 	if len(newPartitions) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
