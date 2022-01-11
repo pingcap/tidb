@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -85,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -191,6 +193,7 @@ type clientConn struct {
 	authPlugin    string            // default authentication plugin
 	isUnixSocket  bool              // connection is Unix Socket file
 	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	inputDecoder  *inputDecoder     // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -964,6 +967,15 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 	cc.rsEncoder = newResultEncoder(chs)
 }
 
+func (cc *clientConn) initInputEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetClient)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_client system variable failed", zap.Error(err))
+	}
+	cc.inputDecoder = newInputDecoder(chs)
+}
+
 // initConnect runs the initConnect SQL statement if it has been specified.
 // The semantics are MySQL compatible.
 func (cc *clientConn) initConnect(ctx context.Context) error {
@@ -1100,12 +1112,17 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
+				var startTS uint64
+				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
+					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
+					zap.Uint64("timestamp", startTS),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
@@ -1244,7 +1261,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.TopSQLEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
@@ -1364,11 +1381,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) writeStats(ctx context.Context) error {
-	msg := []byte("Uptime: 0  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000")
+	var err error
+	var uptime int64 = 0
+	info := serverInfo{}
+	info.ServerInfo, err = infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+	} else {
+		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
+	}
+	msg := []byte(fmt.Sprintf("Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
+		uptime))
 	data := cc.alloc.AllocWithLen(4, len(msg))
 	data = append(data, msg...)
 
-	err := cc.writePacket(data)
+	err = cc.writePacket(data)
 	if err != nil {
 		return err
 	}
@@ -1864,8 +1891,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
-	var idxKeys []kv.Key
-	var rowKeys []kv.Key
+	var idxKeys []kv.Key // nolint: prealloc
+	var rowKeys []kv.Key // nolint: prealloc
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		switch stmt.(type) {
@@ -2190,10 +2217,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+	// if fetchedRows is not enough, getting data from recordSet.
+	// NOTE: chunk should not be allocated from the allocator
+	// the allocator will reset every statement
+	// but it maybe stored in the result set among statements
+	// ref https://github.com/pingcap/tidb/blob/7fc6ebbda4ddf84c0ba801ca7ebb636b934168cf/server/conn_stmt.go#L233-L239
+	// Here server.tidbResultSet implements Next method.
+	req := rs.NewChunk(nil)
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
-		// Here server.tidbResultSet implements Next method.
 		if err := rs.Next(ctx, req); err != nil {
 			return err
 		}

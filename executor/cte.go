@@ -89,6 +89,11 @@ type CTEExec struct {
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
+
+	// isInApply indicates whether CTE is in inner side of Apply
+	// and should resTbl/iterInTbl be reset for each outer row of Apply.
+	// Because we reset them when SQL is finished instead of when CTEExec.Close() is called.
+	isInApply bool
 }
 
 // Open implements the Executor interface.
@@ -114,6 +119,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
 		}
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
 		recursiveTypes := e.recursiveExec.base().retFieldTypes
 		e.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, e.maxChunkSize)
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
@@ -204,7 +212,14 @@ func (e *CTEExec) Close() (err error) {
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
-		if err = e.iterOutTbl.DerefAndClose(); err != nil {
+		if e.iterOutTbl != nil {
+			if err = e.iterOutTbl.DerefAndClose(); err != nil {
+				return err
+			}
+		}
+	}
+	if e.isInApply {
+		if err = e.reopenTbls(); err != nil {
 			return err
 		}
 	}
@@ -396,7 +411,9 @@ func (e *CTEExec) reset() {
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
-	e.hashTbl = newConcurrentMapHashTable()
+	if e.isDistinct {
+		e.hashTbl = newConcurrentMapHashTable()
+	}
 	if err := e.resTbl.Reopen(); err != nil {
 		return err
 	}

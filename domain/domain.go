@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -89,12 +90,14 @@ type Domain struct {
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
+	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
 	onClose              func()
+	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -159,7 +162,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -171,6 +174,16 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	is := newISBuilder.Build()
 	do.infoCache.Insert(is, startTS)
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) sysFacHack() (pools.Resource, error) {
+	// TODO: Here we create new sessions with sysFac in DDL,
+	// which will use `do` as Domain instead of call `domap.Get`.
+	// That's because `domap.Get` requires a lock, but before
+	// we initialize Domain finish, we can't require that again.
+	// After we remove the lazy logic of creating Domain, we
+	// can simplify code here.
+	return do.sysExecutorFactory(do)
 }
 
 func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
@@ -271,7 +284,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -322,6 +335,22 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
+}
+
+// ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
+func (do *Domain) ExpiredTimeStamp4PC() types.Time {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	return do.expiredTimeStamp4PC
+}
+
+// SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
+func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
+	do.m.Lock()
+	defer do.m.Unlock()
+
+	do.expiredTimeStamp4PC = time
 }
 
 // DDL gets DDL from domain.
@@ -701,6 +730,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
 		renewLeaseCh:        make(chan func(), 10),
+		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -711,7 +741,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
 		var addrs []string
@@ -753,7 +784,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	// After we remove the lazy logic of creating Domain, we
 	// can simplify code here.
 	sysFac := func() (pools.Resource, error) {
-		return sysFactory(do)
+		return sysExecutorFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -1265,6 +1296,16 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+	statsHandle := do.StatsHandle()
+	for i, ctx := range ctxList {
+		statsHandle.StatsLoad.SubCtxs[i] = ctx
+		do.wg.Add(1)
+		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+	}
+}
+
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
@@ -1359,8 +1400,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
+		dumpColStatsUsageTicker.Stop()
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
@@ -1408,6 +1451,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+			}
+		case <-dumpColStatsUsageTicker.C:
+			err := statsHandle.DumpColStatsUsageToKV()
+			if err != nil {
+				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
 		}
 	}

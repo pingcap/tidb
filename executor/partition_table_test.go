@@ -414,7 +414,7 @@ func (s *partitionTableSuite) TestBatchGetandPointGetwithHashPartition(c *C) {
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
 		queryHash := fmt.Sprintf("select a from thash where a=%v", x)
-		queryRegular := fmt.Sprintf("select a from thash where a=%v", x)
+		queryRegular := fmt.Sprintf("select a from tregular where a=%v", x)
 		c.Assert(tk.HasPlan(queryHash, "Point_Get"), IsTrue) // check if PointGet is used
 		tk.MustQuery(queryHash).Check(tk.MustQuery(queryRegular).Rows())
 	}
@@ -526,10 +526,10 @@ func (s *partitionTableSuite) TestDirectReadingwithIndexJoin(c *C) {
 	// hash and range partition
 	tk.MustExec("create table thash (a int, b int, c int, primary key(a), index idx_b(b)) partition by hash(a) partitions 4;")
 	tk.MustExec(`create table trange (a int, b int, c int, primary key(a), index idx_b(b)) partition by range(a) (
-		  partition p0 values less than(1000),
-		  partition p1 values less than(2000),
-		  partition p2 values less than(3000),
-		  partition p3 values less than(4000));`)
+		 partition p0 values less than(1000),
+		 partition p1 values less than(2000),
+		 partition p2 values less than(3000),
+		 partition p3 values less than(4000));`)
 
 	// regualr table
 	tk.MustExec(`create table tnormal (a int, b int, c int, primary key(a), index idx_b(b));`)
@@ -2912,7 +2912,7 @@ type testOutput struct {
 
 func (s *testSuiteWithData) verifyPartitionResult(tk *testkit.TestKit, input []string, output []testOutput) {
 	for i, tt := range input {
-		var isSelect bool = false
+		var isSelect = false
 		if strings.HasPrefix(strings.ToLower(tt), "select ") {
 			isSelect = true
 		}

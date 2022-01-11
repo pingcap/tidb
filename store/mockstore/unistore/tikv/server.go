@@ -138,6 +138,10 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 	return req.reader
 }
 
+func (req *requestCtx) isSnapshotIsolation() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_SI
+}
+
 func (req *requestCtx) finish() {
 	atomic.AddInt32(&req.svr.refCount, -1)
 	if req.reader != nil {

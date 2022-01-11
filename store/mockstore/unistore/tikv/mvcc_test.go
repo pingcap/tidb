@@ -51,20 +51,23 @@ func (ts *TestStore) newReqCtx() *requestCtx {
 }
 
 func (ts *TestStore) newReqCtxWithKeys(rawStartKey, rawEndKey []byte) *requestCtx {
+	epoch := &metapb.RegionEpoch{ConfVer: 1, Version: 1}
+	peer := &metapb.Peer{Id: 1, StoreId: 1, Role: metapb.PeerRole_Voter}
 	return &requestCtx{
 		regCtx: &regionCtx{
+			meta: &metapb.Region{
+				Id:          1,
+				RegionEpoch: epoch,
+				Peers:       []*metapb.Peer{peer},
+			},
 			latches:     newLatches(),
 			rawStartKey: rawStartKey,
 			rawEndKey:   rawEndKey,
 		},
 		rpcCtx: &kvrpcpb.Context{
 			RegionId:    1,
-			RegionEpoch: &metapb.RegionEpoch{Version: 1, ConfVer: 1},
-			Peer: &metapb.Peer{
-				Id:      1,
-				StoreId: 1,
-				Role:    metapb.PeerRole_Voter,
-			},
+			RegionEpoch: epoch,
+			Peer:        peer,
 		},
 		svr: ts.Svr,
 	}
@@ -506,7 +509,6 @@ func MustGetRollback(key []byte, ts uint64, store *TestStore) {
 }
 
 func TestBasicOptimistic(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -521,7 +523,6 @@ func TestBasicOptimistic(t *testing.T) {
 }
 
 func TestPessimiticTxnTTL(t *testing.T) {
-	t.Parallel()
 	var err error
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
@@ -551,7 +552,6 @@ func TestPessimiticTxnTTL(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -586,7 +586,6 @@ func TestRollback(t *testing.T) {
 }
 
 func TestOverwritePessimisitcLock(t *testing.T) {
-	t.Parallel()
 	var err error
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
@@ -615,7 +614,6 @@ func TestOverwritePessimisitcLock(t *testing.T) {
 }
 
 func TestCheckTxnStatus(t *testing.T) {
-	t.Parallel()
 	var err error
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
@@ -718,7 +716,6 @@ func TestCheckTxnStatus(t *testing.T) {
 }
 
 func TestCheckSecondaryLocksStatus(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -785,7 +782,6 @@ func TestCheckSecondaryLocksStatus(t *testing.T) {
 }
 
 func TestMvccGet(t *testing.T) {
-	t.Parallel()
 	var err error
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
@@ -900,7 +896,6 @@ func TestMvccGet(t *testing.T) {
 }
 
 func TestPrimaryKeyOpLock(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -952,7 +947,6 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 }
 
 func TestMvccTxnRead(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1024,7 +1018,6 @@ func TestMvccTxnRead(t *testing.T) {
 }
 
 func TestTxnPrewrite(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1060,7 +1053,6 @@ func TestTxnPrewrite(t *testing.T) {
 }
 
 func TestPrewriteInsert(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1097,7 +1089,6 @@ func TestPrewriteInsert(t *testing.T) {
 }
 
 func TestRollbackKey(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1123,7 +1114,6 @@ func TestRollbackKey(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1146,7 +1136,6 @@ func TestCleanup(t *testing.T) {
 }
 
 func TestCommit(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1198,7 +1187,6 @@ func TestCommit(t *testing.T) {
 }
 
 func TestMinCommitTs(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1220,7 +1208,6 @@ func TestMinCommitTs(t *testing.T) {
 }
 
 func TestPessimisticLock(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1386,7 +1373,6 @@ func TestPessimisticLock(t *testing.T) {
 }
 
 func TestResolveCommit(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1452,7 +1438,6 @@ func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
 }
 
 func TestBatchGet(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 	MustLoad(100, 101, store, "ta:1", "tb:2", "tc:3")
@@ -1466,7 +1451,6 @@ func TestBatchGet(t *testing.T) {
 }
 
 func TestCommitPessimisticLock(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 	k := []byte("ta")
@@ -1477,7 +1461,6 @@ func TestCommitPessimisticLock(t *testing.T) {
 }
 
 func TestOpCheckNotExist(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1495,7 +1478,6 @@ func TestOpCheckNotExist(t *testing.T) {
 }
 
 func TestPessimisticLockForce(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1513,7 +1495,6 @@ func TestPessimisticLockForce(t *testing.T) {
 }
 
 func TestScanSampleStep(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 	for i := 0; i < 1000; i++ {
@@ -1547,7 +1528,6 @@ func genScanSampleStepKey(i int) []byte {
 }
 
 func TestAsyncCommitPrewrite(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1577,7 +1557,6 @@ func TestAsyncCommitPrewrite(t *testing.T) {
 }
 
 func TestAccessCommittedLocks(t *testing.T) {
-	t.Parallel()
 	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
 	defer close()
 
@@ -1670,6 +1649,58 @@ func TestAccessCommittedLocks(t *testing.T) {
 		} else {
 			require.Nil(store.t, pair.Error)
 		}
+	}
+}
+
+func TestTiKVRCRead(t *testing.T) {
+	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer close()
+
+	k1 := []byte("t1")
+	k2, v2 := []byte("t2"), []byte("v2")
+	k3, v3 := []byte("t3"), []byte("v3")
+	k4, v4 := []byte("t4"), []byte("v4")
+	MustLoad(10, 20, store, "t1:v1", "t2:v2", "t3:v3")
+	// write to be read
+	MustPrewritePut(k1, k1, []byte("v11"), 30, store)
+	MustCommit(k1, 30, 40, store)
+	// lock to be ignored
+	MustPrewritePut(k2, k2, v2, 50, store)
+	MustPrewriteDelete(k3, k3, 60, store)
+	MustPrewritePut(k4, k4, v4, 70, store)
+
+	expected := map[string][]byte{string(k1): []byte("v11"), string(k2): v2, string(k3): v3, string(k4): nil}
+
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
+	// get
+	for k, v := range expected {
+		res, err := store.MvccStore.Get(reqCtx, []byte(k), 80)
+		require.NoError(t, err)
+		require.Equal(t, res, v)
+	}
+	// batch get
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, 80)
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
+	}
+	// scan
+	pairs = store.MvccStore.Scan(reqCtx, &kvrpcpb.ScanRequest{
+		StartKey: []byte("t1"),
+		EndKey:   []byte("t4"),
+		Limit:    100,
+		Version:  80,
+	})
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
 	}
 }
 

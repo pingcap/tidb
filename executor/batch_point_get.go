@@ -151,6 +151,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		})
 	}
 	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -475,7 +476,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
+				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
 				return (&consistency.Reporter{
 					HandleEncode: func(_ kv.Handle) kv.Key {
 						return key

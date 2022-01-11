@@ -31,7 +31,7 @@ import (
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
 func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
-	var accessConditions, filterConditions []expression.Expression
+	var accessConditions, filterConditions []expression.Expression // nolint: prealloc
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
@@ -529,11 +529,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
+		collator := collate.GetCollator(cols[offset].GetType().Collate)
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
-			points[offset] = rb.build(accesses[offset])
+			points[offset] = rb.build(accesses[offset], collator)
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(cond))
+		points[offset] = rb.intersection(points[offset], rb.build(cond, collator), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
 			if expression.MaybeOverOptimized4PlanCache(sctx, conditions) {
 				// cannot return an empty-range for plan-cache since the range may become non-empty as parameters change
@@ -665,7 +666,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
-			points := rb.build(item)
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].Collate))
 			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)

@@ -142,8 +142,6 @@ func TestNew(t *testing.T) {
 }
 
 func TestGetSet(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -199,8 +197,6 @@ func TestSeek(t *testing.T) {
 }
 
 func TestInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -241,8 +237,6 @@ func TestInc(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -288,8 +282,6 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDelete2(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -330,8 +322,6 @@ func TestDelete2(t *testing.T) {
 }
 
 func TestSetNil(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -348,8 +338,6 @@ func TestSetNil(t *testing.T) {
 }
 
 func TestBasicSeek(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -374,8 +362,6 @@ func TestBasicSeek(t *testing.T) {
 }
 
 func TestBasicTable(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -432,8 +418,6 @@ func TestBasicTable(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -469,8 +453,6 @@ func TestRollback(t *testing.T) {
 }
 
 func TestSeekMin(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -511,8 +493,6 @@ func TestSeekMin(t *testing.T) {
 }
 
 func TestConditionIfNotExist(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -553,8 +533,6 @@ func TestConditionIfNotExist(t *testing.T) {
 }
 
 func TestConditionIfEqual(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -600,8 +578,6 @@ func TestConditionIfEqual(t *testing.T) {
 }
 
 func TestConditionUpdate(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -660,8 +636,6 @@ func TestDBClose(t *testing.T) {
 }
 
 func TestIsolationInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -708,8 +682,6 @@ func TestIsolationInc(t *testing.T) {
 }
 
 func TestIsolationMultiInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -764,7 +736,6 @@ func TestIsolationMultiInc(t *testing.T) {
 }
 
 func TestRetryOpenStore(t *testing.T) {
-	t.Parallel()
 	begin := time.Now()
 	require.NoError(t, Register("dummy", &brokenStore{}))
 	store, err := newStoreWithRetry("dummy://dummy-store", 3)
@@ -779,7 +750,6 @@ func TestRetryOpenStore(t *testing.T) {
 }
 
 func TestOpenStore(t *testing.T) {
-	t.Parallel()
 	require.NoError(t, Register("open", &brokenStore{}))
 	store, err := newStoreWithRetry(":", 3)
 	if store != nil {
@@ -791,7 +761,6 @@ func TestOpenStore(t *testing.T) {
 }
 
 func TestRegister(t *testing.T) {
-	t.Parallel()
 	err := Register("retry", &brokenStore{})
 	require.NoError(t, err)
 	err = Register("retry", &brokenStore{})

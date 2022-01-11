@@ -91,7 +91,7 @@ Selection	0.33	root		gt(test.t1.c2, 1)
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
     │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -118,6 +118,12 @@ Projection	12500.00	root		ifnull(Column#10, 0)->Column#10
 explain format = 'brief' select * from information_schema.columns;
 id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
+explain format = 'brief' select * from information_schema.columns where table_name = 'T1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:COLUMNS	table_name:["t1"]
+explain format = 'brief' select * from information_schema.columns where table_schema = 'TEST' and table_name = 'T1' and column_name = 'c1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:COLUMNS	table_schema:["test"], table_name:["t1"], column_name:["c1"]
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
@@ -225,7 +231,7 @@ set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c1, test.t2.c1)
     ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
     │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -241,7 +247,7 @@ HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2
 explain format = 'brief' select sum(6 in (select c2 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
-└─Projection	10000.00	root		cast(Column#10, decimal(65,0) BINARY)->Column#13
+└─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(6, test.t2.c2)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -809,7 +815,7 @@ Projection	1.00	root		Column#7
   └─HashAgg(Probe)	1.00	root		funcs:sum(Column#12)->Column#7
     └─HashJoin	1.00	root		CARTESIAN left outer join
       ├─HashAgg(Build)	1.00	root		group by:1, funcs:sum(Column#14)->Column#12
-      │ └─Projection	1.00	root		cast(Column#6, decimal(42,0) BINARY)->Column#14
+      │ └─Projection	1.00	root		cast(Column#6, decimal(20,0) BINARY)->Column#14
       │   └─MaxOneRow	1.00	root		
       │     └─Projection	1.00	root		Column#5
       │       └─TableDual	1.00	root		rows:1
@@ -831,7 +837,7 @@ Projection	1.00	root		Column#5
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	1.00	root		funcs:sum(Column#7)->Column#5
-    └─Projection	1.00	root		cast(Column#4, decimal(42,0) BINARY)->Column#7
+    └─Projection	1.00	root		cast(Column#4, decimal(20,0) BINARY)->Column#7
       └─TableDual	1.00	root		rows:1
 explain format = 'brief' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
@@ -846,3 +852,121 @@ Projection	8000.00	root		Column#4, Column#4, Column#5
           └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:sum(test.t.a)->Column#13, funcs:count(test.t.a)->Column#14
             └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
+create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
+insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");
+admin reload opt_rule_blacklist;
+
+explain format = 'brief' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.a, decimal(3,0) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.a, test.t.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select sum(t1.b) from t t1 join t t2 on t1.b=t2.b;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.b, decimal(5,0) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.b, test.t.b)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.b))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.b))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select sum(t1.c) from t t1 join t t2 on t1.c=t2.c;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.c, decimal(8,0) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.c, test.t.c)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.c))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.c))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select sum(t1.d) from t t1 join t t2 on t1.d=t2.d;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.d, decimal(10,0) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.d, test.t.d)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.d))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.d))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select sum(t1.e) from t t1 join t t2 on t1.e=t2.e;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.e, decimal(20,0) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.e, test.t.e)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select avg(t1.a) from t t1 join t t2 on t1.a=t2.a;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.a, decimal(8,4) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.a, test.t.a)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select avg(t1.b) from t t1 join t t2 on t1.b=t2.b;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.b, decimal(10,4) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.b, test.t.b)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.b))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.b))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select avg(t1.c) from t t1 join t t2 on t1.c=t2.c;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.c, decimal(13,4) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.c, test.t.c)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.c))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.c))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select avg(t1.d) from t t1 join t t2 on t1.d=t2.d;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.d, decimal(15,4) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.d, test.t.d)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.d))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.d))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
+└─Projection	12487.50	root		cast(test.t.e, decimal(24,4) BINARY)->Column#14
+  └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.e, test.t.e)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(test.t.e))
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+delete from mysql.opt_rule_blacklist where name="aggregation_push_down";
+admin reload opt_rule_blacklist;
+

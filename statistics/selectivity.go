@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -193,7 +192,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
 		ret = pseudoSelectivity(coll, exprs)
 		if sc.EnableOptimizerCETrace {
-			CETraceExpr(sc, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.Count))
+			CETraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression", expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.Count))
 		}
 		return ret, nil, nil
 	}
@@ -210,7 +209,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(sc, coll.Pseudo) {
+		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
@@ -236,14 +235,14 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if colInfo.IsHandle {
 				nodes[len(nodes)-1].Tp = PkType
 				var cnt float64
-				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
+				cnt, err = coll.GetRowCountByIntColumnRanges(ctx, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 				continue
 			}
-			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
+			cnt, err := coll.GetRowCountByColumnRanges(ctx, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -274,7 +273,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, err := coll.GetRowCountByIndexRanges(sc, id, ranges)
+			cnt, err := coll.GetRowCountByIndexRanges(ctx, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -314,7 +313,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				}
 			}
 			expr := expression.ComposeCNFCondition(ctx, curExpr...)
-			CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+			CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
 		}
 	}
 
@@ -355,6 +354,24 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				if ok {
 					continue
 				}
+				// where {"0" / 0 / "false" / false / null} or A or B ... the '0' constant item should be ignored.
+				if c, ok := cond.(*expression.Constant); ok {
+					if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{cond}) {
+						if c.Value.IsNull() {
+							// constant is null
+							continue
+						}
+						if isTrue, err := c.Value.ToBool(sc); err == nil {
+							if isTrue == 0 {
+								// constant == 0
+								continue
+							}
+							// constant == 1
+							selectivity = 1.0
+							break
+						}
+					}
+				}
 
 				var cnfItems []expression.Expression
 				if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
@@ -366,13 +383,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
 				if err != nil {
 					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-					selectivity = selectionFactor
+					curSelectivity = selectionFactor
 				}
 
 				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
 				if sc.EnableOptimizerCETrace {
 					// Tracing for the expression estimation results of this DNF.
-					CETraceExpr(sc, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.Count))
+					CETraceExpr(ctx, tableID, "Table Stats-Expression-DNF", scalarCond, selectivity*float64(coll.Count))
 				}
 			}
 
@@ -384,7 +401,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				// Tracing for the expression estimation results after applying the DNF estimation result.
 				curExpr = append(curExpr, remainedExprs[i])
 				expr := expression.ComposeCNFCondition(ctx, curExpr...)
-				CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
+				CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.Count))
 			}
 		}
 	}
@@ -396,7 +413,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
 		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
-		CETraceExpr(sc, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.Count))
+		CETraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.Count))
 	}
 	return ret, nodes, nil
 }
@@ -520,7 +537,7 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 }
 
 // CETraceExpr appends an expression and related information into CE trace
-func CETraceExpr(sc *stmtctx.StatementContext, tableID int64, tp string, expr expression.Expression, rowCount float64) {
+func CETraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
 	exprStr, err := ExprToString(expr)
 	if err != nil {
 		logutil.BgLogger().Debug("[OptimizerTrace] Failed to trace CE of an expression",
@@ -533,6 +550,7 @@ func CETraceExpr(sc *stmtctx.StatementContext, tableID int64, tp string, expr ex
 		Expr:     exprStr,
 		RowCount: uint64(rowCount),
 	}
+	sc := sctx.GetSessionVars().StmtCtx
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &rec)
 }
 

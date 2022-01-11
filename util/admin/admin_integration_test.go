@@ -25,8 +25,6 @@ import (
 )
 
 func TestAdminCheckTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -79,8 +77,6 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckTableClusterIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

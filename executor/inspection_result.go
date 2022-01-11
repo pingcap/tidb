@@ -140,7 +140,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.statusToInstanceAddress = make(map[string]string)
 		var rows []chunk.Row
 		exec := sctx.(sqlexec.RestrictedSQLExecutor)
-		stmt, err := exec.ParseWithParams(ctx, "select instance,status_address from information_schema.cluster_info;")
+		stmt, err := exec.ParseWithParams(ctx, true, "select instance,status_address from information_schema.cluster_info;")
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -251,7 +251,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 	}
 	var rows []chunk.Row
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
+	stmt, err := exec.ParseWithParams(ctx, true, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -261,7 +261,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 
 	generateDetail := func(tp, item string) string {
 		var rows []chunk.Row
-		stmt, err := exec.ParseWithParams(ctx, "select value, instance from information_schema.cluster_config where type=%? and `key`=%?;", tp, item)
+		stmt, err := exec.ParseWithParams(ctx, true, "select value, instance from information_schema.cluster_config where type=%? and `key`=%?;", tp, item)
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -347,7 +347,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		}
 		sql.Reset()
 		fmt.Fprintf(sql, "select type,instance,value from information_schema.%s where %s", cas.table, cas.cond)
-		stmt, err := exec.ParseWithParams(ctx, sql.String())
+		stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -378,7 +378,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 	}
 	var rows []chunk.Row
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
+	stmt, err := exec.ParseWithParams(ctx, true, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -405,7 +405,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 		ipToCount[ip]++
 	}
 
-	stmt, err = exec.ParseWithParams(ctx, "select instance, value from metrics_schema.node_total_memory where time=now()")
+	stmt, err = exec.ParseWithParams(ctx, true, "select instance, value from metrics_schema.node_total_memory where time=now()")
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -473,7 +473,7 @@ func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, f
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	var rows []chunk.Row
 	// check the configuration consistent
-	stmt, err := exec.ParseWithParams(ctx, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
+	stmt, err := exec.ParseWithParams(ctx, true, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -643,7 +643,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 			sql.Reset()
 			fmt.Fprintf(sql, "select `%[1]s`,sum(value) as total from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having total>=1.0",
 				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
-			stmt, err := exec.ParseWithParams(ctx, sql.String())
+			stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 			if err == nil {
 				rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 			}
@@ -698,14 +698,14 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
 		(select instance,min(time) as min_time from metrics_schema.up %[1]s and value=0 group by instance,job) as t2 on t1.instance=t2.instance order by job`, condition)
 	var rows []chunk.Row
-	stmt, err := exec.ParseWithParams(ctx, sql.String())
+	stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))
 	}
-	var results []inspectionResult
+	results := make([]inspectionResult, 0, len(rows))
 	for _, row := range rows {
 		if row.Len() < 3 {
 			continue
@@ -726,7 +726,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	// Check from log.
 	sql.Reset()
 	fmt.Fprintf(sql, "select type,instance,time from information_schema.cluster_log %s and level = 'info' and message like '%%Welcome to'", condition)
-	stmt, err = exec.ParseWithParams(ctx, sql.String())
+	stmt, err = exec.ParseWithParams(ctx, true, sql.String())
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -863,7 +863,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 				(select instance, max(value) as cpu from metrics_schema.tikv_thread_cpu %[3]s and name like '%[1]s' group by instance) as t1
 				where t1.cpu > %[2]f;`, rule.component, rule.threshold, condition)
 		}
-		stmt, err := exec.ParseWithParams(ctx, sql.String())
+		stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -1036,7 +1036,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 		} else {
 			fmt.Fprintf(sql, "select instance, max(value)/%.0f as max_value from metrics_schema.%s %s group by instance having max_value > %f;", rule.factor, rule.tbl, cond, rule.threshold)
 		}
-		stmt, err := exec.ParseWithParams(ctx, sql.String())
+		stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -1222,7 +1222,7 @@ func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionF
 			continue
 		}
 		sql := rule.genSQL(filter.timeRange)
-		stmt, err := exec.ParseWithParams(ctx, sql)
+		stmt, err := exec.ParseWithParams(ctx, true, sql)
 		if err == nil {
 			rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
@@ -1245,7 +1245,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
 	var rows []chunk.Row
-	stmt, err := exec.ParseWithParams(ctx, sql.String())
+	stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 	if err == nil {
 		rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	}
@@ -1259,7 +1259,7 @@ func (c thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx
 		sql.Reset()
 		fmt.Fprintf(sql, `select time, value from metrics_schema.pd_scheduler_store_status %s and type='leader_count' and address = '%s' order by time`, condition, address)
 		var subRows []chunk.Row
-		stmt, err := exec.ParseWithParams(ctx, sql.String())
+		stmt, err := exec.ParseWithParams(ctx, true, sql.String())
 		if err == nil {
 			subRows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 		}
