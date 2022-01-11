@@ -267,6 +267,10 @@ func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeF
 	if value == "" && ((sv.AllowEmpty && scope == ScopeSession) || sv.AllowEmptyAll) {
 		return value, nil
 	}
+	// FIXME: hack to bypass some bugs
+	if sv.IsNoop {
+		return value, nil
+	}
 	// Provide validation using the SysVar struct
 	switch sv.Type {
 	case TypeUnsigned:
