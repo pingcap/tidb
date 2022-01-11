@@ -172,15 +172,9 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.TiFlashRule) boo
 
 func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	// If table is dropped after tikv_gc_safe_point, it can be recovered
-	defer func(originGC bool) {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}(ddl.IsEmulatorGCEnable())
-	// Disable emulator GC.
-	ddl.EmulatorGCDisable()
+
+	fCancel := TempDisableEmulatorGC()
+	defer fCancel()
 	tk.MustExec("drop table if exists ddltiflash")
 	ChangeGCSafePoint(tk, time.Now(), "false", "10m0s")
 	defer func() {
@@ -198,6 +192,19 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	c.Assert(ok, Equals, true)
 }
 
+func TempDisableEmulatorGC() func() {
+	ori := ddl.IsEmulatorGCEnable()
+	f := func() {
+		if ori {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}
+	ddl.EmulatorGCDisable()
+	return f
+}
+
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
 func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	_, _, cluster, _ := unistore.New("")
@@ -210,15 +217,9 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 
-	defer func(originGC bool) {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}(ddl.IsEmulatorGCEnable())
+	fCancel := TempDisableEmulatorGC()
+	defer fCancel()
 	// Disable emulator GC, otherwise delete range will be automatically called.
-	ddl.EmulatorGCDisable()
 
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
 	defer func() {
