@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -449,4 +450,21 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	v, ok := regionReplica[1009]
 	require.Equal(t, v, 1)
 	require.Equal(t, ok, true)
+}
+
+// TestTableRange tests the first part of GetPDRegionStats.
+func TestTableRange(t *testing.T) {
+	startKey := tablecodec.GenTableRecordPrefix(1)
+	endKey := startKey.PrefixNext()
+	// t+id+_r
+	require.Equal(t, "7480000000000000015f72", startKey.String())
+	// t+id+_s
+	require.Equal(t, "7480000000000000015f73", endKey.String())
+
+	startKey = tablecodec.EncodeTablePrefix(1)
+	endKey = startKey.PrefixNext()
+	// t+id
+	require.Equal(t, "748000000000000001", startKey.String())
+	// t+(id+1)
+	require.Equal(t, "748000000000000002", endKey.String())
 }

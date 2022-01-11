@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -465,7 +464,7 @@ FindRegion:
 	return true
 }
 
-func (s *testRangeSuite) TestNeedSplit(c *C) {
+func TestNeedSplit(t *testing.T) {
 	regions := []*restore.RegionInfo{
 		{
 			Region: &metapb.Region{
@@ -475,20 +474,20 @@ func (s *testRangeSuite) TestNeedSplit(c *C) {
 		},
 	}
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	require.Nil(t, restore.NeedSplit([]byte("a"), regions))
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	require.Nil(t, restore.NeedSplit([]byte("b"), regions))
 	// In region
 	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
+	require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))))
+	require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))))
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	require.Nil(t, restore.NeedSplit([]byte("d"), regions))
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
+	require.Nil(t, restore.NeedSplit([]byte("e"), regions))
 }
 
-func (s *testRangeSuite) TestRegionConsistency(c *C) {
+func TestRegionConsistency(t *testing.T) {
 	cases := []struct {
 		startKey []byte
 		endKey   []byte
@@ -548,9 +547,8 @@ func (s *testRangeSuite) TestRegionConsistency(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		c.Assert(
-			restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions),
-			ErrorMatches,
-			ca.err)
+		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		require.Error(t, err)
+		require.Regexp(t, ca.err, err.Error())
 	}
 }

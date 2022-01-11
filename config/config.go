@@ -65,6 +65,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	DefStatsLoadConcurrencyLimit = 1
+	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
+	DefMaxOfStatsLoadConcurrencyLimit = 128
+	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
+	DefStatsLoadQueueSizeLimit = 1
+	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
+	DefMaxOfStatsLoadQueueSizeLimit = 100000
 )
 
 // Valid config maps
@@ -483,11 +491,13 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval  string `toml:"-" json:"-"`
-	IndexUsageSyncLease string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                int    `toml:"gogc" json:"gogc"`
-	EnforceMPP          bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	MemProfileInterval   string `toml:"-" json:"-"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -702,10 +712,12 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease: "0s",
-		GOGC:                100,
-		EnforceMPP:          false,
-		PlanReplayerGCLease: "10m",
+		IndexUsageSyncLease:  "0s",
+		GOGC:                 100,
+		EnforceMPP:           false,
+		PlanReplayerGCLease:  "10m",
+		StatsLoadConcurrency: 5,
+		StatsLoadQueueSize:   1000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -748,7 +760,6 @@ var defaultConf = Config{
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
-		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -999,6 +1010,14 @@ func (c *Config) Valid() error {
 	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
+	}
+
+	// check stats load config
+	if c.Performance.StatsLoadConcurrency < DefStatsLoadConcurrencyLimit || c.Performance.StatsLoadConcurrency > DefMaxOfStatsLoadConcurrencyLimit {
+		return fmt.Errorf("stats-load-concurrency should be [%d, %d]", DefStatsLoadConcurrencyLimit, DefMaxOfStatsLoadConcurrencyLimit)
+	}
+	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
+		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
 	// test log level

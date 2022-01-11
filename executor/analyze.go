@@ -67,9 +67,10 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks []*analyzeTask
-	wg    *sync.WaitGroup
-	opts  map[ast.AnalyzeOptionType]uint64
+	tasks      []*analyzeTask
+	wg         *sync.WaitGroup
+	opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]core.V2AnalyzeOptions
 }
 
 var (
@@ -187,7 +188,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
+			globalOpts := e.opts
+			if e.OptionsMap != nil {
+				if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
+					globalOpts = v2Options.FilledOpts
+				}
+			}
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, globalOpts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.histIDs)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.
@@ -206,7 +213,53 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
+	err = e.saveAnalyzeOptsV2()
+	if err != nil {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+}
+
+func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
+		return nil
+	}
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	idx := 0
+	for _, opts := range e.OptionsMap {
+		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
+		sampleRate := float64(0)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
+			sampleRate = math.Float64frombits(val)
+		}
+		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
+		topn := int64(-1)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
+			topn = int64(val)
+		}
+		colChoice := opts.ColChoice.String()
+		colIDs := make([]string, len(opts.ColumnList))
+		for i, colInfo := range opts.ColumnList {
+			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		}
+		colIDStrs := strings.Join(colIDs, ",")
+		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		if idx < len(e.OptionsMap)-1 {
+			sqlexec.MustFormatSQL(sql, ",")
+		}
+		idx += 1
+	}
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), true, sql.String())
+	if err != nil {
+		return err
+	}
+	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -1570,7 +1623,7 @@ type AnalyzeFastExec struct {
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	stmt, err = exec.ParseWithParams(context.TODO(), true, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}

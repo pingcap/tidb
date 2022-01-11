@@ -4364,12 +4364,10 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
-		wg.Done()
-	}()
+	})
 	time.Sleep(2 * time.Second)
 	pi := tk.Se.ShowProcess()
 	c.Assert(pi, NotNil)
@@ -4378,17 +4376,17 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), true, "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), true, "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4398,15 +4396,15 @@ func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), true, "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()
@@ -5420,7 +5418,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	doModify := func() {
@@ -5459,7 +5457,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table."))
 	}
 
 	assertSelectAsUnModified()
@@ -5910,4 +5908,32 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 
 	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
 	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+}
+
+func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	// Set tidb_snapshot and assert tidb_read_staleness
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	_, err := tk.Exec("set @@tidb_read_staleness='-5'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_snapshot should be clear before setting tidb_read_staleness")
+	tk.MustExec("set @@tidb_snapshot = ''")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+
+	// Set tidb_read_staleness and assert tidb_snapshot
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	_, err = tk.Exec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
+	tk.MustExec("set @@tidb_read_staleness = ''")
+	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 }
