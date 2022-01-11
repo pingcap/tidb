@@ -22,8 +22,10 @@ import (
 // Node implementations should embed it in.
 type node struct {
 	utf8Text string
-	text     string
-	offset   int
+	enc      charset.Encoding
+
+	text   string
+	offset int
 }
 
 // SetOriginTextPosition implements Node interface.
@@ -38,16 +40,19 @@ func (n *node) OriginTextPosition() int {
 
 // SetText implements Node interface.
 func (n *node) SetText(enc charset.Encoding, text string) {
-	if enc == nil {
-		enc = charset.EncodingBinImpl
-	}
-	utf8Lit, _ := enc.Transform(nil, charset.HackSlice(text), charset.OpDecodeReplace)
-	n.utf8Text = charset.HackString(utf8Lit)
+	n.enc = enc
+	n.utf8Text = text
 	n.text = text
 }
 
 // Text implements Node interface.
 func (n *node) Text() string {
+	if n.enc == nil {
+		return n.utf8Text
+	}
+	utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeReplace)
+	n.utf8Text = charset.HackString(utf8Lit)
+	n.enc = nil
 	return n.utf8Text
 }
 
