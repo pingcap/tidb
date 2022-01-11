@@ -89,7 +89,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	infosync.SetMockTiFlash(s.tiflash)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
-	//s.tiflash = infosync.GetMockTiFlash()
 
 	log.Info("Mock stat", zap.Any("infosyncer", s.dom.InfoSyncer()))
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
@@ -206,18 +205,23 @@ func TempDisableEmulatorGC() func() {
 	return f
 }
 
+func (s *tiflashDDLTestSuite) SetPdLoop(tick int) func() {
+	originValue := ddl.PullTiFlashPdTick
+	ddl.PullTiFlashPdTick = tick
+	return func() {
+		ddl.PullTiFlashPdTick = originValue
+	}
+}
+
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
 func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	_, _, cluster, _ := unistore.New("")
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
-
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
-
 	tk := testkit.NewTestKit(c, s.store)
-
 	fCancel := TempDisableEmulatorGC()
 	defer fCancel()
 	// Disable emulator GC, otherwise delete range will be automatically called.
@@ -226,6 +230,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashNoRedundantPDRules(c *C) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
 	}()
+	fCancelPD := s.SetPdLoop(10000)
+	defer fCancelPD()
 
 	// Clean all rules
 	s.tiflash.GlobalTiFlashPlacementRules = make(map[string]placement.TiFlashRule)
@@ -522,11 +528,10 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
 	}()
 
-	originValue := ddl.PullTiFlashPdTick
-	ddl.PullTiFlashPdTick = 1
-	defer func() {
-		ddl.PullTiFlashPdTick = originValue
-	}()
+
+	fCancelPD := s.SetPdLoop(1)
+	defer fCancelPD()
+
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
@@ -566,11 +571,8 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
-	originValue := ddl.PullTiFlashPdTick
-	ddl.PullTiFlashPdTick = 1000
-	defer func() {
-		ddl.PullTiFlashPdTick = originValue
-	}()
+	fCancelPD := s.SetPdLoop(10000)
+	defer fCancelPD()
 
 	tk.MustExec("drop table ddltiflash_gc")
 	// Now gc will trigger, and will remove dropped table.
