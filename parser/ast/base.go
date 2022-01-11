@@ -25,7 +25,7 @@ import (
 type node struct {
 	utf8Text string
 	enc      charset.Encoding
-	once     *sync.Once
+	once     sync.Once
 
 	text   string
 	offset int
@@ -45,7 +45,7 @@ func (n *node) OriginTextPosition() int {
 func (n *node) SetText(enc charset.Encoding, text string) {
 	n.enc = enc
 	n.text = text
-	n.once = &sync.Once{}
+	n.once = sync.Once{}
 }
 
 // Text implements Node interface.
