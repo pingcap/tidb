@@ -492,7 +492,7 @@ func (v *serverGlobalVariable) GetVal() string {
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
-	var str []string
+	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}
