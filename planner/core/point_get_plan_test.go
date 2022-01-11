@@ -207,6 +207,19 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPointGetSuite) TestGetExtraColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+	  a int(11) DEFAULT NULL,
+	  b int(11) DEFAULT NULL,
+	  UNIQUE KEY idx (a))`)
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, index:idx(a) "))
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1`).Check(testkit.Rows(
+		`Projection 1.00 root  test.t.a, test.t.b, test.t._tidb_rowid, date_format(cast(test.t.a, datetime BINARY), )->Column#4`,
+		`└─Point_Get 1.00 root table:t, index:idx(a) `))
+}
+
 func (s *testPointGetSuite) TestPointGetForUpdateWithSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
