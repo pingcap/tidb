@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,6 +53,11 @@ type cachedTable struct {
 	handle    StateRemote
 	renewCh   chan func()
 	totalSize int64
+
+	mu struct {
+		sync.RWMutex
+		lockingForRead bool
+	}
 }
 
 // cacheData pack the cache data and lease.
@@ -61,11 +67,9 @@ type cacheData struct {
 	kv.MemBuffer
 }
 
-func leaseFromTS(ts uint64) uint64 {
-	// TODO make this configurable in the following PRs
-	const defaultLeaseDuration time.Duration = 3 * time.Second
+func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
 	physicalTime := oracle.GetTimeFromTS(ts)
-	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
+	lease := oracle.GoTimeToTS(physicalTime.Add(leaseDuration))
 	return lease
 }
 
@@ -79,7 +83,7 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
+func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
 		return nil
@@ -89,9 +93,13 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
-		// TODO make this configurable in the following PRs
-		if distance >= 0 && distance <= (1500*time.Millisecond) {
-			c.renewCh <- c.renewLease(ts, RenewReadLease, data)
+		if distance >= 0 && distance <= leaseDuration/2 {
+			op := c.renewLease(ts, RenewReadLease, data, leaseDuration)
+			select {
+			case c.renewCh <- op:
+			default:
+				// Skip this time, if the previous renew lease operation hasn't finished.
+			}
 		}
 		return data.MemBuffer
 	}
@@ -163,18 +171,46 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 	return buffer, startTS, totalSize, nil
 }
 
-func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error {
+func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
+	c.mu.RLock()
+	lockingForRead := c.mu.lockingForRead
+	c.mu.RUnlock()
+	if lockingForRead {
+		// There is a inflight calling already.
+		return
+	}
+
+	c.mu.Lock()
+	c.mu.lockingForRead = true
+	c.mu.Unlock()
+
+	go c.updateLockForRead(ctx, store, ts, leaseDuration)
+}
+
+func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in the recoverable goroutine",
+				zap.Reflect("r", r),
+				zap.Stack("stack trace"))
+		}
+		c.mu.Lock()
+		c.mu.lockingForRead = false
+		c.mu.Unlock()
+	}()
+
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
-	lease := leaseFromTS(ts)
+	lease := leaseFromTS(ts, leaseDuration)
 	succ, err := c.handle.LockForRead(ctx, tid, lease)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("lock cached table for read", zap.Error(err))
+		return
 	}
 	if succ {
 		mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 
 		c.cacheData.Store(&cacheData{
@@ -185,7 +221,6 @@ func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, t
 		atomic.StoreInt64(&c.totalSize, totalSize)
 	}
 	// Current status is not suitable to cache.
-	return nil
 }
 
 const cachedTableSizeLimit = 64 * (1 << 20)
@@ -225,10 +260,10 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 
-func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) func() {
+func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData, leaseDuration time.Duration) func() {
 	return func() {
 		tid := c.Meta().ID
-		lease := leaseFromTS(ts)
+		lease := leaseFromTS(ts, leaseDuration)
 		succ, err := c.handle.RenewLease(context.Background(), tid, lease, op)
 		if err != nil {
 			log.Warn("Renew read lease error", zap.Error(err))

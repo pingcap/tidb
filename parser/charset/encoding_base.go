@@ -26,7 +26,8 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
+// ErrInvalidCharacterString returns when the string is invalid in the specific charset.
+var ErrInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
 
 // encodingBase defines some generic functions.
 type encodingBase struct {
@@ -55,11 +56,12 @@ func (b encodingBase) IsValid(src []byte) bool {
 	return isValid
 }
 
-func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err error) {
+func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result []byte, err error) {
 	if dest == nil {
-		dest = make([]byte, len(src))
+		dest = &bytes.Buffer{}
+		dest.Grow(len(src))
 	}
-	dest = dest[:0]
+	dest.Reset()
 	b.self.Foreach(src, op, func(from, to []byte, ok bool) bool {
 		if !ok {
 			if err == nil && (op&opSkipError == 0) {
@@ -69,18 +71,18 @@ func (b encodingBase) Transform(dest, src []byte, op Op) (result []byte, err err
 				return false
 			}
 			if op&opTruncateReplace != 0 {
-				dest = append(dest, '?')
+				dest.WriteByte('?')
 				return true
 			}
 		}
 		if op&opCollectFrom != 0 {
-			dest = append(dest, from...)
+			dest.Write(from)
 		} else if op&opCollectTo != 0 {
-			dest = append(dest, to...)
+			dest.Write(to)
 		}
 		return true
 	})
-	return dest, err
+	return dest.Bytes(), err
 }
 
 func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
@@ -115,7 +117,7 @@ func beginWithReplacementChar(dst []byte) bool {
 // generateEncodingErr generates an invalid string in charset error.
 func generateEncodingErr(name string, invalidBytes []byte) error {
 	arg := fmt.Sprintf("%X", invalidBytes)
-	return errInvalidCharacterString.FastGenByArgs(name, arg)
+	return ErrInvalidCharacterString.FastGenByArgs(name, arg)
 }
 
 // HackSlice converts string to slice without copy.

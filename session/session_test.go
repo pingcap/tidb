@@ -4364,12 +4364,10 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		tk.MustQuery("select 1 from t where a = (select sleep(5));").Check(testkit.Rows())
-		wg.Done()
-	}()
+	})
 	time.Sleep(2 * time.Second)
 	pi := tk.Se.ShowProcess()
 	c.Assert(pi, NotNil)
@@ -4378,17 +4376,17 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 	wg.Wait()
 }
 
-func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
+func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
 	// test compatibility with ExcuteInternal
-	_, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT 4")
+	_, err := exec.ParseWithParams(context.TODO(), true, "SELECT 4")
 	c.Assert(err, IsNil)
 
 	// test charset attack
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
+	stmt, err := exec.ParseWithParams(context.TODO(), true, "SELECT * FROM test WHERE name = %? LIMIT 1", "\xbf\x27 OR 1=1 /*")
 	c.Assert(err, IsNil)
 
 	var sb strings.Builder
@@ -4398,15 +4396,15 @@ func (s *testSessionSerialSuite) TestParseWithParamsInternal(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT * FROM test WHERE name=_utf8mb4\"\xbf' OR 1=1 /*\" LIMIT 1")
 
 	// test invalid sql
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT")
+	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT")
 	c.Assert(err, ErrorMatches, ".*You have an error in your SQL syntax.*")
 
 	// test invalid arguments to escape
-	_, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT %?, %?", 3)
+	_, err = exec.ParseWithParams(context.TODO(), true, "SELECT %?, %?", 3)
 	c.Assert(err, ErrorMatches, "missing arguments.*")
 
 	// test noescape
-	stmt, err = exec.ParseWithParamsInternal(context.TODO(), "SELECT 3")
+	stmt, err = exec.ParseWithParams(context.TODO(), true, "SELECT 3")
 	c.Assert(err, IsNil)
 
 	sb.Reset()

@@ -17,7 +17,6 @@ package kv
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -38,13 +37,8 @@ func (t *TableKVDecoder) Name() string {
 	return t.tableName
 }
 
-func (t *TableKVDecoder) DecodeHandleFromTable(key []byte) (kv.Handle, error) {
+func (t *TableKVDecoder) DecodeHandleFromRowKey(key []byte) (kv.Handle, error) {
 	return tablecodec.DecodeRowKey(key)
-}
-
-func (t *TableKVDecoder) EncodeHandleKey(tableID int64, h kv.Handle) kv.Key {
-	// do not ever ever use tbl.Meta().ID, we need to deal with partitioned tables!
-	return tablecodec.EncodeRowKeyWithHandle(tableID, h)
 }
 
 func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key []byte, value []byte) (kv.Handle, error) {
@@ -111,7 +105,6 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 }
 
 func NewTableKVDecoder(tbl table.Table, tableName string, options *SessionOptions) (*TableKVDecoder, error) {
-	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 	se := newSession(options)
 	cols := tbl.Cols()
 	// Set CommonAddRecordCtx to session to reuse the slices and BufStore in AddRecord

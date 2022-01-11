@@ -736,11 +736,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSignForInteger()
 		}
-	case mysql.TypeFloat, mysql.TypeDouble:
-		switch newCol.Tp {
-		case mysql.TypeFloat, mysql.TypeDouble:
-			return needTruncationOrToggleSign()
-		}
+		// conversion between float and double needs reorganization, see issue #31372
 	}
 
 	return true
@@ -996,7 +992,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(context.Background(), valStr)
+				stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), true, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1707,7 +1703,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		}
 	}
 	buf.WriteString(" limit 1")
-	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParamsInternal(ctx, buf.String(), paramsList...)
+	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, true, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1761,17 +1757,20 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) bool {
+func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 || (!isMultiSchemaChange && len(indexInfo.Columns) == 1) {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return false
+					return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 				}
 			}
 		}
+		if len(indexInfo.Columns) == 1 && indexInfo.Columns[0].Name.L == colName && !isMultiSchemaChange {
+			return errCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema is disable", colName)
+		}
 	}
-	return true
+	return nil
 }
 
 func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.IndexInfo {
