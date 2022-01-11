@@ -318,7 +318,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	node.Accept(hintProcessor)
 
 	failpoint.Inject("mockRandomPlanID", func() {
-		sctx.GetSessionVars().PlanID = rand.Int() % 1000
+		sctx.GetSessionVars().PlanID = rand.Intn(1000)
 	})
 
 	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
