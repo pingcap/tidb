@@ -424,6 +424,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	if m.tiflash == nil {
 		return errors.New("MockTiFlash is not accessible")
 	}
+	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }

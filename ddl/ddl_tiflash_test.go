@@ -184,12 +184,20 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
 
-	//tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test99"), model.NewCIStr("ddltiflash"))
-	//c.Assert(err, NotNil)
-	//c.Assert(tb, NotNil)
-	//ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
-	//_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
-	//c.Assert(ok, Equals, true)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	if tb.Meta().Partition != nil {
+		for _, e := range tb.Meta().Partition.Definitions {
+			ruleName := fmt.Sprintf("table-%v-r", e.ID)
+			_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
+			c.Assert(ok, Equals, true)
+		}
+	} else {
+		ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
+		_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
+		c.Assert(ok, Equals, true)
+	}
 }
 
 func TempDisableEmulatorGC() func() {
@@ -366,8 +374,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 		}
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
-	tk.MustExec("drop table if exists ddltiflash")
-
 	s.CheckFlashback(tk, c)
 }
 
@@ -378,12 +384,9 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
-
 	s.CheckFlashback(tk, c)
-
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
@@ -392,17 +395,15 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica, IsNil)
 }
 
+
 // Truncate partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
-
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
 	tk.MustExec("alter table ddltiflash truncate partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
@@ -411,10 +412,8 @@ func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 
 // Fail truncate partition.
 func (s *tiflashDDLTestSuite) TestTiFlashFailTruncatePartition(c *C) {
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
@@ -435,7 +434,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashFailTruncatePartition(c *C) {
 func (s *tiflashDDLTestSuite) TestTiFlashDropPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
@@ -463,18 +461,15 @@ func CheckTableAvailable(dom *domain.Domain, c *C, count uint64, labels []string
 func (s *tiflashDDLTestSuite) TestTiFlashTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists ddltiflashp")
 	tk.MustExec("create table ddltiflashp(z int not null) partition by range (z) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflashp set tiflash replica 1")
 
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	// Should get schema right now
-
 	tk.MustExec("truncate table ddltiflashp")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, c, 1, []string{}, "test", "ddltiflashp")
-
 	tk.MustExec("drop table if exists ddltiflash2")
 	tk.MustExec("create table ddltiflash2(z int)")
 	tk.MustExec("alter table ddltiflash2 set tiflash replica 1")
@@ -514,7 +509,6 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	tk.MustExec("alter table ddltiflash set tiflash replica 1 location labels 'a','b'")
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
-
 	expectRule := infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
@@ -524,11 +518,8 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	defer func() {
 		ChangeGCSafePoint(tk, time.Now(), "true", "10m0s")
 	}()
-
-
 	fCancelPD := s.SetPdLoop(1)
 	defer fCancelPD()
-
 	tk.MustExec("drop table ddltiflash")
 	expectRule = infosync.MakeNewRule(tb.Meta().ID, 1, []string{"a", "b"})
 	res = s.CheckPlacementRule(*expectRule)
@@ -546,15 +537,17 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	for _, store := range s.cluster.GetAllStores() {
 		cluster.AddStore(store.Id, store.Address, store.Labels...)
 	}
-
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
 	}()
-
+	fCancelPD := s.SetPdLoop(10000)
+	defer fCancelPD()
 	c.Assert(err, IsNil)
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	c.Assert(err, IsNil)
+	// Make SetPdLoop take effects.
+	time.Sleep(time.Second)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -568,9 +561,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleWithGCWorker(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
-	fCancelPD := s.SetPdLoop(10000)
-	defer fCancelPD()
-
+	ChangeGCSafePoint(tk, time.Now().Add(-time.Hour), "true", "10m0s")
 	tk.MustExec("drop table ddltiflash_gc")
 	// Now gc will trigger, and will remove dropped table.
 	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
