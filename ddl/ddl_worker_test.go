@@ -1527,7 +1527,7 @@ func addDDLJob(c *C, d *ddl, job *model.Job) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testDDLSuite) TestParallelDDL(c *C) {
+func (s *testDDLSerialSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer func() {
 		err := store.Close()
