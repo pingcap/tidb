@@ -252,12 +252,12 @@ func cmdRun(args ...string) bool {
 
 	numactl := numactlExist()
 	taskCh := make(chan task, 100)
-	errCh := make(chan struct{})
+	works := make([]numa, P)
 	var wg sync.WaitGroup
 	for i := 0; i < P; i++ {
-		n := numa{fmt.Sprintf("%d", i), numactl}
+		works[i] = numa{fmt.Sprintf("%d", i), numactl, false}
 		wg.Add(1)
-		go n.worker(&wg, taskCh, errCh)
+		go works[i].worker(&wg, taskCh)
 	}
 
 	shuffle(tasks)
@@ -266,12 +266,12 @@ func cmdRun(args ...string) bool {
 	}
 	close(taskCh)
 	wg.Wait()
-	select {
-	case <-errCh:
-		return false
-	default:
+	for _, work := range works {
+		if work.Fail {
+			os.Exit(1)
+			break
+		}
 	}
-	return true
 }
 
 func main() {
@@ -353,9 +353,10 @@ func listPackages() ([]string, error) {
 type numa struct {
 	cpu     string
 	numactl bool
+	Fail    bool
 }
 
-func (n *numa) worker(wg *sync.WaitGroup, ch chan task, ErrCh chan struct{}) {
+func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
 		start := time.Now()
@@ -363,7 +364,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task, ErrCh chan struct{}) {
 		if res.err != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test, t.old, time.Since(start), res.err)
 			io.Copy(os.Stderr, &res.output)
-			ErrCh <- struct{}{}
+			n.Fail = true
 		}
 	}
 }
