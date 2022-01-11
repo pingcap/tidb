@@ -470,3 +470,56 @@ func Test_encodeKey(t *testing.T) {
 	key := encodeKey(buf, []byte("S"), []byte("P"))
 	assert.Equal(t, "SP", key)
 }
+
+func Test_removeInValidPlanRecord(t *testing.T) {
+	c1 := newCollecting()
+	rs := []struct {
+		sql  string
+		plan string
+		tss  []uint64
+	}{
+		{"SQL-1", "PLAN-1", []uint64{1, 2, 3, 5}},
+		{"SQL-1", "PLAN-2", []uint64{1, 2, 5, 6}},
+
+		{"SQL-2", "PLAN-1", []uint64{1, 2, 3, 5}},
+		{"SQL-2", "", []uint64{1, 2, 3, 4, 6}},
+
+		{"SQL-3", "", []uint64{2, 3, 5}},
+		{"SQL-3", "PLAN-1", []uint64{1, 2, 3, 4, 6}},
+	}
+	for _, r := range rs {
+		record := c1.getOrCreateRecord([]byte(r.sql), []byte(r.plan))
+		for _, ts := range r.tss {
+			record.appendCPUTime(ts, 1)
+		}
+	}
+
+	c1.removeInValidPlanRecord()
+
+	result := []struct {
+		sql  string
+		plan string
+		tss  []uint64
+		cpus []uint32
+	}{
+		{"SQL-1", "PLAN-1", []uint64{1, 2, 3, 5}, []uint32{1, 1, 1, 1}},
+		{"SQL-1", "PLAN-2", []uint64{1, 2, 5, 6}, []uint32{1, 1, 1, 1}},
+		{"SQL-2", "PLAN-1", []uint64{1, 2, 3, 4, 5, 6}, []uint32{2, 2, 2, 1, 1, 1}},
+		{"SQL-3", "PLAN-1", []uint64{1, 2, 3, 4, 5, 6}, []uint32{1, 2, 2, 1, 1, 1}},
+	}
+	assert.Equal(t, len(result), len(c1.records))
+	buf := bytes.NewBuffer(make([]byte, 0, 64))
+	for _, r := range result {
+		buf.Reset()
+		k := encodeKey(buf, []byte(r.sql), []byte(r.plan))
+		record, ok := c1.records[k]
+		assert.True(t, ok)
+		assert.Equal(t, []byte(r.sql), record.sqlDigest)
+		assert.Equal(t, []byte(r.plan), record.planDigest)
+		assert.Equal(t, len(r.tss), len(record.tsItems))
+		for i, ts := range r.tss {
+			assert.Equal(t, ts, record.tsItems[i].timestamp)
+			assert.Equal(t, r.cpus[i], record.tsItems[i].cpuTimeMs)
+		}
+	}
+}
