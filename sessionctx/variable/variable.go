@@ -497,7 +497,7 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 		TiDBEnableTelemetry, TiDBEnablePointGetCache:

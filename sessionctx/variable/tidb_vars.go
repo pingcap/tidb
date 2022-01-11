@@ -414,6 +414,7 @@ const (
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
 	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
+	// Deprecated: It is removed and do not use it again
 	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
@@ -732,7 +733,6 @@ const (
 	DefTiDBMaxDeltaSchemaCount            = 1024
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
-	DefTiDBEnableAlterPlacement           = false
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
