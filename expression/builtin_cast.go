@@ -1580,15 +1580,13 @@ func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, 
 func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context) (string, bool, error) {
 	flen := tp.Flen
 	if tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
-		sc := ctx.GetSessionVars().StmtCtx
 		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 		if err != nil {
 			return "", false, errors.Trace(err)
 		}
 		if uint64(flen) > maxAllowedPacket {
-			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
-			return "", true, nil
+			return "", true, handleAllowedPacketOverflowed(ctx, "cast_as_binary", maxAllowedPacket)
 		}
 		padding := make([]byte, flen-len(s))
 		s = string(append([]byte(s), padding...))
