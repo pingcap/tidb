@@ -271,7 +271,7 @@ func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) []*tracing.LogicalPla
 	if len(roots) < 1 {
 		return nil
 	}
-	var rr []*tracing.LogicalPlanTrace
+	rr := make([]*tracing.LogicalPlanTrace, 0, len(roots))
 	for _, root := range roots {
 		simplify(root)
 		rr = append(rr, root)
