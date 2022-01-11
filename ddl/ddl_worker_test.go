@@ -1701,11 +1701,11 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 				// get the last 12 jobs completed.
 				finishedJobs = finishedJobs[len(finishedJobs)-12:]
 				// check some jobs are ordered because of the dependence.
-				c.Assert(finishedJobs[0].ID, Equals, job1.ID)
-				c.Assert(finishedJobs[1].ID, Equals, job2.ID)
-				c.Assert(finishedJobs[2].ID, Equals, job3.ID)
-				c.Assert(finishedJobs[4].ID, Equals, job5.ID)
-				c.Assert(finishedJobs[11].ID, Equals, job12.ID)
+				c.Assert(finishedJobs[0].ID, Equals, job1.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[1].ID, Equals, job2.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[2].ID, Equals, job3.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[4].ID, Equals, job5.ID, Commentf("%v", finishedJobs))
+				c.Assert(finishedJobs[11].ID, Equals, job12.ID, Commentf("%v", finishedJobs))
 				// check the jobs are ordered in the backfill-job queue or general-job queue.
 				backfillJobID := int64(0)
 				generalJobID := int64(0)
