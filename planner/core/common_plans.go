@@ -394,14 +394,14 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.NormalizedSQL4PCHash == "" {
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
 		return ""
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return ""
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(preparedStmt.NormalizedSQL4PC, "")
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -412,7 +412,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if globalHandle == nil {
 		return ""
 	}
-	bindRecord = globalHandle.GetBindRecord(preparedStmt.NormalizedSQL4PCHash, preparedStmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		usingBinding := bindRecord.FindUsingBinding()
 		if usingBinding != nil {
@@ -449,6 +449,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -554,8 +555,11 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.SkipPlanCache {
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -584,6 +588,22 @@ REBUILD:
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
+}
+
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containTableDual(child)
+	}
+	return childContainTableDual
 }
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
@@ -1027,6 +1047,16 @@ type AnalyzeInfo struct {
 	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
+	V2Options     *V2AnalyzeOptions
+}
+
+// V2AnalyzeOptions is used to hold analyze options information.
+type V2AnalyzeOptions struct {
+	PhyTableID int64
+	RawOpts    map[ast.AnalyzeOptionType]uint64
+	FilledOpts map[ast.AnalyzeOptionType]uint64
+	ColChoice  model.ColumnChoice
+	ColumnList []*model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -1050,9 +1080,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
+	ColTasks   []AnalyzeColumnsTask
+	IdxTasks   []AnalyzeIndexTask
+	Opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]V2AnalyzeOptions
 }
 
 // LoadData represents a loaddata plan.

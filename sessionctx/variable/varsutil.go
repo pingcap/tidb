@@ -402,6 +402,9 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotInfoschema = nil
 		return nil
 	}
+	if s.ReadStaleness != 0 {
+		return fmt.Errorf("tidb_read_staleness should be clear before setting tidb_snapshot")
+	}
 
 	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
 		s.SnapshotTS = tso
@@ -446,6 +449,9 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 		s.ReadStaleness = 0
 		return nil
 	}
+	if s.SnapshotTS != 0 {
+		return fmt.Errorf("tidb_snapshot should be clear before setting tidb_read_staleness")
+	}
 	sValue, err := strconv.ParseInt(sVal, 10, 32)
 	if err != nil {
 		return err
@@ -486,7 +492,7 @@ func (v *serverGlobalVariable) GetVal() string {
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
-	var str []string
+	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}

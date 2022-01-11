@@ -1292,6 +1292,9 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
+	if res.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
+	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
@@ -1577,15 +1580,13 @@ func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, 
 func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context) (string, bool, error) {
 	flen := tp.Flen
 	if tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
-		sc := ctx.GetSessionVars().StmtCtx
 		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 		if err != nil {
 			return "", false, errors.Trace(err)
 		}
 		if uint64(flen) > maxAllowedPacket {
-			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
-			return "", true, nil
+			return "", true, handleAllowedPacketOverflowed(ctx, "cast_as_binary", maxAllowedPacket)
 		}
 		padding := make([]byte, flen-len(s))
 		s = string(append([]byte(s), padding...))

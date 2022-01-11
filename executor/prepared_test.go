@@ -937,9 +937,10 @@ func TestIssue28782(t *testing.T) {
 
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// TODO(Reminiscent): Support cache more tableDual plan.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func TestIssue29101(t *testing.T) {
@@ -1157,7 +1158,7 @@ func TestPreparePlanCache4Function(t *testing.T) {
 	tk.MustExec("set @a = 1, @b = null;")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
@@ -1405,4 +1406,23 @@ func TestPreparePC4Binding(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestIssue31141(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true) // requires plan cache enable
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+
+	// No panic here.
+	tk.MustExec("prepare stmt1 from 'do 1'")
+
+	tk.MustExec("set @@tidb_txn_mode = 'optimistic'")
+	tk.MustExec("prepare stmt1 from 'do 1'")
 }

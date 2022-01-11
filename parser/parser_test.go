@@ -2190,6 +2190,7 @@ func TestIdentifier(t *testing.T) {
 		{`select .78'123'`, true, "SELECT 0.78 AS `123`"},
 		{"select .78`123`", true, "SELECT 0.78 AS `123`"},
 		{`select .78"123"`, true, "SELECT 0.78 AS `123`"},
+		{"select 111 as \xd6\xf7", true, "SELECT 111 AS `??`"},
 	}
 	RunTest(t, table, false)
 }
@@ -5092,6 +5093,14 @@ func TestDDLStatements(t *testing.T) {
 	createTableStr = `CREATE TABLE t (c_double double(10, 2))`
 	_, _, err = p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20))`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.EqualError(t, err, "line 1 column 70 near \"\"GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together ")
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20)) on commit preserve rows`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.NoError(t, err)
 }
 
 func TestAnalyze(t *testing.T) {
@@ -6479,20 +6488,9 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 
 func TestCharsetIntroducer(t *testing.T) {
 	p := parser.New()
-	// `_gbk` is treated as an identifier.
-	_, _, err := p.Parse("select _gbk 'a';", "", "")
-	require.NoError(t, err)
-
-	charset.AddCharset(&charset.Charset{
-		Name:             "gbk",
-		DefaultCollation: "gbk_bin",
-		Collations:       map[string]*charset.Collation{},
-		Desc:             "gbk",
-		Maxlen:           2,
-	})
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
-	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
