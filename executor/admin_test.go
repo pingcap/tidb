@@ -221,7 +221,7 @@ func TestAdminRecoverIndex(t *testing.T) {
 	// Make some corrupted index.
 	ctx := mock.NewContext()
 	ctx.Store = store
-	is := d.InfoSchema()
+	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("admin_test")
 	tbl, err := is.TableByName(dbName, tblName)
