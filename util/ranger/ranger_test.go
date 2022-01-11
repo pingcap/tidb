@@ -1441,13 +1441,15 @@ create table t(
 	e binary(10),
 	f varchar(10) collate utf8mb4_general_ci,
 	g enum('A','B','C') collate utf8mb4_general_ci,
+	h varchar(10) collate utf8_bin,
 	index idx_ab(a(50), b),
 	index idx_cb(c, a),
 	index idx_d(d(2)),
 	index idx_e(e(2)),
 	index idx_f(f),
 	index idx_de(d(2), e),
-	index idx_g(g)
+	index idx_g(g),
+	index idx_h(h(3))
 )`)
 
 	tests := []struct {
@@ -1729,6 +1731,13 @@ create table t(
 			accessConds: "[eq(test.t.g, a)]",
 			filterConds: "[]",
 			resultStr:   "[[\"A\",\"A\"]]",
+		},
+		{
+			indexPos:    7,
+			exprStr:     `h LIKE 'ÿÿ%'`,
+			accessConds: `[like(test.t.h, ÿÿ%, 92)]`,
+			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
+			resultStr:   "[[\"ÿÿ\",\"ÿ\xc3\xc0\")]", // The decoding error is ignored.
 		},
 	}
 
