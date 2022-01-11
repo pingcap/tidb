@@ -282,6 +282,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		if candidateInfo != nil {
 			candidateInfo.SetCost(curTask.cost())
+			candidateInfo.Info = curTask.plan().ExplainInfo()
 		}
 		// Get the most efficient one.
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
