@@ -1891,8 +1891,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
-		finalPref.AggFuncs, finalPref.GroupByItems,
-		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
 	if copTaskType == kv.TiDB {
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
@@ -1949,7 +1948,6 @@ func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
 func RemoveUnnecessaryFirstRow(
 	sctx sessionctx.Context,
-	finalAggFuncs []*aggregation.AggFuncDesc,
 	finalGbyItems []expression.Expression,
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,

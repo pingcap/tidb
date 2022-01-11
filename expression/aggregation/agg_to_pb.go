@@ -124,6 +124,27 @@ func AggFunctionModeToPB(mode AggFunctionMode) (pbMode *tipb.AggFunctionMode) {
 	return pbMode
 }
 
+func pbAggFunctionModeToAggFunctionMode(pbMode *tipb.AggFunctionMode) (mode AggFunctionMode) {
+	// set the default mode to Partial1Mode since before adding aggFunctionMode to tipb,
+	// the aggregation mode in is always Partial1Mode
+	mode = Partial1Mode
+	if pbMode != nil {
+		switch *pbMode {
+		case tipb.AggFunctionMode_CompleteMode:
+			mode = CompleteMode
+		case tipb.AggFunctionMode_FinalMode:
+			mode = FinalMode
+		case tipb.AggFunctionMode_Partial1Mode:
+			mode = Partial1Mode
+		case tipb.AggFunctionMode_Partial2Mode:
+			mode = Partial2Mode
+		case tipb.AggFunctionMode_DedupMode:
+			mode = DedupMode
+		}
+	}
+	return mode
+}
+
 // PBExprToAggFuncDesc converts pb to aggregate function.
 func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []*types.FieldType) (*AggFuncDesc, error) {
 	var name string
@@ -166,7 +187,7 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 	base.WrapCastForAggArgs(ctx)
 	return &AggFuncDesc{
 		baseFuncDesc: base,
-		Mode:         Partial1Mode,
+		Mode:         pbAggFunctionModeToAggFunctionMode(aggFunc.AggFuncMode),
 		HasDistinct:  false,
 	}, nil
 }
