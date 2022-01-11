@@ -1577,8 +1577,9 @@ type AggInfo struct {
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
+// firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
 	defer func() {
 		if partial != nil {
 			for _, f := range partial.AggFuncs {
@@ -1587,7 +1588,7 @@ func BuildFinalModeAggregation(
 		}
 	}()
 
-	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
+	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
 		GroupByItems: original.GroupByItems,
@@ -1788,11 +1789,14 @@ func BuildFinalModeAggregation(
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
 				}
 			} else {
-				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+				partialFuncDesc := *aggFunc
+				partial.AggFuncs = append(partial.AggFuncs, &partialFuncDesc)
+				if aggFunc.Name == ast.AggFuncFirstRow {
+					firstRowFuncMap[&partialFuncDesc] = finalAggFunc
+				}
 			}
 
 			finalAggFunc.Mode = aggregation.FinalMode
-			funcMap[aggFunc] = finalAggFunc
 		}
 
 		finalAggFunc.Args = args
@@ -1878,7 +1882,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
-	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
+	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
@@ -1891,7 +1895,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
-		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 	if copTaskType == kv.TiDB {
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
@@ -1952,7 +1956,7 @@ func RemoveUnnecessaryFirstRow(
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,
 	partialSchema *expression.Schema,
-	funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
+	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
 
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
@@ -1972,7 +1976,7 @@ func RemoveUnnecessaryFirstRow(
 				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					funcMap[aggFunc].Args[0] = finalGbyItems[j]
+					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
