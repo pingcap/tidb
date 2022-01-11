@@ -1,7 +1,7 @@
 # Defining placement rules in SQL
 
 - Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
-- Last updated:  2021-11-28
+- Last updated:  2022-01-06
 - Discussion PR: https://github.com/pingcap/tidb/pull/26221
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18030
 - Original Document (Chinese): https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
@@ -64,43 +64,28 @@ This proposal makes some intentional decisions so that both categories of use-ca
 
 ### New Syntax Overview
 
-There are two ways to specify placement rules:
-
-1. By assigning placement directly on a database, table or partition (direct assignment)
-2. By creating a new `PLACEMENT POLICY` and then applying the placement policy to a database, table or partition (placement policy)
-
-Using a `PLACEMENT POLICY` will be recommended for compliance requirements, since it can allow administrators to better keep track of usage. This can be seen as similar to how complex environments will use `ROLES` for management instead of directly assigning privileges to users.
-
-Both syntaxes are considered [`table_option`](https://dev.mysql.com/doc/refman/8.0/en/alter-table.html)s, and available in both `CREATE TABLE` and `ALTER TABLE` contexts.
-
-The two methods **are mutually exclusive**. Specifying both in a `CREATE`/`ALTER` statement will result in an error. Specifying a `PLACEMENT POLICY` on a table with direct assignment options will clear those options.
-
-#### Direct Assignment
-
-Creating a new table with directly assigned constraints. The leader is in `us-east-1` region, the followers are in `us-east-1` and `us-east-2`:
+The new syntax is based on a `PLACEMENT POLICY` statement and the ability to assign a placement policy to a schema, table or partition:
 
 ```sql
-CREATE TABLE t1 (
-	id INT NOT NULL PRIMARY KEY,
-	b VARCHAR(100)
-) PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2";
+CREATE PLACEMENT POLICY policyName [placementOptions];
+CREATE TABLE t1 (a INT) PLACEMENT POLICY=policyName;
 ```
 
-In this context, "REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
+An earlier, experimental, version of this proposal featured the ability to assign placementOptions directly to objects (tables or partitions). **This is no longer supported**.
+
+A `PLACEMENT POLICY` allows administrators to better keep track of usage. This can be seen as similar to how complex environments will use `ROLES` for management instead of directly assigning privileges to users. For example:
+
+```sql
+CREATE PLACEMENT POLICY `standardplacement` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"
+```
+
+In this context, "PRIMARY_REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
 - `host` and `hosts`: expected to be the same physical machine or hypervisor.
 - `rack` and `racks`: similar to host; a group of machines that are physically close together and may suffer from many of the same failures.
 - `zone` and `zones`: similar to an AWS zone; much larger degree of blast radius isolation from a rack, but still vulnerable to issues such as a natural disaster.
 - `region` and `regions`: expected to be distributed far enough apart that there is isolation from disasters.
 
 To use additional labels not in this list, see "Advanced Placement" below.
-
-#### Explicit Placement Syntax
-
-Creating a new `PLACEMENT POLICY`:
-
-```sql
-CREATE PLACEMENT POLICY `standardplacement` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"
-```
 
 Creating a new table with the `PLACEMENT POLICY` assigned:
 
@@ -128,9 +113,7 @@ Behavior notes:
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
 - It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
-- The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
 - The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
-- You can not use **both** a placement policy and direct assignment. If you alter specify both in a `CREATE TABLE` or `ALTER TABLE` an error will be returned. If you specify a `PLACEMENT POLICY` in an `ALTER TABLE` statement, it will unset other placement options ({FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE).
 
 #### Advanced Placement
 
@@ -160,19 +143,17 @@ The placement policy above has 4 followers:
 
 Behavior notes:
 
-* Advanced placement is available in the context of `CREATE|ALTER PLACEMENT POLICY`, `CREATE|ALTER DATABASE` and `CREATE|ALTER TABLE`. i.e. the usage of all placement syntax is expected to be the same in all contexts.
+* Advanced placement is available in the context of `CREATE|ALTER PLACEMENT POLICY`, i.e. the usage of all placement syntax is expected to be the same in all contexts.
 * It is possible to set `CONSTRAINTS`, `LEADER_CONSTRAINTS`, `FOLLOWER_CONSTRAINTS` and `LEARNER_CONSTRAINTS`. Assuming that both `CONSTRAINTS` and `FOLLOWER_CONSTRAINTS` are specified, the conditions are "AND"ed together.
 * See "Constraints configuration" below for a full set of rules and syntax for constraints.
 
 #### Metadata commands
 
-Besides `SHOW CREATE PLACEMENT POLICY x` and `SHOW CREATE TABLE t1` it should be possible to summarize all placement for a database system. This is beneficial for compliance scenarios.
+Besides `SHOW CREATE PLACEMENT POLICY x`, it should be possible to summarize all placement for a database system. This is beneficial for compliance scenarios.
 
-##### information_schema.placement_rules
+##### information_schema.placement_policies
 
-A new system table `information_schema.placement_rules` is added to view all explicit placement rules. An explicit rule is one that has been defined by the user and does not use inheritance rules, such as how partitions will use the same rules as the table they belong to.
-
-The table definition is as follows:
+A new system table `information_schema.placement_policies` is added to view all placement policies. The table definition is as follows:
 
 ```sql
 +----------------------+---------------+------+------+---------+-------+
@@ -180,43 +161,31 @@ The table definition is as follows:
 +----------------------+---------------+------+------+---------+-------+
 | POLICY_ID            | bigint(64)    | NO   |      | NULL    |       |
 | CATALOG_NAME         | varchar(512)  | NO   |      | NULL    |       |
-| POLICY_NAME          | varchar(64)   | YES  |      | NULL    |       |
-| SCHEMA_NAME          | varchar(64)   | YES  |      | NULL    |       |
-| TABLE_NAME           | varchar(64)   | YES  |      | NULL    |       |
-| PARTITION_NAME       | varchar(64)   | YES  |      | NULL    |       |
-| PRIMARY_REGION       | varchar(1024) | NO   |      | NULL    |       |
-| REGIONS              | varchar(1024) | NO   |      | NULL    |       |
-| CONSTRAINTS          | varchar(1024) | NO   |      | NULL    |       |
-| LEADER_CONSTRAINTS   | varchar(1024) | NO   |      | NULL    |       |
-| FOLLOWER_CONSTRAINTS | varchar(1024) | NO   |      | NULL    |       |
-| LEARNER_CONSTRAINTS  | varchar(1024) | NO   |      | NULL    |       |
-| SCHEDULE             | varchar(20)   | NO   |      | NULL    |       |
-| FOLLOWERS            | bigint(64)    | NO   |      | NULL    |       |
-| LEARNERS             | bigint(64)    | NO   |      | NULL    |       |
+| POLICY_NAME          | varchar(64)   | NO   |      | NULL    |       |
+| PRIMARY_REGION       | varchar(1024) | YES  |      | NULL    |       |
+| REGIONS              | varchar(1024) | YES  |      | NULL    |       |
+| CONSTRAINTS          | varchar(1024) | YES  |      | NULL    |       |
+| LEADER_CONSTRAINTS   | varchar(1024) | YES  |      | NULL    |       |
+| FOLLOWER_CONSTRAINTS | varchar(1024) | YES  |      | NULL    |       |
+| LEARNER_CONSTRAINTS  | varchar(1024) | YES  |      | NULL    |       |
+| SCHEDULE             | varchar(20)   | YES  |      | NULL    |       |
+| FOLLOWERS            | bigint(64)    | YES  |      | NULL    |       |
 +----------------------+---------------+------+------+---------+-------+
-15 rows in set (0.00 sec)
 ```
 
 ##### information_schema.tables and information_schema.partitions
 
-The information_schema tables for `tables` and `partitions` should be modified to have additional fields for `tidb_placement_policy_name` and `tidb_direct_placement`:
+The information_schema tables for `tables` and `partitions` should be modified to have an additional field for `tidb_placement_policy_name`:
 
 ```golang
 {name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024}
 ```
 
 This helps make the information match what is available in `SHOW CREATE TABLE`, but in a structured format.
 
 ##### SHOW PLACEMENT
 
-The `information_schema.placement_rules` table only contains stored placement rules, and users cannot query the effective rule of one object from it.
-
-For example, table `t` has two partitions `p0` and `p1`, and a placement rule is added on `t`. If the user wants to query the working rule of `p0`, he will find no placement rule is defined for `p0` through the system table. Based on the inheritance rules for partitioned tables the user needs to query the placement rule on `t`. This procedure is annoying.
-
-To simplify the procedure, a `SHOW PLACEMENT` statement is provided to summarize the effective rules for one specified object.
-
-The statement is in such a format:
+In addition to `information_schema.tables` and `information_schema.partitions`, a summary of the placement for a schema or table can be provided with `SHOW PLACEMENT`. The `placement` column in `SHOW PLACEMENT` shows the canonical version of the rules for an object (table or partition) with placement policies expanded. This is helpful for returning the canonical set of rules (which can get complicated since partitions inherit placement from tables, but can also be manually specified):
 
 ```sql
 SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name [PARTITION partition_name]];
@@ -279,6 +248,8 @@ SHOW PLACEMENT LIKE 'POLICY standardpol%';
 
 This will match for `PLACEMENT POLICY` names such as `standardpolicy`.
 
+The `scheduling_state` is one of `SCHEDULED`, `INPROGRESS`, or `PENDING`. `PENDING` means the placement rule is semantically valid, but might not be able to be scheduled based on the current topology of the cluster.
+
 ### Updates to Existing Syntax
 
 #### CREATE DATABASE / ALTER DATABASE
@@ -300,7 +271,7 @@ CREATE TABLE mydb.t3 (a INT) PLACEMENT POLICY=`companystandardpolicy`;
 
 #### SHOW CREATE TABLE
 
-The output of `SHOW CREATE TABLE` should describe any placement options that are either explicitly specified, or inherited from the default placement from `CREATE DATABASE` / `ALTER DATABASE`. This should be escaped in TiDB feature-specific comment syntax. i.e.
+The output of `SHOW CREATE TABLE` should escape placement policies in TiDB feature-specific comment syntax. i.e.
 
 ```sql
 use test;
@@ -325,13 +296,6 @@ SHOW CREATE TABLE t3;
 CREATE TABLE `t3` (
   `a` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement]  PLACEMENT POLICY=`acdc` */;
-
-ALTER TABLE t3 PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2,us-west-1,us-west-2";
-SHOW CREATE TABLE t3;
--->
-CREATE TABLE `t3` (
-  `a` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2,us-west-1,us-west-2" */;
 
 ```
 
@@ -380,15 +344,6 @@ For example, `+region=us-east-1,+region=us-east-2,-disk=hdd` is equivalent to:
 
 Field `location_labels` in PD placement rule configuration is used to isolate replicas to different zones to improve availability. For now, the global configuration can be used as the default `location_labels` for all placement rules defined in SQL, so it's unnecessary to specify it.
 
-`PLACEMENT` also supports adding TiFlash replicas for a table, as the statement `ALTER TABLE table_name SET TIFLASH REPLICA count` does. For example:
-
-```sql
-ALTER TABLE t1
-	LEARNER_CONSTRAINTS="[+engine=tiflash]" LEARNERS=1;
-```
-
-The only way to judge whether it’s adding a TiFlash replica is to check the label. If it contains `engine=tiflash`, then it’s adding or removing a TiFlash replica. This logic is conventional in PD for now.
-
 #### Specifying role count
 
 The roles `FOLLOWERS` and `LEARNERS` also support an optional count in *list* format. For example:
@@ -401,8 +356,8 @@ CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-eas
 If the constraints is specified as a dictionary (e.g. `{"+region=us-east-1":1}`) the count is not applicable and an error is returned:
 
 ```sql
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=3 // technically accurate, but an error
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=2 // an error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=3; -- technically accurate, but an error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=2; -- an error
 ```
 
 For dictionary format, the count is inferred by the constraint. The following constraint creates 4 followers:
@@ -456,7 +411,6 @@ When placement policies are specified, they should be validated for correctness:
 1. The `FOLLOWERS` count should respect raft quorum expectations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environments, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
-4. Specifying both direct placement rules (`{FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
 
 #### Skipping Policy Validation
 
@@ -464,12 +418,14 @@ It should be possible to skip policy validation. This can be seen as similar to 
 
 ```sql
 SET FOREIGN_KEY_CHECKS=0;
-SET PLACEMENT_CHECKS=0;
+SET tidb_placement_mode='IGNORE';
 
 CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
 ```
 
-If a table is imported when `PLACEMENT_CHECKS` is `OFF`, and the placement policy does not validate, then the same rules of fallback apply as in the case `DROP PLACEMENT POLICY` (where policy is still in use).
+If a table is imported when `tidb_placement_mode='IGNORE'`, and the placement policy does not validate, then the same rules of fallback apply as in the case `DROP PLACEMENT POLICY` (where policy is still in use).
+
+The default value for `tidb_placement_mode` is `STRICT`. The option is an enum, and in future we may add support for a `WARN` mode.
 
 #### Ambiguous and edge cases
 
@@ -507,14 +463,14 @@ The semantics of partitioning are different to the default database policy. When
 
 ```sql
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY='companystandardpolicy'
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
   PARTITION p1 VALUES LESS THAN (2005),
   PARTITION p2 VALUES LESS THAN (2010),
   PARTITION p3 VALUES LESS THAN (2015),
   PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
- )
-PLACEMENT POLICY='companystandardpolicy';
+ );
 ```
 
 In this example, partition `p0` uses the policy `storeonhdd`, partition `p4` uses the policy `storeonfastssd` and the remaining partitions use the policy `companystandardpolicy`. Assuming the following `ALTER TABLE` statement is executed, only partitions `p1`-`p3` will be updated:
@@ -570,18 +526,20 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
 ALTER TABLE t1 PLACEMENT POLICY="xyz";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY="xyz"
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT POLICY="xyz";
+ );
 
 ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT;
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY="xyz"
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000),
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT POLICY="xyz";
+ );
  
 ```
 
@@ -610,7 +568,7 @@ The fact that the DDL procedure in TiDB is mature helps to achieve some features
 - DDL is rollbackable as the middle states can transform from one to another
 - Updating schema version guarantees all active transactions are based on the same version of placement rules
 
-The actual "completion" of the DDL job as far as TiDB is concerned is that PD has been notified of the placement rules for all of the affected regions. PD will then asynchronously apply the placement rules to all of the regions, and this progress is not observable via `ADMIN SHOW DDL JOBS`. The progress of scheduling can be observed via `SHOW PLACEMENT` or by reading `information_schema.placement_rules`.
+The actual "completion" of the DDL job as far as TiDB is concerned is that PD has been notified of the placement rules for all of the affected regions. PD will then asynchronously apply the placement rules to all of the regions, and this progress is not observable via `ADMIN SHOW DDL JOBS`. The progress of scheduling can be observed via `SHOW PLACEMENT` or by reading `information_schema.placement_policies`.
 
 ### Privilege management
 
@@ -618,7 +576,8 @@ Privilege management is quite straightforward:
 
 * `ALTER [DATABASE|TABLE]` statement requires `Alter` privilege
 * `CREATE TABLE` statement requires `Create` privilege
-* `information_schema.placement_rules` and `SHOW PLACEMENT` only shows the placement rules on the objects that visible to the current user
+* `SHOW PLACEMENT` only shows the placement rules on the objects that visible to the current user
+* `information_schema.placement_policies` requires `CREATE TABLE` privilege (it doesn't reveal anything about tables, but any user who creates a table can specify a placement policy, and needs to know the possible names of policies)
 * `ADMIN SHOW DDL` requires `Super` privilege
 * `CREATE PLACEMENT POLICY`, `DROP PLACEMENT POLICY` and `ALTER PLACEMENT POLICY` require `PLACEMENT_ADMIN` (a new dynamic privilege). This is because these objects have global scope.
 
@@ -626,9 +585,7 @@ Privilege management is quite straightforward:
 
 ### Storing Placement Policies
 
-Placement policies will be stored in a table in the `mysql` schema. The policy name must be globally unique, but the definition of the table is not described in this proposal.
-
-Because the implementation is TiDB specific (does not require any compatibility with MySQL), it is up to the implementer to decide.
+Placement policies will be stored in the internal meta data system, similar to tables or views. The policy name must be globally unique, but the definition of the table is not described in this proposal.
 
 ### Storage Consistency
 
@@ -684,8 +641,9 @@ There needs a way to map the placement rules in SQL to PD placement rule configu
 However, an object (database, table, partition) may have multiple rules for a single role. For example:
 
 ```sql
-ALTER TABLE t
+CREATE PLACEMENT POLICY p1
 	FOLLOWER_CONSTRAINTS="{+region=us-east-1:2,+region=us-east-2:1}";
+CREATE TABLE t1 (a int) PLACEMENT POLICY p1;
 ```
 
 It needs 2 placement rules for `follower` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
@@ -869,6 +827,7 @@ CREATE PLACEMENT POLICY storeonfastssd CONSTRAINTS="[+disk=ssd]";
 CREATE PLACEMENT POLICY storeonhdd CONSTRAINTS="[+disk=hdd]";
 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PLACEMENT POLICY='companystandardpolicy'
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
   PARTITION p1 VALUES LESS THAN (2005),
@@ -876,7 +835,7 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
   PARTITION p3 VALUES LESS THAN (2015),
   PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
  )
-PLACEMENT POLICY='companystandardpolicy';
+;
 ```
 
 ### Optimization: Multi-tenancy / control of shared resources
@@ -974,7 +933,7 @@ Assuming that global indexes can be added to the TiDB server, this use-case can 
 
 For investigation, we looked at the implementation of placement rules in various databases (CockroachDB, Yugabyte, OceanBase).
 
-The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, learners).
+The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. The idea of using a Placement Group/Placement Policy can also be seen as similar to using a "tablespace" in a traditional database.
 
 CockroachDB does not look to have something directly comparable to `PLACEMENT POLICY`, but it does have the ability to specify "replication zones" for "system ranges" such as default, meta, liveness, system, timeseries. Before dropping `ALTER TABLE t1 ADD PLACEMENT` from this proposal, it was investigated the CockroachDB does not support this syntax, presumably for simplification and minimising similar risks of misconfiguration.
 
@@ -982,7 +941,6 @@ CockroachDB does not look to have something directly comparable to `PLACEMENT PO
 
 - In this proposal, placement policies are global-level and not specific to a database. This simplifies the configuration, but makes it restrictive for multi-tenant scenarios where a schema-per-tenant is provided. This is because creating or modifying placement policies requires a privilege which is cluster scoped (`PLACEMENT_ADMIN`). The limitation is that "tenants" will be able to `CREATE TABLE (..) PLACEMENT POLICY=x`, but they will not be able to `CREATE PLACEMENT POLICY x` or `ALTER PLACEMENT POLICY x`
 - Complex scenarios may exist where there is not a column in the current table which can be used to partition the table into different regions, but instead there is a column which is a foreign key to another table from which this information can be determined. In this scenario, the user will be required to "denormalize" the usage and move the parent_id into the child table so geo-partitioning is possible.
-- Because direct assignment and `PLACEMENT POLICY` are mutually exclusive, it results in some scenarios where users that just want to make one small change on a placement policy need to create a new policy. This is intentional to limit the risk of misconfiguration.
 - The name `REGION` is ambigous, since we are using it for placement as well as to refer to a chunk of data. We could avoid region here, but the problem is it is the most used term for a geographic location of a data center. We recommend instead calling both region but in documentation refering to them as "data regions" and "placement regions".
 
 ## Unresolved Questions
@@ -1030,6 +988,11 @@ CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
 This specific semantic will be the hardest to implement because of the other dependencies in the server.
 
 ## Changelog
+
+* 20221-01-06:
+  - Removed Direct placement options, and support only placement policies.
+  - Renamed infoschema tables to make sense based on direct placement removal.
+  - Incorporate change from `PLACEMENT_CHECKS` to `tidb_placement_mode`.
 
 * 2021-11-29:
   - Updated limits on object length.
