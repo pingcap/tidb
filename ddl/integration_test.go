@@ -89,21 +89,21 @@ func TestDDLStatementsBackFill(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	needBackfill := false
+	needReorg := false
 	dom := domain.GetDomain(tk.Session())
 	dom.DDL().SetHook(&ddl.TestDDLCallback{
 		Do: dom,
 		OnJobUpdatedExported: func(job *model.Job) {
-			if job.NeedBackfill() {
-				needBackfill = true
+			if job.SchemaState == model.StateWriteReorganization {
+				needReorg = true
 			}
 		},
 	})
 	tk.MustExec("create table t (a int, b char(65));")
 	tk.MustExec("insert into t values (1, '123');")
 	testCases := []struct {
-		ddlSQL               string
-		expectedNeedBackfill bool
+		ddlSQL            string
+		expectedNeedReorg bool
 	}{
 		{"alter table t modify column a bigint;", false},
 		{"alter table t modify column b char(255);", false},
@@ -114,8 +114,8 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		{"alter table t1 drop primary key;", false},
 	}
 	for _, tc := range testCases {
-		needBackfill = false
+		needReorg = false
 		tk.MustExec(tc.ddlSQL)
-		require.Equal(t, tc.expectedNeedBackfill, needBackfill, tc)
+		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
 }

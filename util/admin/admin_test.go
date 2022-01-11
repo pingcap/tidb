@@ -237,7 +237,7 @@ func TestCancelJobs(t *testing.T) {
 		SchemaID:  1,
 		TableID:   2,
 		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true},
+		ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true},
 	}
 	job1 := &model.Job{
 		ID:       1001,
@@ -250,7 +250,7 @@ func TestCancelJobs(t *testing.T) {
 		SchemaID:  1,
 		TableID:   2,
 		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{NeedBackfill: true},
+		ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true},
 	}
 	job3 := &model.Job{
 		ID:       1003,

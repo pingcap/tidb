@@ -172,7 +172,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.NeedBackfill() {
+			if j >= len(generalJobs) {
 				offset := int64(j - len(generalJobs))
 				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {

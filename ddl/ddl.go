@@ -500,14 +500,23 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
+// mayNeedReorg indicates that this job may need to reorganize the data.
+func mayNeedReorg(job *model.Job) bool {
+	if job.ReorgMeta == nil {
+		// For the job types other than add index, add primary key or modify column,
+		// the job.ReorgMeta is nil.
+		return false
+	}
+	return job.ReorgMeta.MayNeedReorg
+}
+
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
-	// If the workers don't run, we needn't to notify workers.
+	// If the workers don't run, we needn't notify workers.
 	if !RunWorker {
 		return
 	}
-
 	var worker *worker
-	if job.NeedBackfill() {
+	if mayNeedReorg(job) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]

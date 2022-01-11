@@ -223,7 +223,8 @@ type DDLReorgMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZone                        `json:"time_zone"`
-	NeedBackfill  bool                             `json:"need_backfill"`
+	// MayNeedReorg is derived from the job type.
+	MayNeedReorg bool `json:"-"`
 }
 
 // TimeZone represents a single time zone.
@@ -317,15 +318,6 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.State = jobState
 	job.SchemaState = schemaState
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
-}
-
-func (job *Job) NeedBackfill() bool {
-	if job.ReorgMeta == nil {
-		// For the job types other than add index, add primary key or modify column,
-		// the job.ReorgMeta is nil.
-		return false
-	}
-	return job.ReorgMeta.NeedBackfill
 }
 
 // TSConvert2Time converts timestamp to time.

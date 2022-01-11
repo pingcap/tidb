@@ -230,7 +230,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  &model.DDLReorgMeta{NeedBackfill: true},
+		ReorgMeta:  &model.DDLReorgMeta{MayNeedReorg: true},
 		Args: []interface{}{unique, model.NewCIStr(indexName),
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
