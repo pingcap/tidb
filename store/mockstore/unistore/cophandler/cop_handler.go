@@ -302,32 +302,34 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, ndvs []int
 	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
-		for i := range execSummary {
-			if closureExecutor == nil {
-				selResp.ExecutionSummaries = execSummary
-				continue
-			}
-			switch executors[i].Tp {
-			case tipb.ExecType_TypeTableScan:
-				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeIndexScan:
-				execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeSelection:
-				execSummary[i] = closureExecutor.selectionCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeTopN:
-				execSummary[i] = closureExecutor.topNCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
-				execSummary[i] = closureExecutor.aggCtx.execDetail.buildSummary()
-			case tipb.ExecType_TypeLimit:
-				costNs := uint64(0)
-				rows := uint64(closureExecutor.rowCount)
-				numIter := uint64(1)
-				execSummary[i] = &tipb.ExecutorExecutionSummary{
-					TimeProcessedNs: &costNs,
-					NumProducedRows: &rows,
-					NumIterations:   &numIter,
+		if closureExecutor != nil {
+			for i := range execSummary {
+				switch executors[i].Tp {
+				case tipb.ExecType_TypeTableScan:
+					execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
+				case tipb.ExecType_TypeIndexScan:
+					execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
+				case tipb.ExecType_TypeSelection:
+					execSummary[i] = closureExecutor.selectionCtx.execDetail.buildSummary()
+				case tipb.ExecType_TypeTopN:
+					execSummary[i] = closureExecutor.topNCtx.execDetail.buildSummary()
+				case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+					execSummary[i] = closureExecutor.aggCtx.execDetail.buildSummary()
+				case tipb.ExecType_TypeLimit:
+					costNs := uint64(0)
+					rows := uint64(closureExecutor.rowCount)
+					numIter := uint64(1)
+					execSummary[i] = &tipb.ExecutorExecutionSummary{
+						TimeProcessedNs: &costNs,
+						NumProducedRows: &rows,
+						NumIterations:   &numIter,
+					}
+				default:
+					execSummary[i] = &tipb.ExecutorExecutionSummary{}
 				}
-			default:
+			}
+		} else {
+			for i := range execSummary {
 				execSummary[i] = &tipb.ExecutorExecutionSummary{}
 			}
 		}
