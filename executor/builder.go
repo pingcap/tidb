@@ -3914,8 +3914,8 @@ type kvRangeBuilderFromRangeAndPartition struct {
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
-	var ret [][]kv.KeyRange
-	var pids []int64
+	ret := make([][]kv.KeyRange, 0, len(h.partitions))
+	pids := make([]int64, 0, len(h.partitions))
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
