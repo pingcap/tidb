@@ -43,7 +43,7 @@ func TestPlanStatsLoad(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustExec("set @@session.tidb_stats_load_sync_wait =9999999")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
 	tk.MustExec("create table t(a int, b int, c int, d int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3)")
 	tk.MustExec("create table pt(a int, b int, c int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
