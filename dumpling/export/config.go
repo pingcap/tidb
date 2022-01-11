@@ -45,7 +45,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
-	flagSortByPk                 = "sort-by-pk"
+	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
 	flagWhere                    = "where"
