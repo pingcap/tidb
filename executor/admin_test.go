@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
@@ -1078,8 +1079,6 @@ func withLogHook(ctx context.Context, msgFilter string) (newCtx context.Context,
 }
 
 func TestCheckFailReport(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := newInconsistencyKit(t, testkit.NewAsyncTestKit(t, store), newDefaultOpt())

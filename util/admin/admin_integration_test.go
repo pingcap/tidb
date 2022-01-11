@@ -113,7 +113,6 @@ func TestAdminCheckTableClusterIndex(t *testing.T) {
 }
 
 func TestAdminCheckTableCorrupted(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

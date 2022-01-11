@@ -1705,8 +1705,6 @@ func TestTiKVRCRead(t *testing.T) {
 }
 
 func TestAssertion(t *testing.T) {
-	t.Parallel()
-
 	store, close := NewTestStore("TestAssertion", "TestAssertion", t)
 	defer close()
 
