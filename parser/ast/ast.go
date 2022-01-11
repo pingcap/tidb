@@ -16,9 +16,9 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/parser/charset"
 	"io"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/types"
