@@ -395,7 +395,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica, IsNil)
 }
 
-
 // Truncate partition shall not block.
 func (s *tiflashDDLTestSuite) TestTiFlashTruncatePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

@@ -393,7 +393,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
-	logutil.BgLogger().Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed), zap.Int("updated", len(tableList) - originLen))
+	logutil.BgLogger().Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed), zap.Int("updated", len(tableList)-originLen))
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
