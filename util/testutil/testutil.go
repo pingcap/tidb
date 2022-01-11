@@ -151,6 +151,15 @@ func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*c
 	}
 }
 
+// RerunWithCommonHandleEnabledWithoutCheck runs a test function with IsCommonHandle enabled but without check.
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabledWithoutCheck(f func()) {
+	if !chs.IsCommonHandle {
+		chs.IsCommonHandle = true
+		f()
+		chs.IsCommonHandle = false
+	}
+}
+
 // NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
 func (chs *CommonHandleSuite) NewHandle() *commonHandleSuiteNewHandleBuilder {
 	return &commonHandleSuiteNewHandleBuilder{isCommon: chs.IsCommonHandle}
