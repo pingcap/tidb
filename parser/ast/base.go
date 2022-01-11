@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"sync"
+
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -23,6 +25,7 @@ import (
 type node struct {
 	utf8Text string
 	enc      charset.Encoding
+	once     sync.Once
 
 	text   string
 	offset int
@@ -47,12 +50,13 @@ func (n *node) SetText(enc charset.Encoding, text string) {
 
 // Text implements Node interface.
 func (n *node) Text() string {
-	if n.enc == nil {
-		return n.utf8Text
-	}
-	utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeReplace)
-	n.utf8Text = charset.HackString(utf8Lit)
-	n.enc = nil
+	n.once.Do(func() {
+		if n.enc == nil {
+			return
+		}
+		utf8Lit, _ := n.enc.Transform(nil, charset.HackSlice(n.text), charset.OpDecodeReplace)
+		n.utf8Text = charset.HackString(utf8Lit)
+	})
 	return n.utf8Text
 }
 

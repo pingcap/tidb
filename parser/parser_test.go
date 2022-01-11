@@ -6497,3 +6497,26 @@ func TestCharsetIntroducer(t *testing.T) {
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
 	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
+
+func BenchmarkUTF8(b *testing.B) {
+	//sql := "insert into t values ('一'), ('汉字')" + strings.Repeat(",('一'), ('汉字')", 10000)
+	sql := "select '" + strings.Repeat("这是一个测试", 10000) + "' as " + strings.Repeat("aaaaa", 10000)
+	p := parser.New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.ParseSQL(sql)
+	}
+}
+
+func BenchmarkGBK(b *testing.B) {
+	//sql := "insert into t values ('一'), ('汉字')" + strings.Repeat(",('一'), ('汉字')", 10000)
+	sql := "select '" + strings.Repeat("这是一个测试", 10000) + "' as " + strings.Repeat("aaaaa", 10000)
+	gbkSQL, err := charset.EncodingGBKImpl.Transform(nil, []byte(sql), charset.OpEncode)
+	require.NoError(b, err)
+	sql = string(gbkSQL)
+	p := parser.New()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.ParseSQL(sql, parser.CharsetClient("gbk"))
+	}
+}
