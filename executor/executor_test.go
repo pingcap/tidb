@@ -9766,34 +9766,6 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 	c.Assert(opsAlreadyCoveredMask, Equals, opsNeedsCoveredMask, Commentf("these operators are not covered %s", commentBuf.String()))
 }
 
-func (s *testSerialSuite) TestIssue30971(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (id int);")
-	tk.MustExec("create table t2 (id int, c int);")
-
-	testCases := []struct {
-		sql    string
-		fields int
-	}{
-		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
-		{"select * from t1 union select 1 from t1", 1},
-		{"select c from t2 union select * from t1", 1},
-		{"select * from t1", 1},
-		{"select * from t2 where c in (select * from t1)", 2},
-		{"insert into t1 values (?)", 0},
-		{"update t1 set id = ?", 0},
-	}
-	for _, test := range testCases {
-		_, _, fields, err := tk.Se.PrepareStmt(test.sql)
-		c.Assert(err, IsNil)
-		c.Assert(fields, HasLen, test.fields)
-	}
-}
-<<<<<<< HEAD
-=======
-
 func (s *testSerialSuite) TestIndexJoin31494(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9833,18 +9805,28 @@ func (s *testSerialSuite) TestIndexJoin31494(c *C) {
 	}
 }
 
-// Details at https://github.com/pingcap/tidb/issues/31038
-func (s *testSerialSuite) TestFix31038(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = false
-	})
+func (s *testSerialSuite) TestIssue30971(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t123")
-	tk.MustExec("create table t123 (id int);")
-	failpoint.Enable("github.com/pingcap/tidb/store/copr/disable-collect-execution", `return(true)`)
-	tk.MustQuery("select * from t123;")
-	failpoint.Disable("github.com/pingcap/tidb/store/copr/disable-collect-execution")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("create table t2 (id int, c int);")
+
+	testCases := []struct {
+		sql    string
+		fields int
+	}{
+		// Fix a bug that the column length field returned to client is incorrect using MySQL prepare protocol.
+		{"select * from t1 union select 1 from t1", 1},
+		{"select c from t2 union select * from t1", 1},
+		{"select * from t1", 1},
+		{"select * from t2 where c in (select * from t1)", 2},
+		{"insert into t1 values (?)", 0},
+		{"update t1 set id = ?", 0},
+	}
+	for _, test := range testCases {
+		_, _, fields, err := tk.Se.PrepareStmt(test.sql)
+		c.Assert(err, IsNil)
+		c.Assert(fields, HasLen, test.fields)
+	}
 }
->>>>>>> 82a75542e... executor: fix index join bug caused by innerWorker panic (#31563)
