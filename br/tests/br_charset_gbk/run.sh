@@ -55,9 +55,7 @@ run_sql "SET NAMES gbk; INSERT INTO $DB.t VALUES (\"测试\", \"a\"); SET NAMES 
 
 # backup db
 echo "backup start..."
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
 run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB"
-export GO_FAILPOINTS=""
 
 # check if we use the region unit
 if [[ "$(wc -l <$PROGRESS_FILE)" == "1" ]] && [[ $(grep -c "region" $PROGRESS_FILE) == "1" ]];
