@@ -70,9 +70,10 @@ import (
 )
 
 var (
-	serverPID   int
-	osUser      string
-	osVersion   string
+	serverPID int
+	osUser    string
+	osVersion string
+	// RunInGoTest represents whether we are run code in test.
 	RunInGoTest bool
 )
 
