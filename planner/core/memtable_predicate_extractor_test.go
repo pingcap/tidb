@@ -1552,3 +1552,67 @@ func TestTikvRegionPeersExtractor(t *testing.T) {
 		}
 	}
 }
+
+func TestColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql         string
+		columnName  set.StringSet
+		tableSchema set.StringSet
+		tableName   set.StringSet
+		skipRequest bool
+	}{
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.COLUMNS where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from INFORMATION_SCHEMA.COLUMNS where table_name='TEST';`,
+			tableName: set.NewStringSet("test"),
+		},
+		{
+			sql:        "select * from information_schema.COLUMNS where table_name in ('TEST','t') and column_name in ('A','b')",
+			columnName: set.NewStringSet("a", "b"),
+			tableName:  set.NewStringSet("test", "t"),
+		},
+		{
+			sql:       `select * from information_schema.COLUMNS where table_name='a' and table_name in ('a', 'B');`,
+			tableName: set.NewStringSet("a"),
+		},
+		{
+			sql:         `select * from information_schema.COLUMNS where table_name='a' and table_name='B';`,
+			skipRequest: true,
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.ColumnsTableExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.columnName.Count(), columnsTableExtractor.ColumnName.Count())
+		if ca.columnName.Count() > 0 && columnsTableExtractor.ColumnName.Count() > 0 {
+			require.EqualValues(t, ca.columnName, columnsTableExtractor.ColumnName, "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableSchema.Count(), columnsTableExtractor.TableSchema.Count())
+		if ca.tableSchema.Count() > 0 && columnsTableExtractor.TableSchema.Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, columnsTableExtractor.TableSchema, "SQL: %v", ca.sql)
+		}
+		require.Equal(t, ca.tableName.Count(), columnsTableExtractor.TableName.Count())
+		if ca.tableName.Count() > 0 && columnsTableExtractor.TableName.Count() > 0 {
+			require.EqualValues(t, ca.tableName, columnsTableExtractor.TableName, "SQL: %v", ca.sql)
+		}
+	}
+}
