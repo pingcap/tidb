@@ -227,7 +227,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
-	flags.BoolP(flagSortByPk, "", true, "Sort by PK")
+	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
