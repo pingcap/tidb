@@ -365,8 +365,6 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 // It handles rare situation, when we fail to alter pd rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFlashReplicaStatus) error {
 	c := context.Background()
-	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
-
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Can not get Helper")
@@ -387,19 +385,23 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 
 	start := time.Now()
 	// Cover getDropOrTruncateTableTiflash
+	originLen := len(tableList)
+	currentSchema := d.GetInfoSchemaWithInterceptor(ctx)
 	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
 		// may fail when no `tikv_gc_safe_point` available, should return in order to remove valid pd rules.
 		logutil.BgLogger().Error("getDropOrTruncateTableTiflash returns error", zap.Error(err))
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
-	logutil.BgLogger().Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed))
+	logutil.BgLogger().Info("getDropOrTruncateTableTiflash cost", zap.Duration("time", elapsed), zap.Int("updated", len(tableList) - originLen))
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
 		if _, ok := allRules[ruleID]; !ok {
 			// Mostly because of a previous failure of setting pd rule.
 			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
+			newRule := infosync.MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
+			_ = infosync.SetTiFlashPlacementRule(context.Background(), *newRule)
 		}
 		// For every existing table, we do not remove their rules.
 		delete(allRules, ruleID)

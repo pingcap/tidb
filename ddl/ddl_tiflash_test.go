@@ -189,6 +189,13 @@ func (s *tiflashDDLTestSuite) CheckFlashback(tk *testkit.TestKit, c *C) {
 	tk.MustExec("flashback table ddltiflash")
 	time.Sleep(ddl.PollTiFlashInterval * 3)
 	CheckTableAvailable(s.dom, c, 1, []string{})
+
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test99"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, NotNil)
+	c.Assert(tb, NotNil)
+	ruleName := fmt.Sprintf("table-%v-r", tb.Meta().ID)
+	_, ok := s.tiflash.GlobalTiFlashPlacementRules[ruleName]
+	c.Assert(ok, Equals, true)
 }
 
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.

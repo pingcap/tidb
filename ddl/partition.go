@@ -94,14 +94,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		return ver, err
 	}
 
-	if tblInfo.TiFlashReplica != nil {
-		// Must set placement rule, and make sure it succeeds.
-		if err := infosync.ConfigureTiFlashPDForPartitions(true, &partInfo.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); err != nil {
-			logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
-			return ver, errors.Trace(err)
-		}
-	}
-
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
@@ -136,6 +128,14 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// modify placement settings
 		for _, def := range tblInfo.Partition.AddingDefinitions {
 			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
+		if tblInfo.TiFlashReplica != nil {
+			// Must set placement rule, and make sure it succeeds.
+			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); err != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 		}
@@ -1206,6 +1206,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				break
 			}
 		}
+	}
+	for _, p := range newPartitions {
+		logutil.BgLogger().Debug("HAVE NEW", zap.Int64("id", p.ID), zap.Int64("db", job.SchemaID), zap.Int64("tb", job.TableID))
 	}
 	if len(newPartitions) == 0 {
 		job.State = model.JobStateCancelled

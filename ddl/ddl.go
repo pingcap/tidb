@@ -751,6 +751,7 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
 				// then can't find the table from the snapshot info-schema. Should just ignore error here,
 				// see more in TestParallelDropSchemaAndDropTable.
+				logutil.BgLogger().Debug("GetDropOrTruncateTableInfoFromJobsByStore err", zap.Int64("db", job.SchemaID), zap.Int64("table", job.TableID))
 				continue
 			}
 			return false, err
@@ -759,8 +760,10 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
 			// then can't find the table from the snapshot info-schema. Should just ignore error here,
 			// see more in TestParallelDropSchemaAndDropTable.
+			logutil.BgLogger().Debug("GetDropOrTruncateTableInfoFromJobsByStore nil", zap.Int64("db", job.SchemaID), zap.Int64("table", job.TableID))
 			continue
 		}
+		logutil.BgLogger().Debug("GetDropOrTruncateTableInfoFromJobsByStore found", zap.Int64("db", job.SchemaID), zap.Int64("table", job.TableID))
 		finish, err := fn(job, tbl)
 		if err != nil || finish {
 			return finish, err
