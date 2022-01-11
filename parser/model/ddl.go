@@ -223,8 +223,6 @@ type DDLReorgMeta struct {
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 	Location      *TimeZone                        `json:"time_zone"`
-	// MayNeedReorg is derived from the job type.
-	MayNeedReorg bool `json:"-"`
 }
 
 // TimeZone represents a single time zone.

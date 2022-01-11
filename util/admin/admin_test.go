@@ -233,11 +233,10 @@ func TestCancelJobs(t *testing.T) {
 	// When both types of jobs exist in the DDL queue,
 	// we first cancel the job with a larger ID.
 	job = &model.Job{
-		ID:        1000,
-		SchemaID:  1,
-		TableID:   2,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true},
+		ID:       1000,
+		SchemaID: 1,
+		TableID:  2,
+		Type:     model.ActionAddIndex,
 	}
 	job1 := &model.Job{
 		ID:       1001,
@@ -246,11 +245,10 @@ func TestCancelJobs(t *testing.T) {
 		Type:     model.ActionAddColumn,
 	}
 	job2 := &model.Job{
-		ID:        1002,
-		SchemaID:  1,
-		TableID:   2,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true},
+		ID:       1002,
+		SchemaID: 1,
+		TableID:  2,
+		Type:     model.ActionAddIndex,
 	}
 	job3 := &model.Job{
 		ID:       1003,

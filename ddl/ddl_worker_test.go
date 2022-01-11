@@ -132,8 +132,6 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
 	// This DDL request is a add index DDL job.
 	job.Type = model.ActionAddIndex
-	job.ReorgMeta = model.NewDDLReorgMeta()
-	job.ReorgMeta.MayNeedReorg = true
 	d.asyncNotifyWorker(job)
 	select {
 	case <-d.workers[addIdxWorker].ddlJobCh:
@@ -1475,7 +1473,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true}}
+	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
@@ -1484,7 +1482,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true}}
+	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
@@ -1493,7 +1491,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true}}
+	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
@@ -1502,7 +1500,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true}}
+	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job10)
@@ -1511,7 +1509,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex, ReorgMeta: &model.DDLReorgMeta{MayNeedReorg: true}}
+	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job12)

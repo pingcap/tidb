@@ -502,12 +502,18 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 
 // mayNeedReorg indicates that this job may need to reorganize the data.
 func mayNeedReorg(job *model.Job) bool {
-	if job.ReorgMeta == nil {
-		// For the job types other than add index, add primary key or modify column,
-		// the job.ReorgMeta is nil.
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return true
+	case model.ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
 		return false
 	}
-	return job.ReorgMeta.MayNeedReorg
 }
 
 func (d *ddl) asyncNotifyWorker(job *model.Job) {
