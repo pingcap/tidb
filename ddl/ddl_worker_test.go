@@ -1527,7 +1527,7 @@ func addDDLJob(c *C, d *ddl, job *model.Job) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testDDLSerialSuite) TestParallelDDL(c *C) {
+func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer func() {
 		err := store.Close()
@@ -1603,6 +1603,7 @@ func (s *testDDLSerialSuite) TestParallelDDL(c *C) {
 	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)
 	_, err = tbl3.AddRecord(ctx, types.MakeDatums(11, 22, 33, 44))
 	c.Assert(err, IsNil)
+	time.Sleep(10 * time.Millisecond)
 
 	// set hook to execute jobs after all jobs are in queue.
 	jobCnt := int64(12)
