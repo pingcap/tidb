@@ -1710,7 +1710,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers []ServerInfo
+	servers := make([]ServerInfo, 0, len(stores))
 	for _, store := range stores {
 		failpoint.Inject("mockStoreTombstone", func(val failpoint.Value) {
 			if val.(bool) {
