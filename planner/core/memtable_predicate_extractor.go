@@ -78,7 +78,7 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	}
 	// All expressions in IN must be a constant
 	// SELECT * FROM t1 WHERE c IN ('1', '2')
-	var results []types.Datum
+	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
 		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
