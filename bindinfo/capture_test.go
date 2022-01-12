@@ -35,9 +35,9 @@ func TestDMLCapturePlanBaseline(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	tk.MustExec(" SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -94,9 +94,9 @@ func TestCapturePlanBaseline(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -150,9 +150,9 @@ func TestCaptureBaselinesDefaultDB(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists spm")
@@ -293,9 +293,9 @@ func TestBindingSource(t *testing.T) {
 
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("set @@tidb_capture_plan_baselines = on")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec("set @@tidb_capture_plan_baselines = off")
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
@@ -426,7 +426,7 @@ func TestIssue20417(t *testing.T) {
 	// Test for capture baseline
 	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("set @@tidb_capture_plan_baselines = on")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	dom.BindHandle().CaptureBaselines()
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("select * from t where b=2 and c=213124")
@@ -436,7 +436,7 @@ func TestIssue20417(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` = ?", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
-	tk.MustExec("set @@tidb_capture_plan_baselines = off")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 
 	// Test for evolve baseline
 	utilCleanBindingEnv(tk, dom)
@@ -562,9 +562,9 @@ func TestCaptureFilter(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
-		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
