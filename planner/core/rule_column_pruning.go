@@ -296,18 +296,8 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
 			parentUsedCols = append(parentUsedCols, col)
-			cols := p.Schema().Columns
-			if col != cols[len(cols)-1] {
-				panic("MJONSS: Assumptions of ExtraPidColID always last is wrong!!!")
-			}
 		}
 	}
-	// ExtraPidColID should always be last?
-	/*
-		if cols[len(cols)-1].ID == model.ExtraPidColID {
-			parentUsedCols = append(parentUsedCols, col)
-		}
-	*/
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols, opt)
