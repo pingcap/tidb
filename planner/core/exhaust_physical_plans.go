@@ -113,7 +113,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	all, desc := prop.AllSameOrder()
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if !all {
 			return nil, false
@@ -364,7 +364,7 @@ var ForceUseOuterBuild4Test = false
 var ForcedHashLeftJoin4Test = false
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsEmpty() { // hash join doesn't promise any orders
+	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil
 	}
 	joins := make([]PhysicalPlan, 0, 2)
@@ -624,7 +624,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 				NeedOuterSort:           !isOuterKeysPrefix,
 				CompareFuncs:            compareFuncs,
 				OuterCompareFuncs:       outerCompareFuncs,
-				Desc:                    !prop.IsEmpty() && prop.SortItems[0].Desc,
+				Desc:                    !prop.IsSortItemEmpty() && prop.SortItems[0].Desc,
 			}.Init(p.ctx)
 			indexMergeJoins = append(indexMergeJoins, indexMergeJoin)
 		}
@@ -649,7 +649,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
 			// join operator to provide any promise of the output order.
-			KeepOuterOrder: !prop.IsEmpty(),
+			KeepOuterOrder: !prop.IsSortItemEmpty(),
 		}.Init(p.ctx)
 		indexHashJoins = append(indexHashJoins, indexHashJoin)
 	}
@@ -770,7 +770,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 		ranges = helper.chosenRanges
 	} else {
@@ -799,7 +799,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
 	var (
@@ -860,7 +860,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
 	if us == nil {
-		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
+		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		if innerTask2 != nil {
 			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 		}
@@ -1635,7 +1635,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		// refine error message
 		// If the required property is not empty, we will enforce it and try the hint again.
 		// So we only need to generate warning message when the property is empty.
-		if !canForced && needForced && prop.IsEmpty() {
+		if !canForced && needForced && prop.IsSortItemEmpty() {
 			// Construct warning message prefix.
 			var errMsg string
 			switch {
@@ -1863,7 +1863,7 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 }
 
 func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBCJ bool) []PhysicalPlan {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
@@ -2008,7 +2008,7 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
@@ -2541,7 +2541,7 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 }
 
 func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalProperty) (hashAggs []PhysicalPlan) {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
@@ -2605,7 +2605,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 }
 
 func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil
 	}
 	if prop.TaskTp == property.MppTaskType && !la.checkCanPushDownToMPP() {
@@ -2692,7 +2692,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 
 	aggs := append(hashAggs, streamAggs...)
 
-	if streamAggs == nil && preferStream && !prop.IsEmpty() {
+	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
 		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
 		warning := ErrInternal.GenWithStack(errMsg)
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
@@ -2710,7 +2710,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		return nil, true, nil
 	}
 
@@ -2752,7 +2752,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
-	if !prop.IsEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
+	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
 		return nil, true, nil
 	}
 	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
@@ -2844,7 +2844,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if !prop.IsEmpty() || prop.IsFlashProp() {
+	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true, nil
 	}

@@ -234,8 +234,8 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 	return true
 }
 
-// IsEmpty checks whether the order property is empty.
-func (p *PhysicalProperty) IsEmpty() bool {
+// IsSortItemEmpty checks whether the order property is empty.
+func (p *PhysicalProperty) IsSortItemEmpty() bool {
 	return len(p.SortItems) == 0
 }
 

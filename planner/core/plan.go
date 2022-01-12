@@ -75,7 +75,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		}
 		return &mppTask{}
 	}
-	if p.IsEmpty() || tsk.plan() == nil {
+	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
 	}
 	tsk = tsk.convertToRootTask(ctx)

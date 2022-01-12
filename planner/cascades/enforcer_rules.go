@@ -41,7 +41,7 @@ func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers
 	if g.EngineType != memo.EngineTiDB {
 		return
 	}
-	if !prop.IsEmpty() {
+	if !prop.IsSortItemEmpty() {
 		enforcers = append(enforcers, orderEnforcer)
 	}
 	return

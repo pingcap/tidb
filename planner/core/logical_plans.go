@@ -639,7 +639,7 @@ type LogicalIndexScan struct {
 
 // MatchIndexProp checks if the indexScan can match the required property.
 func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
-	if prop.IsEmpty() {
+	if prop.IsSortItemEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
