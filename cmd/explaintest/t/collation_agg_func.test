@@ -1,4 +1,5 @@
 # These tests test the aggregate function's behavior according to collation.
+# The result of min/max of enum/set is wrong, please fix them soon.
 
 # prepare database
 create database collation_agg_func;
@@ -54,6 +55,7 @@ insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
 insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
 --error 1265
 insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
+split table tt by (0), (1), (2), (3), (4), (5);
 desc format='brief' select min(a) from tt;
 select min(a) from tt;
 desc format='brief' select min(a collate utf8mb4_bin) from tt;
