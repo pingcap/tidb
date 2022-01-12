@@ -400,8 +400,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	var txnTS uint64
-	if e.SCtx().GetSessionVars().TxnCtx != nil {
-		txnTS = e.SCtx().GetSessionVars().TxnCtx.StartTS
+	if sessVars.TxnCtx != nil {
+		txnTS = sessVars.TxnCtx.StartTS
 	}
 
 	if prepared.CachedPlan != nil {
