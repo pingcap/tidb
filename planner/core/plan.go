@@ -71,7 +71,7 @@ type Plan interface {
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
 		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
-			return mpp.enforceExchanger(p)
+			return mpp.enforceExchanger(p, ctx)
 		}
 		return &mppTask{}
 	}

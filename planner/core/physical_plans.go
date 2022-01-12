@@ -1142,6 +1142,9 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+	// whether this operator only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function.
+	IsPartialSort bool
 }
 
 // Clone implements PhysicalPlan interface.

@@ -2294,15 +2294,15 @@ func disableAggPushDownToCop(p LogicalPlan) {
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-		"MPP mode may be blocked because operator `Window` is not supported now.")
-	if prop.IsFlashProp() {
-		return nil, true, nil
-	}
+	//p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+	//	"MPP mode may be blocked because operator `Window` is not supported now.")
+	//if prop.IsFlashProp() {
+	//	return nil, true, nil
+	//}
 	var byItems []property.SortItem
 	byItems = append(byItems, p.PartitionBy...)
 	byItems = append(byItems, p.OrderBy...)
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, CanAddEnforcer: true}
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems, IsPartialSort: true, CanAddEnforcer: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil, true, nil
 	}
@@ -2378,6 +2378,8 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
+		case *LogicalWindow:
+			return true
 		default:
 			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")

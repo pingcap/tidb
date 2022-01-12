@@ -119,6 +119,10 @@ type PhysicalProperty struct {
 	// SortItems contains the required sort attributes.
 	SortItems []SortItem
 
+	// whether these sort only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function executed by tiflash.
+	IsPartialSort bool
+
 	// TaskTp means the type of task that an operator requires.
 	//
 	// It needs to be specified because two different tasks can't be compared
