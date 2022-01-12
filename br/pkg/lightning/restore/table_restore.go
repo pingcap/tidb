@@ -369,11 +369,10 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				panic("forcing failure due to FailBeforeIndexEngineImported")
+			})
 		}
-
-		failpoint.Inject("FailBeforeIndexEngineImported", func() {
-			panic("forcing failure due to FailBeforeIndexEngineImported")
-		})
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
 		if err = firstErr(err, saveCpErr); err != nil {
