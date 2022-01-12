@@ -230,12 +230,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:         prepared,
+		PreparedStmtText:    prepared.Stmt.Text(),
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 	}
+	if preparedObj.PreparedStmtText == "" {
+		panic("???")
+	}
+	log.Info("[PC] prepared stmt text", zap.String("query", preparedObj.PreparedStmtText))
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 
@@ -315,7 +320,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
 		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
-			vars, id, prepared.SchemaVersion,
+			vars, preparedObj.PreparedStmtText, prepared.SchemaVersion,
 		))
 	}
 	vars.RemovePreparedStmt(id)
