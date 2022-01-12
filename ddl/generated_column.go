@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -26,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 // columnGenerationInDDL is a struct for validating generated columns in DDL.
@@ -353,6 +354,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	}
 	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
 		return ErrUnsupportedExpressionIndex
+	}
+	if expr.(*driver.ValueExpr).Datum.Kind() == types.KindNull {
+		return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs("NULL"))
 	}
 	return nil
 }
