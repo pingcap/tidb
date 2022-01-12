@@ -6077,6 +6077,7 @@ func TestRedundantColumnResolve(t *testing.T) {
 }
 
 func TestCoercibilityWithColumn(t *testing.T) {
+	// issue #31541
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
