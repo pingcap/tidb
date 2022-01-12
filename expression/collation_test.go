@@ -252,7 +252,7 @@ func newColString(chs, coll string) *Column {
 	return column
 }
 
-func newColJson() *Column {
+func newColJSON() *Column {
 	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
 	return column
 }
@@ -517,7 +517,7 @@ func TestDeriveCollation(t *testing.T) {
 			},
 			[]Expression{
 				newColInt(CoercibilityExplicit),
-				newColJson(),
+				newColJSON(),
 				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
 			},
 			[]types.EvalType{types.ETInt, types.ETJson},
