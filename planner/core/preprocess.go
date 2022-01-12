@@ -1688,6 +1688,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.LastSnapshotTS = ts
 			p.IsStaleness = true
 		}
+	case readTS == 0 && node == nil && readStaleness == 0:
+		// If both readTS and node is empty while the readStaleness is empty, it means we may be in a local txn,
+		// so setting p.ReadReplicaScope is necessary to verify the txn scope later.
+		p.ReadReplicaScope = scope
 	}
 
 	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
