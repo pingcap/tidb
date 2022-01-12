@@ -761,15 +761,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	var commitDetail *tikvutil.CommitDetails
+	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommitWithRetry(ctx)
+
 	var txn uint64
 	if s.sessionVars.TxnCtx != nil {
 		txn = s.sessionVars.TxnCtx.StartTS
 	}
-	log.Info("[PC] commit txn", zap.Uint64("txn", txn))
+	log.Info("[PC] commit txn", zap.Uint64("txn", txn), zap.Error(err))
 
-	var commitDetail *tikvutil.CommitDetails
-	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
-	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}

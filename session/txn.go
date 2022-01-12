@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
 	"runtime/trace"
 	"strings"
 	"sync"
@@ -368,6 +369,10 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 // Rollback overrides the Transaction interface.
 func (txn *LazyTxn) Rollback() error {
 	defer txn.reset()
+
+	ts := txn.StartTS()
+	log.Info("[PC] rollback txn", zap.Uint64("txn", ts))
+
 	txn.mu.Lock()
 	txn.mu.TxnInfo.State = txninfo.TxnRollingBack
 	txn.mu.Unlock()
