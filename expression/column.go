@@ -673,7 +673,6 @@ func (col *Column) Repertoire() Repertoire {
 	default:
 		return ASCII
 	}
-	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.
